@@ -20,6 +20,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   background: var(--surface);
+  box-shadow: var(--shadow-panel);
 }
 
 .sectionHead {
@@ -32,7 +33,7 @@
 }
 
 .sectionTitle {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -123,6 +124,7 @@ tr td.wrap {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  box-shadow: var(--shadow-panel);
 }
 
 .created {
@@ -293,7 +295,7 @@ tr td.wrap {
   background: none;
   color: var(--muted);
   cursor: pointer;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1;
   padding: 2px 6px;
   border-radius: 999px;

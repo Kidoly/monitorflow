@@ -7,12 +7,14 @@
   overflow: auto;
   /* Contains visually hidden text (RelativeTime), which would otherwise widen the page past the scroll box. */
   position: relative;
+  box-shadow: var(--shadow-panel);
 }
 
 .bare {
   border: 0;
   border-radius: 0;
   background: none;
+  box-shadow: none;
 }
 
 .table {
@@ -98,8 +100,8 @@
 }
 
 .title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .sub {
@@ -111,8 +113,19 @@
 
 .skel {
   background: linear-gradient(90deg, var(--hl), var(--border), var(--hl));
+  background-size: 200% 100%;
   border-radius: 4px;
   height: 12px;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }
 
 .more {

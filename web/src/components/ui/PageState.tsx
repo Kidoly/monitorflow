@@ -6,7 +6,7 @@ import { Button, ButtonLink } from "./Button";
 import { cx } from "./cx";
 import styles from "./PageState.module.css";
 import { toneClass } from "./StatusLabel";
-import { formatClock } from "./time";
+import { formatAgo, formatClock } from "./time";
 import type { Tone } from "./tone";
 
 /**
@@ -55,6 +55,7 @@ export function PageHeader({
   detail,
   tone,
   reason,
+  sub,
 }: {
   title: ReactNode;
   status?: ReactNode;
@@ -63,9 +64,13 @@ export function PageHeader({
   detail?: boolean;
   tone?: Tone;
   reason?: ReactNode;
+  /** One line under the title: the facts that matter, badges, a Details toggle. */
+  sub?: ReactNode;
 }) {
+  // An OK state stays quiet: only a problem tints the header.
+  const tinted = tone !== undefined && tone !== "ok";
   return (
-    <div className={cx(styles.header, detail && styles.detail, tone && styles.tinted, tone && styles[`tint-${tone}`])}>
+    <div className={cx(styles.header, detail && styles.detail, tinted && styles.tinted, tinted && styles[`tint-${tone}`])}>
       <h1 className={styles.title}>{title}</h1>
       {status}
       {meta !== undefined && (
@@ -75,24 +80,19 @@ export function PageHeader({
       )}
       {actions && <div className={styles.actions}>{actions}</div>}
       {reason && <p className={styles.reason}>{reason}</p>}
+      {sub && <div className={styles.sub}>{sub}</div>}
     </div>
   );
 }
 
 /**
- * "Updated 14:32:05, refreshes every 15 seconds", with the time in the
- * warning colour when the data is stale.
+ * Nothing while the data is fresh: refreshing is the normal state. When a
+ * refresh failed, a muted "Updated 3 min ago"; before any load, the retry.
  */
 export function RefreshLine({ updatedAt, stale, intervalMs = 15_000 }: { updatedAt: Date | null; stale?: boolean; intervalMs?: number }) {
-  const seconds = Math.round(intervalMs / 1000);
-  const every = t("ui.page.refreshes", { count: seconds });
-  if (!updatedAt) return <>{t("ui.page.retrying", { count: seconds })}</>;
-  const time = t("ui.page.updated", { time: formatClock(updatedAt) });
-  return (
-    <>
-      {stale ? <strong className={styles.stale}>{time}</strong> : time}, {every}
-    </>
-  );
+  if (!updatedAt) return <>{t("ui.page.retrying", { count: Math.round(intervalMs / 1000) })}</>;
+  if (!stale) return null;
+  return <span className={styles.stale}>{t("ui.page.updatedAgo", { ago: formatAgo(updatedAt, new Date()) })}</span>;
 }
 
 /** Skeleton bars for a first load: never a spinner, never on refresh. */
@@ -102,6 +102,17 @@ export function LoadingBlock({ label = t("ui.page.loading") }: { label?: string 
       <div className={styles.skel} style={{ width: "40%" }} />
       <div className={styles.skel} style={{ width: "90%" }} />
       <div className={styles.skel} style={{ width: "75%" }} />
+    </div>
+  );
+}
+
+/** Skeleton lines inside a box that already exists (a menu, a log, a panel). */
+export function SkeletonLines({ label = t("ui.page.loading"), lines = 3 }: { label?: string; lines?: number }) {
+  return (
+    <div className={styles.skelLines} aria-busy="true" aria-label={label} role="status">
+      {Array.from({ length: lines }, (_, i) => (
+        <div key={i} className={styles.skel} style={{ width: `${[60, 90, 75, 85][i % 4]}%` }} />
+      ))}
     </div>
   );
 }

@@ -4,8 +4,11 @@ import type { ComponentProps } from "react";
 import styles from "./Button.module.css";
 import { cx } from "./cx";
 
-/** `default` is bordered white, `k` is the black primary, `danger` the red one. */
-export type ButtonVariant = "default" | "k" | "danger";
+/**
+ * `default` is the bordered secondary, `k` the one primary of a page (black,
+ * white in dark mode), `ghost` a borderless quiet action, `danger` the red one.
+ */
+export type ButtonVariant = "default" | "k" | "ghost" | "danger";
 export type ButtonSize = "default" | "small" | "large";
 
 interface Look {

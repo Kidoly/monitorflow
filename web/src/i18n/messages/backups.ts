@@ -16,7 +16,6 @@ export const en = {
   "summary.ok": "Backed up.",
   cannot: "Cannot back up: {message}.",
   title: "Backups",
-  meta: "Global administrators only",
   what: "the backups",
   backingUp: "Backing up…",
   backUpNow: "Back up now",
@@ -45,6 +44,8 @@ export const en = {
   "column.kind": "Kind",
   "column.size": "Size",
   download: "Download",
+  downloadFile: "Download {name}",
+  cancel: "Cancel",
   inHostDir: "In BACKUP_DIR on the server",
   needsCompose: "Download needs the current compose file",
 } as const satisfies Catalog;
@@ -66,7 +67,6 @@ export const fr: Translation<typeof en> = {
   "summary.ok": "Sauvegardé.",
   cannot: "Sauvegarde impossible : {message}.",
   title: "Sauvegardes",
-  meta: "Administrateurs globaux uniquement",
   what: "les sauvegardes",
   backingUp: "Sauvegarde en cours…",
   backUpNow: "Sauvegarder maintenant",
@@ -96,6 +96,8 @@ export const fr: Translation<typeof en> = {
   "column.kind": "Type",
   "column.size": "Taille",
   download: "Télécharger",
+  downloadFile: "Télécharger {name}",
+  cancel: "Annuler",
   inHostDir: "Dans BACKUP_DIR sur le serveur",
   needsCompose: "Le téléchargement nécessite le fichier compose actuel",
 };

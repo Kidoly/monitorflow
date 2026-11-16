@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 
 import { Button, ButtonLink, fieldClass } from "@/components/ui/Button";
+import { InfoTip } from "@/components/ui/Hint";
 import { cx } from "@/components/ui/cx";
 import { type Column, DataTable } from "@/components/ui/DataTable";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
@@ -94,7 +95,7 @@ export function TokensAdmin({ me }: { me: Me }) {
     <div className={styles.page}>
       <PageHeader
         title={t("install.title")}
-        meta={t("install.meta")}
+        status={<InfoTip label={t("install.about")}>{t("install.meta")}</InfoTip>}
       />
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
@@ -141,7 +142,7 @@ export function TokensAdmin({ me }: { me: Me }) {
                 {advanced ? t("install.tokens.hide") : t("install.tokens.show")}
               </Button>
             </div>
-            <p className={styles.sectionNote}>{t("install.tokens.note")}</p>
+            <InfoTip label={t("install.about")}>{t("install.tokens.note")}</InfoTip>
           </section>
           {advanced && (
             <>

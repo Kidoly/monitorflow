@@ -34,6 +34,12 @@ h3 {
   margin: 0;
 }
 
+/* Emphasis in running text is a step up, not bold. */
+strong,
+b {
+  font-weight: 500;
+}
+
 /* Buttons drawn on links (`.btn-k` on <a>) override this with a two-class selector. */
 a {
   color: var(--text);
@@ -47,6 +53,31 @@ a:hover {
 :focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 2px;
+}
+
+/* Hover, background and border changes ease in rather than snap. */
+a,
+button,
+input,
+select,
+textarea,
+summary,
+td {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
 button,
@@ -72,7 +103,7 @@ input[type="file"]::file-selector-button {
   margin-right: 10px;
   padding: 0 14px;
   border-radius: var(--radius-control);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   background: var(--surface);
   font: inherit;
   font-weight: 500;

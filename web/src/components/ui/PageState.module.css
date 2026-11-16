@@ -36,6 +36,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   background: var(--surface);
+  box-shadow: var(--shadow-panel);
 }
 
 .empty a:not([class]) {
@@ -48,7 +49,7 @@
 
 .emptyTitle {
   color: var(--text);
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .emptyActions {
@@ -65,12 +66,32 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  box-shadow: var(--shadow-panel);
 }
 
 .skel {
   background: linear-gradient(90deg, var(--hl), var(--border), var(--hl));
+  background-size: 200% 100%;
   border-radius: 4px;
   height: 12px;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.skelLines {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+  min-width: 160px;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }
 
 .header {
@@ -98,23 +119,32 @@
 .tint-neutral { --tint: var(--neutral-bg); --tint-fg: var(--neutral); }
 .tint-info { --tint: var(--info-bg); --tint-fg: var(--info); }
 
+/* The facts line of a detail page, under the title. */
+.sub {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Why, in one sentence: its own line under the title. */
 .reason {
   flex-basis: 100%;
   margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   color: var(--tint-fg, var(--text));
 }
 
 .title {
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.02em;
 }
 
 .detail .title {
-  font-size: 26px;
+  font-size: 22px;
 }
 
 .meta {
@@ -126,7 +156,7 @@
 }
 
 .stale {
-  color: var(--warn);
+  color: var(--muted);
 }
 
 .actions {

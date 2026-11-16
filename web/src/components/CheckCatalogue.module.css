@@ -80,24 +80,17 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   cursor: pointer;
+  box-shadow: var(--shadow-panel);
 }
 
 .card:hover {
-  border-color: var(--muted);
+  border-color: var(--border-strong);
 }
 
-.card:focus-visible {
-  outline: 2px solid var(--info);
-  outline-offset: 1px;
-}
-
-.top .card {
-  background: var(--info-bg);
-  border-color: transparent;
-}
-
-.top .card:hover {
-  border-color: var(--info);
+/* The built-in check whose "always runs" note is shown. */
+.card.selected {
+  border-color: var(--border-strong);
+  background: var(--hl);
 }
 
 .cardTitle {

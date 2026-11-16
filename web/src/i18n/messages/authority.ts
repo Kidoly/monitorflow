@@ -73,7 +73,6 @@ export const en = {
     "It gives every server and relay of every customer its certificate. Ask a global administrator for a role.",
   failure: "{what}: {message}.",
   title: "Certificate authority",
-  meta: "Global administrators only",
   what: "the certificate authority",
   restoredBanner:
     "A restore brought back a certificate authority this server retired on {date}. Servers and relays that moved to the newer one cannot connect until they are installed again. Restore a backup taken after that date if there is one, or start a change now.",
@@ -194,7 +193,6 @@ export const fr: Translation<typeof en> = {
     "Elle donne à chaque serveur et relais de chaque client son certificat. Demandez un rôle à un administrateur global.",
   failure: "{what} : {message}.",
   title: "Autorité de certification",
-  meta: "Administrateurs globaux uniquement",
   what: "l’autorité de certification",
   restoredBanner:
     "Une restauration a ramené une autorité de certification que ce serveur a retirée le {date}. Les serveurs et relais qui ont basculé vers la plus récente ne peuvent pas se connecter avant d’être réinstallés. Restaurez une sauvegarde faite après cette date s’il y en a une, ou lancez un changement maintenant.",

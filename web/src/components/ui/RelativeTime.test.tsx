@@ -37,12 +37,12 @@ describe("RelativeTime", () => {
 });
 
 describe("page states", () => {
-  it("writes the refresh line, stale or not", () => {
-    const { rerender } = render(<PageHeader title="Fleet" meta={<RefreshLine updatedAt={now} />} />);
+  it("says nothing while fresh and how old the data is once stale", () => {
+    const { rerender } = render(<PageHeader title="Fleet" meta={<RefreshLine updatedAt={new Date()} />} />);
     expect(screen.getByRole("heading", { level: 1, name: "Fleet" })).toBeInTheDocument();
-    expect(screen.getByText(/Updated/)).toHaveTextContent("Updated 14:32:05, refreshes every 15 seconds");
-    rerender(<PageHeader title="Fleet" meta={<RefreshLine updatedAt={now} stale />} />);
-    expect(screen.getByText("Updated 14:32:05").tagName).toBe("STRONG");
+    expect(screen.queryByText(/Updated/)).not.toBeInTheDocument();
+    rerender(<PageHeader title="Fleet" meta={<RefreshLine updatedAt={new Date(Date.now() - 180_000)} stale />} />);
+    expect(screen.getByText("Updated 3 min ago")).toBeInTheDocument();
     rerender(<PageHeader title="Fleet" meta={<RefreshLine updatedAt={null} />} />);
     expect(screen.getByText(/Could not load/)).toHaveTextContent("Could not load. Retrying every 15 seconds.");
   });

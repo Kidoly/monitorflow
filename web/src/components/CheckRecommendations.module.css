@@ -46,6 +46,7 @@
   border-radius: var(--radius-panel);
   background: var(--surface);
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-panel);
 }
 
 .text {

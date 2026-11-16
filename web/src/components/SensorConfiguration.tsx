@@ -9,6 +9,7 @@ import {
   type EffectiveThreshold,
   type SensorConfigEntry,
   type ServerDetail,
+  api,
   describeError,
 } from "@/lib/api";
 import {
@@ -47,7 +48,7 @@ import { Label } from "@/components/ui/StatusLabel";
 
 import admin from "./AdminPages.module.css";
 import styles from "./SensorConfiguration.module.css";
-import { Field, SlowNote } from "./MonitoringSettings";
+import { Field, SlowNote, TurnAlertOff } from "./MonitoringSettings";
 import { IntervalSelect } from "./IntervalSelect";
 
 /** What the sensor page read, for its Configuration card; null where it could not be read. */
@@ -173,7 +174,8 @@ function facts(
       ? [{ label: t("sensors.config.parameters"), value: Object.entries(sensor.params).map(([k, v]) => `${k}=${v}`).join(" "), mono: true }]
       : []),
     ...(sensor ? [{ label: t("sensors.config.appliesFrom"), value: LEVEL_LABELS[ruleLevel(sensor, rule, perInstance(sensor, instance))] }] : []),
-    ...(data.config ? [configurationFact(data.config)] : []),
+    // Up to date is the normal state: only waiting or out of date is a fact worth a line.
+    ...(data.config && !data.config.in_sync ? [configurationFact(data.config)] : []),
   ];
 }
 
@@ -247,9 +249,7 @@ function configurationFact(config: EffectiveSensors): Fact {
   }
   return {
     label: t("sensors.config.title"),
-    value: (
-      <Label tone={config.in_sync ? "ok" : "warn"}>{config.in_sync ? t("sensors.config.upToDate") : t("sensors.config.outOfDate")}</Label>
-    ),
+    value: <Label tone="warn">{t("sensors.config.outOfDate")}</Label>,
   };
 }
 
@@ -354,6 +354,7 @@ function RuleEditor({
   const [errors, setErrors] = useState<FormErrors & { timeout?: string }>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const siteServers = useSiteServerCount(place.siteId);
   const id = useId();
 
   async function write(change: RuleChange) {
@@ -412,7 +413,7 @@ function RuleEditor({
           value={timeout}
           onChange={setTimeoutText}
           error={errors.timeout}
-          hint={t("sensors.edit.timeoutHint", { duration: formatSeconds(defaultTimeoutMs(intervalMs) / 1000) })}
+          placeholder={t("sensors.edit.timeoutHint", { duration: formatSeconds(defaultTimeoutMs(intervalMs) / 1000) })}
         />
       </div>
       <div className={styles.fields}>
@@ -432,7 +433,7 @@ function RuleEditor({
               value={form.warning}
               onChange={set("warning")}
               error={errors.warning}
-              hint={t("sensors.edit.noWarning")}
+              placeholder={t("sensors.edit.noWarning")}
             />
             <Field
               label={t("sensors.edit.criticalAt")}
@@ -440,7 +441,7 @@ function RuleEditor({
               value={form.critical}
               onChange={set("critical")}
               error={errors.critical}
-              hint={t("sensors.edit.noCritical")}
+              placeholder={t("sensors.edit.noCritical")}
             />
           </>
         )}
@@ -450,7 +451,7 @@ function RuleEditor({
           value={form.minutes}
           onChange={set("minutes")}
           error={errors.minutes}
-          hint={t("sensors.edit.firstValue")}
+          placeholder={t("sensors.edit.firstValue")}
         />
       </div>
       {rule && !rule.enabled && <p className={admin.fieldNote}>{t("sensors.edit.offNote")}</p>}
@@ -467,6 +468,12 @@ function RuleEditor({
               onChange={() => setApplyTo(choice.value)}
             />{" "}
             {choice.label}
+            {(choice.value !== "site" || siteServers !== null) && (
+              <span className={admin.dim}>
+                {" · "}
+                {t("sensors.apply.count", { count: choice.value === "site" ? siteServers! : 1 })}
+              </span>
+            )}
           </label>
         ))}
         {applyTo === "site" && hasOwn && (
@@ -483,12 +490,16 @@ function RuleEditor({
         <Button onClick={onCancel} disabled={busy}>
           {t("sensors.edit.cancel")}
         </Button>
+        {failure && (
+          <span role="alert" className={cx(admin.hintError, styles.failure)}>
+            {failure}
+          </span>
+        )}
         {rule?.enabled && (
-          <Button
-            variant="danger"
+          <TurnAlertOff
             disabled={busy}
-            onClick={() =>
-              void write({
+            onConfirm={() =>
+              write({
                 threshold: {
                   metric: rule.metric,
                   instance: rule.instance,
@@ -501,16 +512,23 @@ function RuleEditor({
                 },
               })
             }
-          >
-            {t("sensors.edit.turnOff")}
-          </Button>
-        )}
-        {failure && (
-          <span role="alert" className={cx(admin.hintError, styles.failure)}>
-            {failure}
-          </span>
+          />
         )}
       </div>
     </form>
   );
+}
+
+/** How many servers a site default reaches: the site's servers, removed ones aside; null until known. */
+function useSiteServerCount(siteId: string): number | null {
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    api.siteServers(siteId, controller.signal).then(
+      ({ servers }) => setCount(servers.filter((s) => !s.revoked_at).length),
+      () => {},
+    );
+    return () => controller.abort();
+  }, [siteId]);
+  return count;
 }

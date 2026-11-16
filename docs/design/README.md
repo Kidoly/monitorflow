@@ -10,7 +10,7 @@ Target stack: Next.js static export, React 19, TypeScript, CSS Modules, CSS cust
 
 ## The system in one paragraph
 
-Black on white, Inter 14 px / 1.5, thin #eaeaea borders, no shadows except menus, radius 5 / 6 / 8 px. Left sidebar 240 px, active item is a solid black pill (white on dark). The scope switcher shows only the customer name. Status is never a symbol or a colour alone: it is a word inside a tinted label (light background, dark text of the same hue, contrast >= 4.5:1): Online / Offline / Revoked, OK / Warning / Critical / Unknown, Pending / Approved / Installed / Failed / Rejected, Read-only / Low-impact / High-impact / Forbidden. Tables have 52 px rows, 40 px header, 14 px text, five columns or fewer; secondary facts go in a 12 px grey sub-line under the main cell. Each list page is: title line -> clickable counters (stat tiles) -> filter row (36 px buttons + search) -> one table with row actions at the right -> one grey sentence. Detail pages are: breadcrumb -> title with status label and actions -> a plain two-column facts box (label grey, value black, no extra styles) -> tabs or a big chart -> tables.
+Layered neutral surfaces: a light grey page (`--bg`), white panels (`--surface`) with a 1 px `--border`, a 10 px radius and, in light mode only, a very soft `--shadow-panel`; dark mode relies on the step between surfaces. Inputs, selects and secondary buttons use `--border-strong`. Inter 14 px / 1.5, radius 5 / 6 / 10 px. Left sidebar 240 px on its own tone (`--sidebar`) with a 1 px divider; the active item is a raised `--nav-active` surface. The scope switcher shows only the customer name. Status is never a symbol or a colour alone: it is a word inside a tinted label (light background, dark text of the same hue, contrast >= 4.5:1): Online / Offline / Revoked, OK / Warning / Critical / Unknown, Pending / Approved / Installed / Failed / Rejected, Read-only / Low-impact / High-impact / Forbidden. Tables have 52 px rows, 40 px header, 14 px text, five columns or fewer; secondary facts go in a 12 px grey sub-line under the main cell. Each list page is: title line -> clickable counters (stat tiles) -> filter row (36 px buttons + search) -> one table with row actions at the right -> one grey sentence. Detail pages are: breadcrumb -> title with status label and actions -> a plain two-column facts box (label grey, value black, no extra styles) -> tabs or a big chart -> tables.
 
 ## Screen list and routes
 
@@ -37,7 +37,7 @@ Black on white, Inter 14 px / 1.5, thin #eaeaea borders, no shadows except menus
 
 Interaction notes: navigation and shell
 
-• Sidebar is a <nav aria-label="Main"> of <a> links; the active link carries aria-current="page" and is drawn as a solid black (dark: white) pill. Open incident count is a <span> inside the Incidents link with aria-label="3 open incidents".
+• Sidebar is a <nav aria-label="Main"> of <a> links; the active link carries aria-current="page" and is drawn as a raised surface on the sidebar tone. Open incident count is a <span> inside the Incidents link with aria-label="3 open incidents".
 • Scope switcher is a <button aria-haspopup="listbox"> that opens a two-level list (customer → sites). It shows only the customer name; the site filter lives in the filter bar. Choice is stored in the URL (?customer=acme) so every page keeps it and links are shareable.
 • Skip link is the first focusable element; it targets <main id="main">.
 • Theme: a data-theme attribute on <html> ("light" | "dark" | absent = follow prefers-color-scheme), stored in localStorage. All colours are CSS variables, so components never branch on theme.
@@ -82,4 +82,4 @@ Interaction notes: coming next
 
 - `.btn-k` (black button) is also used on `<a>`: declare it with higher specificity than the global `a` colour rule, or scope link colour with `a:not(.btn)`.
 - Group headers (except the fleet's sites, ADR-0130), topology diagrams, side-by-side boxes of different heights and open confirmation dialogs were removed on purpose; do not add them back.
-- No icons for status, no pills for filters, no cards with shadows. Icons exist only in the sidebar (16 px, 1.6 stroke).
+- No icons for status, no pills for filters. Panels carry `--shadow-panel` and nothing heavier; menus carry `--shadow-menu`. Icons exist only in the sidebar (16 px, 1.6 stroke).
