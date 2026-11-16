@@ -21,6 +21,8 @@ pub mod exec;
 #[cfg(unix)]
 pub mod flatpak;
 #[cfg(unix)]
+pub mod snap;
+#[cfg(unix)]
 pub mod sources;
 #[cfg(unix)]
 pub mod update;
