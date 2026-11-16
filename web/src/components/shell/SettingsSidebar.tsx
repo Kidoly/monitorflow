@@ -63,7 +63,7 @@ export function SettingsSidebar({ me, pathname, backHref }: { me: Me; pathname: 
       {groups.length === 0 && <p className={styles.noMatch}>{t("shell.settings.noMatch")}</p>}
       {groups.map((group) => (
         <Fragment key={group.heading}>
-          <div className={styles.heading}>{group.heading}</div>
+          <div className={styles.heading}>{t(group.heading)}</div>
           {group.entries.map((entry) => {
             const status = statuses[entry.id];
             return (
@@ -74,7 +74,7 @@ export function SettingsSidebar({ me, pathname, backHref }: { me: Me; pathname: 
                 aria-current={entry === current ? "page" : undefined}
               >
                 <Icon name={entry.icon} />
-                <span className={cx(styles.text, styles.ellipsis)}>{entry.label}</span>
+                <span className={cx(styles.text, styles.ellipsis)}>{t(entry.label)}</span>
                 {needsAttention(status) && (
                   <span className={styles.flag}>
                     <Label tone={status!.tone} small>

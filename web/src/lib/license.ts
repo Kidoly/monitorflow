@@ -1,5 +1,6 @@
 import type { LicenseView } from "./api";
 import type { Tone } from "@/components/ui/tone";
+import { t } from "@/i18n";
 import { dateLocale } from "@/i18n/locale";
 
 /** `2027-11-30` as "30 November 2027", "30 novembre 2027": licenses count in whole UTC days. */
@@ -14,7 +15,7 @@ export function formatDay(day: string): string {
 
 /** "3 central servers", the first one included. */
 export function centralServers(count: number): string {
-  return count === 1 ? "1 central server" : `${count} central servers`;
+  return t("license.centralServers", { count });
 }
 
 /** One line for where the license stands, and its tint (ADR-0100). */
@@ -22,20 +23,23 @@ export function licenseSummary(view: LicenseView): [string, Tone] {
   const license = view.license;
   switch (view.state) {
     case "valid":
-      return license ? [`Valid until ${formatDay(license.expires)}, for ${centralServers(license.server_instances)}.`, "ok"] : ["Valid.", "ok"];
+      return license
+        ? [t("license.summary.valid", { day: formatDay(license.expires), servers: centralServers(license.server_instances) }), "ok"]
+        : [t("license.summary.validShort"), "ok"];
     case "expires_soon":
       return license
-        ? [`Expires on ${formatDay(license.expires)}. Central servers already added keep running; after that day no other can be added.`, "warn"]
-        : ["Expires soon.", "warn"];
+        ? [t("license.summary.expiresSoon", { day: formatDay(license.expires) }), "warn"]
+        : [t("license.summary.expiresSoonShort"), "warn"];
     case "expired":
       return [
-        `Expired${license ? ` on ${formatDay(license.expires)}` : ""}. Central servers already added keep running; none can be added until a new license key is installed.`,
+        license ? t("license.summary.expiredOn", { day: formatDay(license.expires) }) : t("license.summary.expired"),
         "bad",
       ];
     case "invalid":
-      return [`The license key no longer verifies: ${view.problem ?? "unknown reason"}.`, "bad"];
+      // The problem is the server's words, in English (ADR-0136).
+      return [t("license.summary.invalid", { problem: view.problem ?? t("license.summary.unknownReason") }), "bad"];
     default:
-      return ["No license key.", "neutral"];
+      return [t("license.summary.none"), "neutral"];
   }
 }
 
@@ -47,17 +51,17 @@ export function licenseSummary(view: LicenseView): [string, Tone] {
 export function licenseNotice(view: LicenseView): string | null {
   const added = view.added?.length ?? 0;
   if (!view.available || added === 0) return null;
-  const keep = `${added === 1 ? "The central server" : `The ${added} central servers`} already added keep${added === 1 ? "s" : ""} running`;
+  const keep = t("license.notice.keep", { count: added });
   const expires = view.license ? formatDay(view.license.expires) : null;
   switch (view.state) {
     case "expires_soon":
-      return `The Enterprise license expires on ${expires}. ${keep}, but no other can be added after that day.`;
+      return t("license.notice.expiresSoon", { day: expires ?? "", keep });
     case "expired":
-      return `The Enterprise license expired${expires ? ` on ${expires}` : ""}. ${keep}, but no other can be added.`;
+      return expires ? t("license.notice.expiredOn", { day: expires, keep }) : t("license.notice.expired", { keep });
     case "invalid":
-      return `The Enterprise license key no longer verifies. ${keep}, but no other can be added.`;
+      return t("license.notice.invalid", { keep });
     case "none":
-      return `There is no Enterprise license key. ${keep}, but no other can be added.`;
+      return t("license.notice.none", { keep });
     default:
       return null;
   }
