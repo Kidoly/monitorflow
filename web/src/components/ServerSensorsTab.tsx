@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { rich, t } from "@/i18n";
+import { t } from "@/i18n";
 import {
   type EffectiveSensor,
   type EffectiveSensors,
@@ -14,24 +14,22 @@ import {
 import { checkTitle, saveThreshold, shapeFor, shapeOf } from "@/lib/alerts";
 import { unitOf } from "@/lib/format";
 import { modifiesSite, useMe } from "@/lib/me";
-import { metricTitle } from "@/lib/metrics";
 import { sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
-import { LEVEL_LABELS, perInstance, ruleLevel, ruleSummary, rowRule } from "@/lib/sensorRules";
-import { type SensorRow, formatSensorValue, primaryMetric, sensorKind } from "@/lib/sensors";
+import { LEVEL_LABELS, perInstance, ruleCompact, ruleLevel, ruleSummary, rowRule } from "@/lib/sensorRules";
+import { type SensorRow, formatSensorValue, sensorKind } from "@/lib/sensors";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Button } from "@/components/ui/Button";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, EmptyState } from "@/components/ui/PageState";
 import { Reason } from "@/components/ui/Reason";
-import { RelativeTime } from "@/components/ui/RelativeTime";
+import { Tooltip } from "@/components/ui/Hint";
 import { type RowMenuItem, RowMenu } from "@/components/ui/RowMenu";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
-import { formatDuration, formatSince } from "@/components/ui/time";
 import type { Tone } from "@/components/ui/tone";
 
-import { AddCheck, BuiltinInterval, type Target, TurnBackOn, stopChecking, stringParams } from "./MonitoringSettings";
+import { AddCheck, type Target, TurnBackOn, stopChecking, stringParams } from "./MonitoringSettings";
 import styles from "./ServerPage.module.css";
 
 /** What the Sensors tab reads besides the rows; null where it could not be read. */
@@ -56,7 +54,6 @@ export function ServerSensorsTab({
   rules,
   window,
   incidentsFailed,
-  now,
   onChanged,
 }: {
   server: ServerDetail;
@@ -66,7 +63,6 @@ export function ServerSensorsTab({
   /** What the sparklines cover; null when the values could not be read. */
   window?: { start: number; end: number } | null;
   incidentsFailed: boolean;
-  now: Date;
   onChanged: () => void;
 }) {
   const scope = useScope();
@@ -112,7 +108,15 @@ export function ServerSensorsTab({
         <PrimaryCell
           title={row.title}
           href={scopedHref(sensorHref(server.id, row.metric, row.instance), scope)}
-          sub={sensorKind(row.sensor, row.instance)}
+          sub={
+            row.status !== "ok" && (row.reason ?? row.error) ? (
+              <span className={styles.why}>
+                <Reason short text={row.reason ?? row.error} />
+              </span>
+            ) : (
+              sensorKind(row.sensor, row.instance)
+            )
+          }
         />
       ),
     },
@@ -122,7 +126,6 @@ export function ServerSensorsTab({
       cell: (row) =>
         row.waiting ? <Label tone="neutral">{t("server.sensors.waiting")}</Label> : <StatusLabel kind="sensor" value={row.status} />,
     },
-    { key: "message", header: t("server.sensors.column.message"), cell: (row) => <Reason short text={row.reason ?? row.error} /> },
     {
       key: "trend",
       header: t("server.sensors.column.lastHour"),
@@ -138,7 +141,7 @@ export function ServerSensorsTab({
           />
         ) : null,
     },
-    { key: "value", header: t("server.sensors.column.lastValue"), cell: (row) => <LastValue row={row} now={now} /> },
+    { key: "value", header: t("server.sensors.column.lastValue"), cell: (row) => <LastValue row={row} /> },
     {
       key: "rule",
       header: t("server.sensors.column.rule"),
@@ -155,7 +158,7 @@ export function ServerSensorsTab({
 
   return (
     <div className={styles.tab}>
-      <Drift config={sensors} now={now} />
+      <Drift config={sensors} />
       {incidentsFailed && (
         <Banner tone="warn">{t("server.sensors.incidentsFailed")}</Banner>
       )}
@@ -183,15 +186,7 @@ export function ServerSensorsTab({
           }
         />
       )}
-      <div className={styles.addLine}>
-        {rows.length > 0 && addButton}
-        <BuiltinInterval
-          target={target}
-          interval={{ check_interval_ms: sensors.check_interval_ms, check_interval_origin: sensors.check_interval_origin }}
-          canEdit={canEdit}
-          onChanged={onChanged}
-        />
-      </div>
+      {rows.length > 0 && addButton && <div className={styles.addLine}>{addButton}</div>}
       {adding && (
         <div className={styles.addBox}>
           <AddCheck
@@ -218,9 +213,6 @@ export function ServerSensorsTab({
           </ul>
         </section>
       )}
-      <p className={styles.note}>
-        {t("server.sensors.note")}
-      </p>
     </div>
   );
 }
@@ -231,14 +223,14 @@ function own(sensor: EffectiveSensor, siteSensors: EffectiveSensor[] | null): bo
   return !siteSensors?.some((s) => s.name === sensor.name && s.instance === sensor.instance);
 }
 
-/** "every 1 min · warn > 85% · crit > 95% · for 5 min" and where it comes from. */
+/** "1 min · > 85% / 95% · 5 min" and where it comes from; the sentence in a tooltip. */
 function RuleCell({ sensors, row, rule }: { sensors: EffectiveSensor[]; row: SensorRow; rule: EffectiveThreshold | undefined }) {
   const shape = rule ? shapeFor(sensors, rule) : shapeOf(sensors, row.metric, row.instance || null);
   const level = ruleLevel(row.sensor, rule, perInstance(row.sensor, row.instance));
   return (
     <span className={styles.rule}>
-      <span>{ruleSummary(shape, rule, row.sensor.interval_ms)}</span>
-      <Label tone={level === "builtin" || level === "site" ? "neutral" : "info"} small>
+      <Tooltip text={ruleSummary(shape, rule, row.sensor.interval_ms)}>{ruleCompact(shape, rule, row.sensor.interval_ms)}</Tooltip>
+      <Label tone="neutral" small>
         {LEVEL_LABELS[level]}
       </Label>
     </span>
@@ -310,29 +302,13 @@ function TurnOff({
 
 const TONES: Record<SensorRow["status"], Tone> = { critical: "bad", warning: "warn", unknown: "neutral", ok: "ok" };
 
-function LastValue({ row, now }: { row: SensorRow; now: Date }) {
+function LastValue({ row }: { row: SensorRow }) {
   if (row.waiting || row.error) return <span className={styles.muted}>–</span>;
-  const { incident } = row;
-  const other = incident && incident.metric !== primaryMetric(row.sensor).metric;
-  return (
-    <>
-      <strong>{formatSensorValue(row.metric, row.value)}</strong>
-      {incident && (
-        <span className={styles.muted}>
-          {" · "}
-          {other && `${metricTitle(incident.metric)} · `}
-          {t("server.sensors.since", {
-            since: formatSince(new Date(incident.opened_at), now),
-            duration: formatDuration((now.getTime() - Date.parse(incident.opened_at)) / 1000),
-          })}
-        </span>
-      )}
-    </>
-  );
+  return <span className={styles.value}>{formatSensorValue(row.metric, row.value)}</span>;
 }
 
 /** Whether the agent confirmed the current configuration (ADR-0016). */
-function Drift({ config, now }: { config: EffectiveSensors; now: Date }) {
+function Drift({ config }: { config: EffectiveSensors }) {
   if (config.applied_revision === null) {
     return (
       <p className={styles.drift}>
@@ -341,16 +317,8 @@ function Drift({ config, now }: { config: EffectiveSensors; now: Date }) {
       </p>
     );
   }
-  if (config.in_sync) {
-    return (
-      <p className={styles.drift}>
-        <Label tone="ok">{t("server.sensors.upToDate")}</Label>
-        {config.applied_at && (
-          <span>{rich("server.sensors.applied", { when: <RelativeTime value={config.applied_at} now={now} /> })}</span>
-        )}
-      </p>
-    );
-  }
+  // Up to date is the normal state: nothing to say.
+  if (config.in_sync) return null;
   return (
     <p className={styles.drift}>
       <Label tone="warn">{t("server.sensors.outOfDate")}</Label>

@@ -146,6 +146,7 @@ export function FleetOverview() {
     {
       key: "host",
       header: t("fleet.column.server"),
+      className: styles.host,
       cell: (r) => (
         <PrimaryCell
           title={r.server.hostname}

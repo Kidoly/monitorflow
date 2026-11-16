@@ -44,6 +44,8 @@ export const en = {
   "column.kind": "Kind",
   "column.size": "Size",
   download: "Download",
+  downloadFile: "Download {name}",
+  cancel: "Cancel",
   inHostDir: "In BACKUP_DIR on the server",
   needsCompose: "Download needs the current compose file",
 } as const satisfies Catalog;
@@ -94,6 +96,8 @@ export const fr: Translation<typeof en> = {
   "column.kind": "Type",
   "column.size": "Taille",
   download: "Télécharger",
+  downloadFile: "Télécharger {name}",
+  cancel: "Annuler",
   inHostDir: "Dans BACKUP_DIR sur le serveur",
   needsCompose: "Le téléchargement nécessite le fichier compose actuel",
 };

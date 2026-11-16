@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useState } from "react";
 
 import { t } from "@/i18n";
 import { type Silence, type SilenceRequest, type SilenceScope, api, describeError, isUnauthorized } from "@/lib/api";
@@ -14,6 +14,8 @@ import { type Column, DataTable } from "@/components/ui/DataTable";
 import { Page } from "@/components/ui/Page";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
+import { InfoTip } from "@/components/ui/Hint";
+import { RowMenu } from "@/components/ui/RowMenu";
 import { formatDay } from "@/components/ui/time";
 
 import admin from "./AdminPages.module.css";
@@ -136,7 +138,13 @@ function because(silence: Silence): string {
  * A silenced server, relay or site says so at the top of its page, and
  * operators of its site silence it from here in one click.
  */
-export function SilenceBar({ target }: { target: SilenceTarget }) {
+/**
+ * The silences of one server, relay or site: notices for active and planned
+ * ones, a "Silence ▾" menu (1 hour, until tomorrow 8:00, custom), and the
+ * custom form. A page that puts the menu in its header uses this hook;
+ * `SilenceBar` stacks the three.
+ */
+export function useSilenceBar(target: SilenceTarget): { notices: ReactNode; menu: ReactNode; form: ReactNode } {
   const multiCustomer = useMultiCustomer();
   const me = useMe();
   const { scope, id, name } = target;
@@ -170,7 +178,7 @@ export function SilenceBar({ target }: { target: SilenceTarget }) {
     }
   }
 
-  return (
+  const notices = (
     <>
       {last && (
         <Banner tone="warn">
@@ -204,22 +212,37 @@ export function SilenceBar({ target }: { target: SilenceTarget }) {
           {s.can_end && <EndSilence silence={s} onEnded={refresh} />}
         </Banner>
       ))}
-      {modifiesSite(me, target.customerId, target.siteId) && (
-        <div className={styles.bar} role="group" aria-label={t("silences.bar.label", { name })}>
-          <span className={styles.label}>{last ? t("silences.bar.longer") : t("silences.bar.for")}</span>
-          <Button size="small" disabled={busy} onClick={() => void until(inOneHour(new Date()))}>
-            {t("silences.bar.hour")}
-          </Button>
-          <Button size="small" disabled={busy} onClick={() => void until(tomorrowMorning(new Date()))}>
-            {t("silences.bar.tomorrow")}
-          </Button>
-          <Button size="small" aria-expanded={custom} onClick={() => setCustom(!custom)}>
-            {t("silences.bar.custom")}
-          </Button>
-          {error && <span role="alert">{error}</span>}
-        </div>
-      )}
-      {custom && <SilenceForm submitLabel={t("silences.bar.submit", { name })} onSubmit={silence} onCancel={() => setCustom(false)} />}
+    </>
+  );
+  const menu = modifiesSite(me, target.customerId, target.siteId) && (
+    <span className={styles.bar}>
+      <RowMenu
+        label={t("silences.bar.label", { name })}
+        trigger={last ? t("silences.bar.longer") : t("silences.bar.trigger")}
+        disabled={busy}
+        items={[
+          { label: t("silences.bar.hour"), onSelect: () => void until(inOneHour(new Date())) },
+          { label: t("silences.bar.tomorrow"), onSelect: () => void until(tomorrowMorning(new Date())) },
+          { label: t("silences.bar.custom"), onSelect: () => setCustom(true) },
+        ]}
+      />
+      {error && <span role="alert">{error}</span>}
+    </span>
+  );
+  const form = custom && (
+    <SilenceForm submitLabel={t("silences.bar.submit", { name })} onSubmit={silence} onCancel={() => setCustom(false)} />
+  );
+  return { notices, menu, form };
+}
+
+/** Notices, the "Silence ▾" menu and the custom form, one under the other. */
+export function SilenceBar({ target }: { target: SilenceTarget }) {
+  const { notices, menu, form } = useSilenceBar(target);
+  return (
+    <>
+      {notices}
+      {menu && <div>{menu}</div>}
+      {form}
     </>
   );
 }
@@ -325,6 +348,7 @@ export function SilencesPage() {
     <Page>
       <PageHeader
         title={t("silences.title")}
+        status={<InfoTip label={t("silences.about")}>{t("silences.intro")}</InfoTip>}
         meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
         actions={
           canSilence && (
@@ -334,9 +358,6 @@ export function SilencesPage() {
           )
         }
       />
-      <p className={styles.intro}>
-        {t("silences.intro")}
-      </p>
       {adding && (
         <NewSilence
           onCancel={() => setAdding(false)}

@@ -119,6 +119,15 @@
 .tint-neutral { --tint: var(--neutral-bg); --tint-fg: var(--neutral); }
 .tint-info { --tint: var(--info-bg); --tint-fg: var(--info); }
 
+/* The facts line of a detail page, under the title. */
+.sub {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Why, in one sentence: its own line under the title. */
 .reason {
   flex-basis: 100%;

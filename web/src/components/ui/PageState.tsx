@@ -55,6 +55,7 @@ export function PageHeader({
   detail,
   tone,
   reason,
+  sub,
 }: {
   title: ReactNode;
   status?: ReactNode;
@@ -63,6 +64,8 @@ export function PageHeader({
   detail?: boolean;
   tone?: Tone;
   reason?: ReactNode;
+  /** One line under the title: the facts that matter, badges, a Details toggle. */
+  sub?: ReactNode;
 }) {
   // An OK state stays quiet: only a problem tints the header.
   const tinted = tone !== undefined && tone !== "ok";
@@ -77,6 +80,7 @@ export function PageHeader({
       )}
       {actions && <div className={styles.actions}>{actions}</div>}
       {reason && <p className={styles.reason}>{reason}</p>}
+      {sub && <div className={styles.sub}>{sub}</div>}
     </div>
   );
 }
