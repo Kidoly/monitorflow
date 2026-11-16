@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { rich, t } from "@/i18n";
 import { ApiError, type MirrorDistribution, api, describeError } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { usePolledData } from "@/lib/usePolledData";
@@ -32,7 +33,7 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
       setRefused(
         e instanceof ApiError && e.status === 409
           ? e.message
-          : `Cannot add ${distribution.name}. ${describeError(e)}`,
+          : t("mirrors.cannotAdd", { name: distribution.name, error: describeError(e) }),
       );
       refresh();
     } finally {
@@ -42,17 +43,17 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
 
   const header = (
     <div className={styles.addHeader}>
-      <h2 className={styles.addTitle}>Add a mirror</h2>
+      <h2 className={styles.addTitle}>{t("mirrors.add")}</h2>
       <Button size="small" onClick={onClose}>
-        Close
+        {t("mirrors.close")}
       </Button>
     </div>
   );
   if (!data) {
     return (
-      <section className={styles.add} aria-label="Add a mirror">
+      <section className={styles.add} aria-label={t("mirrors.add")}>
         {header}
-        {error ? <ErrorState what="the distributions" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
+        {error ? <ErrorState what={t("mirrors.distributions")} error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
       </section>
     );
   }
@@ -60,39 +61,38 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
   const columns: Column<MirrorDistribution>[] = [
     {
       key: "name",
-      header: "Distribution",
-      cell: (d) => <PrimaryCell title={d.name} sub={d.family === "apt" ? "amd64, with updates and security" : "x86_64, BaseOS and AppStream"} />,
+      header: t("mirrors.column.distribution"),
+      cell: (d) => <PrimaryCell title={d.name} sub={d.family === "apt" ? t("mirrors.apt") : t("mirrors.dnf")} />,
     },
-    { key: "size", header: "Disk space", cell: (d) => `about ${formatBytes(d.size_bytes)}` },
+    { key: "size", header: t("mirrors.column.diskSpace"), cell: (d) => t("mirrors.about", { size: formatBytes(d.size_bytes) }) },
   ];
 
   return (
-    <section className={styles.add} aria-label="Add a mirror">
+    <section className={styles.add} aria-label={t("mirrors.add")}>
       {header}
       {!data.tools.available && (
         <Banner tone="bad">
-          <strong>The mirror tools are not running.</strong> Start them on the central server with{" "}
-          <code>docker compose -f deploy/docker-compose.yml up -d mirror</code>, then retry.
+          <strong>{t("mirrors.tools.down")}</strong>{" "}
+          {rich("mirrors.tools.start", { command: <code>docker compose -f deploy/docker-compose.yml up -d mirror</code> })}
           {data.tools.problem && <span className={styles.dim}> ({data.tools.problem})</span>}
         </Banner>
       )}
       {refused && <Banner tone="bad">{refused}</Banner>}
       <p className={styles.note}>
         {data.disk
-          ? `${formatBytes(data.disk.free_bytes)} free of ${formatBytes(data.disk.total_bytes)} on this server. `
+          ? `${t("mirrors.free", { free: formatBytes(data.disk.free_bytes), total: formatBytes(data.disk.total_bytes) })} `
           : ""}
-        A mirror syncs every day and keeps a snapshot of each sync. Relays set to serve mirrors copy it too, and need
-        the same space.
+        {t("mirrors.addNote")}
       </p>
       <DataTable
         dense
-        label="Distributions"
+        label={t("mirrors.distributionsLabel")}
         columns={columns}
         rows={data.distributions}
         rowKey={(d) => d.id}
         rowActions={(d) =>
           d.added ? (
-            <Label tone="neutral">Added</Label>
+            <Label tone="neutral">{t("mirrors.addedLabel")}</Label>
           ) : d.problem ? (
             <span className={styles.dim}>{d.problem}</span>
           ) : (
@@ -102,7 +102,7 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
               disabled={busy !== null || !data.tools.available}
               onClick={() => void add(d)}
             >
-              Add <span className="visually-hidden">{d.name}</span>
+              {t("mirrors.addButton")} <span className="visually-hidden">{d.name}</span>
             </Button>
           )
         }

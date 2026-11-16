@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { MIRROR_ID, mirror } from "@/test/mirrors";
@@ -32,6 +33,20 @@ function mirrors() {
 
 describe("MirrorListPage", () => {
   beforeEach(() => setUrl("/admin/mirrors/"));
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch({ "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } } });
+    render(
+      <As user={globalAdmin}>
+        <MirrorListPage />
+      </As>,
+    );
+    const table = await screen.findByRole("table", { name: "Miroirs" });
+    expect(within(table).getByRole("columnheader", { name: /Prochaine synchro/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ajouter un miroir" })).toBeInTheDocument();
+    expect(screen.getByText(/Chaque miroir garde ses 7 instantanés les plus récents/)).toBeInTheDocument();
+  });
 
   it("lists mirrors problems first with their last run and counters", async () => {
     stubFetch({ "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } } });

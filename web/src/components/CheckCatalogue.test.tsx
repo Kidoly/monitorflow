@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { CATALOGUE } from "@/lib/catalogue";
 
 import { CheckCatalogue } from "./CheckCatalogue";
@@ -17,6 +18,16 @@ describe("CheckCatalogue", () => {
     const top = screen.getByRole("region", { name: "Most used" });
     expect(within(top).getAllByRole("button")).toHaveLength(1);
     expect(within(top).getByRole("button")).toHaveTextContent("PostgreSQL answers");
+  });
+
+  it("speaks French", () => {
+    setActiveLocale("fr");
+    render(<CheckCatalogue entries={CATALOGUE} mostUsed={[]} systems={["linux", "proxmox"]} onChoose={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.getByRole("group", { name: "Catalogue des contrôles" })).toBeInTheDocument();
+    expect(screen.getByText(`${CATALOGUE.length} résultats`)).toBeInTheDocument();
+    const common = screen.getByRole("region", { name: "Contrôles courants" });
+    expect(within(common).getAllByRole("button")[0]).toHaveTextContent("Le serveur web répond (HTTPS)");
+    expect(screen.getByRole("group", { name: "Ce qu’il faut surveiller" })).toHaveTextContent(/Disponibilité/);
   });
 
   it("searches live, filters, and hands the chosen check on", async () => {

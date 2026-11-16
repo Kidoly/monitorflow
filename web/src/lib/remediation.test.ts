@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { event } from "@/test/remediation";
 
 import {
@@ -46,6 +47,20 @@ describe("eventSummary", () => {
     for (const [overrides, want] of cases) {
       expect(eventSummary(event(overrides))).toBe(want);
     }
+  });
+
+  it("speaks French when that is the language", () => {
+    setActiveLocale("fr");
+    expect(eventSummary(event({ kind: "command_result", payload: { exit_code: 0, duration_ms: 1500 } }))).toBe(
+      "Code de sortie 0, 1,5 s",
+    );
+    expect(eventSummary(event({ kind: "state_change", payload: { from: "awaiting_approval", to: "running" } }))).toBe(
+      "État en attente d’approbation → en cours",
+    );
+    expect(timeLeft("2026-10-19T12:00:00Z", new Date("2026-10-19T11:59:15Z"))).toBe("reste 45 s");
+    expect(chainSummary({ valid: true, events: 1, broken_at: null, reason: null, head_hash: null })).toBe(
+      "Chaîne de hachage vérifiée\u00a0: 1 événement, tête aucune.",
+    );
   });
 
   it("labels actors", () => {

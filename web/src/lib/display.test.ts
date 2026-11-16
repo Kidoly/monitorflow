@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import { displayHref, gridRows, isStale, nextPage, staleText, textScale } from "./display";
 
 describe("display", () => {
@@ -33,7 +35,11 @@ describe("display", () => {
 
   it("says plainly what the stale data is", () => {
     expect(staleText(new Date(2026, 10, 5, 14, 2, 31))).toBe(
-      "Data from 14:02 — this screen has lost its connection to MonitorFlow. It keeps trying.",
+      "Data from 14:02. This screen has lost its connection to MonitorFlow and keeps trying.",
+    );
+    setActiveLocale("fr");
+    expect(staleText(new Date(2026, 10, 5, 14, 2, 31))).toBe(
+      "Données de 14:02. Cet écran a perdu sa connexion à MonitorFlow et réessaie.",
     );
   });
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import type { FollowUp } from "./api";
 import { covers, followUpLine, listNames, stepRequest, stepSentence } from "./followUp";
 
@@ -55,6 +57,18 @@ describe("follow-up words", () => {
       "After 1 minute without acknowledgement, tell nobody.",
     );
     expect(stepRequest(step)).toEqual({ after_minutes: 15, on_call: ["s1"], users: ["u1", "u2"], channels: ["c1"], administrators: true });
+  });
+
+  it("speaks French", () => {
+    setActiveLocale("fr");
+    expect(followUpLine(open, waiting, clock)).toBe("bob sera prévenu à 03:27 si personne ne prend en charge.");
+    expect(followUpLine(open, { ...waiting, next: ["alice", "bob"] }, clock)).toBe(
+      "alice et bob seront prévenus à 03:27 si personne ne prend en charge.",
+    );
+    const step = { after_minutes: 1, on_call: [{ id: "s1", name: "Ops" }], users: [], channels: [], administrators: true };
+    expect(stepSentence(step)).toBe(
+      "Après 1 minute sans prise en charge, prévenir la personne d’astreinte de Ops et les administrateurs du lieu.",
+    );
   });
 
   it("offers only schedules and channels that cover the whole place", () => {

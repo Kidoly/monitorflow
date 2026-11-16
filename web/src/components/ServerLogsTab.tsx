@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 
+import { t } from "@/i18n";
 import { type LogLine, type ServerDetail, api, describeError } from "@/lib/api";
 import { LOG_PAGE, MAX_LOG_LINES, lineSource, logWindow, priorityTone, priorityWord } from "@/lib/logs";
 import { usePolledData } from "@/lib/usePolledData";
@@ -24,9 +25,8 @@ const FIXED_MS = 24 * 60 * 60 * 1000;
 export function ServerLogsTab({ server }: { server: ServerDetail }) {
   if (server.os_family === "windows") {
     return (
-      <EmptyState title="Windows event logs aren't forwarded yet">
-        Linux servers send the warnings and errors of their system journal here. The Event Log checks of{" "}
-        {server.hostname} still count the events they watch.
+      <EmptyState title={t("server.logs.windows")}>
+        {t("server.logs.windowsText", { server: server.hostname })}
       </EmptyState>
     );
   }
@@ -63,7 +63,7 @@ function Logs({ server }: { server: ServerDetail }) {
   const columns: Column<LogLine>[] = [
     {
       key: "time",
-      header: "Time",
+      header: t("server.logs.column.time"),
       className: styles.logTime,
       cell: (line) => (
         <>
@@ -76,10 +76,10 @@ function Logs({ server }: { server: ServerDetail }) {
     },
     {
       key: "message",
-      header: "Message",
+      header: t("server.logs.column.message"),
       cell: (line) => (
         <>
-          <span className={styles.logSource}>{lineSource(line) || "no unit"}</span>
+          <span className={styles.logSource}>{lineSource(line) || t("server.logs.noUnit")}</span>
           <span className={styles.logMessage}>{line.message}</span>
         </>
       ),
@@ -89,15 +89,15 @@ function Logs({ server }: { server: ServerDetail }) {
   return (
     <div className={styles.tab}>
       <FilterBar
-        label="Log filters"
-        search={{ name: "q", label: "Search the messages", placeholder: "Search the messages", width: 260 }}
+        label={t("server.logs.filters")}
+        search={{ name: "q", label: t("server.logs.search"), placeholder: t("server.logs.search"), width: 260 }}
         filters={[
           {
             name: "level",
-            label: "Level",
-            options: [{ value: "error", label: "errors and worse" }],
+            label: t("server.logs.level"),
+            options: [{ value: "error", label: t("server.logs.errors") }],
           },
-          { name: "unit", label: "Unit", options: unitOptions },
+          { name: "unit", label: t("server.logs.unit"), options: unitOptions },
         ]}
         onChange={() => setLimit(LOG_PAGE)}
       />
@@ -111,26 +111,26 @@ function Logs({ server }: { server: ServerDetail }) {
         />
       )}
       {error !== null && data && (
-        <Banner tone="warn">Could not refresh the logs: {describeError(error)} Retrying automatically.</Banner>
+        <Banner tone="warn">{t("server.logs.refreshFailed", { error: describeError(error) })}</Banner>
       )}
       {!data ? (
         error !== null ? (
-          <ErrorState what="the logs" error={describeError(error)} onRetry={refresh} />
+          <ErrorState what={t("server.logs.what")} error={describeError(error)} onRetry={refresh} />
         ) : (
-          <LoadingBlock label="Loading logs" />
+          <LoadingBlock label={t("server.logs.loading")} />
         )
       ) : data.lines.length === 0 ? (
         filtered ? (
-          <NoMatches names={FILTER_KEYS}>No line in this time matches the filters.</NoMatches>
+          <NoMatches names={FILTER_KEYS}>{t("server.logs.noMatch")}</NoMatches>
         ) : (
-          <EmptyState title="No warnings or errors in this time">
-            {server.hostname} forwards the warnings and errors of its system journal. Quiet is good news.
+          <EmptyState title={t("server.logs.quiet")}>
+            {t("server.logs.quietText", { server: server.hostname })}
           </EmptyState>
         )
       ) : (
         <>
           <DataTable
-            label={`Logs of ${server.hostname}`}
+            label={t("server.logs.table", { server: server.hostname })}
             columns={columns}
             rows={data.lines}
             rowKey={(line) => `${line.time} ${line.pid ?? ""} ${line.message}`}
@@ -140,11 +140,11 @@ function Logs({ server }: { server: ServerDetail }) {
           {data.more &&
             (limit < MAX_LOG_LINES ? (
               <div>
-                <Button onClick={() => setLimit((n) => Math.min(MAX_LOG_LINES, n + LOG_PAGE))}>Show older</Button>
+                <Button onClick={() => setLimit((n) => Math.min(MAX_LOG_LINES, n + LOG_PAGE))}>{t("server.logs.older")}</Button>
               </div>
             ) : (
               <p className={styles.note}>
-                Showing the newest {MAX_LOG_LINES} lines. Narrow the filters to see older ones.
+                {t("server.logs.newest", { count: MAX_LOG_LINES })}
               </p>
             ))}
         </>
@@ -171,13 +171,13 @@ function WindowLine({
   return (
     <p className={styles.note}>
       {live
-        ? `From ${formatExact(start)} to now, refreshed every 15 seconds.`
-        : `From ${formatExact(start)} to ${formatExact(end)}.`}
+        ? t("server.logs.live", { start: formatExact(start) })
+        : t("server.logs.fixed", { start: formatExact(start), end: formatExact(end) })}
       {(chosen || !live) && (
         <>
           {" "}
           <button type="button" className={styles.linkButton} onClick={onLastHour}>
-            Show the last hour
+            {t("server.logs.lastHour")}
           </button>
         </>
       )}

@@ -2,8 +2,9 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { Silence } from "@/lib/api";
-import { DEFAULT_REASON, tomorrowMorning } from "@/lib/silences";
+import { defaultReason, tomorrowMorning } from "@/lib/silences";
 import { As, customerAdmin, me, single, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 
@@ -43,7 +44,7 @@ afterEach(() => vi.useRealTimers());
 describe("SilenceBar", () => {
   it("silences for an hour in one click, then says so", async () => {
     const fetchMock = stubFetch({
-      [LIST]: [none, { status: 200, body: { silences: [silence({ reason: DEFAULT_REASON })] } }],
+      [LIST]: [none, { status: 200, body: { silences: [silence({ reason: defaultReason() })] } }],
       "POST /api/silences": { status: 201, body: silence() },
     });
     render(
@@ -56,10 +57,28 @@ describe("SilenceBar", () => {
     expect(await screen.findByText(/Silenced until/)).toBeInTheDocument();
     const post = fetchMock.mock.calls.find((c) => c[1]?.method === "POST");
     const body = bodyOf(post);
-    expect(body).toMatchObject({ scope: "server", target_id: "s1", reason: DEFAULT_REASON });
+    expect(body).toMatchObject({ scope: "server", target_id: "s1", reason: defaultReason() });
     expect(body.starts_at).toBeUndefined();
     expect(Date.parse(String(body.ends_at)) - before).toBeGreaterThan(3_590_000);
     expect(Date.parse(String(body.ends_at)) - before).toBeLessThan(3_700_000);
+  });
+
+  it("speaks French, the one-click reason included", async () => {
+    setActiveLocale("fr");
+    const fetchMock = stubFetch({
+      [LIST]: [none, { status: 200, body: { silences: [silence()] } }],
+      "POST /api/silences": { status: 201, body: silence() },
+    });
+    render(
+      <As user={operator}>
+        <SilenceBar target={target} />
+      </As>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "1 heure" }));
+    expect(await screen.findByText(/En silence jusqu’à/)).toBeInTheDocument();
+    expect(screen.getByText(/Kernel update, par alice, jusqu’à/)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Mettre en silence les notifications de web-1" })).toBeInTheDocument();
+    expect(bodyOf(fetchMock.mock.calls.find((c) => c[1]?.method === "POST"))).toMatchObject({ reason: "Maintenance planifiée" });
   });
 
   it("silences until tomorrow morning", async () => {
