@@ -49,6 +49,7 @@ import { useUrlParams } from "@/lib/urlState";
 import { UUID } from "@/lib/uuid";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button, ButtonLink, fieldClass } from "@/components/ui/Button";
+import { InfoTip } from "@/components/ui/Hint";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Page } from "@/components/ui/Page";
 import { Banner, EmptyState, ErrorState, LoadingBlock, NotFound, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
@@ -111,7 +112,7 @@ export function DashboardsPage() {
           <h2 id="ready-made" className={admin.sectionTitle}>
             {t("dashboards.list.readyMade")}
           </h2>
-          <span className={admin.dim}>{t("dashboards.list.readyNote")}</span>
+          <InfoTip label={t("dashboards.list.about")}>{t("dashboards.list.readyNote")}</InfoTip>
         </div>
         <ul className={styles.cards}>
           {readyMades().map((d) => (
