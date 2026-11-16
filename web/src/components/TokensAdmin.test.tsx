@@ -4,6 +4,7 @@ import type { UserEvent } from "@testing-library/user-event";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import {
   type AgentInstall,
   CSRF_HEADER,
@@ -260,6 +261,9 @@ describe("TokensAdmin", () => {
     expect(hostsWords({ host_count: 1, max_hosts: null })).toBe("1 server");
     expect(hostsWords({ host_count: 1, max_hosts: 1 })).toBe("1 of 1 server");
     expect(hostsWords({ host_count: 3, max_hosts: 10 })).toBe("3 of 10 servers");
+    setActiveLocale("fr");
+    expect(hostsWords({ host_count: 0, max_hosts: null })).toBe("0 serveur");
+    expect(hostsWords({ host_count: 3, max_hosts: 10 })).toBe("3 sur 10 serveurs");
   });
 
   it("creates a relay token and shows it once with its configuration", async () => {
@@ -573,7 +577,7 @@ describe("TokensAdmin", () => {
     const section = await screen.findByRole("form", { name: "Default install source" });
     expect(await within(section).findByRole("radio", { name: "GitHub" })).toBeDisabled();
     expect(section).toHaveTextContent("A global administrator changes it.");
-    expect(section).toHaveTextContent("set in the server configuration (agent_install_source)");
+    expect(section).toHaveTextContent("set in the server configuration: agent_install_source");
     expect(section).toHaveTextContent("This server holds no agent release yet");
     expect(within(section).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
@@ -634,6 +638,24 @@ describe("TokensAdmin", () => {
     expect(await screen.findByText("No tokens yet.")).toBeInTheDocument();
     const call = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "DELETE");
     expect(requestHeaders(fetchMock, call)[CSRF_HEADER]).toBe("1");
+  });
+
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    const user = userEvent.setup();
+    stubFetch({
+      "GET /api/tokens": { status: 200, body: { tokens: [token()], next_cursor: null } },
+      "GET /api/sites": sites,
+      "GET /api/settings/agent-install": settings,
+    });
+    render(<TokensAdmin me={customerAdmin} />);
+    expect(screen.getByRole("heading", { level: 1, name: "Ajouter des serveurs" })).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Afficher les jetons à usage unique" }));
+    expect(await screen.findByRole("form", { name: "Nouveau jeton" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Jetons" })).toHaveTextContent("1 en attente");
+    expect(screen.getByRole("button", { name: "Révoquer le jeton de web-01" })).toBeInTheDocument();
+    expect(await screen.findByText("Source d’installation par défaut")).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Commande d’installation" })).toHaveTextContent("Approuver les nouveaux serveurs");
   });
 
   it("explains that site administrators cannot enroll", () => {

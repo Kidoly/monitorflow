@@ -3,6 +3,7 @@
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 
+import { t } from "@/i18n";
 import { ApiError, type Mirror, type MirrorRunSummary, api, describeError } from "@/lib/api";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { describeMirror, intervalText, nextSync, retentionText, shortTime } from "@/lib/mirrors";
@@ -29,18 +30,22 @@ const problemsFirst = (a: Mirror, b: Mirror) => RANK[runOf(a)] - RANK[runOf(b)] 
 
 /** A mirror being removed, in the place of its last run. */
 export function RemovalLabel({ mirror }: { mirror: Mirror }) {
-  return mirror.delete_error ? <Label tone="bad">Removal failed</Label> : <Label tone="info">Being removed</Label>;
+  return mirror.delete_error ? (
+    <Label tone="bad">{t("mirrors.removalFailed")}</Label>
+  ) : (
+    <Label tone="info">{t("mirrors.beingRemoved")}</Label>
+  );
 }
 
 /** The last run as a status word and when, or "Never run". */
 export function LastRun({ run, now }: { run: MirrorRunSummary | null; now: Date }) {
-  if (!run) return <Label tone="neutral">Never run</Label>;
+  if (!run) return <Label tone="neutral">{t("mirrors.neverRun")}</Label>;
   return (
     <>
       <StatusLabel kind="run" value={run.state} />{" "}
       <span className={styles.dim}>
         {run.state === "running" ? (
-          `since ${shortTime(new Date(run.started_at), now)}`
+          t("mirrors.since", { time: shortTime(new Date(run.started_at), now) })
         ) : (
           <RelativeTime value={run.finished_at ?? run.started_at} now={now} />
         )}
@@ -49,18 +54,18 @@ export function LastRun({ run, now }: { run: MirrorRunSummary | null; now: Date 
   );
 }
 
-/** "20:30", "due", "manual", or "every 12 h" when the last sync is not known. */
+/** "20:30", "due", "manual", "after this one" during a sync, or "every 12 h" when the last sync is not known. */
 export function nextSyncText(
   mirror: Mirror,
   lastSync: MirrorRunSummary | null | undefined,
   now: Date,
 ): string {
-  if (mirror.sync_interval_s === null) return "manual";
+  if (mirror.sync_interval_s === null) return t("mirrors.manual");
   const running = mirror.last_run?.state === "running";
-  if (running) return "—";
+  if (running) return t("mirrors.afterThisOne");
   const next = nextSync(mirror, lastSync, running);
   if (!next) return intervalText(mirror.sync_interval_s);
-  return next <= now ? "due" : shortTime(next, now);
+  return next <= now ? t("mirrors.due") : shortTime(next, now);
 }
 
 /** In a list, only a last run that is a sync tells when the last sync started. */
@@ -81,11 +86,14 @@ export function useMirrorJobs(refresh: () => void) {
         await (kind === "sync" ? api.syncMirror(mirror.id) : api.snapshotMirror(mirror.id));
         refresh();
       } catch (e) {
-        const what = kind === "sync" ? "a sync" : "a snapshot";
+        const name = mirror.name;
         setError(
           e instanceof ApiError && e.status === 409
-            ? `Cannot start ${what} of ${mirror.name}: ${e.message}.`
-            : `Cannot start ${what} of ${mirror.name}. ${describeError(e)}`,
+            ? t(kind === "sync" ? "mirrors.start.sync" : "mirrors.start.snapshot", { name, reason: e.message })
+            : t(kind === "sync" ? "mirrors.start.syncFailed" : "mirrors.start.snapshotFailed", {
+                name,
+                error: describeError(e),
+              }),
         );
       } finally {
         setBusy(null);
@@ -101,8 +109,8 @@ export function MirrorListPage() {
   const me = useMe();
   if (!administersEverything(me)) {
     return (
-      <NoPermission title="Mirrors need a global administrator">
-        Mirrors are shared by {multiCustomer(me) ? "every customer" : "all sites"}. Ask a global administrator for a role.
+      <NoPermission title={t("mirrors.role.title")}>
+        {multiCustomer(me) ? t("mirrors.role.everyCustomer") : t("mirrors.role.allSites")}
       </NoPermission>
     );
   }
@@ -120,7 +128,7 @@ function MirrorList() {
 
   const meta = (
     <>
-      Global administrators only
+      {t("mirrors.globalOnly")}
       {(updatedAt !== null || error !== null) && (
         <>
           {" · "}
@@ -135,15 +143,15 @@ function MirrorList() {
   };
   const addButton = (
     <Button variant="k" onClick={openAdd}>
-      Add a mirror
+      {t("mirrors.add")}
     </Button>
   );
-  const header = <PageHeader title="Mirrors" meta={meta} actions={!adding && addButton} />;
+  const header = <PageHeader title={t("mirrors.title")} meta={meta} actions={!adding && addButton} />;
   if (error instanceof ApiError && error.status === 403) {
     return (
       <div className={styles.page}>
         {header}
-        <NoPermission title="Mirrors need a global administrator" />
+        <NoPermission title={t("mirrors.role.title")} />
       </div>
     );
   }
@@ -151,7 +159,7 @@ function MirrorList() {
     return (
       <div className={styles.page}>
         {header}
-        {error ? <ErrorState what="mirrors" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
+        {error ? <ErrorState what={t("mirrors.what")} error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
       </div>
     );
   }
@@ -176,26 +184,31 @@ function MirrorList() {
   const columns: Column<Mirror>[] = [
     {
       key: "name",
-      header: "Mirror",
+      header: t("mirrors.column.mirror"),
       className: styles.wrap,
       sortValue: (m) => m.name,
       cell: (m) => <PrimaryCell title={m.name} href={mirrorHref(m.id)} sub={describeMirror(m)} />,
     },
-    { key: "run", header: "Last run", sortValue: (m) => RANK[runOf(m)], cell: (m) => (m.deleting_at ? <RemovalLabel mirror={m} /> : <LastRun run={m.last_run} now={now} />) },
+    {
+      key: "run",
+      header: t("mirrors.column.lastRun"),
+      sortValue: (m) => RANK[runOf(m)],
+      cell: (m) => (m.deleting_at ? <RemovalLabel mirror={m} /> : <LastRun run={m.last_run} now={now} />),
+    },
     {
       key: "distribution",
-      header: "Distribution",
-      cell: (m) => m.distribution || <span className={styles.dim}>—</span>,
+      header: t("mirrors.column.distribution"),
+      cell: (m) => m.distribution,
     },
     {
       key: "snapshot",
-      header: "Current snapshot",
+      header: t("mirrors.column.snapshot"),
       sortValue: (m) => m.current_snapshot,
-      cell: (m) => m.current_snapshot ?? <span className={styles.dim}>none</span>,
+      cell: (m) => m.current_snapshot ?? <span className={styles.dim}>{t("mirrors.none")}</span>,
     },
     {
       key: "next",
-      header: "Next sync",
+      header: t("mirrors.column.nextSync"),
       className: styles.dim,
       cell: (m) => nextSyncText(m, lastSyncOf(m), now),
     },
@@ -208,7 +221,7 @@ function MirrorList() {
       {jobs.error && <Banner tone="bad">{jobs.error}</Banner>}
       {added && (
         <Banner tone="ok" role="status">
-          {added} added. The first sync starts within a minute and can take hours; this page shows its progress.
+          {t("mirrors.added", { name: added })}
         </Banner>
       )}
       {adding && (
@@ -225,18 +238,18 @@ function MirrorList() {
         dense
         maxWidth={1000}
         tiles={[
-          tile("Succeeded", "succeeded", "ok"),
-          tile("Running", "running", "info"),
-          tile("Failed", "failed", "bad"),
-          tile("Never run", "never", "neutral"),
+          tile(t("mirrors.run.succeeded"), "succeeded", "ok"),
+          tile(t("mirrors.run.running"), "running", "info"),
+          tile(t("mirrors.run.failed"), "failed", "bad"),
+          tile(t("mirrors.neverRun"), "never", "neutral"),
         ]}
       />
       <FilterBar
-        label="Mirror filters"
+        label={t("mirrors.filters")}
         filters={[
           {
             name: "family",
-            label: "Family",
+            label: t("mirrors.family"),
             options: [
               { value: "apt", label: "apt" },
               { value: "dnf", label: "dnf" },
@@ -244,28 +257,27 @@ function MirrorList() {
           },
           {
             name: "run",
-            label: "Last run",
+            label: t("mirrors.column.lastRun"),
             options: [
-              { value: "succeeded", label: "Succeeded" },
-              { value: "running", label: "Running" },
-              { value: "failed", label: "Failed" },
-              { value: "never", label: "Never run" },
+              { value: "succeeded", label: t("mirrors.run.succeeded") },
+              { value: "running", label: t("mirrors.run.running") },
+              { value: "failed", label: t("mirrors.run.failed") },
+              { value: "never", label: t("mirrors.neverRun") },
             ],
           },
         ]}
-        search={{ name: "q", label: "Search", placeholder: "Mirror name", width: 200 }}
+        search={{ name: "q", label: t("mirrors.search"), placeholder: t("mirrors.searchPlaceholder"), width: 200 }}
       />
       {data.mirrors.length === 0 ? (
-        <EmptyState title="No mirrors yet" actions={!adding && addButton}>
-          Keep a copy of a distribution here, and your servers update from it instead of the Internet. Relays set to serve
-          mirrors copy it for their sites.
+        <EmptyState title={t("mirrors.empty.title")} actions={!adding && addButton}>
+          {t("mirrors.empty.text")}
         </EmptyState>
       ) : rows.length === 0 ? (
-        <NoMatches names={["family", "run", "q"]}>No mirror matches these filters.</NoMatches>
+        <NoMatches names={["family", "run", "q"]}>{t("mirrors.noMatch")}</NoMatches>
       ) : (
         <DataTable
           dense
-          label="Mirrors"
+          label={t("mirrors.title")}
           columns={columns}
           rows={rows}
           rowKey={(m) => m.id}
@@ -275,9 +287,7 @@ function MirrorList() {
           rowActions={(m) => <MirrorButtons mirror={m} jobs={jobs} />}
         />
       )}
-      <p className={styles.note}>
-        Open a mirror for its snapshots and run history. Relays set to serve mirrors copy all of them.
-      </p>
+      <p className={styles.note}>{t("mirrors.openHint")}</p>
       <p className={styles.note}>{retentionText(data.keep_snapshots)}</p>
     </div>
   );
@@ -289,10 +299,10 @@ function MirrorButtons({ mirror, jobs }: { mirror: Mirror; jobs: ReturnType<type
   return (
     <>
       <Button size="small" disabled={disabled} onClick={() => void jobs.start(mirror, "sync")}>
-        Sync now <span className="visually-hidden">{mirror.name}</span>
+        {t("mirrors.syncNow")} <span className="visually-hidden">{mirror.name}</span>
       </Button>
       <Button size="small" disabled={disabled} onClick={() => void jobs.start(mirror, "snapshot")}>
-        Snapshot <span className="visually-hidden">{mirror.name}</span>
+        {t("mirrors.snapshot")} <span className="visually-hidden">{mirror.name}</span>
       </Button>
     </>
   );
