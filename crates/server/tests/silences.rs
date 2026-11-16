@@ -1083,4 +1083,32 @@ db_tests! {
             .await;
         assert!(unended.is_err());
     }
+
+    #[sqlx::test]
+    async fn the_same_silence_asked_twice_is_made_once(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let a = place(&pool, "a").await;
+        let root = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let body = request("server", Some(a.server));
+        let (status, first, _) = call(&pool, "POST", SILENCES, Some(&root), Some(body.clone())).await;
+        assert_eq!(status, StatusCode::CREATED);
+        let (status, again, _) = call(&pool, "POST", SILENCES, Some(&root), Some(body.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{again}");
+        assert_eq!(again["id"], first["id"]);
+        assert_eq!(listed(&pool, &root, "").await.len(), 1);
+        assert_eq!(audited(&pool, "silence.create").await.len(), 1);
+
+        // Another reason, another end or another target is another silence.
+        let mut other = body.clone();
+        other["reason"] = json!("kernel upgrade");
+        assert_eq!(post(&pool, &root, other).await, StatusCode::CREATED);
+        let mut later = body.clone();
+        later["ends_at"] = json!(Utc::now() + TimeDelta::hours(2));
+        assert_eq!(post(&pool, &root, later).await, StatusCode::CREATED);
+        assert_eq!(post(&pool, &root, request("site", Some(a.site))).await, StatusCode::CREATED);
+        // Once ended, asking again makes a new one.
+        end(&pool, first["id"].as_str().unwrap().parse().unwrap()).await;
+        assert_eq!(post(&pool, &root, body).await, StatusCode::CREATED);
+        assert_eq!(listed(&pool, &root, "").await.len(), 4);
+    }
 }

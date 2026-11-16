@@ -312,6 +312,40 @@ pub async fn create(
     let (reason, starts_at) = validate(&request, Utc::now()).map_err(ApiError::Invalid)?;
     let column = |target| request.target_id.filter(|_| request.scope == target);
     let mut tx = state.pool.begin().await?;
+    // The same silence asked twice (a menu choice picked again before the
+    // page showed the first) is the one already there, not a second row.
+    // The lock makes two such requests at once wait for each other.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('silence:' || coalesce($1::text, 'all')))")
+        .bind(request.target_id)
+        .execute(&mut *tx)
+        .await?;
+    let same: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM silences
+         WHERE server_id IS NOT DISTINCT FROM $1 AND relay_id IS NOT DISTINCT FROM $2
+           AND site_id IS NOT DISTINCT FROM $3 AND customer_id IS NOT DISTINCT FROM $4
+           AND ended_at IS NULL AND starts_at <= $5 AND ends_at = $6 AND reason = $7
+         ORDER BY created_at LIMIT 1",
+    )
+    .bind(column(Target::Server))
+    .bind(column(Target::Relay))
+    .bind(column(Target::Site))
+    .bind(column(Target::Customer))
+    .bind(starts_at)
+    .bind(request.ends_at)
+    .bind(&reason)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(id) = same {
+        // SQL-safe: interpolates only the constant SELECT.
+        let mut view: SilenceView =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE x.id = $1")))
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        tx.commit().await?;
+        view.can_end = may_end(&user, &view);
+        return Ok((StatusCode::OK, Json(view)));
+    }
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO silences (server_id, relay_id, site_id, customer_id, starts_at, ends_at,
                                reason, created_by)

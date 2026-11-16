@@ -529,7 +529,9 @@ or maintenance.\n\n\
 operator or above on the customer as a whole; for `all`, a global administrator. **Area**: `alerts`. \
 `target_id` is required, except for `all`, which takes none.\n\n\
 `reason` (1 to 200 characters) shows to others, so they know what the silence is for. Audited as \
-`silence.create`. **Not safe to repeat**: each request makes a silence; send `Idempotency-Key` to retry.",
+`silence.create`. The same request again while its silence runs or waits (same target, `ends_at` and \
+`reason`) answers that silence with 200 and makes no second one. Otherwise **not safe to repeat**: each \
+request makes a silence; send `Idempotency-Key` to retry.",
     request_body(content = silences::CreateRequest, example = json!({
         "scope": "server", "target_id": ex::SERVER,
         "starts_at": "2026-11-14T22:00:00Z", "ends_at": "2026-11-15T00:00:00Z",
@@ -538,6 +540,8 @@ operator or above on the customer as a whole; for `all`, a global administrator.
     responses(
         (status = 201, description = "The new silence", body = silences::SilenceView,
             example = json!(ex::silence())),
+        (status = 200, description = "The same silence, already there: nothing was created",
+            body = silences::SilenceView, example = json!(ex::silence())),
         (status = 400, description = "No `target_id` (or one for `all`), no reason or a reason over 200 \
 characters, an end not after the start, or longer than 30 days: `invalid`", body = ErrorBody),
         (status = 403, description = "The key may only read the target, or may not silence \

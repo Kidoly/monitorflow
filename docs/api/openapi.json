@@ -24120,7 +24120,7 @@
           "alerts"
         ],
         "summary": "Create a silence",
-        "description": "Stops notifications about a server, a relay, a site, a customer or everything, from `starts_at` (now when absent or past) until `ends_at`, at most 30 days later. Use it around a deployment or maintenance.\n\n**Who**, by `scope`: for `server`, `relay` or `site`, operator or above on its site; for `customer`, operator or above on the customer as a whole; for `all`, a global administrator. **Area**: `alerts`. `target_id` is required, except for `all`, which takes none.\n\n`reason` (1 to 200 characters) shows to others, so they know what the silence is for. Audited as `silence.create`. **Not safe to repeat**: each request makes a silence; send `Idempotency-Key` to retry.",
+        "description": "Stops notifications about a server, a relay, a site, a customer or everything, from `starts_at` (now when absent or past) until `ends_at`, at most 30 days later. Use it around a deployment or maintenance.\n\n**Who**, by `scope`: for `server`, `relay` or `site`, operator or above on its site; for `customer`, operator or above on the customer as a whole; for `all`, a global administrator. **Area**: `alerts`. `target_id` is required, except for `all`, which takes none.\n\n`reason` (1 to 200 characters) shows to others, so they know what the silence is for. Audited as `silence.create`. The same request again while its silence runs or waits (same target, `ends_at` and `reason`) answers that silence with 200 and makes no second one. Otherwise **not safe to repeat**: each request makes a silence; send `Idempotency-Key` to retry.",
         "operationId": "create_silence",
         "parameters": [
           {
@@ -24153,6 +24153,31 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "The same silence, already there: nothing was created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SilenceView"
+                },
+                "example": {
+                  "active": false,
+                  "can_end": true,
+                  "created_at": "2026-11-14T09:30:00Z",
+                  "created_by_username": "alice",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "ends_at": "2026-11-15T00:00:00Z",
+                  "id": "7c6b5a4f-3e2d-4c1b-a09f-8e7d6c5b4a3f",
+                  "reason": "Kernel upgrade and reboot",
+                  "scope": "server",
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "starts_at": "2026-11-14T22:00:00Z",
+                  "target_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "target_name": "web-1"
+                }
+              }
+            }
+          },
           "201": {
             "description": "The new silence",
             "content": {

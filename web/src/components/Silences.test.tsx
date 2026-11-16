@@ -235,6 +235,18 @@ describe("SilencesPage", () => {
     expect(within(table).getAllByRole("button", { name: /End the silence/ })).toHaveLength(2);
   });
 
+  it("explains silences without sending to another page what the New silence button does", async () => {
+    stubFetch({ "GET /api/silences": { status: 200, body: { silences: [] } } });
+    render(
+      <As user={operator}>
+        <SilencesPage />
+      </As>,
+    );
+    await screen.findByRole("button", { name: "New silence" });
+    expect(document.body).toHaveTextContent(/A silence stops notifications for a while/);
+    expect(document.body).not.toHaveTextContent(/open its page/);
+  });
+
   it("says when nothing is silenced", async () => {
     stubFetch({ "GET /api/silences": { status: 200, body: { silences: [] } } });
     render(
