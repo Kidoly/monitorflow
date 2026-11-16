@@ -5,9 +5,11 @@ import { useCallback, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
+import { Missing } from "@/components/ui/Missing";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
+import { t } from "@/i18n";
 import { type Me, type Relay, api, describeError } from "@/lib/api";
 import { certificateProblem, certificateState } from "@/lib/certificates";
 import { administersCustomer, multiCustomer } from "@/lib/me";
@@ -30,13 +32,11 @@ export function relayStatus(relay: Pick<Relay, "status" | "revoked_at">) {
 
 /** "Valid", or a tinted problem once renewal is late or failed; "None" without an unrevoked certificate. */
 export function CertificateCell({ notAfter, now }: { notAfter: string | null; now: Date }) {
-  if (!notAfter) return <span className={styles.dim}>None</span>;
+  if (!notAfter) return <span className={styles.dim}>{t("relays.certificate.none")}</span>;
   const problem = certificateProblem(notAfter, now);
-  if (!problem) return <>Valid</>;
+  if (!problem) return <>{t("relays.certificate.valid")}</>;
   return <Label tone={certificateState(notAfter, now) === "failed" ? "bad" : "warn"}>{problem}</Label>;
 }
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function RelayList({ me }: { me: Me }) {
   const [adding, setAdding] = useState(false);
@@ -48,50 +48,50 @@ export function RelayList({ me }: { me: Me }) {
   const columns: Column<Relay>[] = [
     {
       key: "relay",
-      header: "Relay",
+      header: t("relays.column.relay"),
       cell: (relay) => (
         <PrimaryCell
           title={relay.peer_id}
           href={relayHref(relay.id)}
-          sub={[relay.site_name, multiCustomer(me) && relay.customer_name, relay.relay_version && `relay ${relay.relay_version}`]
+          sub={[relay.site_name, multiCustomer(me) && relay.customer_name, relay.relay_version && t("relays.version", { version: relay.relay_version })]
             .filter(Boolean)
             .join(" · ")}
         />
       ),
     },
-    { key: "status", header: "Status", cell: (relay) => <StatusLabel kind="server" value={relayStatus(relay)} /> },
+    { key: "status", header: t("relays.column.status"), cell: (relay) => <StatusLabel kind="server" value={relayStatus(relay)} /> },
     {
       key: "agents",
-      header: "Agents",
+      header: t("relays.column.agents"),
       cell: (relay) => (
         <>
           <strong>{relay.connected_agents}</strong>{" "}
-          <span className={styles.dim}>connected / {relay.server_count} total</span>
+          <span className={styles.dim}>{t("relays.agents", { count: relay.server_count })}</span>
         </>
       ),
     },
     {
       key: "names",
-      header: "Addresses",
+      header: t("relays.column.addresses"),
       cell: (relay) =>
         relay.pending_names ? (
-          <Label tone="warn">Waiting for confirmation</Label>
+          <Label tone="warn">{t("relays.waitingConfirmation")}</Label>
         ) : relay.server_names.length > 0 ? (
           <span className={styles.mono}>{relay.server_names.join(" · ")}</span>
         ) : (
-          <span className={styles.dim}>—</span>
+          <Missing word="none" className={styles.dim} />
         ),
     },
     {
       key: "certificate",
-      header: "Certificate",
+      header: t("relays.column.certificate"),
       cell: (relay) => <CertificateCell notAfter={relay.cert_not_after} now={now} />,
     },
     {
       key: "seen",
-      header: "Last seen",
+      header: t("relays.column.seen"),
       className: styles.dim,
-      cell: (relay) => (relay.last_heartbeat ? <RelativeTime value={relay.last_heartbeat} now={now} /> : "never"),
+      cell: (relay) => (relay.last_heartbeat ? <RelativeTime value={relay.last_heartbeat} now={now} /> : t("relays.never")),
     },
   ];
 
@@ -100,11 +100,11 @@ export function RelayList({ me }: { me: Me }) {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Relays"
+        title={t("relays.title")}
         meta={
           relays || error ? (
             <>
-              {relays && `${plural(relays.length, "relay")}, ${online} online · `}
+              {relays && t("relays.count", { count: relays.length, online })}
               <RefreshLine updatedAt={updatedAt} stale={stale} />
             </>
           ) : undefined
@@ -113,7 +113,7 @@ export function RelayList({ me }: { me: Me }) {
           canEnroll &&
           !adding && (
             <Button variant="k" onClick={() => setAdding(true)}>
-              Add relay
+              {t("relays.add")}
             </Button>
           )
         }
@@ -136,31 +136,30 @@ export function RelayList({ me }: { me: Me }) {
         ))}
       {confirmed && (
         <Banner tone="info">
-          {confirmed.peer_id} is ready.{" "}
-          <Link href={relayHref(confirmed.id)}>Add servers behind this relay</Link>
+          {t("relays.ready", { name: confirmed.peer_id })}{" "}
+          <Link href={relayHref(confirmed.id)}>{t("relays.addServersBehind")}</Link>
         </Banner>
       )}
       {!relays && error ? (
-        <ErrorState what="relays" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what={t("relays.what")} error={describeError(error)} onRetry={refresh} />
       ) : relays?.length === 0 ? (
         !adding && (
           <EmptyState
-            title="No relays yet"
+            title={t("relays.empty.title")}
             actions={
               canEnroll && (
                 <Button variant="k" onClick={() => setAdding(true)}>
-                  Add relay
+                  {t("relays.add")}
                 </Button>
               )
             }
           >
-            A relay carries the servers of a site that cannot reach this server directly. It takes one command on one
-            of the site&apos;s servers.
+            {t("relays.empty.note")}
           </EmptyState>
         )
       ) : (
         <DataTable
-          label="Relays"
+          label={t("relays.title")}
           columns={columns}
           rows={relays ?? []}
           rowKey={(relay) => relay.id}

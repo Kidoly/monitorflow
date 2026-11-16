@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { BackupsView, InstallKeyList, IntegrationEndpoint, LicenseView, ServerUpdateView } from "@/lib/api";
 import { authority } from "@/test/certificateAuthority";
 import { relay } from "@/test/admin";
+import { setActiveLocale } from "@/i18n/locale";
 
 import {
   addServersStatus,
@@ -31,6 +32,9 @@ describe("settings status lines", () => {
     expect(relaysStatus([relay(), relay({ status: "offline" })])).toEqual({ text: "1 of 2 relays connected", tone: "warn" });
     expect(relaysStatus([relay({ pending_names: ["r"] })])?.text).toBe("1 relay waits for confirmation");
     expect(relaysStatus([relay({ revoked_at: "2026-11-01T00:00:00Z", status: "offline" })])).toBeUndefined();
+    setActiveLocale("fr");
+    expect(relaysStatus([relay(), relay()])?.text).toBe("2 relais connectés");
+    expect(relaysStatus([relay({ pending_names: ["r"] })])?.text).toBe("1 relais attend une confirmation");
   });
 
   it("asks for approval of waiting servers", () => {

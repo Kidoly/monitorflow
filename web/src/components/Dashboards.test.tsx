@@ -2,8 +2,9 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { Dashboard, DashboardData, Panel, PanelData, Server } from "@/lib/api";
-import { READY_MADE } from "@/lib/dashboards";
+import { readyMades } from "@/lib/dashboards";
 import { NO_SCOPE } from "@/lib/scope";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -227,13 +228,28 @@ describe("Dashboards", () => {
     );
     expect(await screen.findByRole("link", { name: "Web" })).toHaveAttribute("href", `/dashboards/view?id=${ID}`);
     expect(screen.getByText("Customer acme")).toBeInTheDocument();
-    for (const d of READY_MADE) expect(screen.getByRole("link", { name: new RegExp(d.name) })).toBeInTheDocument();
+    for (const d of readyMades()) expect(screen.getByRole("link", { name: new RegExp(d.name) })).toBeInTheDocument();
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    setUrl("/dashboards/");
+    stubFetch({ "GET /api/dashboards": { status: 200, body: { dashboards: [dashboard()] } } });
+    render(
+      <As user={viewer}>
+        <DashboardsPage />
+      </As>,
+    );
+    expect(await screen.findByRole("link", { name: "Web" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Tableaux de bord" })).toBeInTheDocument();
+    expect(screen.getByText("Client acme")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Vue du parc/ })).toBeInTheDocument();
   });
 
   it("shows a ready-made dashboard within the chosen customer, and copies it", async () => {
     const customer = "22222222-2222-4222-8222-222222222222";
     setUrl(`/dashboards/view/?ready=overview&customer=${customer}`);
-    const overview = READY_MADE[0]!;
+    const overview = readyMades()[0]!;
     const fetchMock = stubFetch({
       "POST /api/dashboard-data": {
         status: 200,

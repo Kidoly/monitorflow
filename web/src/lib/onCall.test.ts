@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import { handoffRule, move, placeName, problemText, timeZones, who } from "./onCall";
 
 describe("onCall", () => {
@@ -30,6 +32,17 @@ describe("onCall", () => {
     expect(problemText("no_mail_server", "bob", "x")).toContain("no email channel");
     expect(who({ username: null, user_id: null })).toBe("nobody");
     expect(who({ username: null, user_id: "x" })).toBe("a removed user");
+  });
+
+  it("speaks French", () => {
+    setActiveLocale("fr");
+    expect(handoffRule({ rotation: "weekly", handoff_day: 5, handoff_time: "17:30", time_zone: "Europe/Paris" })).toBe(
+      "Relève chaque vendredi à 17:30, heure de Europe/Paris",
+    );
+    expect(placeName({ customer_name: null, site_name: null }, false)).toBe("Tout");
+    expect(problemText("no_access", "bob", "Tous les sites")).toBe("bob ne voit plus tous les sites");
+    expect(problemText("disabled", "bob", "x")).toBe("Le compte de bob est désactivé");
+    expect(who({ username: null, user_id: null })).toBe("personne");
   });
 
   it("moves people within the list", () => {

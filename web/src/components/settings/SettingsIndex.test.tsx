@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { Me } from "@/lib/api";
 import { As, customerAdmin, me, relay, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -89,5 +90,15 @@ describe("SettingsIndex", () => {
   it("tells other roles they need an administrator", () => {
     open(viewer);
     expect(screen.getByText("Settings need an administrator role.")).toBeInTheDocument();
+  });
+
+  it("speaks French, and searches the French words", async () => {
+    setActiveLocale("fr");
+    const user = userEvent.setup();
+    open(global);
+    expect(screen.getByRole("heading", { level: 1, name: "Paramètres" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Parc" })).toBeInTheDocument();
+    await user.type(screen.getByRole("searchbox", { name: "Rechercher dans les paramètres" }), "sauvegarde");
+    expect(rowNames()).toEqual(["Sauvegardes"]);
   });
 });
