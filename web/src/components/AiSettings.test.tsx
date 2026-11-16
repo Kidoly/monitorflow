@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { AiSettings } from "@/lib/api";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -59,6 +60,19 @@ describe("AiSettingsPage", () => {
       </As>,
     );
     expect(screen.getByText("AI setup needs a global administrator")).toBeInTheDocument();
+  });
+
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    const user = userEvent.setup();
+    stubFetch({ [`GET ${AI}`]: ok(settings()) });
+    page();
+    expect(await screen.findByText("L’IA est désactivée.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Activer l’IA" })).toBeDisabled();
+    expect(screen.getByLabelText(/^Clé d’API Anthropic/)).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Un autre modèle ou un modèle local"));
+    expect(screen.getByText(/pour que rien n’en sorte/)).toBeInTheDocument();
+    expect(screen.getByText(/un contexte de 32\s000 jetons/)).toBeInTheDocument();
   });
 
   it("walks through key, test and enable, then shows the command for servers", async () => {

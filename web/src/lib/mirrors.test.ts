@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { mirror } from "@/test/mirrors";
 
 import { describeMirror, durationText, intervalText, nextSync, shortTime, upstreamText } from "./mirrors";
@@ -41,5 +42,16 @@ describe("mirror helpers", () => {
     expect(durationText(252_000)).toBe("4 min 12 s");
     expect(durationText(542_000)).toBe("9 min 02 s");
     expect(durationText(3_900_000)).toBe("1 h 05 min");
+  });
+});
+
+describe("mirror helpers in French", () => {
+  it("speak the active language", () => {
+    setActiveLocale("fr");
+    expect(intervalText(12 * 3600)).toBe("toutes les 12 h");
+    expect(intervalText(86_400)).toBe("toutes les 1 j");
+    expect(intervalText(null)).toBe("synchronisations manuelles uniquement");
+    expect(durationText(252_000)).toBe("4 min 12 s");
+    expect(shortTime(new Date(2026, 8, 23, 2, 0), new Date(2026, 8, 24))).toBe("23 sept. 02:00");
   });
 });

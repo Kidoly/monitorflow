@@ -10,72 +10,78 @@ import type {
   RiskTier,
   SnapshotUnsupported,
 } from "./api";
+import { t } from "@/i18n";
+import { activeLocale } from "@/i18n/locale";
 
 /** The `risk` status word of a tier (`StatusLabel kind="risk"`). */
 export function riskWord(tier: RiskTier): "read-only" | "low-impact" | "high-impact" | "forbidden" {
   return tier.replace("_", "-") as "read-only" | "low-impact" | "high-impact" | "forbidden";
 }
 
-const TIER_NAMES: Record<RiskTier, string> = {
-  read_only: "Read-only",
-  low_impact: "Low-impact",
-  high_impact: "High-impact",
-  forbidden: "Forbidden",
-};
+const TIERS: readonly RiskTier[] = ["read_only", "low_impact", "high_impact", "forbidden"];
+const STATES: readonly RemediationState[] = ["open", "running", "awaiting_approval", "resolved", "escalated", "failed"];
 
-const STATE_NAMES: Record<RemediationState, string> = {
-  open: "open",
-  running: "running",
-  awaiting_approval: "awaiting approval",
-  resolved: "resolved",
-  escalated: "escalated",
-  failed: "failed",
-};
+/** A tier's name: "Low-impact". */
+export function tierName(tier: RiskTier): string {
+  return t(`remediation.tier.${tier}`);
+}
+
+function stateName(state: unknown): string | null {
+  return STATES.includes(state as RemediationState) ? t(`remediation.state.${state as RemediationState}`) : null;
+}
 
 /** Event kinds in the order of a step, for the filter. */
-export const EVENT_KINDS: { value: RemediationEventKind; label: string }[] = [
-  { value: "context_sent", label: "Context sent" },
-  { value: "ai_proposal", label: "AI proposal" },
-  { value: "classification", label: "Classification" },
-  { value: "approval", label: "Approval" },
-  { value: "edit", label: "Edit" },
-  { value: "rejection", label: "Rejection" },
-  { value: "snapshot", label: "Snapshot" },
-  { value: "command_queued", label: "Command queued" },
-  { value: "command_result", label: "Command result" },
-  { value: "escalation", label: "Escalation" },
-  { value: "state_change", label: "State change" },
-  { value: "note", label: "Note" },
+export const EVENT_KINDS: readonly RemediationEventKind[] = [
+  "context_sent",
+  "ai_proposal",
+  "classification",
+  "approval",
+  "edit",
+  "rejection",
+  "snapshot",
+  "command_queued",
+  "command_result",
+  "escalation",
+  "state_change",
+  "note",
 ];
 
-export const ACTOR_KINDS: { value: ActorKind; label: string }[] = [
-  { value: "user", label: "Users" },
-  { value: "system", label: "System" },
-  { value: "ai", label: "AI" },
-  { value: "peer", label: "Agents" },
-];
+export const ACTOR_KINDS: readonly ActorKind[] = ["user", "system", "ai", "peer"];
+
+/** The filter's choices of event kinds, in the active language. */
+export const eventKindOptions = () => EVENT_KINDS.map((value) => ({ value, label: eventKindLabel(value) }));
+
+/** The filter's choices of actors, in the active language. */
+export const actorKindOptions = () => ACTOR_KINDS.map((value) => ({ value, label: t(`remediation.actors.${value}`) }));
 
 export function eventKindLabel(kind: RemediationEventKind): string {
-  return EVENT_KINDS.find((k) => k.value === kind)?.label ?? kind;
+  return EVENT_KINDS.includes(kind) ? t(`remediation.kind.${kind}`) : kind;
 }
 
 /** Who did it, as the audit log shows it. */
 export function actorLabel(event: Pick<RemediationEvent, "actor_kind" | "actor_id" | "actor_name">): string {
   switch (event.actor_kind) {
     case "user":
-      return event.actor_name ?? "deleted user";
+      return event.actor_name ?? t("remediation.actor.deletedUser");
     case "system":
-      return "system";
+      return t("remediation.actor.system");
     case "ai":
-      return `AI · ${event.actor_id}`;
+      return t("remediation.actor.ai", { id: event.actor_id });
     case "peer":
-      return `agent ${event.actor_id}`;
+      return t("remediation.actor.agent", { id: event.actor_id });
   }
 }
 
 function text(payload: Record<string, unknown>, key: string): string {
   const value = payload[key];
   return typeof value === "string" ? value : "";
+}
+
+/** How long a command took: "20 ms", "1.5 s". */
+function duration(ms: number): string {
+  if (ms < 1000) return `${ms} ${t("format.unit.millisecond")}`;
+  const seconds = (ms / 1000).toLocaleString(activeLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return `${seconds} ${t("format.unit.second")}`;
 }
 
 /**
@@ -91,42 +97,52 @@ export function eventSummary(event: Pick<RemediationEvent, "kind" | "actor_kind"
         redactions && typeof redactions === "object"
           ? Object.values(redactions).reduce<number>((sum, n) => sum + (typeof n === "number" ? n : 0), 0)
           : 0;
-      return `Context sent to ${text(p, "model") || "the AI"}${count ? `, ${count} ${count === 1 ? "secret" : "secrets"} redacted` : ""}`;
+      const sent = t("remediation.summary.contextSent", { model: text(p, "model") || t("remediation.summary.theAi") });
+      return count ? sent + t("remediation.summary.redacted", { count }) : sent;
     }
     case "ai_proposal":
       return typeof p.command === "string"
-        ? `Proposed ${p.command} · ${text(p, "diagnosis")}`
-        : `Stopped (${text(p, "stop") === "resolved" ? "considers it fixed" : "escalates"}): ${text(p, "reason")}`;
+        ? t("remediation.summary.proposed", { command: p.command, diagnosis: text(p, "diagnosis") })
+        : text(p, "stop") === "resolved"
+          ? t("remediation.summary.stoppedFixed", { reason: text(p, "reason") })
+          : t("remediation.summary.stoppedEscalates", { reason: text(p, "reason") });
     case "classification": {
-      const tier = TIER_NAMES[p.tier as RiskTier] ?? text(p, "tier");
+      const tier = TIERS.includes(p.tier as RiskTier) ? tierName(p.tier as RiskTier) : text(p, "tier");
       const rule = p.rule && typeof p.rule === "object" ? text(p.rule as Record<string, unknown>, "id") : "";
-      return `${tier}${rule ? ` by rule ${rule}` : ""}: ${text(p, "reason")}`;
+      return rule
+        ? t("remediation.summary.classifiedByRule", { tier, rule, reason: text(p, "reason") })
+        : t("remediation.summary.classified", { tier, reason: text(p, "reason") });
     }
     case "approval":
       return event.actor_kind === "system"
-        ? `Approved by policy: ${text(p, "command")}`
-        : `Approved: ${text(p, "command")}`;
+        ? t("remediation.summary.approvedByPolicy", { command: text(p, "command") })
+        : t("remediation.summary.approved", { command: text(p, "command") });
     case "edit":
-      return `Edited ${text(p, "original")} → ${text(p, "edited")}`;
+      return t("remediation.summary.edited", { original: text(p, "original"), edited: text(p, "edited") });
     case "rejection":
-      return `Rejected ${text(p, "command")}${text(p, "reason") ? ` · ${text(p, "reason")}` : ""}`;
+      return text(p, "reason")
+        ? t("remediation.summary.rejectedBecause", { command: text(p, "command"), reason: text(p, "reason") })
+        : t("remediation.summary.rejected", { command: text(p, "command") });
     case "snapshot":
       return text(p, "method") === "none"
-        ? `No snapshot: ${text(p, "detail")}`
-        : `Snapshot ${text(p, "name")} (${text(p, "method")})`;
+        ? t("remediation.summary.noSnapshot", { detail: text(p, "detail") })
+        : t("remediation.summary.snapshot", { name: text(p, "name"), method: text(p, "method") });
     case "command_queued":
-      return `Queued ${text(p, "command")}`;
+      return t("remediation.summary.queued", { command: text(p, "command") });
     case "command_result": {
       const ms = typeof p.duration_ms === "number" ? p.duration_ms : null;
-      const took = ms === null ? "" : `, ${ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`}`;
+      const took = ms === null ? "" : `, ${duration(ms)}`;
       return typeof p.exit_code === "number"
-        ? `Exit code ${p.exit_code}${took}`
-        : `Did not complete: ${text(p, "error") || "no result"}${took}`;
+        ? t("remediation.summary.exitCode", { code: String(p.exit_code), took })
+        : t("remediation.summary.notCompleted", { error: text(p, "error") || t("remediation.summary.noResult"), took });
     }
     case "escalation":
-      return `Escalated: ${text(p, "reason")}`;
+      return t("remediation.summary.escalated", { reason: text(p, "reason") });
     case "state_change":
-      return `State ${STATE_NAMES[p.from as RemediationState] ?? text(p, "from")} → ${STATE_NAMES[p.to as RemediationState] ?? text(p, "to")}`;
+      return t("remediation.summary.stateChange", {
+        from: stateName(p.from) ?? text(p, "from"),
+        to: stateName(p.to) ?? text(p, "to"),
+      });
     case "note":
       return text(p, "text");
   }
@@ -136,15 +152,15 @@ export function eventSummary(event: Pick<RemediationEvent, "kind" | "actor_kind"
 export function snapshotReason(reason: SnapshotUnsupported | null, kind?: GuestKind | null): string {
   switch (reason) {
     case "cannot_snapshot":
-      return `the ${kind === "lxc" ? "container" : "VM"}'s storage cannot take snapshots.`;
+      return kind === "lxc" ? t("remediation.snapshot.cannotContainer") : t("remediation.snapshot.cannotVm");
     case "disabled":
-      return "Proxmox snapshots are not enabled on this MonitorFlow server.";
+      return t("remediation.snapshot.disabled");
     case "not_mapped":
-      return "the server is not mapped to a Proxmox VM.";
+      return t("remediation.snapshot.notMapped");
     case "unknown_cluster":
-      return "the server's Proxmox cluster is not configured.";
+      return t("remediation.snapshot.unknownCluster");
     default:
-      return "no snapshot support on this server.";
+      return t("remediation.snapshot.none");
   }
 }
 
@@ -159,19 +175,19 @@ export function rollbackText(snapshots: SnapshotSupport): { text: string; note: 
     // A Proxmox guest: Proxmox's reason, then its cause.
     if (reason === "cannot_snapshot" || reason === "unknown_cluster" || !detail) {
       return {
-        text: `No snapshot before this change: ${snapshotReason(reason, kind)}`,
+        text: t("remediation.rollback.none", { reason: snapshotReason(reason, kind) }),
         note: detail && reason === "cannot_snapshot" ? `(${detail}.)` : null,
       };
     }
     // Not a Proxmox guest: why there is no local snapshot.
-    return { text: `No snapshot before this change: ${detail}.`, note: null };
+    return { text: t("remediation.rollback.noneDetail", { detail }), note: null };
   }
   if ((snapshots.method === "lvm" || snapshots.method === "zfs") && detail) {
-    return { text: `A local snapshot is taken before the command runs: ${detail}.`, note: null };
+    return { text: t("remediation.rollback.local", { detail }), note: null };
   }
   return {
-    text: `A Proxmox snapshot of the ${kind === "lxc" ? "container" : "VM"} is taken before the command runs.`,
-    note: snapshots.left_out ? `It leaves out ${snapshots.left_out}: a rollback does not restore it.` : null,
+    text: kind === "lxc" ? t("remediation.rollback.proxmoxContainer") : t("remediation.rollback.proxmoxVm"),
+    note: snapshots.left_out ? t("remediation.rollback.leftOut", { what: snapshots.left_out }) : null,
   };
 }
 
@@ -179,24 +195,30 @@ export function rollbackText(snapshots: SnapshotSupport): { text: string; note: 
 export function timeLeft(deadline: string, now: Date): string | null {
   const seconds = Math.floor((Date.parse(deadline) - now.getTime()) / 1000);
   if (seconds <= 0) return null;
-  if (seconds < 60) return `${seconds} s left`;
+  if (seconds < 60) return t("remediation.left.seconds", { seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min ${seconds % 60} s left`;
-  return `${Math.floor(minutes / 60)} h ${minutes % 60} min left`;
+  if (minutes < 60) return t("remediation.left.minutes", { minutes, seconds: seconds % 60 });
+  return t("remediation.left.hours", { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
 }
 
 /** One line on an incident's chain report. */
 export function chainSummary(chain: ChainReport): string {
   if (chain.valid) {
-    return `Hash chain verified: ${chain.events} ${chain.events === 1 ? "event" : "events"}, head ${chain.head_hash?.slice(0, 12) ?? "none"}.`;
+    return t("remediation.chain.verified", {
+      count: chain.events,
+      head: chain.head_hash?.slice(0, 12) ?? t("remediation.chain.noHead"),
+    });
   }
-  const why: Record<NonNullable<ChainReport["reason"]>, string> = {
-    gap: "a missing event",
-    prev_hash: "a link to the previous event that does not match",
-    hash: "an event whose content does not match its hash",
-    head: "a head that does not match the last event",
-  };
-  return `Hash chain broken at event ${chain.broken_at}: ${chain.reason ? why[chain.reason] : "unknown reason"}. The history was changed outside MonitorFlow.`;
+  const why = {
+    gap: "remediation.chain.gap",
+    prev_hash: "remediation.chain.prevHash",
+    hash: "remediation.chain.hash",
+    head: "remediation.chain.head",
+  } as const satisfies Record<NonNullable<ChainReport["reason"]>, string>;
+  return t("remediation.chain.broken", {
+    seq: String(chain.broken_at),
+    why: t(chain.reason ? why[chain.reason] : "remediation.chain.unknown"),
+  });
 }
 
 /** Filters of the audit log, from its query string. */
@@ -213,8 +235,8 @@ export function auditFiltersFromQuery(params: URLSearchParams): AuditFilters {
   return {
     incident: params.get("incident"),
     server: params.get("server"),
-    kind: EVENT_KINDS.some((k) => k.value === kind) ? (kind as RemediationEventKind) : null,
-    actor: ACTOR_KINDS.some((a) => a.value === actor) ? (actor as ActorKind) : null,
+    kind: EVENT_KINDS.includes(kind as RemediationEventKind) ? (kind as RemediationEventKind) : null,
+    actor: ACTOR_KINDS.includes(actor as ActorKind) ? (actor as ActorKind) : null,
   };
 }
 

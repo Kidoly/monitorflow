@@ -23,9 +23,6 @@ import {
   MAX_NAME,
   MAX_PANELS,
   RANGES,
-  RANGE_LABELS,
-  READY_MADE,
-  WIDTH_LABELS,
   copyName,
   copySpec,
   dropMissingServers,
@@ -34,13 +31,16 @@ import {
   newPanel,
   placePanel,
   placesOf,
+  rangeLabel,
   readyMade,
+  readyMades,
   serversWithin,
   sharingLabel,
+  widthLabel,
   withinOf,
 } from "@/lib/dashboards";
+import { t } from "@/i18n";
 import { displayHref } from "@/lib/display";
-import { customerWide } from "@/lib/customers";
 import { modifiesCustomer, modifiesSite, multiCustomer, useMe, useMultiCustomer } from "@/lib/me";
 import { DASHBOARDS_PATH, dashboardHref, readyMadeHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -70,24 +70,24 @@ export function DashboardsPage() {
   const columns: Column<DashboardSummary>[] = [
     {
       key: "name",
-      header: "Name",
+      header: t("dashboards.list.name"),
       cell: (d) => (
         <PrimaryCell
           title={d.name}
           href={scopedHref(dashboardHref(d.id), scope)}
-          sub={`${d.panels} ${d.panels === 1 ? "panel" : "panels"}`}
+          sub={t("dashboards.list.panels", { count: d.panels })}
         />
       ),
       sortValue: (d) => d.name,
     },
-    { key: "shared", header: "Shared with", cell: (d) => sharingLabel(d.shared_with, multi), sortValue: (d) => sharingLabel(d.shared_with, multi) },
+    { key: "shared", header: t("dashboards.list.shared"), cell: (d) => sharingLabel(d.shared_with, multi), sortValue: (d) => sharingLabel(d.shared_with, multi) },
     {
       key: "updated",
-      header: "Changed",
+      header: t("dashboards.list.changed"),
       cell: (d) => (
         <>
           {formatDay(new Date(d.updated_at), new Date())}
-          {d.updated_by_username && <span className={admin.dim}> by {d.updated_by_username}</span>}
+          {d.updated_by_username && <span className={admin.dim}>{t("dashboards.list.by", { name: d.updated_by_username })}</span>}
         </>
       ),
       sortValue: (d) => d.updated_at,
@@ -97,11 +97,11 @@ export function DashboardsPage() {
   return (
     <Page>
       <PageHeader
-        title="Dashboards"
+        title={t("dashboards.list.title")}
         meta={<RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={DASHBOARD_REFRESH_MS} />}
         actions={
           <ButtonLink variant="k" href={newHref}>
-            New dashboard
+            {t("dashboards.list.new")}
           </ButtonLink>
         }
       />
@@ -109,12 +109,12 @@ export function DashboardsPage() {
       <section className={admin.section} aria-labelledby="ready-made">
         <div className={admin.sectionHead}>
           <h2 id="ready-made" className={admin.sectionTitle}>
-            Ready-made
+            {t("dashboards.list.readyMade")}
           </h2>
-          <span className={admin.dim}>For every server you see. Make a copy to change one.</span>
+          <span className={admin.dim}>{t("dashboards.list.readyNote")}</span>
         </div>
         <ul className={styles.cards}>
-          {READY_MADE.map((d) => (
+          {readyMades().map((d) => (
             <li key={d.id}>
               <Link href={scopedHref(readyMadeHref(d.id), scope)} className={styles.card}>
                 <b>{d.name}</b>
@@ -126,23 +126,23 @@ export function DashboardsPage() {
       </section>
       {!data ? (
         error !== null && !isUnauthorized(error) ? (
-          <ErrorState what="the dashboards" error={describeError(error)} onRetry={refresh} />
+          <ErrorState what={t("dashboards.list.what")} error={describeError(error)} onRetry={refresh} />
         ) : (
-          <LoadingBlock label="Loading dashboards" />
+          <LoadingBlock label={t("dashboards.list.loading")} />
         )
       ) : data.dashboards.length === 0 ? (
         <EmptyState
-          title="No dashboard of your own yet"
+          title={t("dashboards.list.none")}
           actions={
             <ButtonLink variant="k" href={newHref}>
-              New dashboard
+              {t("dashboards.list.new")}
             </ButtonLink>
           }
         >
-          Build a page of charts and figures by picking from lists, for yourself or shared with a site or customer.
+          {t("dashboards.list.noneText")}
         </EmptyState>
       ) : (
-        <DataTable label="Dashboards" columns={columns} rows={data.dashboards} rowKey={(d) => d.id} />
+        <DataTable label={t("dashboards.list.title")} columns={columns} rows={data.dashboards} rowKey={(d) => d.id} />
       )}
     </Page>
   );
@@ -170,13 +170,13 @@ const EMPTY: Draft = { name: "", shared_with: { kind: "personal" }, spec: { vers
 function sharingOptions(me: ReturnType<typeof useMe>, servers: Server[], current: Sharing): { value: string; label: string; sharing: Sharing }[] {
   const { sites, customers } = placesOf(servers);
   const options: { value: string; label: string; sharing: Sharing }[] = [
-    { value: "personal", label: "Only me", sharing: { kind: "personal" } },
+    { value: "personal", label: t("dashboards.sharing.personal"), sharing: { kind: "personal" } },
   ];
   for (const c of customers) {
-    if (modifiesCustomer(me, c.id)) options.push({ value: `customer:${c.id}`, label: customerWide(`Customer ${c.name}`, multiCustomer(me)), sharing: { kind: "customer", id: c.id } });
+    if (modifiesCustomer(me, c.id)) options.push({ value: `customer:${c.id}`, label: multiCustomer(me) ? t("dashboards.sharing.customer", { name: c.name }) : t("dashboards.sharing.allSites"), sharing: { kind: "customer", id: c.id } });
   }
   for (const s of sites) {
-    if (modifiesSite(me, s.customerId, s.id)) options.push({ value: `site:${s.id}`, label: `Site ${s.name}`, sharing: { kind: "site", id: s.id } });
+    if (modifiesSite(me, s.customerId, s.id)) options.push({ value: `site:${s.id}`, label: t("dashboards.sharing.site", { name: s.name }), sharing: { kind: "site", id: s.id } });
   }
   const value = sharingValue(current);
   if (!options.some((o) => o.value === value)) options.push({ value, label: sharingLabel(current, multiCustomer(me)), sharing: current });
@@ -268,16 +268,16 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
   if (!valid || (loadError instanceof ApiError && loadError.status === 404)) {
     return (
       <NotFound
-        title="Dashboard not found"
-        actions={<ButtonLink href={scopedHref(DASHBOARDS_PATH, scope)}>Back to the dashboards</ButtonLink>}
+        title={t("dashboards.view.notFound")}
+        actions={<ButtonLink href={scopedHref(DASHBOARDS_PATH, scope)}>{t("dashboards.view.back")}</ButtonLink>}
       />
     );
   }
   if (!shown) {
     return loadError !== null && !isUnauthorized(loadError) ? (
-      <ErrorState what="the dashboard" error={describeError(loadError)} />
+      <ErrorState what={t("dashboards.view.what")} error={describeError(loadError)} />
     ) : (
-      <LoadingBlock label="Loading dashboard" />
+      <LoadingBlock label={t("dashboards.view.loading")} />
     );
   }
 
@@ -304,7 +304,7 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!editDraft) return;
-    if (!editDraft.name.trim()) return setMessage({ tone: "bad", text: "Give the dashboard a name." });
+    if (!editDraft.name.trim()) return setMessage({ tone: "bad", text: t("dashboards.view.nameRequired") });
     setBusy(true);
     setMessage(null);
     try {
@@ -356,30 +356,30 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
   }
 
   const rangeButtons = (
-    <div className={styles.ranges} role="group" aria-label="Time range">
+    <div className={styles.ranges} role="group" aria-label={t("dashboards.view.range")}>
       {RANGES.map((r) => (
         <Button key={r} size="small" active={r === range} aria-pressed={r === range} onClick={() => setParams({ range: r === shown.spec.range ? null : r })}>
-          {RANGE_LABELS[r]}
+          {rangeLabel(r)}
         </Button>
       ))}
     </div>
   );
 
   const header = draft ? (
-    <form className={styles.editHead} onSubmit={(e) => void save(e)} aria-label="Dashboard">
+    <form className={styles.editHead} onSubmit={(e) => void save(e)} aria-label={t("dashboards.view.form")}>
       <label className={admin.field}>
-        Name
+        {t("dashboards.view.name")}
         <input
           className={fieldClass}
           required
           maxLength={MAX_NAME}
           value={draft.name}
-          placeholder="Database servers"
+          placeholder={t("dashboards.view.namePlaceholder")}
           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
         />
       </label>
       <label className={admin.field}>
-        Shared with
+        {t("dashboards.view.sharedWith")}
         <select
           className={fieldClass}
           value={sharingValue(draft.shared_with)}
@@ -395,11 +395,11 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
           ))}
         </select>
         <span className={admin.fieldNote}>
-          {draft.shared_with.kind === "personal" ? "Only you see it." : "Everyone there sees it; its operators change it."}
+          {draft.shared_with.kind === "personal" ? t("dashboards.view.onlyYou") : t("dashboards.view.everyone")}
         </span>
       </label>
       <label className={admin.field}>
-        Opens on
+        {t("dashboards.view.opensOn")}
         <select
           className={fieldClass}
           value={draft.spec.range}
@@ -407,17 +407,17 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
         >
           {RANGES.map((r) => (
             <option key={r} value={r}>
-              Last {RANGE_LABELS[r]}
+              {t("dashboards.view.last", { range: rangeLabel(r) })}
             </option>
           ))}
         </select>
       </label>
       <div className={admin.formFoot}>
         <Button type="submit" variant="k" disabled={busy || editing !== null}>
-          {busy ? "Saving…" : "Save"}
+          {busy ? t("dashboards.view.saving") : t("dashboards.view.save")}
         </Button>
         <Button onClick={cancel} disabled={busy}>
-          Cancel
+          {t("dashboards.view.cancel")}
         </Button>
       </div>
     </form>
@@ -425,14 +425,17 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
 
   return (
     <Page>
-      <Breadcrumb parents={[{ label: "Dashboards", href: scopedHref(DASHBOARDS_PATH, scope) }]} current={shown.name || "New dashboard"} />
+      <Breadcrumb
+        parents={[{ label: t("dashboards.list.title"), href: scopedHref(DASHBOARDS_PATH, scope) }]}
+        current={shown.name || t("dashboards.view.new")}
+      />
       <PageHeader
         detail
-        title={shown.name || "New dashboard"}
+        title={shown.name || t("dashboards.view.new")}
         status={
           <Label tone="neutral">
             {builtIn
-              ? "Ready-made"
+              ? t("dashboards.view.readyMade")
               : draft
                 ? (sharingOptions(me, servers ?? [], draft.shared_with).find((o) => o.value === sharingValue(draft.shared_with))?.label ??
                   sharingLabel(draft.shared_with, multiCustomer(me)))
@@ -445,16 +448,16 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
             <>
               {panels.length > 0 && (saved || builtIn) && (
                 <ButtonLink href={scopedHref(displayHref(saved ? { id: saved.id } : { ready: builtIn!.id }), scope)}>
-                  Show on a screen
+                  {t("dashboards.view.show")}
                 </ButtonLink>
               )}
-              {canEdit && <Button onClick={startEditing}>Edit</Button>}
+              {canEdit && <Button onClick={startEditing}>{t("dashboards.view.edit")}</Button>}
               <Button onClick={() => void copy()} disabled={busy}>
-                Make a copy
+                {t("dashboards.view.copy")}
               </Button>
               {canEdit && saved && !confirmDelete && (
                 <Button variant="danger" onClick={() => setConfirmDelete(true)}>
-                  Delete
+                  {t("dashboards.view.delete")}
                 </Button>
               )}
             </>
@@ -462,15 +465,13 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
         }
       />
       {confirmDelete && saved && (
-        <div className={styles.confirm} role="group" aria-label="Delete the dashboard">
-          <span>
-            Delete “{saved.name}” for everyone it is shared with? Its panels go with it; the servers and their data stay.
-          </span>
+        <div className={styles.confirm} role="group" aria-label={t("dashboards.view.deleteGroup")}>
+          <span>{t("dashboards.view.deleteText", { name: saved.name })}</span>
           <Button onClick={() => setConfirmDelete(false)} disabled={busy}>
-            Cancel
+            {t("dashboards.view.cancel")}
           </Button>
           <Button variant="danger" onClick={() => void remove()} disabled={busy}>
-            Delete {saved.name}
+            {t("dashboards.view.deleteNamed", { name: saved.name })}
           </Button>
         </div>
       )}
@@ -478,11 +479,11 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
       {message && <Banner tone={message.tone}>{message.text}</Banner>}
       {cleaned && cleaned.dropped > 0 && (
         <Banner tone="info">
-          {cleaned.dropped} removed {cleaned.dropped === 1 ? "server was" : "servers were"} taken out of the panels. Save to keep it so.
+          {t("dashboards.view.dropped", { count: cleaned.dropped })}
         </Banner>
       )}
       {stale && updatedAt && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
-      {!data && error !== null && !isUnauthorized(error) && <Banner tone="bad">Could not load the panels: {describeError(error)}</Banner>}
+      {!data && error !== null && !isUnauthorized(error) && <Banner tone="bad">{t("dashboards.view.panelsFailed", { error: describeError(error) })}</Banner>}
       {panels.length > 0 && rangeButtons}
 
       {draft && editing !== null && servers && (
@@ -502,18 +503,18 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
 
       {panels.length === 0 ? (
         <EmptyState
-          title="No panels yet"
+          title={t("dashboards.view.noPanels")}
           actions={
             draft ? (
               <Button variant="k" onClick={() => setEditing("new")} disabled={!servers}>
-                Add a panel
+                {t("dashboards.view.addPanel")}
               </Button>
             ) : (
-              canEdit && <Button onClick={startEditing}>Edit</Button>
+              canEdit && <Button onClick={startEditing}>{t("dashboards.view.edit")}</Button>
             )
           }
         >
-          A panel is a chart, a figure, a top list or the open alerts of the servers you choose.
+          {t("dashboards.view.noPanelsText")}
         </EmptyState>
       ) : (
         <div className={styles.grid}>
@@ -529,35 +530,46 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
             >
               <DashboardPanel panel={panel} data={byId.get(panel.id)} window={data} scope={scope} />
               {draft && (
-                <div className={styles.tools} role="group" aria-label={`Arrange ${panel.title}`}>
-                  <Button size="small" onClick={() => setEditing(index)} disabled={!servers || editing !== null} aria-label={`Edit ${panel.title}`}>
-                    Edit
+                <div className={styles.tools} role="group" aria-label={t("dashboards.view.arrange", { title: panel.title })}>
+                  <Button
+                    size="small"
+                    onClick={() => setEditing(index)}
+                    disabled={!servers || editing !== null}
+                    aria-label={t("dashboards.view.editPanel", { title: panel.title })}
+                  >
+                    {t("dashboards.view.edit")}
                   </Button>
-                  <Button size="small" onClick={() => setPanels(movePanel(panels, index, -1))} disabled={index === 0} aria-label={`Move ${panel.title} earlier`}>
-                    Earlier
+                  <Button
+                    size="small"
+                    onClick={() => setPanels(movePanel(panels, index, -1))}
+                    disabled={index === 0}
+                    aria-label={t("dashboards.view.moveEarlier", { title: panel.title })}
+                  >
+                    {t("dashboards.view.earlier")}
                   </Button>
                   <Button
                     size="small"
                     onClick={() => setPanels(movePanel(panels, index, 1))}
                     disabled={index === panels.length - 1}
-                    aria-label={`Move ${panel.title} later`}
+                    aria-label={t("dashboards.view.moveLater", { title: panel.title })}
                   >
-                    Later
+                    {t("dashboards.view.later")}
                   </Button>
                   <select
                     className={fieldClass}
-                    aria-label={`Width of ${panel.title}`}
+                    aria-label={t("dashboards.view.widthOf", { title: panel.title })}
                     value={panel.width}
                     onChange={(e) => setPanels(panels.map((p, i) => (i === index ? { ...p, width: Number(e.target.value) as Panel["width"] } : p)))}
                   >
                     {([1, 2, 3] as const).map((w) => (
                       <option key={w} value={w}>
-                        {WIDTH_LABELS[w]}
+                        {widthLabel(w)}
                       </option>
                     ))}
                   </select>
-                  <Button size="small" variant="danger" onClick={() => setPanels(panels.filter((_, i) => i !== index))} aria-label={`Remove ${panel.title}`}>
-                    Remove
+                  <Button size="small" variant="danger" onClick={() => setPanels(panels.filter((_, i) => i !== index))} aria-label={t("dashboards.view.removePanel", { title: panel.title })}
+                  >
+                    {t("dashboards.view.remove")}
                   </Button>
                 </div>
               )}
@@ -568,12 +580,12 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
       {draft && panels.length > 0 && (
         <div>
           <Button variant="k" onClick={() => setEditing("new")} disabled={!servers || editing !== null || panels.length >= MAX_PANELS}>
-            Add a panel
+            {t("dashboards.view.addPanel")}
           </Button>
-          {panels.length >= MAX_PANELS && <span className={admin.dim}> A dashboard has at most {MAX_PANELS} panels.</span>}
+          {panels.length >= MAX_PANELS && <span className={admin.dim}> {t("dashboards.view.maxPanels", { max: MAX_PANELS })}</span>}
         </div>
       )}
-      {draft && <p className={admin.footnote}>Drag a panel to move it, or use Earlier and Later. Nothing is kept until you save.</p>}
+      {draft && <p className={admin.footnote}>{t("dashboards.view.footnote")}</p>}
       {!draft && saved?.can_link && <DisplayLinks dashboard={saved} />}
     </Page>
   );
