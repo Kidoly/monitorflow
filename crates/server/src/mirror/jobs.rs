@@ -226,6 +226,14 @@ impl Job {
             Ok(snapshot) => (None, snapshot),
             Err(Failed(error)) => (Some(error), None),
         };
+        if self.mirror.mode == Mode::OnDemand && snapshot.is_some() {
+            // Pending updates the new snapshot lists, without holding the
+            // job (ADR-0142).
+            let (mirrors, mirror) = (self.mirrors.clone(), self.mirror.clone());
+            tokio::spawn(async move {
+                super::prefetch::after_sync(&mirrors, &mirror).await;
+            });
+        }
         let output = keep_tail(&self.log, OUTPUT_TAIL);
         let pool = self.mirrors.pool.clone();
         let finished =
