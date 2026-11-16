@@ -14,6 +14,7 @@ import { type Column, DataTable } from "@/components/ui/DataTable";
 import { Page } from "@/components/ui/Page";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
+import { InfoTip } from "@/components/ui/Hint";
 import { RowMenu } from "@/components/ui/RowMenu";
 import { formatDay } from "@/components/ui/time";
 
@@ -347,6 +348,7 @@ export function SilencesPage() {
     <Page>
       <PageHeader
         title={t("silences.title")}
+        status={<InfoTip label={t("silences.about")}>{t("silences.intro")}</InfoTip>}
         meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
         actions={
           canSilence && (
@@ -356,9 +358,6 @@ export function SilencesPage() {
           )
         }
       />
-      <p className={styles.intro}>
-        {t("silences.intro")}
-      </p>
       {adding && (
         <NewSilence
           onCancel={() => setAdding(false)}

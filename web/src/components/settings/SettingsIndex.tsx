@@ -40,7 +40,7 @@ export function SettingsIndex() {
 
   return (
     <Page>
-      <PageHeader title={t("shell.nav.settings")} meta={t("settings.index.meta")} />
+      <PageHeader title={t("shell.nav.settings")} />
       <div className={styles.search} role="search">
         <label htmlFor={searchId} className="visually-hidden">
           {t("shell.settings.search")}
