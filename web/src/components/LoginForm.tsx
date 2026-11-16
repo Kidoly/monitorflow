@@ -6,6 +6,7 @@ import { type FormEvent, useEffect, useState, useSyncExternalStore } from "react
 import { SetupHint } from "@/components/SetupHint";
 import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
+import { Logo } from "@/components/ui/Logo";
 import { t } from "@/i18n";
 import { ApiError, api, describeError } from "@/lib/api";
 
@@ -103,7 +104,10 @@ export function LoginForm() {
     return (
       <div className={styles.page}>
         <main id="main" className={styles.main}>
-          <h1 className={styles.brand}>MonitorFlow</h1>
+          <h1 className={styles.brand}>
+            <Logo size={32} />
+            MonitorFlow
+          </h1>
           <div className={styles.box}>
             <h2 className={styles.title}>{t("auth.setupPending.title")}</h2>
             <Banner tone="warn">
@@ -119,7 +123,10 @@ export function LoginForm() {
   return (
     <div className={styles.page}>
       <main id="main" className={styles.main}>
-        <h1 className={styles.brand}>MonitorFlow</h1>
+        <h1 className={styles.brand}>
+          <Logo size={32} />
+          MonitorFlow
+        </h1>
         <form className={styles.box} onSubmit={onSubmit} aria-labelledby="signin-title">
           <h2 id="signin-title" className={styles.title}>
             {t("auth.signIn")}

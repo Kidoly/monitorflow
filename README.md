@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
+  <img alt="" src="docs/images/logo.svg" width="96" height="96">
+</picture>
+
 # MonitorFlow
 
 MonitorFlow watches your Linux and Windows servers, tells you when something goes wrong, and keeps them up to date, all from one web page. You install one central server, then a small program called an agent on each server you want to watch. It is free and open source, made for a company running its own servers and for service providers running servers for their customers.

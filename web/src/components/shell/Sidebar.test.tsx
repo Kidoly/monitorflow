@@ -23,7 +23,7 @@ const links = () =>
     .getAllByRole("link")
     .filter((link) => !link.getAttribute("href")?.startsWith("/settings/preferences"))
     .map((link) => link.textContent?.replace(/\d+$/, "") ?? "")
-    .filter((name) => name !== "MonitorFlowMF");
+    .filter((name) => name !== "MonitorFlow");
 
 /** Renders `ui` with `sidebar` as the stored preferences, loaded. */
 async function withPreferences(ui: React.ReactElement, sidebar?: SidebarPreferences) {

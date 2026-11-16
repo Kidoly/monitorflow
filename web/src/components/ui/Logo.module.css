@@ -1,0 +1,32 @@
+.logo {
+  display: inline-flex;
+  flex: none;
+}
+
+/* One image per theme, as tokens.css picks the theme: the stored choice,
+   or the system's when there is none. */
+.light {
+  display: block;
+}
+
+.dark {
+  display: none;
+}
+
+:global(:root[data-theme="dark"]) .light {
+  display: none;
+}
+
+:global(:root[data-theme="dark"]) .dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :global(:root:not([data-theme="light"])) .light {
+    display: none;
+  }
+
+  :global(:root:not([data-theme="light"])) .dark {
+    display: block;
+  }
+}

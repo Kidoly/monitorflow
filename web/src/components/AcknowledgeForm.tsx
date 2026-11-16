@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
 import { formatClock } from "@/components/ui/time";
+import { Logo } from "@/components/ui/Logo";
 import { rich, t } from "@/i18n";
 import { type AcknowledgeLink, ApiError, LOGIN_PATH, api, describeError } from "@/lib/api";
 
@@ -75,7 +76,10 @@ export function AcknowledgeForm() {
   return (
     <div className={styles.page}>
       <main id="main" className={styles.main}>
-        <h1 className={styles.brand}>MonitorFlow</h1>
+        <h1 className={styles.brand}>
+          <Logo size={32} />
+          MonitorFlow
+        </h1>
         {state.kind === "gone" ? (
           <div className={styles.box}>
             <h2 className={styles.title}>{t("incidents.link.goneTitle")}</h2>
