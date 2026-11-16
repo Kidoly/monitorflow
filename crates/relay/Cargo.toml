@@ -32,10 +32,14 @@ reqwest.workspace = true
 serde_json.workspace = true
 ring.workspace = true
 serde.workspace = true
+# The disk size the default cap of on-demand packages is half of.
+rustix.workspace = true
 # The addresses a relay reports for confirmation (ADR-0066).
 if-addrs.workspace = true
 
 [dev-dependencies]
+# The fake distribution of the on-demand cascade test.
+axum.workspace = true
 monitorflow-server = { path = "../server" }
 async-trait.workspace = true
 rcgen.workspace = true

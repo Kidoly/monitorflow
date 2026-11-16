@@ -1664,6 +1664,7 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "bzip2",
  "clap",
  "crc",
@@ -1678,6 +1679,7 @@ dependencies = [
  "rcgen",
  "reqwest",
  "ring",
+ "rustix",
  "rustls",
  "ruzstd",
  "serde",

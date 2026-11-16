@@ -8,10 +8,12 @@
 //! [`fetch`] live in [`monitorflow_common::mirror::repo`], shared with the
 //! server's on-demand mirrors (ADR-0142). [`sync`] copies a snapshot with
 //! [`fetch`]; [`task`] runs the sync loop and [`retention`] bounds the
-//! snapshots kept. [`report`] tells the server what the relay serves.
+//! snapshots kept. [`cache`] fetches the packages of on-demand snapshots
+//! from the upstream and keeps them under a cap (ADR-0142). [`report`] tells the server what the relay serves.
 //! [`agent`] copies the newest agent releases for self-updates (ADR-0053).
 
 pub mod agent;
+pub mod cache;
 pub mod report;
 pub mod retention;
 pub mod sync;
