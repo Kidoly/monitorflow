@@ -346,6 +346,45 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn older_rollouts_end_superseded_and_the_target_finishes(pool: PgPool) {
+        let (_, paris, _) = sites(&pool).await;
+        server(&pool, "paris-1", paris, "debian", "0.0.1").await;
+        // The rollout of an older release, never halted.
+        sqlx::query(
+            "INSERT INTO auto_rollouts (kind, version, started_at, counted_from)
+             VALUES ('agent', '0.0.1', now() - interval '1 day', now() - interval '1 day')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let dir = TempDir::new().unwrap();
+        let sources = cache(&dir, &["0.0.2"]);
+        let updater = updater(&pool, &sources);
+        assert_eq!(tick(&updater).await, ["paris-1"]);
+
+        let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let settings = ApiSettings {
+            agent_releases: sources.clone(),
+            ..ApiSettings::default()
+        };
+        let (status, body) = call_with(&pool, settings.clone(), &global, "GET", "/api/auto-update", Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let history = &body["agents"]["history"];
+        assert_eq!(history[0]["version"], "0.0.2");
+        assert_eq!(history[0]["outcome"], "rolling");
+        assert_eq!(history[1]["version"], "0.0.1");
+        // The stored state is kept as it was; the outcome tells it ended.
+        assert_eq!(history[1]["state"], "rolling");
+        assert_eq!(history[1]["outcome"], "superseded");
+
+        finish(&pool, "paris-1", "succeeded").await;
+        let (status, body) = call_with(&pool, settings, &global, "GET", "/api/auto-update", Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["agents"]["history"][0]["outcome"], "finished");
+        assert_eq!(body["agents"]["history"][1]["outcome"], "superseded");
+    }
+
+    #[sqlx::test]
     async fn relays_update_first_and_their_agents_follow(pool: PgPool) {
         let (customer, paris, _) = sites(&pool).await;
         let relay = insert(

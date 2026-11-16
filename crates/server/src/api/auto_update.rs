@@ -26,7 +26,7 @@ use super::mirrors::require_global_admin;
 use super::sensors::body;
 use super::{ApiError, ApiState};
 use crate::auto_update::policy::{self, Settings, SitePhase, Tries};
-use crate::auto_update::store::{self, Kind, Rollout, Stored};
+use crate::auto_update::store::{self, Kind, Rollout, RolloutState, Stored};
 use crate::auto_update::{self, server_version};
 
 /// Earlier rollouts listed.
@@ -61,8 +61,50 @@ pub struct KindView {
     pub totals: Totals,
     /// Every site, by customer and site name.
     pub sites: Vec<SiteView>,
-    /// The 10 newest rollouts, `rollout` included.
-    pub history: Vec<Rollout>,
+    /// The 10 newest rollouts, `rollout` included, each with where it
+    /// ended.
+    pub history: Vec<HistoryRollout>,
+}
+
+/// A rollout of the history and where it stands now.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateHistoryRollout)]
+pub struct HistoryRollout {
+    #[serde(flatten)]
+    pub rollout: Rollout,
+    pub outcome: Outcome,
+}
+
+/// Where a rollout of the history stands. `state` only tells whether it
+/// halted; a rollout of an older release stays `rolling` there forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateRolloutOutcome)]
+#[serde(rename_all = "lowercase")]
+pub enum Outcome {
+    /// The rollout of the target, with servers still waiting or updating.
+    Rolling,
+    /// The rollout of the target, halted after too many failures.
+    Halted,
+    /// The rollout of the target, with nothing left to update.
+    Finished,
+    /// No longer the target: a newer release replaced it, so nothing more
+    /// is queued for it.
+    Superseded,
+}
+
+/// Where `rollout` stands, given the current `target` and the totals of
+/// its rollout.
+pub fn outcome(rollout: &Rollout, target: Option<&Version>, totals: &Totals) -> Outcome {
+    let is_target = target.is_some_and(|t| t.to_string() == rollout.version);
+    if !is_target {
+        Outcome::Superseded
+    } else if rollout.state == RolloutState::Halted {
+        Outcome::Halted
+    } else if totals.waiting + totals.pending == 0 {
+        Outcome::Finished
+    } else {
+        Outcome::Rolling
+    }
 }
 
 /// Servers (or relays) by where they stand towards `target`.
@@ -220,7 +262,14 @@ async fn kind_view(
         }
     }
     let totals = sites.iter().fold(Totals::default(), |a, s| a.add(s.totals));
-    let history = Rollout::recent(&state.pool, kind, HISTORY).await?;
+    let history = Rollout::recent(&state.pool, kind, HISTORY)
+        .await?
+        .into_iter()
+        .map(|rollout| HistoryRollout {
+            outcome: outcome(&rollout, target, &totals),
+            rollout,
+        })
+        .collect();
     Ok(KindView {
         latest: latest.map(ToString::to_string),
         target: target.map(ToString::to_string),
@@ -349,4 +398,46 @@ pub async fn resume(
     .await?;
     tx.commit().await?;
     Ok(Json(rollout))
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+
+    fn rollout(version: &str, state: RolloutState) -> Rollout {
+        Rollout {
+            kind: Kind::Agent,
+            version: version.into(),
+            state,
+            started_at: Utc::now(),
+            halted_at: None,
+            reason: None,
+            counted_from: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn older_rollouts_are_superseded_and_the_target_finishes() {
+        let target = Version::from_str("1.2.0").unwrap();
+        let busy = Totals {
+            waiting: 2,
+            ..Totals::default()
+        };
+        let done = Totals {
+            up_to_date: 5,
+            ..Totals::default()
+        };
+        let older = rollout("1.1.0", RolloutState::Rolling);
+        assert_eq!(outcome(&older, Some(&target), &busy), Outcome::Superseded);
+        let halted = rollout("1.1.0", RolloutState::Halted);
+        assert_eq!(outcome(&halted, Some(&target), &busy), Outcome::Superseded);
+        let current = rollout("1.2.0", RolloutState::Rolling);
+        assert_eq!(outcome(&current, Some(&target), &busy), Outcome::Rolling);
+        assert_eq!(outcome(&current, Some(&target), &done), Outcome::Finished);
+        let stopped = rollout("1.2.0", RolloutState::Halted);
+        assert_eq!(outcome(&stopped, Some(&target), &done), Outcome::Halted);
+        assert_eq!(outcome(&current, None, &done), Outcome::Superseded);
+    }
 }

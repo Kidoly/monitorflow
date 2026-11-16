@@ -605,6 +605,13 @@ export interface Rollout {
   counted_from: string;
 }
 
+/** Where a rollout of the history stands; `state` only tells whether it halted. */
+export type RolloutOutcome = "rolling" | "halted" | "finished" | "superseded";
+
+export interface HistoryRollout extends Rollout {
+  outcome: RolloutOutcome;
+}
+
 export interface AutoUpdateTotals {
   up_to_date: number;
   /** Older and not tried yet. */
@@ -637,7 +644,7 @@ export interface AutoUpdateKind {
   rollout: Rollout | null;
   totals: AutoUpdateTotals;
   sites: AutoUpdateSite[];
-  history: Rollout[];
+  history: HistoryRollout[];
 }
 
 /** `GET /api/auto-update`. */

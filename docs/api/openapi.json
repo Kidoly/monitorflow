@@ -393,7 +393,7 @@
           "automatic updates"
         ],
         "summary": "Read the progress of automatic updates",
-        "description": "The settings as they apply, the central server's version (agents and\nrelays never move past it), and for agents and for relays: the newest\nstable release held, the `target` they move to, its rollout, totals,\neach site's phase and totals, and the last 10 rollouts. Relays are\nupdated before the agents behind them.\n\nMonitorFlow sends each server or relay that needs it a signed\n`self_update` command, with no person's approval: one per site first\n(`canary`), then a quarter of the site at a time (`rolling`). A site\nwhose first update failed is `blocked` for that version. Each server is\ntried once per version. Only the agent or relay restarts, never the\nhost, and its watchdog rolls back a version that does not connect.\n\nNeeds a global administrator role and the key area \"updates\".",
+        "description": "The settings as they apply, the central server's version (agents and\nrelays never move past it), and for agents and for relays: the newest\nstable release held, the `target` they move to, its rollout, totals,\neach site's phase and totals, and the last 10 rollouts with their\n`outcome`. Relays are updated before the agents behind them.\n\nMonitorFlow sends each server or relay that needs it a signed\n`self_update` command, with no person's approval: one per site first\n(`canary`), then a quarter of the site at a time (`rolling`). A site\nwhose first update failed is `blocked` for that version. Each server is\ntried once per version. Only the agent or relay restarts, never the\nhost, and its watchdog rolls back a version that does not connect.\n\nNeeds a global administrator role and the key area \"updates\".",
         "operationId": "auto_update_status",
         "responses": {
           "200": {
@@ -410,10 +410,21 @@
                         "counted_from": "2026-11-10T08:00:00Z",
                         "halted_at": null,
                         "kind": "agent",
+                        "outcome": "rolling",
                         "reason": null,
                         "started_at": "2026-11-10T08:00:00Z",
                         "state": "rolling",
                         "version": "0.3.1"
+                      },
+                      {
+                        "counted_from": "2026-11-02T08:00:00Z",
+                        "halted_at": null,
+                        "kind": "agent",
+                        "outcome": "superseded",
+                        "reason": null,
+                        "started_at": "2026-11-02T08:00:00Z",
+                        "state": "rolling",
+                        "version": "0.3.0"
                       }
                     ],
                     "latest": "0.3.1",
@@ -28483,6 +28494,25 @@
         },
         "additionalProperties": false
       },
+      "AutoUpdateHistoryRollout": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AutoUpdateRollout"
+          },
+          {
+            "type": "object",
+            "required": [
+              "outcome"
+            ],
+            "properties": {
+              "outcome": {
+                "$ref": "#/components/schemas/AutoUpdateRolloutOutcome"
+              }
+            }
+          }
+        ],
+        "description": "A rollout of the history and where it stands now."
+      },
       "AutoUpdateKind": {
         "type": "string",
         "description": "What a rollout updates.",
@@ -28503,9 +28533,9 @@
           "history": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/AutoUpdateRollout"
+              "$ref": "#/components/schemas/AutoUpdateHistoryRollout"
             },
-            "description": "The 10 newest rollouts, `rollout` included."
+            "description": "The 10 newest rollouts, `rollout` included, each with where it\nended."
           },
           "latest": {
             "type": [
@@ -28606,6 +28636,16 @@
             "description": "The release, like `0.3.1`."
           }
         }
+      },
+      "AutoUpdateRolloutOutcome": {
+        "type": "string",
+        "description": "Where a rollout of the history stands. `state` only tells whether it\nhalted; a rollout of an older release stays `rolling` there forever.",
+        "enum": [
+          "rolling",
+          "halted",
+          "finished",
+          "superseded"
+        ]
       },
       "AutoUpdateRolloutState": {
         "type": "string",

@@ -16,7 +16,8 @@ use crate::auto_update::store::{Kind, Rollout, RolloutState};
     paths(auto_update_status, resume_rollout),
     components(schemas(
         Settings, SitePhase, Kind, Rollout, RolloutState, auto_update::KindView,
-        auto_update::Totals, auto_update::SiteView,
+        auto_update::Totals, auto_update::SiteView, auto_update::HistoryRollout,
+        auto_update::Outcome,
     )),
     modifiers(&Common),
     tags(
@@ -35,8 +36,8 @@ pub struct Doc;
 /// The settings as they apply, the central server's version (agents and
 /// relays never move past it), and for agents and for relays: the newest
 /// stable release held, the `target` they move to, its rollout, totals,
-/// each site's phase and totals, and the last 10 rollouts. Relays are
-/// updated before the agents behind them.
+/// each site's phase and totals, and the last 10 rollouts with their
+/// `outcome`. Relays are updated before the agents behind them.
 ///
 /// MonitorFlow sends each server or relay that needs it a signed
 /// `self_update` command, with no person's approval: one per site first
@@ -80,7 +81,11 @@ pub struct Doc;
                 "history": [{
                     "kind": "agent", "version": "0.3.1", "state": "rolling",
                     "started_at": "2026-11-10T08:00:00Z", "halted_at": null, "reason": null,
-                    "counted_from": "2026-11-10T08:00:00Z"
+                    "counted_from": "2026-11-10T08:00:00Z", "outcome": "rolling"
+                }, {
+                    "kind": "agent", "version": "0.3.0", "state": "rolling",
+                    "started_at": "2026-11-02T08:00:00Z", "halted_at": null, "reason": null,
+                    "counted_from": "2026-11-02T08:00:00Z", "outcome": "superseded"
                 }]
             },
             "relays": {
