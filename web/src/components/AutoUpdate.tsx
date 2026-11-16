@@ -1,12 +1,16 @@
 "use client";
 
-import { useId, useState } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useCallback, useId, useState } from "react";
 
 import { t } from "@/i18n";
 import {
   ApiError,
   type AutoUpdateChange,
   type AutoUpdateKind,
+  type AutoUpdatePeer,
+  type AutoUpdatePeerState,
   type AutoUpdateSite,
   type AutoUpdateStatus,
   type Rollout,
@@ -15,7 +19,8 @@ import {
   describeError,
 } from "@/lib/api";
 import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
-import { SITES_PATH } from "@/lib/routes";
+import { SITES_PATH, relayHref, serverHref } from "@/lib/routes";
+import { type ParamChanges, useUrlParams } from "@/lib/urlState";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./AdminPages.module.css";
@@ -146,6 +151,40 @@ function AutoUpdate() {
   );
 }
 
+const PEER_STATES: readonly AutoUpdatePeerState[] = ["up_to_date", "waiting", "pending", "failed"];
+
+/**
+ * The list of peers open under the tiles of `relays` or agents, from the
+ * URL: `?agents=waiting&agentsSite=<id>`, so it can be shared.
+ */
+function useOpenList(relays: boolean) {
+  const [params, setParams] = useUrlParams();
+  const pathname = usePathname();
+  const key = relays ? "relays" : "agents";
+  const siteKey = `${key}Site`;
+  const value = params.get(key);
+  const state = PEER_STATES.find((s) => s === value) ?? null;
+  const site = state ? params.get(siteKey) : null;
+  const changes = (next: AutoUpdatePeerState | null, nextSite: string | null): ParamChanges => ({
+    [key]: next,
+    [siteKey]: next ? nextSite : null,
+  });
+  const href = (next: AutoUpdatePeerState, nextSite: string) => {
+    const query = new URLSearchParams(params);
+    query.set(key, next);
+    query.set(siteKey, nextSite);
+    return `${pathname}?${query}`;
+  };
+  return {
+    state,
+    site,
+    /** Opens `next` for every site, or closes it when it is open. */
+    toggle: (next: AutoUpdatePeerState) => setParams(changes(state === next ? null : next, null)),
+    open: (next: AutoUpdatePeerState, nextSite: string | null) => setParams(changes(next, nextSite)),
+    href,
+  };
+}
+
 /** Progress of one kind of peer: totals, sites and rollouts. */
 function Kind({
   relays,
@@ -159,6 +198,21 @@ function Kind({
   now: Date;
 }) {
   const title = relays ? t("autoUpdate.relays") : t("autoUpdate.agents");
+  const list = useOpenList(relays);
+  const listId = useId();
+  const tile = (label: string, state: AutoUpdatePeerState, value: number, tone: Tone) => ({
+    label,
+    value,
+    tone,
+    active: list.state === state,
+    controls: listId,
+    // A zero has nothing to list, unless the URL opened it.
+    onToggle: value > 0 || list.state === state ? () => list.toggle(state) : undefined,
+  });
+  const openSite = (state: AutoUpdatePeerState, site: string) => {
+    list.open(state, site);
+    requestAnimationFrame(() => document.getElementById(listId)?.scrollIntoView?.({ block: "nearest" }));
+  };
   return (
     <section className={styles.section} aria-label={title}>
       <div className={styles.sectionHead}>
@@ -184,20 +238,27 @@ function Kind({
         dense
         label={title}
         tiles={[
-          { label: t("autoUpdate.tile.upToDate"), value: kind.totals.up_to_date, tone: "ok" },
-          { label: t("autoUpdate.tile.waiting"), value: kind.totals.waiting, tone: "neutral" },
-          { label: t("autoUpdate.tile.inProgress"), value: kind.totals.pending, tone: "info" },
-          {
-            label: t("autoUpdate.tile.failed"),
-            value: kind.totals.failed,
-            tone: kind.totals.failed > 0 ? "bad" : "neutral",
-          },
+          tile(t("autoUpdate.tile.upToDate"), "up_to_date", kind.totals.up_to_date, "ok"),
+          tile(t("autoUpdate.tile.waiting"), "waiting", kind.totals.waiting, "neutral"),
+          tile(t("autoUpdate.tile.inProgress"), "pending", kind.totals.pending, "info"),
+          tile(t("autoUpdate.tile.failed"), "failed", kind.totals.failed, kind.totals.failed > 0 ? "bad" : "neutral"),
         ]}
       />
+      {list.state && (
+        <Peers
+          id={listId}
+          relays={relays}
+          state={list.state}
+          site={kind.sites.find((s) => s.id === list.site) ?? null}
+          onAllSites={() => list.open(list.state!, null)}
+        />
+      )}
       <Sites
         sites={kind.sites}
         label={relays ? t("autoUpdate.relaysBySite") : t("autoUpdate.agentsBySite")}
         relays={relays}
+        href={list.href}
+        onOpen={openSite}
       />
       <History
         rollouts={kind.history}
@@ -291,8 +352,161 @@ function Settings({
   );
 }
 
-function Sites({ sites, label, relays }: { sites: AutoUpdateSite[]; label: string; relays: boolean }) {
+const LIST_TITLES = {
+  agent: {
+    up_to_date: "autoUpdate.list.agent.upToDate",
+    waiting: "autoUpdate.list.agent.waiting",
+    pending: "autoUpdate.list.agent.pending",
+    failed: "autoUpdate.list.agent.failed",
+  },
+  relay: {
+    up_to_date: "autoUpdate.list.relay.upToDate",
+    waiting: "autoUpdate.list.relay.waiting",
+    pending: "autoUpdate.list.relay.pending",
+    failed: "autoUpdate.list.relay.failed",
+  },
+} as const;
+
+/** The agents or relays behind one tile, for every site or `site`. */
+function Peers({
+  id,
+  relays,
+  state,
+  site,
+  onAllSites,
+}: {
+  id: string;
+  relays: boolean;
+  state: AutoUpdatePeerState;
+  site: AutoUpdateSite | null;
+  onAllSites: () => void;
+}) {
+  const kind = relays ? "relay" : "agent";
+  const siteId = site?.id ?? null;
+  const fetcher = useCallback(
+    (signal: AbortSignal) => api.autoUpdatePeers(kind, state, siteId, signal),
+    [kind, state, siteId],
+  );
+  const { data, error, updatedAt, refresh } = usePolledData(fetcher);
   const multiCustomer = useMultiCustomer();
+  const title = t(LIST_TITLES[kind][state]);
+  const label = site ? t("autoUpdate.list.inSite", { list: title, site: site.name }) : title;
+
+  let body;
+  if (!data || !updatedAt) {
+    body = error ? (
+      <Banner tone="bad">
+        <strong>{t("ui.page.loadFailed", { what: t("autoUpdate.list.what") })}</strong> {describeError(error)}{" "}
+        <Button size="small" onClick={refresh}>
+          {t("ui.page.retry")}
+        </Button>
+      </Banner>
+    ) : (
+      <LoadingBlock />
+    );
+  } else {
+    const now = updatedAt;
+    const columns: Column<AutoUpdatePeer>[] = [
+      {
+        key: "name",
+        header: relays ? t("autoUpdate.column.relay") : t("autoUpdate.column.server"),
+        cell: (p) => <Link href={relays ? relayHref(p.id) : serverHref(p.id)}>{p.name}</Link>,
+      },
+      {
+        key: "site",
+        header: t("autoUpdate.column.site"),
+        cell: (p) => (
+          <>
+            {p.site_name} {multiCustomer && <span className={styles.dim}>· {p.customer_name}</span>}
+          </>
+        ),
+      },
+      {
+        key: "version",
+        header: t("autoUpdate.column.version"),
+        cell: (p) => p.version ?? <span className={styles.dim}>{t("autoUpdate.list.noVersion")}</span>,
+      },
+      {
+        key: "details",
+        header: t("autoUpdate.column.details"),
+        className: styles.wrap,
+        cell: (p) => <PeerDetails peer={p} now={now} />,
+      },
+    ];
+    body = (
+      <>
+        <DataTable bare label={label} columns={columns} rows={data.peers} rowKey={(p) => p.id} />
+        {data.total > data.peers.length && (
+          <p className={styles.sectionNote}>
+            {t("autoUpdate.list.more", { shown: data.peers.length, total: data.total })}
+          </p>
+        )}
+      </>
+    );
+  }
+  return (
+    <div id={id} role="region" aria-label={label}>
+      <div className={styles.sectionHead}>
+        <h3 className={styles.sectionTitle}>{label}</h3>
+        {site && (
+          <Button size="small" onClick={onAllSites}>
+            {t("autoUpdate.list.allSites")}
+          </Button>
+        )}
+      </div>
+      {body}
+    </div>
+  );
+}
+
+function PeerDetails({ peer, now }: { peer: AutoUpdatePeer; now: Date }) {
+  if (peer.state === "failed") {
+    return (
+      <>
+        {/* The peer's own words (ADR-0136). */}
+        {peer.error ?? t("autoUpdate.list.noError")}
+        {peer.finished_at && (
+          <span className={styles.dim}>
+            {" · "}
+            <RelativeTime value={peer.finished_at} now={now} />
+          </span>
+        )}
+      </>
+    );
+  }
+  if (peer.waiting_for_relay) return <>{t("autoUpdate.list.forRelay")}</>;
+  return null;
+}
+
+function Sites({
+  sites,
+  label,
+  relays,
+  href,
+  onOpen,
+}: {
+  sites: AutoUpdateSite[];
+  label: string;
+  relays: boolean;
+  href: (state: AutoUpdatePeerState, site: string) => string;
+  onOpen: (state: AutoUpdatePeerState, site: string) => void;
+}) {
+  const multiCustomer = useMultiCustomer();
+  /** "3 waiting", a link opening the list of those 3 when not zero. */
+  const count = (site: AutoUpdateSite, state: AutoUpdatePeerState, text: string, value: number) =>
+    value === 0 ? (
+      text
+    ) : (
+      <a
+        href={href(state, site.id)}
+        onClick={(e) => {
+          e.preventDefault();
+          onOpen(state, site.id);
+        }}
+      >
+        {text}
+      </a>
+    );
   const columns: Column<AutoUpdateSite>[] = [
     {
       key: "site",
@@ -326,8 +540,17 @@ function Sites({ sites, label, relays }: { sites: AutoUpdateSite[]; label: strin
       header: relays ? t("autoUpdate.relays") : t("autoUpdate.agents"),
       cell: (s) => (
         <span className={styles.dim}>
-          {t("autoUpdate.progress", { upToDate: s.totals.up_to_date, pending: s.totals.pending, waiting: s.totals.waiting })}
-          {s.totals.failed > 0 && t("autoUpdate.progressFailed", { failed: s.totals.failed })}
+          {count(s, "up_to_date", t("autoUpdate.count.upToDate", { count: s.totals.up_to_date }), s.totals.up_to_date)}
+          {" · "}
+          {count(s, "pending", t("autoUpdate.count.inProgress", { count: s.totals.pending }), s.totals.pending)}
+          {" · "}
+          {count(s, "waiting", t("autoUpdate.count.waiting", { count: s.totals.waiting }), s.totals.waiting)}
+          {s.totals.failed > 0 && (
+            <>
+              {" · "}
+              {count(s, "failed", t("autoUpdate.count.failed", { count: s.totals.failed }), s.totals.failed)}
+            </>
+          )}
         </span>
       ),
     },
