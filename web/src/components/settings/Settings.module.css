@@ -136,3 +136,24 @@
 .choiceSelect {
   max-width: 240px;
 }
+
+/* Preferences: the password form, labels above their fields. */
+.password {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 360px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.fieldHint {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}

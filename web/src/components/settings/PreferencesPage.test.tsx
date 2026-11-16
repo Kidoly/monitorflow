@@ -8,7 +8,7 @@ import { SAVE_DELAY, startPreferences, stopPreferences } from "@/lib/preferences
 import { THEME_KEY } from "@/lib/theme";
 import { As, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
-import { setUrl } from "@/test/navigation";
+import { router, setUrl } from "@/test/navigation";
 
 import { PreferencesPage } from "./PreferencesPage";
 
@@ -16,8 +16,10 @@ vi.mock("next/navigation", () => import("@/test/navigation"));
 
 const URL = "/api/me/preferences";
 
-async function open(server: object = {}, put: { status: number; body?: unknown } = { status: 200, body: {} }) {
-  const fetchMock = stubFetch({ [`GET ${URL}`]: { status: 200, body: server }, [`PUT ${URL}`]: put });
+type Reply = { status: number; body?: unknown };
+
+async function open(server: object = {}, put: Reply = { status: 200, body: {} }, more: Record<string, Reply | Reply[]> = {}) {
+  const fetchMock = stubFetch({ [`GET ${URL}`]: { status: 200, body: server }, [`PUT ${URL}`]: put, ...more });
   render(
     <LocaleProvider>
       <As user={viewer}>
@@ -43,6 +45,7 @@ async function lastPut(fetchMock: ReturnType<typeof stubFetch>) {
 describe("PreferencesPage", () => {
   beforeEach(() => {
     setUrl("/settings/preferences/");
+    router.replace.mockClear();
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -62,7 +65,7 @@ describe("PreferencesPage", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(localStorage.getItem(THEME_KEY)).toBe("light");
     expect(await lastPut(fetchMock)).toEqual({ theme: "light" });
-    await user.click(screen.getByRole("radio", { name: "System" }));
+    await user.click(screen.getByRole("radio", { name: "Follow the system" }));
     expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
     expect(await lastPut(fetchMock)).toEqual({ theme: "system" });
   });
@@ -91,5 +94,75 @@ describe("PreferencesPage", () => {
       await vi.advanceTimersByTimeAsync(SAVE_DELAY);
     });
     expect(await screen.findByText(/could not be saved/)).toBeInTheDocument();
+  });
+
+  it("has Language, Appearance, Sidebar and Password sections, for every role", async () => {
+    await open();
+    expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
+      "Language",
+      "Appearance",
+      "Sidebar",
+      "Password",
+    ]);
+    expect(screen.getByText("Signed in as alice (viewer)")).toBeInTheDocument();
+  });
+
+  it("signs out from the header", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const fetchMock = await open({}, undefined, { "POST /api/auth/logout": { status: 204 } });
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", expect.objectContaining({ method: "POST" }));
+    expect(router.replace).toHaveBeenCalledWith("/login/");
+  });
+
+  describe("password", () => {
+    const PASSWORD_URL = "POST /api/me/password";
+
+    async function fill(user: ReturnType<typeof userEvent.setup>, current: string, next: string, confirm = next) {
+      await user.type(screen.getByLabelText("Current password"), current);
+      await user.type(screen.getByLabelText("New password"), next);
+      await user.type(screen.getByLabelText("Confirm password"), confirm);
+      await user.click(screen.getByRole("button", { name: "Change password" }));
+    }
+
+    it("changes it with the current one and says the other sessions ended", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const fetchMock = await open({}, undefined, { [PASSWORD_URL]: { status: 204 } });
+      await fill(user, "old password here", "a new long password");
+      expect(await screen.findByText("Password changed. Your other sessions were signed out.")).toBeInTheDocument();
+      const call = fetchMock.mock.calls.find(([url]) => url === "/api/me/password");
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+        current_password: "old password here",
+        new_password: "a new long password",
+      });
+      expect(screen.getByLabelText("Current password")).toHaveValue("");
+    });
+
+    it("refuses two different new passwords without asking the server", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const fetchMock = await open();
+      await fill(user, "old password here", "a new long password", "another long password");
+      expect(screen.getByRole("alert")).toHaveTextContent("The passwords differ.");
+      expect(screen.getByLabelText("Confirm password")).toHaveAttribute("aria-invalid", "true");
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/me/password")).toBe(false);
+    });
+
+    it("shows the server's reason, like a wrong current password", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await open({}, undefined, {
+        [PASSWORD_URL]: { status: 400, body: { error: "The current password is not right.", code: "invalid" } },
+      });
+      await fill(user, "wrong password!!", "a new long password");
+      expect(await screen.findByRole("alert")).toHaveTextContent("The current password is not right.");
+      // Still signed in: a 400 is not taken for an expired session.
+      expect(router.replace).not.toHaveBeenCalledWith("/login/");
+    });
+
+    it("asks for at least 12 characters", async () => {
+      await open();
+      const field = screen.getByLabelText("New password");
+      expect(field).toHaveAttribute("minLength", "12");
+      expect(field).toHaveAccessibleDescription(/At least 12 characters/);
+    });
   });
 });
