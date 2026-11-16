@@ -65,7 +65,7 @@ describe("PreferencesPage", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(localStorage.getItem(THEME_KEY)).toBe("light");
     expect(await lastPut(fetchMock)).toEqual({ theme: "light" });
-    await user.click(screen.getByRole("radio", { name: "System" }));
+    await user.click(screen.getByRole("radio", { name: "Follow the system" }));
     expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
     expect(await lastPut(fetchMock)).toEqual({ theme: "system" });
   });

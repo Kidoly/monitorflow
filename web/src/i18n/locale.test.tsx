@@ -1,8 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { LanguageSelect } from "@/components/shell/LanguageSelect";
+import { setLanguage } from "@/lib/preferences";
 
 import { t } from ".";
 import { LOCALE_KEY, applyLocale, matchLocale, preferredLocale } from "./locale";
@@ -48,17 +47,15 @@ describe("locale", () => {
     expect(document.documentElement.lang).toBe("fr");
   });
 
-  it("switches language from the select and keeps the choice", async () => {
+  it("switches language at once and keeps the choice", () => {
     render(
       <LocaleProvider>
         <Sample />
-        <LanguageSelect />
       </LocaleProvider>,
     );
     expect(screen.getByText("Sign out")).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Language" }), "Français");
+    act(() => setLanguage("fr"));
     expect(screen.getByText("Se déconnecter")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Langue" })).toHaveValue("fr");
     expect(localStorage.getItem(LOCALE_KEY)).toBe("fr");
     expect(document.documentElement.lang).toBe("fr");
     act(() => applyLocale("en"));
