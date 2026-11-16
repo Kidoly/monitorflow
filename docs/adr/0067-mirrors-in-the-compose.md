@@ -1,7 +1,7 @@
 # ADR-0067: Mirrors in the production compose
 
 Date: 2026-10-31
-Status: accepted; amends ADR-0030, ADR-0034, ADR-0056 and ADR-0065; amended by ADR-0074 on retention
+Status: accepted; amends ADR-0030, ADR-0034, ADR-0056 and ADR-0065; amended by ADR-0074 on retention; on-demand mode and both sizes in "Add a mirror", ADR-0142
 
 ## Context
 
