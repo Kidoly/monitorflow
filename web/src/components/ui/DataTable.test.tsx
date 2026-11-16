@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setUrl } from "@/test/navigation";
 
-import { type Column, DataTable, PrimaryCell, parseSort, useUrlSort } from "./DataTable";
+import { type Column, DataTable, PrimaryCell, nextSort, parseSort, useUrlSort } from "./DataTable";
 import { isHealthy, problemRank, problemsFirst } from "./problemsFirst";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
@@ -87,6 +87,10 @@ describe("DataTable", () => {
     }
     render(<Page />);
     expect(screen.getByRole("columnheader", { name: "Host" })).toHaveAttribute("aria-sort", "descending");
+    // From descending, a click goes back to the table's own order.
+    await user.click(screen.getByRole("button", { name: "Host" }));
+    expect(window.location.search).toBe("?customer=acme");
+    expect(screen.getByRole("columnheader", { name: "Host" })).toHaveAttribute("aria-sort", "none");
     await user.click(screen.getByRole("button", { name: "Host" }));
     expect(window.location.search).toBe("?customer=acme&sort=host");
     expect(screen.getByRole("columnheader", { name: "Host" })).toHaveAttribute("aria-sort", "ascending");
@@ -166,5 +170,16 @@ describe("problemsFirst", () => {
     expect(problemRank({ ...base, offline: true, certificateWarning: true })).toBe(2);
     expect(problemRank({ ...base, certificateWarning: true })).toBe(3);
     expect(isHealthy(base)).toBe(true);
+  });
+});
+
+describe("nextSort", () => {
+  it("sorts ascending, then descending, then goes back to the table's own order", () => {
+    const asc = nextSort(null, "host");
+    expect(asc).toEqual({ key: "host", direction: "asc" });
+    const desc = nextSort(asc, "host");
+    expect(desc).toEqual({ key: "host", direction: "desc" });
+    expect(nextSort(desc, "host")).toBeNull();
+    expect(nextSort(desc, "os")).toEqual({ key: "os", direction: "asc" });
   });
 });

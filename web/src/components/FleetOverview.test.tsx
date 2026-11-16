@@ -87,7 +87,6 @@ describe("FleetOverview", () => {
     expect(within(first!).getByRole("link", { name: "web-1" })).toHaveAttribute("href", expect.stringMatching(/^\/servers\/view\/?\?id=s1$/));
     // The status strip of the shell replaced the counters.
     expect(screen.queryByRole("group", { name: "Summary, click to filter" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Problems first" })).toBeInTheDocument();
   });
 
   it("speaks French when that is the language", async () => {
@@ -100,7 +99,6 @@ describe("FleetOverview", () => {
     expect(web).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Critique/);
     expect(db).toHaveTextContent(/agent inconnu\s*Hors ligne\s*Dernier contact 13:51/);
     expect(screen.getByText(/^En silence par alice jusqu’à aujourd’hui 18:00\s: migration$/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Problèmes d’abord" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Problème" })).toBeInTheDocument();
   });
 
@@ -206,7 +204,10 @@ describe("FleetOverview", () => {
     await userEvent.clear(screen.getByRole("searchbox", { name: "Search" }));
     await userEvent.click(screen.getByRole("button", { name: "Server" }));
     expect(window.location.search).toBe("?sort=host");
-    await userEvent.click(screen.getByRole("button", { name: "Problems first" }));
+    await userEvent.click(screen.getByRole("button", { name: "Server" }));
+    expect(window.location.search).toBe("?sort=-host");
+    // A third click goes back to problems first.
+    await userEvent.click(screen.getByRole("button", { name: "Server" }));
     expect(window.location.search).toBe("");
   });
 
