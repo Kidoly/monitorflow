@@ -223,9 +223,13 @@ mod tests {
                 Request::Signed { step, .. } => match step {
                     Step::Install => self.install.clone(),
                     Step::Reboot => self.reboot.clone(),
-                    Step::SelfUpdate => None,
+                    Step::SelfUpdate | Step::Winget => None,
                 },
-                Request::Install { .. } | Request::Reboot | Request::SelfUpdate(_) => None,
+                Request::Install { .. }
+                | Request::Reboot
+                | Request::SelfUpdate(_)
+                | Request::WingetScan
+                | Request::WingetUpgrade { .. } => None,
             };
             reply.ok_or_else(|| PackageError::Helper("the update service is not running".into()))
         }
