@@ -163,7 +163,10 @@ describe("MirrorListPage", () => {
       expect(screen.getByText(/200 GiB free of 1,000 GiB on this server/)).toBeInTheDocument();
       expect(within(table).getByText("about 150 GiB")).toBeInTheDocument();
       expect(within(table).getByText("Added")).toBeInTheDocument();
-      expect(within(table).getByText(/needs about 280 GiB and this server has 200 GiB free/)).toBeInTheDocument();
+      // The server's English sentence is not shown: the column and the
+      // header already give both numbers.
+      expect(within(table).getByText("Not enough free space")).toBeInTheDocument();
+      expect(screen.queryByText(/needs about 280 GiB/)).not.toBeInTheDocument();
       expect(within(table).queryByRole("button", { name: /Ubuntu/ })).not.toBeInTheDocument();
 
       await user.click(within(table).getByRole("button", { name: "Add Debian 13 (trixie)" }));
@@ -175,6 +178,41 @@ describe("MirrorListPage", () => {
         "Debian 13 (trixie) added. The first sync starts within a minute",
       );
       expect(screen.queryByRole("table", { name: "Distributions" })).not.toBeInTheDocument();
+    });
+
+    it("says in French why a distribution does not fit, with one way of writing sizes", async () => {
+      const user = userEvent.setup();
+      setActiveLocale("fr");
+      const free = 3.3 * GIB;
+      stubFetch({
+        "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } },
+        "GET /api/mirrors/catalog": {
+          status: 200,
+          body: catalog({
+            disk: { free_bytes: free, total_bytes: 20 * GIB },
+            distributions: [
+              {
+                id: "debian-13",
+                name: "Debian 13 (trixie)",
+                family: "apt",
+                size_bytes: 150 * GIB,
+                added: false,
+                problem: "Debian 13 (trixie) needs about 150 GiB and this server has 3.3 GiB free.",
+              },
+            ],
+          }),
+        },
+      });
+      render(
+        <As user={globalAdmin}>
+          <MirrorListPage />
+        </As>,
+      );
+      await user.click(await screen.findByRole("button", { name: "Ajouter un miroir" }));
+      const table = await screen.findByRole("table", { name: "Distributions" });
+      expect(screen.getByText(/3,3\sGio libres sur 20\sGio/)).toBeInTheDocument();
+      expect(within(table).getByText("Pas assez d’espace libre")).toBeInTheDocument();
+      expect(screen.queryByText(/needs about/)).not.toBeInTheDocument();
     });
 
     it("says what to do when the tools are not running", async () => {
