@@ -48,6 +48,10 @@ pub struct PluginChecks {
     newest: Mutex<i64>,
     /// Where `newest` is kept across restarts.
     state: Option<PathBuf>,
+    /// What `state` holds. Saves run off the runtime and can finish in
+    /// any order: one only writes a value newer than this, so an older
+    /// save never overwrites a newer one.
+    saved: Arc<Mutex<i64>>,
 }
 
 impl PluginChecks {
@@ -73,6 +77,7 @@ impl PluginChecks {
             granted: Mutex::default(),
             newest: Mutex::default(),
             state: None,
+            saved: Arc::default(),
         }
     }
 
@@ -84,6 +89,7 @@ impl PluginChecks {
             .and_then(|text| text.trim().parse().ok())
             .unwrap_or(0);
         self.newest = Mutex::new(newest);
+        self.saved = Arc::new(Mutex::new(newest));
         self.state = Some(path);
         self
     }
@@ -136,14 +142,22 @@ impl PluginChecks {
         let Some(path) = self.state.clone() else {
             return;
         };
+        let saved = Arc::clone(&self.saved);
         let save = move || {
-            let saved = monitorflow_common::client::identity::write_atomic(
+            let mut saved = saved.lock().expect("not poisoned");
+            if newest <= *saved {
+                return;
+            }
+            let written = monitorflow_common::client::identity::write_atomic(
                 &path,
                 newest.to_string().as_bytes(),
                 0o600,
             );
-            if let Err(error) = saved {
-                tracing::warn!(%error, "cannot remember the newest list of plugins; it will not survive a restart");
+            match written {
+                Ok(()) => *saved = newest,
+                Err(error) => {
+                    tracing::warn!(%error, "cannot remember the newest list of plugins; it will not survive a restart");
+                }
             }
         };
         match tokio::runtime::Handle::try_current() {
