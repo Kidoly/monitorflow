@@ -71,10 +71,10 @@ Eviction runs at the end of each retention pass (hourly) and whenever a download
 
 Two moments know in advance what will be installed:
 
-- **A campaign is pinned.** When a campaign with pinned snapshots is created, and again at each tick of its runner while it is not final, the server fetches into the store the pending updates of its target servers that the pinned snapshots list.
+- **A campaign is pinned.** Within 10 minutes of a campaign with pinned snapshots being created, and every 10 minutes while it is not final, the server fetches into the store the pending updates of its target servers that the pinned snapshots list. A draft waits for its window anyway, so a few minutes cost nothing, and a pass over packages already stored only reads their files.
 - **After each sync** of an on-demand mirror, the pending updates of the whole fleet that its new `current` lists, so that the next morning's automatic updates come from the disk.
 
-The pending updates are those agents report (`server_packages.upgradable_version`, ADR-0031), matched by name, version and architecture against the package list; no server-to-mirror mapping is needed, since a version string names one distribution's package. Prefetches share the bounded downloads and the deduplication of requests, and wait behind clients' requests. A prefetch that fails is logged and left to the first request.
+The pending updates are those agents report (`server_packages.upgradable_version`, ADR-0031), matched by name, version and architecture against the package list; no server-to-mirror mapping is needed, since a version string names one distribution's package. Prefetches share the bounded downloads and the deduplication of requests, two at a time, leaving most downloads to clients' requests. A prefetch that fails is logged and left to the first request.
 
 ### Relays
 
