@@ -1,13 +1,9 @@
 .bar {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   font-size: 13px;
-}
-
-.label {
-  color: var(--muted);
 }
 
 .lines {

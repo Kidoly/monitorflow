@@ -31,13 +31,15 @@ import { usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { UUID } from "@/lib/uuid";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { ButtonLink } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { FactsBox } from "@/components/ui/FactsBox";
+import { Hint } from "@/components/ui/Hint";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Page } from "@/components/ui/Page";
 import { Banner, ErrorState, LoadingBlock, NotFound, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
-import { Label, StatusLabel } from "@/components/ui/StatusLabel";
+import { RowMenu } from "@/components/ui/RowMenu";
+import { Label, StatusLabel, statusWord } from "@/components/ui/StatusLabel";
 import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { formatExact } from "@/components/ui/time";
 
@@ -46,11 +48,12 @@ import { serverSiblings } from "./breadcrumbSiblings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { ServerCommandsTab } from "./ServerCommandsTab";
-import { RollbackFact } from "./ServerRollback";
+import { RollbackBadge, RollbackFact } from "./ServerRollback";
 import { ServerLogsTab } from "./ServerLogsTab";
 import { type SensorRules, ServerSensorsTab } from "./ServerSensorsTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
-import { SilenceBar } from "./Silences";
+import styles from "./ServerPage.module.css";
+import { useSilenceBar } from "./Silences";
 
 /** Commands loaded at first; "Load more" adds pages of this size. */
 export const COMMANDS_PAGE = 50;
@@ -181,19 +184,13 @@ export function ServerPage({ id }: { id: string | null }) {
   return (
     <Page>
       <ServerHeading server={server} />
-      <PageHeader
-        detail
-        title={server.hostname}
-        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.status} />}
-        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
-        actions={
-          <>
-            <UpdateAgent server={server} latest={latestAgent} commands={commands} onQueued={refresh} />
-            {!server.revoked_at && administersCustomer(me, server.customer_id) && (
-              <RemovePeer kind="servers" id={server.id} name={server.hostname} onRemoved={refresh} />
-            )}
-          </>
-        }
+      <ServerHeader
+        server={server}
+        latestAgent={latestAgent}
+        commands={commands}
+        now={updatedAt}
+        stale={stale}
+        onChanged={refresh}
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {server.revoked_at && (
@@ -205,12 +202,6 @@ export function ServerPage({ id }: { id: string | null }) {
           canAdminister={administersCustomer(me, server.customer_id)}
         />
       )}
-      {!server.revoked_at && (
-        <SilenceBar
-          target={{ scope: "server", id: server.id, name: server.hostname, customerId: server.customer_id, siteId: server.site_id }}
-        />
-      )}
-      <ServerFacts server={server} latestAgent={latestAgent} now={updatedAt} stale={stale} onChanged={refresh} />
       <Tabs
         label={t("server.sections")}
         idBase="server"
@@ -261,6 +252,131 @@ export function ServerPage({ id }: { id: string | null }) {
         )}
       </TabPanel>
     </Page>
+  );
+}
+
+/**
+ * Title, status and actions (Update agent, Silence ▾, ⋯), one line of facts
+ * with a Details disclosure for the rest, and a badge only for what is not in
+ * its default, healthy state: AI commands on, offline alerts off, rollback
+ * limited, a certificate problem, no package updates.
+ */
+function ServerHeader({
+  server,
+  latestAgent,
+  commands,
+  now,
+  stale,
+  onChanged,
+}: {
+  server: ServerDetail;
+  latestAgent: string | null;
+  commands: ServerData["commands"];
+  now: Date;
+  stale: boolean;
+  onChanged: () => void;
+}) {
+  const me = useMe();
+  const [details, setDetails] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const live = !server.revoked_at;
+  const silences = useSilenceBar({
+    scope: "server",
+    id: server.id,
+    name: server.hostname,
+    customerId: server.customer_id,
+    siteId: server.site_id,
+  });
+  const canRemove = live && administersCustomer(me, server.customer_id);
+  return (
+    <>
+      <PageHeader
+        detail
+        title={server.hostname}
+        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.status} />}
+        meta={<RefreshLine updatedAt={now} stale={stale} />}
+        actions={
+          <>
+            <UpdateAgent server={server} latest={latestAgent} commands={commands} onQueued={onChanged} />
+            {live && silences.menu}
+            {canRemove && (
+              <RowMenu
+                label={t("server.more", { name: server.hostname })}
+                items={[{ label: t("server.remove.trigger", { name: server.hostname }), onSelect: () => setRemoving(true), danger: true }]}
+              />
+            )}
+          </>
+        }
+        sub={
+          <>
+            <span className={styles.line}>
+              {[
+                formatOs(server.os_family, server.os_version),
+                t("server.line.agent", { version: server.agent_version ?? t("server.fact.unknown") }),
+              ].join(" · ")}
+              {" · "}
+              <Link href={siteHref(server.site_id)}>{server.site_name}</Link>
+              {" · "}
+              {server.last_heartbeat ? (
+                <>
+                  {t("server.line.seen")} <RelativeTime value={server.last_heartbeat} now={now} stale={stale} />
+                </>
+              ) : (
+                t("server.line.neverSeen")
+              )}
+            </span>
+            {live && <ServerBadges server={server} now={now} />}
+            <Button variant="ghost" size="small" aria-expanded={details} onClick={() => setDetails(!details)}>
+              {t("ui.details")}
+            </Button>
+          </>
+        }
+      />
+      {removing && canRemove && (
+        <RemovePeer kind="servers" id={server.id} name={server.hostname} onRemoved={onChanged} onClose={() => setRemoving(false)} />
+      )}
+      {live && silences.notices}
+      {live && silences.form}
+      {details && <ServerFacts server={server} latestAgent={latestAgent} now={now} stale={stale} onChanged={onChanged} />}
+    </>
+  );
+}
+
+/** Badges for the states that are not the default; nothing when all is as usual. */
+function ServerBadges({ server, now }: { server: ServerDetail; now: Date }) {
+  const { certificate } = server;
+  const problem = !certificate
+    ? null
+    : certificate.revoked
+      ? statusWord("certificate", "revoked")[0]
+      : certificateProblem(certificate.not_after, now);
+  return (
+    <>
+      {aiCommands(server) === "accepted" && (
+        <Hint tone="info" label={t("server.badge.aiOn")}>
+          {t("server.ai.runs")}
+        </Hint>
+      )}
+      {(server.offline_alerts === false || server.site_offline_alerts === false) && (
+        <Hint tone="neutral" label={t("server.badge.offlineOff")}>
+          {t("server.offline.none")}
+        </Hint>
+      )}
+      <RollbackBadge serverId={server.id} />
+      {problem && (
+        <Hint
+          tone={certificate!.revoked || certificateState(certificate!.not_after, now) === "failed" ? "bad" : "warn"}
+          label={t("server.fact.certificate")}
+        >
+          {problem}
+        </Hint>
+      )}
+      {server.package_updates === false && (
+        <Hint tone="neutral" label={t("server.badge.noPackageUpdates")}>
+          {t("server.fact.noPackageUpdates")}
+        </Hint>
+      )}
+    </>
   );
 }
 
@@ -538,8 +654,6 @@ function ServerFacts({
                 value: <RollbackFact server={server} canMap={administersCustomer(me, server.customer_id)} />,
               },
             ]),
-      ]}
-      details={[
         ...(summary ? [{ label: t("server.fact.commands"), value: summary }] : []),
         { label: t("server.fact.certificateId"), value: server.peer_id, mono: true },
         ...(certificate ? [{ label: t("server.fact.certificateUntil"), value: formatExact(new Date(certificate.not_after)).slice(0, 10) }] : []),

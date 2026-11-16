@@ -1,0 +1,42 @@
+.hint {
+  position: relative;
+  display: inline-flex;
+  border-radius: var(--radius-label);
+  cursor: help;
+}
+
+.icon {
+  margin-left: 6px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: max-content;
+  max-width: 320px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  background: var(--text);
+  color: var(--surface);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: normal;
+  box-shadow: var(--shadow-menu);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    visibility 120ms ease;
+}
+
+.hint:hover .tip,
+.hint:focus-visible .tip {
+  opacity: 1;
+  visibility: visible;
+}

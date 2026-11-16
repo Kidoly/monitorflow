@@ -124,3 +124,16 @@
   font-size: 14px;
   font-weight: 600;
 }
+
+/* "Debian 13 · agent 0.4.0 · main · seen 28 s ago" under the title. */
+.line {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.line a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 2px;
+}

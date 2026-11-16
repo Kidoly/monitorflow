@@ -152,7 +152,12 @@ function routes(overrides: Record<string, unknown> = {}) {
   } as Parameters<typeof stubFetch>[0];
 }
 
-const heading = () => screen.findByRole("heading", { level: 1, name: "web-1" });
+/** Waits for the page, then opens Details, where the full facts list is. */
+async function heading() {
+  const title = await screen.findByRole("heading", { level: 1, name: "web-1" });
+  await userEvent.click(screen.getByRole("button", { name: /^(Details|Détails)$/ }));
+  return title;
+}
 
 describe("ServerPage", () => {
   beforeEach(() => {
@@ -189,11 +194,11 @@ describe("ServerPage", () => {
     expect(facts).toHaveTextContent(/Agent\s*0\.2\.0 · via relay-paris-1/);
     expect(facts).toHaveTextContent(/Certificate\s*Valid, renews automatically/);
     expect(facts).toHaveTextContent(/Added\s*2026-05-03 09:12/);
-    expect(facts).not.toHaveTextContent("Certificate ID");
-    const details = screen.getByText("Details").closest("details")!;
-    expect(details).not.toHaveAttribute("open");
-    expect(details).toHaveTextContent(/Certificate ID\s*agent-1/);
-    expect(details).toHaveTextContent(/Certificate valid until\s*2026-12/);
+    expect(facts).toHaveTextContent(/Certificate ID\s*agent-1/);
+    expect(facts).toHaveTextContent(/Certificate valid until\s*2026-12/);
+    // One line of facts under the title, and no badge while everything is as usual.
+    expect(screen.getByText(/^Debian 12 · agent 0\.2\.0/)).toHaveTextContent(/^Debian 12 · agent 0\.2\.0 · paris · seen 12 s ago/);
+    expect(screen.queryByRole("tooltip", { hidden: true })).not.toBeInTheDocument();
 
     expect(screen.getByRole("tab", { name: "Sensors · 3" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Commands · 1 running" })).toBeInTheDocument();
@@ -315,8 +320,10 @@ describe("ServerPage", () => {
     stubFetch(routes({ [`GET /api/servers/${ID}`]: ok(server) }));
     render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByText("Package updates aren't available on this system; monitoring works normally")).toBeInTheDocument();
-    expect(screen.getByText("Alpine 3.20")).toBeInTheDocument();
+    expect(screen.getByText("No package updates")).toBeInTheDocument();
+    const facts = within(document.querySelector("dl")!);
+    expect(facts.getByText("Package updates aren't available on this system; monitoring works normally")).toBeInTheDocument();
+    expect(facts.getByText("Alpine 3.20")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Updates" }));
     expect(await screen.findByText(/update web-1 with\s+its own tools/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open campaigns" })).not.toBeInTheDocument();
@@ -359,7 +366,8 @@ describe("ServerPage", () => {
       stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting({ ...off, shell: "accepted" }) }));
       render(<ServerPage id={ID} />);
       await heading();
-      expect(screen.getByText(/Runs the commands AI sends/)).toHaveTextContent(/^On Runs/);
+      expect(screen.getByText("AI commands on")).toBeInTheDocument();
+      expect(within(document.querySelector("dl")!).getByText(/Runs the commands AI sends/)).toHaveTextContent(/^On Runs/);
       expect(screen.queryByRole("link", { name: "How to turn them on" })).not.toBeInTheDocument();
     });
 
@@ -493,7 +501,9 @@ describe("ServerPage", () => {
         </As>,
       );
       await heading();
-      expect(screen.getByText(/Runs the commands AI sends/)).toHaveTextContent(/Turned on by alice at 2026-11-16 \d\d:02\./);
+      expect(within(document.querySelector("dl")!).getByText(/Runs the commands AI sends/)).toHaveTextContent(
+        /Turned on by alice at 2026-11-16 \d\d:02\./,
+      );
       unmount();
 
       const pending = { ...change, on: false, state: "queued", finished_at: null } as const;
@@ -504,7 +514,7 @@ describe("ServerPage", () => {
         </As>,
       );
       await heading();
-      expect(screen.getByText(/Runs the commands AI sends/)).toHaveTextContent(
+      expect(within(document.querySelector("dl")!).getByText(/Runs the commands AI sends/)).toHaveTextContent(
         /Turning off… asked by alice at .*\. It applies when the server is back\./,
       );
       expect(screen.queryByRole("button", { name: "Turn off…" })).not.toBeInTheDocument();
@@ -697,7 +707,8 @@ describe("ServerPage", () => {
         <ServerPage id={ID} />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Remove web-1…" }));
+    await userEvent.click(await screen.findByRole("button", { name: "More actions for web-1" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Remove web-1…" }));
     expect(screen.getByRole("form", { name: "Remove web-1?" })).toHaveTextContent("history is kept");
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/revoke"))).toBe(false);
     await userEvent.click(screen.getByRole("button", { name: "Remove web-1" }));
@@ -755,14 +766,15 @@ describe("ServerPage", () => {
     stubFetch(routes({ [`GET /api/servers/${ID}`]: ok({ ...web1, certificate }) }));
     const { unmount } = render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByText("Renewal late, expires in 1 day")).toBeInTheDocument();
+    expect(screen.getByRole("tooltip", { hidden: true })).toHaveTextContent("Renewal late, expires in 1 day");
+    expect(within(document.querySelector("dl")!).getByText("Renewal late, expires in 1 day")).toBeInTheDocument();
     unmount();
 
     const revoked = { ...certificate, revoked: true, revoked_at: "2026-10-19T08:00:00", revocation_reason: "key_compromise" };
     stubFetch(routes({ [`GET /api/servers/${ID}`]: ok({ ...web1, certificate: revoked }) }));
     render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByText("Revoked").closest("dd")).toHaveTextContent("Revoked 2026-10-19 08:00 (key compromise)");
+    expect(within(document.querySelector("dl")!).getByText("Revoked").closest("dd")).toHaveTextContent("Revoked 2026-10-19 08:00 (key compromise)");
   });
 
   it("reads the server from its own endpoint, not the list", async () => {
