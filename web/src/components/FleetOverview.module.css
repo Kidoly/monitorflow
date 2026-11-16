@@ -51,3 +51,10 @@
   white-space: normal;
   max-width: 56ch;
 }
+
+/* The server's sub-line (OS, agent, relay) ends with an ellipsis rather than widening the table. */
+.host span {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

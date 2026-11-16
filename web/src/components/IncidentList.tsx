@@ -159,23 +159,19 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         ),
     },
     {
-      key: "server",
-      header: t("incidents.column.server"),
+      key: "incident",
+      header: t("incidents.column.incident"),
       cell: (i) => (
         <PrimaryCell
-          title={i.hostname}
-          href={scopedHref(incidentPeerHref(i), scope)}
-          sub={[i.site_name, multiCustomer(me) && customers.get(i.site_id)].filter(Boolean).join(" · ")}
+          title={incidentTitle(i)}
+          href={scopedHref(incidentHref(i.id), scope)}
+          sub={
+            <>
+              <Link href={scopedHref(incidentPeerHref(i), scope)}>{i.hostname}</Link>
+              {[" ", i.site_name, multiCustomer(me) && customers.get(i.site_id)].filter(Boolean).join(" · ")}
+            </>
+          }
         />
-      ),
-    },
-    {
-      key: "metric",
-      header: t("incidents.column.metric"),
-      cell: (i) => (
-        <Link href={scopedHref(incidentHref(i.id), scope)} className={i.state === "open" ? styles.strong : undefined}>
-          {incidentTitle(i)}
-        </Link>
       ),
     },
     {
@@ -190,25 +186,31 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     {
       key: "state",
       header: t("incidents.column.state"),
+      className: styles.state,
       cell: (i) => (
         <>
           {i.resolved_at ? t("incidents.resolvedSince", { when: formatSince(new Date(i.resolved_at), now) }) : t("incidents.open")}
+          <span className={styles.small}>
+            {" · "}
+            {formatDuration(((i.resolved_at ? Date.parse(i.resolved_at) : now.getTime()) - Date.parse(i.opened_at)) / 1000)}
+          </span>
           <SilencedSign incident={i} now={now} />
           <Acknowledged incident={i} now={now} onAcknowledge={acknowledge} />
         </>
       ),
     },
     {
-      key: "duration",
-      header: t("incidents.column.duration"),
-      cell: (i) => formatDuration(((i.resolved_at ? Date.parse(i.resolved_at) : now.getTime()) - Date.parse(i.opened_at)) / 1000),
-    },
-    {
       key: "last",
       header: t("incidents.column.last"),
-      cell: (i) => <span className={i.state === "open" ? styles.strong : undefined}>{value(i, i.last_value)}</span>,
+      cell: (i) => (
+        <>
+          <span className={i.state === "open" ? styles.strong : undefined}>{value(i, i.last_value)}</span>
+          {i.peak_value !== null && i.peak_value !== i.last_value && (
+            <span className={styles.peak}>{t("incidents.peak", { value: value(i, i.peak_value) })}</span>
+          )}
+        </>
+      ),
     },
-    { key: "peak", header: t("incidents.column.peak"), cell: (i) => value(i, i.peak_value) },
   ];
 
   const acknowledgeable = incidents.filter((i) => i.state === "open" && i.can_acknowledge && !i.acknowledged_at);
@@ -293,7 +295,6 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
           loading={!data}
           hasMore={Boolean(data?.more) && limit < MAX_LIMIT}
           onLoadMore={() => setLimit((n) => Math.min(MAX_LIMIT, n + PAGE_SIZE))}
-          summary={(shown) => t("incidents.summary", { count: shown, perPage: PAGE_SIZE })}
         />
       )}
     </Page>
