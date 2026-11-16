@@ -3189,6 +3189,118 @@
         }
       }
     },
+    "/api/v1/checks/usage": {
+      "get": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Count the servers running each check",
+        "description": "Each enabled check with the number of servers that run it, over the sites within the key's reach, most servers first, at most 200. A site's check counts every server of the site that is not removed; a server's own check counts that server. A server with its own copy of a site's check counts twice. The web interface shows the first few as the \"Most used\" checks.\n\n**Who**: any role. **Area**: `alerts`.",
+        "operationId": "check_usage",
+        "responses": {
+          "200": {
+            "description": "Checks by servers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckUsageList"
+                },
+                "example": {
+                  "checks": [
+                    {
+                      "kind": "systemd",
+                      "name": "service_nginx",
+                      "plugin": null,
+                      "servers": 42
+                    },
+                    {
+                      "kind": "port",
+                      "name": "port_443",
+                      "plugin": null,
+                      "servers": 40
+                    },
+                    {
+                      "kind": "plugin",
+                      "name": "http_status_shop",
+                      "plugin": "http-status",
+                      "servers": 3
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's maker has no role: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/commands/{id}": {
       "get": {
         "tags": [
@@ -14885,6 +14997,155 @@
         }
       }
     },
+    "/api/v1/relays/{id}/offline-alerts": {
+      "put": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Turn a relay's offline alerts on or off",
+        "description": "With `false`, the relay opens no incident when it stops reporting, and its open offline incident resolves within a minute. With `true`, they are back, unless its site has them off. Audited as `relay.offline_alerts`. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the relay's site. **Area**: `alerts`.",
+        "operationId": "relay_offline_alerts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The relay",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfflineAlerts"
+              },
+              "example": {
+                "enabled": false
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The setting as set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineAlerts"
+                },
+                "example": {
+                  "enabled": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the relay's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such relay, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/relays/{id}/revoke": {
       "post": {
         "tags": [
@@ -19966,6 +20227,434 @@
         }
       }
     },
+    "/api/v1/servers/{id}/recommendations": {
+      "get": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "List the checks recommended for a server",
+        "description": "What the server's agent saw running (services, listening ports, mounted shares) that none of its enabled checks covers yet, one recommendation per thing seen, each with the checks that would cover it: a kind and its `params`, as `POST /api/v1/servers/{id}/sensor_configs` takes them. `reported_at` is when the agent last reported; it is null before its first report and for agents that do not report (Windows, older ones), and the list is then empty. A dismissed recommendation stays listed with `dismissed_by` and `dismissed_at` until it is restored or no longer applies.\n\nAdding one is adding its checks, and the thresholds that go with them, through the routes of checks and thresholds: MonitorFlow adds nothing by itself.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "operationId": "recommendations",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The recommendations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckRecommendationList"
+                },
+                "example": {
+                  "recommendations": [
+                    {
+                      "checks": [
+                        {
+                          "kind": "systemd",
+                          "params": {
+                            "units": "postgresql@16-main.service"
+                          }
+                        },
+                        {
+                          "kind": "port",
+                          "params": {
+                            "host": "127.0.0.1",
+                            "port": "5432"
+                          }
+                        }
+                      ],
+                      "dismissed_at": null,
+                      "dismissed_by": null,
+                      "evidence": [
+                        "postgresql@16-main.service is running",
+                        "port 5432 is listening"
+                      ],
+                      "key": "postgresql",
+                      "title": "PostgreSQL is running"
+                    },
+                    {
+                      "checks": [
+                        {
+                          "kind": "port",
+                          "params": {
+                            "host": "nas.lan",
+                            "port": "2049"
+                          }
+                        }
+                      ],
+                      "dismissed_at": "2026-11-12T10:20:00Z",
+                      "dismissed_by": "alice",
+                      "evidence": [
+                        "/mnt/backup is mounted from nas.lan (nfs4)"
+                      ],
+                      "key": "share:/mnt/backup",
+                      "title": "/mnt/backup is a share on nas.lan"
+                    }
+                  ],
+                  "reported_at": "2026-11-16T08:02:11Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/recommendations/dismiss": {
+      "post": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Dismiss a recommendation of a server",
+        "description": "Hides a current recommendation of the server for good, for everyone: it is listed as dismissed, by whom and when. Only a recommendation the server has now can be dismissed. Audited as `check_recommendation.dismiss`. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `servers`.",
+        "operationId": "dismiss_recommendation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecommendationKey"
+              },
+              "example": {
+                "key": "postgresql"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Dismissed"
+          },
+          "400": {
+            "description": "Not the expected JSON: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the server's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, outside the key's reach, or no current recommendation with this `key`: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/recommendations/restore": {
+      "post": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Restore a dismissed recommendation of a server",
+        "description": "Shows a dismissed recommendation of the server again. Audited as `check_recommendation.restore`. Repeating it is 404: it is no longer dismissed.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `servers`.",
+        "operationId": "restore_recommendation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecommendationKey"
+              },
+              "example": {
+                "key": "share:/mnt/backup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Shown again"
+          },
+          "400": {
+            "description": "Not the expected JSON: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the server's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, outside the key's reach, or no dismissed recommendation with this `key`: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/revoke": {
       "post": {
         "tags": [
@@ -20258,6 +20947,190 @@
           },
           "500": {
             "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/sensor-values": {
+      "get": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Read the recent values of a server's sensors",
+        "description": "Every sensor the server runs (its effective configuration), each with the metric that stands for it and, per instance seen, a sparkline of the last hour (30 points, one every two minutes, each the worst value of its step: the highest for usage, the lowest for what is left or up), the last value and its time. `reason` says why a sensor has no series at all (\"No data yet\") or why an instance's last sample is late (\"No data for 5 minutes\"). For other ranges or metrics, use the metric queries.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "operationId": "sensor_values",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sensors and their values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorValues"
+                },
+                "example": {
+                  "end": 1763294400,
+                  "sensors": [
+                    {
+                      "instance": "",
+                      "metric": "monitorflow_cpu_usage_ratio",
+                      "name": "cpu",
+                      "reason": null,
+                      "series": [
+                        {
+                          "instance": "total",
+                          "last_at": "2026-11-16T12:39:40Z",
+                          "last_value": 0.18,
+                          "points": [
+                            [
+                              1763290800,
+                              0.12
+                            ],
+                            [
+                              1763290920,
+                              0.31
+                            ]
+                          ],
+                          "reason": null
+                        }
+                      ]
+                    },
+                    {
+                      "instance": "",
+                      "metric": "monitorflow_port_5432_up",
+                      "name": "port_5432",
+                      "reason": null,
+                      "series": [
+                        {
+                          "instance": "127.0.0.1:5432",
+                          "last_at": "2026-11-16T12:34:12Z",
+                          "last_value": 1.0,
+                          "points": [
+                            [
+                              1763290800,
+                              1.0
+                            ],
+                            [
+                              1763290920,
+                              null
+                            ]
+                          ],
+                          "reason": "No data for 5 minutes"
+                        }
+                      ]
+                    },
+                    {
+                      "instance": "",
+                      "metric": "monitorflow_service_nginx_active",
+                      "name": "service_nginx",
+                      "reason": "No data yet",
+                      "series": []
+                    }
+                  ],
+                  "start": 1763290800,
+                  "step": 120
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics database is unreachable or not configured: `metrics_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The metrics database did not answer in time: `metrics_timeout`",
             "content": {
               "application/json": {
                 "schema": {
@@ -30134,6 +31007,56 @@
         },
         "additionalProperties": false
       },
+      "CheckRecommendation": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Recommendation"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "dismissed_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "dismissed_by": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Who dismissed it and when; null while it stands."
+              }
+            }
+          }
+        ],
+        "description": "A recommendation, dismissed or not."
+      },
+      "CheckRecommendationList": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/recommendations`.",
+        "required": [
+          "recommendations"
+        ],
+        "properties": {
+          "recommendations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckRecommendation"
+            }
+          },
+          "reported_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the agent last reported what runs; null before its first\nreport, or for an agent that does not report (Windows, older)."
+          }
+        }
+      },
       "CheckResult": {
         "type": "object",
         "description": "Body of `POST /api/server-update/check`.",
@@ -30171,6 +31094,53 @@
           "source": {
             "type": "string",
             "description": "Base URL releases are fetched from."
+          }
+        }
+      },
+      "CheckUsage": {
+        "type": "object",
+        "description": "One check and how many servers run it.",
+        "required": [
+          "kind",
+          "name",
+          "servers"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "The kind of check, like `port`, `systemd` or `plugin`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The sensor name, like `port_443` or `service_nginx`."
+          },
+          "plugin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For kind `plugin`, the plugin it runs."
+          },
+          "servers": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Servers that run it, not removed ones."
+          }
+        }
+      },
+      "CheckUsageList": {
+        "type": "object",
+        "description": "Body of `GET /api/checks/usage`.",
+        "required": [
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckUsage"
+            },
+            "description": "Most servers first."
           }
         }
       },
@@ -35647,6 +36617,99 @@
           }
         }
       },
+      "Recommendation": {
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "evidence",
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecommendedCheck"
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the agent saw: \"postgresql@16-main.service is running\"."
+          },
+          "key": {
+            "type": "string",
+            "description": "Stable for what it is about, for dismissals: `postgresql`,\n`share:/mnt/backup`."
+          },
+          "title": {
+            "type": "string",
+            "description": "\"PostgreSQL is running\"."
+          }
+        }
+      },
+      "RecommendationKey": {
+        "type": "object",
+        "description": "Names a recommendation of the server.",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The recommendation's `key`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecommendedCheck": {
+        "type": "object",
+        "description": "A check a recommendation proposes, as the API takes it: a kind and its\nparameters. The web interface names it and adds its alert as for any\ncheck added by hand.",
+        "required": [
+          "kind",
+          "params"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/components/schemas/RecommendedParams"
+          }
+        }
+      },
+      "RecommendedParams": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "units"
+            ],
+            "properties": {
+              "units": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "port",
+              "host"
+            ],
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "A service check names its units; a port check its port and host."
+      },
       "RejectRequest": {
         "type": "object",
         "description": "Body of `POST .../reject`.",
@@ -37157,6 +38220,123 @@
           }
         },
         "additionalProperties": false
+      },
+      "SensorValue": {
+        "type": "object",
+        "description": "One sensor, by its name and configured instance.",
+        "required": [
+          "name",
+          "instance",
+          "metric",
+          "series"
+        ],
+        "properties": {
+          "instance": {
+            "type": "string",
+            "description": "`\"\"` when the sensor is not limited to one instance."
+          },
+          "metric": {
+            "type": "string",
+            "description": "The metric that stands for it."
+          },
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is no series at all: \"No data yet\"."
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesValue"
+            },
+            "description": "One per instance seen, like one per mount of a disk sensor."
+          }
+        }
+      },
+      "SensorValues": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/sensor-values`.",
+        "required": [
+          "start",
+          "end",
+          "step",
+          "sensors"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sensors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SensorValue"
+            }
+          },
+          "start": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The sparklines' range and step, in Unix seconds."
+          },
+          "step": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SeriesValue": {
+        "type": "object",
+        "description": "One instance of a sensor's metric.",
+        "required": [
+          "instance",
+          "points"
+        ],
+        "properties": {
+          "instance": {
+            "type": "string",
+            "description": "`\"\"` for a metric without instances."
+          },
+          "last_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            },
+            "description": "`[unix seconds, value]` from `start` to `end`; the value is null\nfor a step without a sample."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when the last sample is late: \"No data for 5 minutes\"."
+          }
+        }
       },
       "SeriesView": {
         "type": "object",

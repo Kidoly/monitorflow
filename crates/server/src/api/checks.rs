@@ -16,17 +16,22 @@ use super::{ApiError, ApiState};
 /// Most entries returned; the catalogue shows a handful.
 pub const MAX_USAGE: i64 = 200;
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+/// One check and how many servers run it.
+#[derive(Debug, Serialize, PartialEq, Eq, utoipa::ToSchema)]
 pub struct CheckUsage {
+    /// The kind of check, like `port`, `systemd` or `plugin`.
     pub kind: String,
     /// The sensor name, like `port_443` or `service_nginx`.
     pub name: String,
     /// For kind `plugin`, the plugin it runs.
     pub plugin: Option<String>,
+    /// Servers that run it, not removed ones.
     pub servers: i64,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/checks/usage`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CheckUsageList)]
 pub struct UsageList {
     /// Most servers first.
     pub checks: Vec<CheckUsage>,

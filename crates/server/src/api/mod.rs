@@ -669,6 +669,7 @@ pub(crate) mod one_time;
 pub mod openapi;
 pub mod openapi_auto_update;
 pub mod openapi_campaigns;
+mod openapi_checks;
 pub mod openapi_core;
 mod openapi_dashboards;
 mod openapi_plugins;

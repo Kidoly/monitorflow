@@ -163,20 +163,23 @@ const RULES: &[Rule] = &[
 /// A check a recommendation proposes, as the API takes it: a kind and its
 /// parameters. The web interface names it and adds its alert as for any
 /// check added by hand.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = RecommendedCheck)]
 pub struct Proposed {
     pub kind: &'static str,
     pub params: Params,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// A service check names its units; a port check its port and host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(untagged)]
+#[schema(as = RecommendedParams)]
 pub enum Params {
     Service { units: String },
     Port { port: String, host: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct Recommendation {
     /// Stable for what it is about, for dismissals: `postgresql`,
     /// `share:/mnt/backup`.
