@@ -21,15 +21,32 @@ a.btn:hover {
   text-decoration: none;
 }
 
+.btn:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--hl);
+}
+
 .btn.k,
-a.btn.k {
+a.btn.k,
+.btn.k:hover:not(:disabled) {
   background: var(--text);
-  color: var(--bg);
+  color: var(--surface);
   border-color: var(--text);
 }
 
+.btn.k:hover:not(:disabled) {
+  opacity: 0.86;
+}
+
+/* A quiet action inside a panel or a header: no border until hovered. */
+.btn.ghost,
+a.btn.ghost {
+  border-color: transparent;
+  background: transparent;
+}
+
 .btn.danger,
-a.btn.danger {
+a.btn.danger,
+.btn.danger:hover:not(:disabled) {
   background: var(--bad-bg);
   color: var(--bad);
   border-color: transparent;
@@ -40,10 +57,11 @@ a.btn.danger {
   border-color: var(--text);
 }
 
-/* A chosen option of a segmented group ("± 3 h"). */
-.btn[aria-pressed="true"] {
-  background: var(--text);
-  color: var(--bg);
+/* A chosen option of a segmented group ("± 3 h"): selected, not primary. */
+.btn[aria-pressed="true"],
+.btn[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--hl);
+  color: var(--text);
   border-color: var(--text);
 }
 

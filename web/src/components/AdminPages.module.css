@@ -33,7 +33,7 @@
 }
 
 .sectionTitle {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -295,7 +295,7 @@ tr td.wrap {
   background: none;
   color: var(--muted);
   cursor: pointer;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1;
   padding: 2px 6px;
   border-radius: 999px;

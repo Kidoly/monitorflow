@@ -34,6 +34,12 @@ h3 {
   margin: 0;
 }
 
+/* Emphasis in running text is a step up, not bold. */
+strong,
+b {
+  font-weight: 500;
+}
+
 /* Buttons drawn on links (`.btn-k` on <a>) override this with a two-class selector. */
 a {
   color: var(--text);

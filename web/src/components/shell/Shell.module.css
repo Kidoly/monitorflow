@@ -56,8 +56,8 @@
 }
 
 .brand {
-  font-weight: 700;
-  font-size: 15px;
+  font-weight: 600;
+  font-size: 14px;
   padding: 6px 10px;
   margin-bottom: 8px;
 }
@@ -80,12 +80,10 @@
 }
 
 .heading {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
-  padding: 14px 10px 4px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  padding: 16px 10px 4px;
+  font-weight: 500;
 }
 
 .count {
@@ -125,8 +123,8 @@
 
 .settingsTitle {
   padding: 6px 10px;
-  font-weight: 700;
-  font-size: 15px;
+  font-weight: 600;
+  font-size: 14px;
   color: var(--text);
 }
 
@@ -372,7 +370,7 @@
     right: -4px;
     margin: 0;
     padding: 0 5px;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .scopeButton {
@@ -454,8 +452,8 @@
   }
 
   .topTitle {
-    font-size: 16px;
-    font-weight: 700;
+    font-size: 14px;
+    font-weight: 600;
   }
 
   .topCount {

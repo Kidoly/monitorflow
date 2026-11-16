@@ -18,11 +18,8 @@
 
 .groupTitle {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  color: var(--muted);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .rows {
@@ -99,7 +96,7 @@
 .chevron {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .ok {

@@ -5,7 +5,7 @@ The shared pieces of the design handoff (`docs/design/`). Each file has a doc co
 | Component | Use |
 |---|---|
 | `StatusLabel`, `Label` | Status as a tinted word. `<StatusLabel kind="server" value="online" />`; free words with `<Label tone="warn">`. |
-| `Button`, `ButtonLink`, `buttonClass`, `fieldClass` | `variant` `default` / `k` (black) / `danger`, `size` `small` / `large`, `active` for an applied filter. `ButtonLink` is `.btn-k` on `<a>`. |
+| `Button`, `ButtonLink`, `buttonClass`, `fieldClass` | `variant` `default` (secondary) / `k` (the one primary of a page) / `ghost` / `danger`, `size` `small` / `large`, `active` for an applied filter. `ButtonLink` is `.btn-k` on `<a>`. |
 | `PageHeader`, `RefreshLine` | Title line: title, status, the "Updated …, refreshes every 15 seconds" line, actions. `detail` for 26 px. |
 | `StatTiles` | Clickable counters; `compact` for the grey fact tiles of detail pages. |
 | `FilterBar` | Native selects, toggles and search, written to the URL with `history.replaceState`. |
