@@ -174,7 +174,8 @@ function facts(
       ? [{ label: t("sensors.config.parameters"), value: Object.entries(sensor.params).map(([k, v]) => `${k}=${v}`).join(" "), mono: true }]
       : []),
     ...(sensor ? [{ label: t("sensors.config.appliesFrom"), value: LEVEL_LABELS[ruleLevel(sensor, rule, perInstance(sensor, instance))] }] : []),
-    ...(data.config ? [configurationFact(data.config)] : []),
+    // Up to date is the normal state: only waiting or out of date is a fact worth a line.
+    ...(data.config && !data.config.in_sync ? [configurationFact(data.config)] : []),
   ];
 }
 
@@ -248,9 +249,7 @@ function configurationFact(config: EffectiveSensors): Fact {
   }
   return {
     label: t("sensors.config.title"),
-    value: (
-      <Label tone={config.in_sync ? "ok" : "warn"}>{config.in_sync ? t("sensors.config.upToDate") : t("sensors.config.outOfDate")}</Label>
-    ),
+    value: <Label tone="warn">{t("sensors.config.outOfDate")}</Label>,
   };
 }
 

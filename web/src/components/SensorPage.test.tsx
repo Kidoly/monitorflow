@@ -88,7 +88,7 @@ describe("SensorPage", () => {
     const fetchMock = stub();
     render(<SensorPage id={ID} sensor="disk_used_ratio" instance="/var" />);
     expect(await screen.findByRole("heading", { level: 1, name: "Disk used /var" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Fleet/web-1▾/Disk used /var▾");
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Fleet›web-1▾›Disk used /var▾");
     expect(screen.getByText(/on web-1 · disk sensor · every 30 s/)).toBeInTheDocument();
     expect(screen.getByText("94.2% used is above the critical limit of 90%")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open incident" })).toHaveAttribute("href", expect.stringContaining(open.id));

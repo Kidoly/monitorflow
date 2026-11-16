@@ -30,7 +30,7 @@ export interface Crumb {
 }
 
 /**
- * "Fleet / web-01 ▾ / Disk used ▾": links to the parents, then the current
+ * "Fleet › web-01 ▾ › Disk used ▾": links to the parents, then the current
  * page, which carries `aria-current="page"`. A crumb with `siblings` gets
  * a ▾ that lists them, to jump to one without going back.
  */
@@ -52,7 +52,7 @@ export function Breadcrumb({
             <Link href={parent.href}>{parent.label}</Link>
             {parent.siblings && <SiblingMenu siblings={parent.siblings} />}
           </span>
-          <span aria-hidden="true">/</span>
+          <span aria-hidden="true">›</span>
         </Fragment>
       ))}
       <span className={styles.item}>
