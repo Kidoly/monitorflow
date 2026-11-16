@@ -749,10 +749,17 @@ async fn packages_update(config: PathBuf) -> anyhow::Result<()> {
         .os_family;
     let outcome = update::run(&spec, family, &Tools::default()).await;
     let (mut stdout, mut stderr) = (std::io::stdout().lock(), std::io::stderr().lock());
-    for run in &outcome.runs {
+    let notes = |at: usize| outcome.notes.iter().filter(move |(i, _)| *i == at);
+    for (i, run) in outcome.runs.iter().enumerate() {
+        for (_, note) in notes(i) {
+            writeln!(stdout, "{note}")?;
+        }
         writeln!(stdout, "$ {}", run.line)?;
         stdout.write_all(&run.stdout)?;
         stderr.write_all(&run.stderr)?;
+    }
+    for (_, note) in notes(outcome.runs.len()) {
+        writeln!(stdout, "{note}")?;
     }
     if !outcome.upgraded && outcome.error.is_none() {
         writeln!(stdout, "nothing to upgrade")?;

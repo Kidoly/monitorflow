@@ -283,6 +283,8 @@ fn spec(kind: UpdateKind, packages: &[&str]) -> UpdateSpec {
     UpdateSpec {
         kind,
         packages: packages.iter().map(|p| p.to_string()).collect(),
+        skip_os: false,
+        third_party: Vec::new(),
     }
 }
 
@@ -430,6 +432,30 @@ async fn dnf_reports_from_rpm() {
 }
 
 #[tokio::test]
+async fn reports_say_which_third_party_managers_are_absent() {
+    use monitorflow_common::proto::v1::package_manager_status::State;
+    use monitorflow_common::proto::v1::PackageManager;
+
+    let fakes = Fakes::new(0, 0, 0);
+    let (reports, report) = Reports::new(for_family(OsFamily::Rhel, fakes.tools()).unwrap());
+    reports.collect().await;
+    let report = report.borrow().clone().unwrap();
+    assert!(report.third_party.is_empty());
+    let managers: Vec<_> = report
+        .managers
+        .iter()
+        .map(|m| (m.manager(), m.state()))
+        .collect();
+    assert_eq!(
+        managers,
+        [
+            (PackageManager::Flatpak, State::Absent),
+            (PackageManager::Snap, State::Absent)
+        ]
+    );
+}
+
+#[tokio::test]
 async fn a_missing_tool_reports_nothing() {
     let missing = Path::new("/nonexistent/dpkg-query");
     let tools = Tools {
@@ -455,4 +481,45 @@ fn package_names_cannot_be_options_or_shell() {
     for bad in ["", "-y", "--force", "a b", "a/b", "a;b", &"a".repeat(129)] {
         assert!(!valid_name(bad), "{bad}");
     }
+}
+
+/// The helper runs the OS first, then each selected manager, and stops at
+/// the first failure (ADR-0138).
+#[tokio::test]
+async fn the_helper_runs_the_os_then_third_party_managers() {
+    use super::update::AppSelection;
+
+    let selection = |manager: &str| AppSelection {
+        manager: manager.into(),
+        packages: Vec::new(),
+    };
+    let fakes = Fakes::new(0, 0, 0);
+    let with_apps = UpdateSpec {
+        third_party: vec![selection("flatpak"), selection("snap")],
+        ..spec(UpdateKind::All, &[])
+    };
+    let outcome = update::run(&with_apps, OsFamily::Rhel, &fakes.tools()).await;
+    assert_eq!(outcome.exit_code(), 0);
+    assert_eq!(outcome.runs.len(), 1, "dnf only: both managers are absent");
+    assert_eq!(
+        outcome.notes,
+        [
+            (1, "flatpak: not installed".to_owned()),
+            (1, "snap: not installed".to_owned())
+        ]
+    );
+
+    let only_apps = UpdateSpec {
+        skip_os: true,
+        ..with_apps.clone()
+    };
+    let fakes = Fakes::new(0, 0, 0);
+    let outcome = update::run(&only_apps, OsFamily::Rhel, &fakes.tools()).await;
+    assert!(fakes.calls_of("dnf").is_empty());
+    assert_eq!(outcome.notes.len(), 2);
+
+    let fakes = Fakes::new(0, 1, 0);
+    let outcome = update::run(&with_apps, OsFamily::Rhel, &fakes.tools()).await;
+    assert_eq!(outcome.exit_code(), 1);
+    assert!(outcome.notes.is_empty(), "nothing after a failure");
 }

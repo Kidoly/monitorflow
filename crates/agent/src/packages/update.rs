@@ -5,9 +5,11 @@
 //! itself. Sudoers then names one fixed command line, whatever packages
 //! the update names.
 
-use monitorflow_common::proto::v1::ApplyUpdates;
+use monitorflow_common::proto::v1::{ApplyUpdates, PackageManager, ThirdPartySelection};
+use monitorflow_common::third_party::{self, SelectionError};
 use serde::{Deserialize, Serialize};
 
+use super::app_update;
 use super::apt::{Apt, Candidate};
 use super::exec::{Run, Tools};
 use super::{valid_name, PackageError};
@@ -51,12 +53,32 @@ impl UpdateKind {
 }
 
 /// What to update, built from a signed `ApplyUpdates`. As JSON,
-/// `{"kind": "named", "packages": ["openssl"]}`.
+/// `{"kind": "named", "packages": ["openssl"]}`, with `"skip_os": true`
+/// and `"third_party": [{"manager": "flatpak", "packages": []}]` when
+/// it asks for them (ADR-0140).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateSpec {
     pub kind: UpdateKind,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<String>,
+    /// Leave the OS packages out (ADR-0138).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip_os: bool,
+    /// Third-party managers to update after the OS, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub third_party: Vec<AppSelection>,
+}
+
+/// One third-party manager of an [`UpdateSpec`]: its IDs, or every
+/// pending app when empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppSelection {
+    /// `flatpak` or `snap` ([`third_party::key`]); anything else is
+    /// refused.
+    pub manager: String,
+    #[serde(default)]
     pub packages: Vec<String>,
 }
 
@@ -74,6 +96,8 @@ pub enum SpecError {
     TooManyPackages,
     #[error("invalid package name `{0}`")]
     InvalidName(String),
+    #[error("{0}")]
+    ThirdParty(SelectionError),
 }
 
 impl UpdateSpec {
@@ -87,9 +111,44 @@ impl UpdateSpec {
         } else {
             UpdateKind::Named
         };
+        let third_party = request
+            .third_party
+            .iter()
+            .map(|selection| AppSelection {
+                manager: PackageManager::try_from(selection.manager)
+                    .ok()
+                    .and_then(third_party::key)
+                    .unwrap_or("unknown")
+                    .to_owned(),
+                packages: selection.packages.clone(),
+            })
+            .collect();
         Self {
             kind,
             packages: request.packages.clone(),
+            skip_os: request.skip_os,
+            third_party,
+        }
+    }
+
+    /// The `ApplyUpdates` this spec stands for, so the shared check of
+    /// ADR-0138 applies to it.
+    fn to_request(&self) -> ApplyUpdates {
+        ApplyUpdates {
+            packages: self.packages.clone(),
+            security_only: self.kind == UpdateKind::Security,
+            allow_reboot: false,
+            skip_os: self.skip_os,
+            third_party: self
+                .third_party
+                .iter()
+                .map(|selection| ThirdPartySelection {
+                    manager: third_party::parse(&selection.manager)
+                        .unwrap_or(PackageManager::Unspecified)
+                        .into(),
+                    packages: selection.packages.clone(),
+                })
+                .collect(),
         }
     }
 
@@ -106,8 +165,13 @@ impl UpdateSpec {
 
     /// Package names follow the distributions' grammar ([`valid_name`]),
     /// so none can be an option or a path, and only `named` and
-    /// `security` take them.
+    /// `security` take them. The third-party part names Linux managers
+    /// only, each once, with IDs in its grammar (ADR-0138).
     pub fn validate(&self) -> Result<(), SpecError> {
+        third_party::check(&self.to_request(), Some("linux")).map_err(SpecError::ThirdParty)?;
+        if self.skip_os {
+            return Ok(());
+        }
         match self.kind {
             UpdateKind::All if !self.packages.is_empty() => {
                 return Err(SpecError::UnexpectedPackages(self.kind.as_str()))
@@ -177,11 +241,14 @@ pub struct Outcome {
     /// False when nothing matched, so no upgrade ran.
     pub upgraded: bool,
     pub error: Option<PackageError>,
+    /// Lines to print before the run of the same index, or after the
+    /// last run: what a third-party manager skipped (ADR-0140).
+    pub notes: Vec<(usize, String)>,
 }
 
 impl Outcome {
     /// Records `run`; false when it failed.
-    fn step(&mut self, run: Result<Run, PackageError>) -> bool {
+    pub(super) fn step(&mut self, run: Result<Run, PackageError>) -> bool {
         match run {
             Ok(run) => {
                 let failed = (!run.success()).then(|| PackageError::failed(&run));
@@ -191,6 +258,11 @@ impl Outcome {
             Err(error) => self.error = Some(error),
         }
         self.error.is_none()
+    }
+
+    /// Notes `line` before the next run.
+    pub(super) fn note(&mut self, line: String) {
+        self.notes.push((self.runs.len(), line));
     }
 
     /// The exit code for the helper: the failing tool's, or 1.
@@ -204,14 +276,31 @@ impl Outcome {
 }
 
 /// Runs the update `spec`, already checked, with the host's package
-/// manager, as the current user (root in the helper). Stops at the first
+/// manager, unless it skips the OS, then with each third-party manager it
+/// selects, as the current user (root in the helper). Stops at the first
 /// failure.
 pub async fn run(spec: &UpdateSpec, family: OsFamily, tools: &Tools) -> Outcome {
     let mut outcome = Outcome::default();
+    if !spec.skip_os {
+        run_os(spec, family, tools, &mut outcome).await;
+    }
+    for selection in &spec.third_party {
+        if outcome.error.is_some() {
+            break;
+        }
+        // `validate` refused any other manager.
+        if let Some(manager) = third_party::parse(&selection.manager) {
+            app_update::run(manager, &selection.packages, tools, &mut outcome).await;
+        }
+    }
+    outcome
+}
+
+async fn run_os(spec: &UpdateSpec, family: OsFamily, tools: &Tools, outcome: &mut Outcome) {
     match family {
         OsFamily::Debian => {
             if !outcome.step(tools.direct(&[], &tools.apt_get, &apt_refresh()).await) {
-                return outcome;
+                return;
             }
             let packages = match spec.kind {
                 UpdateKind::All => Vec::new(),
@@ -220,12 +309,12 @@ pub async fn run(spec: &UpdateSpec, family: OsFamily, tools: &Tools) -> Outcome 
                     Ok(candidates) => apt_security(&candidates, &spec.packages),
                     Err(error) => {
                         outcome.error = Some(error);
-                        return outcome;
+                        return;
                     }
                 },
             };
             if spec.kind == UpdateKind::Security && packages.is_empty() {
-                return outcome;
+                return;
             }
             let args = apt_upgrade(&packages);
             outcome.upgraded = true;
@@ -237,7 +326,6 @@ pub async fn run(spec: &UpdateSpec, family: OsFamily, tools: &Tools) -> Outcome 
         }
         OsFamily::Linux => outcome.error = Some(PackageError::Unavailable),
     }
-    outcome
 }
 
 #[cfg(test)]
@@ -248,6 +336,8 @@ mod tests {
         UpdateSpec {
             kind,
             packages: packages.iter().map(|p| p.to_string()).collect(),
+            skip_os: false,
+            third_party: Vec::new(),
         }
     }
 
@@ -341,6 +431,8 @@ mod tests {
         let too_many = UpdateSpec {
             kind: UpdateKind::Named,
             packages: many,
+            skip_os: false,
+            third_party: Vec::new(),
         };
         assert_eq!(too_many.validate(), Err(SpecError::TooManyPackages));
     }
@@ -380,6 +472,88 @@ mod tests {
             assert_eq!(String::from_utf8(spec.to_json()).unwrap(), json);
             assert_eq!(UpdateSpec::parse(json.as_bytes()), Ok(spec));
         }
+    }
+
+    #[test]
+    fn third_party_selections_map_check_and_round_trip() {
+        let selection = |manager: PackageManager, packages: &[&str]| ThirdPartySelection {
+            manager: manager.into(),
+            packages: packages.iter().map(|p| p.to_string()).collect(),
+        };
+        let request = ApplyUpdates {
+            skip_os: true,
+            third_party: vec![
+                selection(PackageManager::Snap, &[]),
+                selection(
+                    PackageManager::Flatpak,
+                    &["app/org.example.App/x86_64/stable"],
+                ),
+            ],
+            ..ApplyUpdates::default()
+        };
+        let spec = UpdateSpec::from_request(&request);
+        assert_eq!(spec.validate(), Ok(()));
+        let json = r#"{"kind":"all","skip_os":true,"third_party":[{"manager":"snap","packages":[]},{"manager":"flatpak","packages":["app/org.example.App/x86_64/stable"]}]}"#;
+        assert_eq!(String::from_utf8(spec.to_json()).unwrap(), json);
+        assert_eq!(UpdateSpec::parse(json.as_bytes()), Ok(spec));
+
+        // The OS and a manager, as campaigns that keep the OS send it.
+        let both = ApplyUpdates {
+            security_only: true,
+            third_party: vec![selection(PackageManager::Flatpak, &[])],
+            ..ApplyUpdates::default()
+        };
+        assert_eq!(UpdateSpec::from_request(&both).validate(), Ok(()));
+    }
+
+    #[test]
+    fn third_party_selections_are_checked() {
+        let refused = |json: &str| match UpdateSpec::parse(json.as_bytes()) {
+            Err(SpecError::ThirdParty(error)) => error,
+            other => panic!("{json}: {other:?}"),
+        };
+        assert_eq!(
+            refused(r#"{"kind":"all","skip_os":true}"#),
+            SelectionError::Empty
+        );
+        assert_eq!(
+            refused(
+                r#"{"kind":"named","packages":["bash"],"skip_os":true,"third_party":[{"manager":"snap"}]}"#
+            ),
+            SelectionError::OsNamesWithoutOs
+        );
+        assert_eq!(
+            refused(r#"{"kind":"all","third_party":[{"manager":"winget"}]}"#),
+            SelectionError::WrongPlatform("winget", "linux".into())
+        );
+        assert_eq!(
+            refused(r#"{"kind":"all","third_party":[{"manager":"unknown"}]}"#),
+            SelectionError::UnknownManager
+        );
+        assert_eq!(
+            refused(r#"{"kind":"all","third_party":[{"manager":"snap"},{"manager":"snap"}]}"#),
+            SelectionError::Duplicate("snap")
+        );
+        for (manager, bad) in [
+            ("snap", "--devmode"),
+            ("snap", "/tmp/x.snap"),
+            ("flatpak", "org.example.App/x86_64/stable"),
+            ("flatpak", "--user"),
+        ] {
+            let json = format!(
+                r#"{{"kind":"all","third_party":[{{"manager":"{manager}","packages":["{bad}"]}}]}}"#
+            );
+            assert!(
+                matches!(refused(&json), SelectionError::InvalidId(..)),
+                "{bad}"
+            );
+        }
+        assert!(matches!(
+            UpdateSpec::parse(
+                br#"{"kind":"all","third_party":[{"manager":"snap","options":["-x"]}]}"#
+            ),
+            Err(SpecError::Json(_))
+        ));
     }
 
     #[test]
