@@ -667,6 +667,10 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         },
         async {
+            mirror::cache::run(mirrors.clone(), until_stopped()).await;
+            Ok(())
+        },
+        async {
             campaigns.clone().run(campaign::POLL, until_stopped()).await;
             Ok(())
         },

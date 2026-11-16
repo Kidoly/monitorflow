@@ -4,12 +4,14 @@
 //! fails the run, never the caller. Deleting the mirror stops its job at
 //! the tool it is running (ADR-0075).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use chrono::Utc;
 use monitorflow_common::mirror::demand::{OnDemand, Source};
+use monitorflow_common::mirror::evict::Outcome;
 use sqlx::PgPool;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::layout::{self, Layout};
@@ -55,6 +57,10 @@ pub struct Mirrors {
     runner: Arc<dyn Runner>,
     layout: Layout,
     ondemand: OnDemand,
+    /// Told when a download made the on-demand store grow.
+    grew: Arc<Notify>,
+    /// The outcome of the last eviction, for the Mirrors page.
+    last_eviction: Arc<Mutex<Option<Outcome>>>,
 }
 
 /// A job holding its mirror's lock, ready to execute.
@@ -69,13 +75,42 @@ pub struct Job {
 
 impl Mirrors {
     pub fn new(pool: PgPool, runner: Arc<dyn Runner>, layout: Layout) -> Self {
-        let ondemand = OnDemand::new(layout.store(), Source::Origin(ondemand::client()));
+        let grew = Arc::new(Notify::new());
+        let told = grew.clone();
+        let ondemand = OnDemand::with_hook(
+            layout.store(),
+            Source::Origin(ondemand::client()),
+            Some(Box::new(move |_| told.notify_one())),
+        );
         Self {
             pool,
             runner,
             layout,
             ondemand,
+            grew,
+            last_eviction: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Ends when a download has made the on-demand store grow since the
+    /// last call.
+    pub async fn grew(&self) {
+        self.grew.notified().await
+    }
+
+    /// The outcome of the last eviction pass, `None` before the first.
+    pub fn last_eviction(&self) -> Option<Outcome> {
+        *self
+            .last_eviction
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn set_last_eviction(&self, outcome: Outcome) {
+        *self
+            .last_eviction
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(outcome);
     }
 
     /// Fetches the packages of on-demand snapshots, for the listener and

@@ -13,11 +13,13 @@
 //! sidecar container and [`catalog`] lists the distributions an
 //! administrator can add in one click (ADR-0067). [`ondemand`] syncs a
 //! mirror's indexes only, its packages fetched when asked for
-//! (ADR-0142). [`retention`] removes
+//! (ADR-0142), and [`cache`] keeps what they fetch under a cap.
+//! [`retention`] removes
 //! the snapshots nothing needs (ADR-0074), and with them what [`removal`]
 //! was asked to delete (ADR-0075).
 
 pub mod apt;
+pub mod cache;
 pub mod catalog;
 pub mod dnf;
 pub mod http;

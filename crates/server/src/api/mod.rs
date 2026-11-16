@@ -86,6 +86,8 @@
 //! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
 //! | POST | `/api/mirrors` | global administrator | body `{"distribution"}`, an `id` of the catalog; 201 [`mirrors::MirrorList`] of the mirrors created; 409 when the mirror tools are not running, the disk is too small or it is already added |
+//! | GET | `/api/mirrors/cache` | global administrator | [`mirrors::Cache`]: the storage cap of on-demand mirrors and what they use (ADR-0142) |
+//! | PUT | `/api/mirrors/cache` | global administrator | body [`mirrors::SetCacheRequest`], `{"cap_bytes"}` or `null` for the default; 200 [`mirrors::Cache`]; audited `mirror.cache_cap` |
 //! | GET | `/api/mirrors/catalog` | global administrator | [`mirrors::Catalog`]: the distributions with their size estimate, the free disk space and whether the mirror tools answer |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots`, each with why it stays, the last `runs`, and `used_by`, what keeps it from being deleted |
 //! | DELETE | `/api/mirrors/{id}` | global administrator | 202 with the listing item once the mirror is being deleted, in the background, until its detail answers 404; 409 saying what still uses it (ADR-0075) |
@@ -1069,6 +1071,10 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/mirrors", get(mirrors::list).post(mirrors::add))
         .route("/api/mirrors/catalog", get(mirrors::catalog))
+        .route(
+            "/api/mirrors/cache",
+            get(mirrors::cache).put(mirrors::set_cache),
+        )
         .route(
             "/api/mirrors/{id}",
             get(mirrors::detail).delete(mirrors::delete),

@@ -15,6 +15,7 @@ use super::access::Scope;
 use super::auth::CurrentUser;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
+use crate::mirror::cache;
 use crate::mirror::catalog::{self, Disk, CATALOG};
 use crate::mirror::jobs::{self, JobError, JobKind};
 use crate::mirror::removal::{self, RemovalError, Users};
@@ -153,6 +154,35 @@ pub struct Catalog {
     pub distributions: Vec<CatalogEntry>,
 }
 
+/// Body of `GET /api/mirrors/cache` (ADR-0142).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = MirrorCache)]
+pub struct Cache {
+    /// The cap in force, in bytes.
+    pub cap_bytes: u64,
+    /// The default: 100 GiB, or half the disk when smaller.
+    pub default_cap_bytes: u64,
+    /// Whether an administrator set the cap.
+    pub cap_set: bool,
+    /// What on-demand mirrors hold: indexes and packages, in bytes.
+    pub used_bytes: u64,
+    pub index_bytes: u64,
+    pub package_bytes: u64,
+    pub packages: u64,
+    /// The last eviction could not get under the cap: campaigns and the
+    /// current snapshots hold more. `false` before the first one.
+    pub over_cap: bool,
+}
+
+/// Body of `PUT /api/mirrors/cache`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = SetMirrorCacheRequest)]
+#[serde(deny_unknown_fields)]
+pub struct SetCacheRequest {
+    /// At least 1 GiB, in bytes; `null` for the default.
+    pub cap_bytes: Option<u64>,
+}
+
 /// Body of `POST /api/mirrors`.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[schema(as = AddMirrorRequest)]
@@ -224,6 +254,61 @@ async fn disk(mirrors: Option<&Mirrors>) -> Option<Disk> {
     tokio::task::spawn_blocking(move || catalog::disk(&root))
         .await
         .ok()?
+}
+
+async fn cache_view(state: &ApiState) -> Result<Cache, ApiError> {
+    let mirrors = state
+        .mirrors
+        .as_ref()
+        .ok_or_else(|| ApiError::Conflict("mirrors are not enabled on this server".into()))?;
+    let cap = cache::cap(&state.pool, mirrors.layout()).await?;
+    let store = mirrors.layout().store();
+    let usage = tokio::task::spawn_blocking(move || store.usage())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Cache {
+        cap_bytes: cap.bytes,
+        default_cap_bytes: cap.default_bytes,
+        cap_set: cap.set,
+        used_bytes: usage.total(),
+        index_bytes: usage.index_bytes,
+        package_bytes: usage.package_bytes,
+        packages: usage.packages,
+        over_cap: mirrors.last_eviction().is_some_and(|o| o.over_cap),
+    })
+}
+
+/// `GET /api/mirrors/cache`.
+pub async fn cache(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+) -> Result<Json<Cache>, ApiError> {
+    require_global_admin(&user)?;
+    Ok(Json(cache_view(&state).await?))
+}
+
+/// `PUT /api/mirrors/cache`: the cap, then an eviction at once when it
+/// went down.
+pub async fn set_cache(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    request: Result<Json<SetCacheRequest>, JsonRejection>,
+) -> Result<Json<Cache>, ApiError> {
+    require_global_admin(&user)?;
+    let bytes = body(request)?.cap_bytes;
+    if bytes.is_some_and(|b| b < cache::MIN_CAP) {
+        return Err(ApiError::Invalid("cap_bytes must be at least 1 GiB".into()));
+    }
+    let mirrors = state
+        .mirrors
+        .clone()
+        .ok_or_else(|| ApiError::Conflict("mirrors are not enabled on this server".into()))?;
+    cache::set_cap(&state.pool, bytes, ("user", &user.id.to_string())).await?;
+    if let Err(error) = cache::evict_now(&mirrors).await {
+        tracing::warn!(%error, "cannot evict down to the new cap");
+    }
+    Ok(Json(cache_view(&state).await?))
 }
 
 /// `GET /api/mirrors/catalog`.

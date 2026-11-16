@@ -1157,12 +1157,19 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         ("GET", "/api/mirrors")
         | ("POST", "/api/mirrors")
         | ("GET", "/api/mirrors/catalog")
+        | ("GET", "/api/mirrors/cache")
+        | ("PUT", "/api/mirrors/cache")
         | ("GET", "/api/mirrors/{id}")
         | ("DELETE", "/api/mirrors/{id}")
         | ("POST", "/api/mirrors/{id}/sync")
         | ("POST", "/api/mirrors/{id}/snapshots") => {
             let uri = path.replace("{id}", &ctx.mirror.to_string());
-            let body = method.eq("POST").then(|| json!({}));
+            let body = match method {
+                "POST" => Some(json!({})),
+                "PUT" => Some(json!({ "cap_bytes": null })),
+                "PATCH" => Some(json!({ "mode": "full" })),
+                _ => None,
+            };
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
         // The server is shared: updating it is for global administrators.

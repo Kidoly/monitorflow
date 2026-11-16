@@ -21,7 +21,7 @@ use crate::relay_commands;
         revoke_install_key, approve_pending_host, reject_pending_host,
         list_relays, relay_detail, revoke_relay, update_relay, confirm_relay_names,
         list_agent_releases, import_release, import_release_from_url,
-        list_mirrors, mirror_catalog, add_mirrors, mirror_detail, delete_mirror, sync_mirror,
+        list_mirrors, mirror_catalog, mirror_cache, set_mirror_cache, add_mirrors, mirror_detail, delete_mirror, sync_mirror,
         snapshot_mirror, server_sources, configure_server_sources, revert_server_sources,
         server_use_mirror, site_sources, site_use_mirror, site_revert_sources,
     ),
@@ -841,6 +841,50 @@ fn list_mirrors() {}
 key outside the \"updates\" area: `api_key_scope`"),
     ))]
 fn mirror_catalog() {}
+
+/// Read the storage cap of on-demand mirrors
+///
+/// What on-demand mirrors keep (ADR-0142): their indexes and the packages
+/// fetched so far, against the cap the least recently used packages are
+/// evicted under. `over_cap` says the last eviction could not get under
+/// it, because campaigns and the current snapshots hold more.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(get, path = "/api/v1/mirrors/cache", tag = "mirrors",
+    responses(
+        (status = 200, description = "The cap and the use", body = mirrors::Cache, example = json!({
+            "cap_bytes": 107374182400u64, "default_cap_bytes": 107374182400u64, "cap_set": false,
+            "used_bytes": 5368709120u64, "index_bytes": 1073741824u64,
+            "package_bytes": 4294967296u64, "packages": 2817, "over_cap": false
+        })),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 409, body = ErrorBody, description = "Mirrors are not enabled on this server: `conflict`"),
+    ))]
+fn mirror_cache() {}
+
+/// Set the storage cap of on-demand mirrors
+///
+/// At least 1 GiB, or `null` for the default (100 GiB, or half the disk
+/// when smaller). A lower cap evicts at once. Audited as
+/// `mirror.cache_cap`.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(put, path = "/api/v1/mirrors/cache", tag = "mirrors",
+    request_body(content = mirrors::SetCacheRequest, example = json!({ "cap_bytes": 53687091200u64 })),
+    responses(
+        (status = 200, description = "The cap and the use after it", body = mirrors::Cache,
+            example = json!({
+                "cap_bytes": 53687091200u64, "default_cap_bytes": 107374182400u64, "cap_set": true,
+                "used_bytes": 5368709120u64, "index_bytes": 1073741824u64,
+                "package_bytes": 4294967296u64, "packages": 2817, "over_cap": false
+            })),
+        (status = 400, body = ErrorBody, description = "Below 1 GiB: `invalid`"),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 409, body = ErrorBody, description = "Mirrors are not enabled on this server: `conflict`"),
+    ))]
+fn set_mirror_cache() {}
 
 /// Add a distribution to the mirrors
 ///

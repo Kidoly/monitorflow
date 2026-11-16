@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "mirror")]
 pub mod demand;
 #[cfg(feature = "mirror")]
+pub mod evict;
+#[cfg(feature = "mirror")]
 pub mod index;
 #[cfg(feature = "mirror")]
 pub mod origin;
