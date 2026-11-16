@@ -778,6 +778,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             );
         }
         ("GET", "/api/servers/{id}/packages")
+        | ("GET", "/api/servers/{id}/third-party")
         | ("GET", "/api/servers/{id}/commands")
         | ("GET", "/api/servers/{id}/rollback") => {
             let uri = path.replace("{id}", &b.server.to_string());

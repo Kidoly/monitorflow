@@ -13,7 +13,8 @@ use utoipa::OpenApi;
 use super::openapi::ErrorBody;
 use super::{
     ai_commands, check_interval, commands, customers, logs, metrics, offline_alerts,
-    package_sources, packages, proxmox, revoke, rollback, sensors, sites, sources, thresholds,
+    package_sources, packages, proxmox, revoke, rollback, sensors, sites, sources, third_party,
+    thresholds,
 };
 
 #[derive(OpenApi)]
@@ -29,7 +30,7 @@ use super::{
         update_threshold, delete_threshold,
         server_metrics, server_logs, revoke_server,
         server_proxmox, set_server_proxmox, clear_server_proxmox, server_proxmox_guests,
-        server_packages, server_rollback, server_sources, configure_server_sources,
+        server_packages, server_third_party, server_rollback, server_sources, configure_server_sources,
         revert_server_sources, server_use_mirror, site_sources, site_use_mirror, revert_site_sources,
         site_agent_auto_update, server_ai_commands, site_ai_commands,
     ),
@@ -904,6 +905,44 @@ page, `null` on the last one. Unknown parameters are 400.\n\n\
             body = ErrorBody),
     ))]
 fn server_packages() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/third-party", tag = "updates",
+    summary = "List a server's third-party apps",
+    description = "The third-party package managers of the server's latest report (ADR-0138): winget on \
+Windows, Flatpak and Snap on Linux, each `available`, `absent` or `unusable` with its counts, and the apps \
+they list as installed, by manager, ID and scope, with the version an update would install. `pending=true` \
+keeps those with an update, `manager` one manager's. `reported` is false, with nothing listed, until the agent \
+reports third-party managers. OS packages stay in `/servers/{id}/packages`.\n\n\
+**Pages**: `limit` apps per page, 1 to 5000, 500 by default; pass `next_cursor` as `cursor` for the next \
+page, `null` on the last one. `managers` is complete on every page. Unknown parameters are 400.\n\n\
+**Who**: any role on the server's site. **Area**: `updates`.",
+    params(("id" = uuid::Uuid, Path, description = "The server"), third_party::ListParams),
+    responses(
+        (status = 200, description = "The managers and one page of apps", body = third_party::List,
+            example = json!({
+                "reported": true,
+                "managers": [
+                    {"manager": "flatpak", "state": "available", "version": "1.14.10", "error": null,
+                     "installed": 2, "pending": 1},
+                    {"manager": "snap", "state": "absent", "version": null, "error": null,
+                     "installed": 0, "pending": 0}
+                ],
+                "packages": [
+                    {"manager": "flatpak", "id": "app/org.mozilla.firefox/x86_64/stable",
+                     "name": "Firefox", "version": "131.0", "available_version": "132.0",
+                     "scope": "machine", "origin": "flathub"},
+                    {"manager": "flatpak", "id": "runtime/org.freedesktop.Platform/x86_64/23.08",
+                     "name": "Freedesktop Platform", "version": "23.08.24", "available_version": null,
+                     "scope": "machine", "origin": "flathub"}
+                ],
+                "next_cursor": null
+            })),
+        (status = 400, description = "`limit` out of range, an unknown `manager`, a bad `cursor` or an \
+unknown parameter: `invalid`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_third_party() {}
 
 #[utoipa::path(get, path = "/api/v1/servers/{id}/rollback", tag = "updates",
     summary = "Get what a change on a server can roll back to",

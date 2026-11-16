@@ -4,8 +4,12 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use monitorflow_common::proto::v1::package_manager_status::State;
 use monitorflow_common::proto::v1::windows_update_source::{Automatic, Origin};
-use monitorflow_common::proto::v1::{ApplyUpdates, Package, PackageReport, WindowsUpdateSource};
+use monitorflow_common::proto::v1::{
+    ApplyUpdates, Package, PackageManager, PackageManagerStatus, PackageReport, PackageScope,
+    ThirdPartyPackage, WindowsUpdateSource,
+};
 use monitorflow_common::redact::Secret;
 use monitorflow_server::agent_releases::ReleaseCache;
 use monitorflow_server::api::auth::CSRF_HEADER;
@@ -286,6 +290,90 @@ db_tests! {
         assert_eq!(page["next_cursor"], Value::Null);
         assert_eq!(h.send("GET", &format!("{uri}?limit=0"), &viewer, None).await.0, StatusCode::BAD_REQUEST);
         assert_eq!(h.send("GET", &format!("{uri}?upgradeable=true"), &viewer, None).await.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test]
+    async fn third_party_apps_are_listed_by_manager_and_cleared_by_older_reports(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let viewer = h.login("viewer", Role::Viewer, GrantScope::Site(h.site)).await;
+        let uri = format!("/api/servers/{}/third-party", h.server);
+        let (status, empty) = h.send("GET", &uri, &viewer, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(empty, json!({"reported": false, "managers": [], "packages": [], "next_cursor": null}));
+
+        let app = |manager: PackageManager, id: &str, available: &str, scope: PackageScope| ThirdPartyPackage {
+            manager: manager.into(),
+            id: id.into(),
+            name: String::new(),
+            version: "1.0".into(),
+            available_version: available.into(),
+            scope: scope.into(),
+            origin: "flathub".into(),
+        };
+        let firefox = "app/org.mozilla.firefox/x86_64/stable";
+        let report = PackageReport {
+            packages: vec![package("libc6", "2.36-9+deb12u4")],
+            collected_at_unix_ms: 1_800_000_000_000,
+            third_party: vec![
+                ThirdPartyPackage { name: "Firefox".into(), ..app(PackageManager::Flatpak, firefox, "132.0", PackageScope::Machine) },
+                app(PackageManager::Flatpak, "runtime/org.freedesktop.Platform/x86_64/23.08", "", PackageScope::Machine),
+                app(PackageManager::Flatpak, firefox, "", PackageScope::User),
+                // Snap is unusable: its apps are not kept.
+                app(PackageManager::Snap, "firefox", "132", PackageScope::Machine),
+            ],
+            managers: vec![
+                PackageManagerStatus { manager: PackageManager::Snap.into(), state: State::Unusable.into(), version: String::new(), error: "snapd is not running".into() },
+                PackageManagerStatus { manager: PackageManager::Flatpak.into(), state: State::Available.into(), version: "1.14.10".into(), error: String::new() },
+            ],
+            ..PackageReport::default()
+        };
+        let store = PackageStore::new(pool.clone());
+        assert!(store.replace("agent-1", &report).await.unwrap());
+
+        let (_, all) = h.send("GET", &uri, &viewer, None).await;
+        assert_eq!(all["reported"], true);
+        assert_eq!(
+            all["managers"],
+            json!([
+                {"manager": "flatpak", "state": "available", "version": "1.14.10", "error": null, "installed": 3, "pending": 1},
+                {"manager": "snap", "state": "unusable", "version": null, "error": "snapd is not running", "installed": 0, "pending": 0},
+            ])
+        );
+        assert_eq!(
+            all["packages"][0],
+            json!({"manager": "flatpak", "id": firefox, "name": "Firefox", "version": "1.0", "available_version": "132.0", "scope": "machine", "origin": "flathub"})
+        );
+        assert_eq!(all["packages"][1]["scope"], "user");
+        assert_eq!(all["packages"].as_array().unwrap().len(), 3);
+
+        let (_, pending) = h.send("GET", &format!("{uri}?pending=true"), &viewer, None).await;
+        assert_eq!(pending["packages"].as_array().unwrap().len(), 1);
+        let (_, snaps) = h.send("GET", &format!("{uri}?manager=snap"), &viewer, None).await;
+        assert_eq!((snaps["packages"].clone(), snaps["managers"].as_array().unwrap().len()), (json!([]), 2));
+        let (_, page) = h.send("GET", &format!("{uri}?limit=2"), &viewer, None).await;
+        assert_eq!(page["packages"].as_array().unwrap().len(), 2);
+        let cursor = page["next_cursor"].as_str().unwrap();
+        let (_, page) = h.send("GET", &format!("{uri}?limit=2&cursor={cursor}"), &viewer, None).await;
+        assert_eq!(page["packages"][0]["id"], "runtime/org.freedesktop.Platform/x86_64/23.08");
+        assert_eq!(page["next_cursor"], Value::Null);
+        for bad in ["manager=os", "manager=chocolatey", "limit=0", "pendings=true"] {
+            assert_eq!(h.send("GET", &format!("{uri}?{bad}"), &viewer, None).await.0, StatusCode::BAD_REQUEST, "{bad}");
+        }
+        let unknown = format!("/api/servers/{}/third-party", Uuid::new_v4());
+        assert_eq!(h.send("GET", &unknown, &viewer, None).await.0, StatusCode::NOT_FOUND);
+
+        // An older agent, or an older relay on the way: OS packages only,
+        // and third-party apps are not known any more.
+        let older = PackageReport {
+            packages: vec![package("libc6", "")],
+            collected_at_unix_ms: 1_800_000_060_000,
+            ..PackageReport::default()
+        };
+        assert!(store.replace("agent-1", &older).await.unwrap());
+        let (_, cleared) = h.send("GET", &uri, &viewer, None).await;
+        assert_eq!(cleared, json!({"reported": false, "managers": [], "packages": [], "next_cursor": null}));
+        let (_, os) = h.send("GET", &format!("/api/servers/{}/packages", h.server), &viewer, None).await;
+        assert_eq!(os["packages"][0]["name"], "libc6");
     }
 
     #[sqlx::test]
