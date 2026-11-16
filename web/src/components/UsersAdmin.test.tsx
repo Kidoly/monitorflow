@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { UserAccount } from "@/lib/api";
 import { As, me, single, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -177,5 +178,17 @@ describe("UsersAdminPage", () => {
     expect(describeGrant({ role: "operator", customer_id: "c9", site_id: null }, names)).toBe("operator · a customer");
     expect(describeGrant({ role: "operator", customer_id: "c9", site_id: null }, names, false)).toBe("operator · all sites");
     expect(describeGrant({ role: "viewer", customer_id: null, site_id: "s2" }, names, false)).toBe("viewer · lyon-office");
+  });
+
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    stubFetch({ ...NAMES, "GET /api/users": { status: 200, body: { users: [account({}), bob] } } });
+    renderAsRoot();
+    const table = await screen.findByRole("table", { name: "Utilisateurs" });
+    const [, mine, theirs] = within(table).getAllByRole("row");
+    expect(mine).toHaveTextContent(/alice.*Vous.*Actif.*administrateur · tout/);
+    expect(within(theirs!).getByRole("button", { name: "Désactiver" })).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Inviter un utilisateur" })).toBeInTheDocument();
+    expect(describeGrant({ role: "operator", customer_id: "c9", site_id: null }, names, false)).toBe("opérateur · tous les sites");
   });
 });

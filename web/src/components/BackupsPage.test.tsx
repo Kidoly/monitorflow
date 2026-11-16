@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { BackupRun, BackupsView } from "@/lib/api";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -61,6 +62,18 @@ describe("BackupsPage", () => {
     stubFetch({});
     renderPage(customerAdmin);
     expect(screen.getByText("Backups need a global administrator")).toBeInTheDocument();
+  });
+
+  it("speaks French, without customer wording for a single company", async () => {
+    setActiveLocale("fr");
+    stubFetch({ "GET /api/backups": { status: 200, body: view() } });
+    renderPage({ ...globalAdmin, multi_customer: false });
+    expect(await screen.findByText("Sauvegardé.")).toBeInTheDocument();
+    expect(screen.getByText(/Quiconque a le fichier peut lire toutes les données/)).toBeInTheDocument();
+    expect(screen.getAllByText("3 Mio").length).toBe(2);
+    const table = screen.getByRole("table", { name: "Sauvegardes" });
+    expect(within(table).getByText("Quotidienne")).toBeInTheDocument();
+    expect(within(table).getByRole("link", { name: "Télécharger" })).toBeInTheDocument();
   });
 
   it("shows the last backup, warns about secrets, and downloads files", async () => {

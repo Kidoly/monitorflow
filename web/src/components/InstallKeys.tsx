@@ -5,8 +5,10 @@ import { type FormEvent, useId, useState } from "react";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { type Column, DataTable } from "@/components/ui/DataTable";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
+import { Missing } from "@/components/ui/Missing";
 import { StatusLabel } from "@/components/ui/StatusLabel";
 import { formatAgo } from "@/components/ui/time";
+import { t } from "@/i18n";
 import { type CreatedInstallKey, type InstallKey, type PendingHost, type Site, api, describeError } from "@/lib/api";
 import { formatWhen } from "@/lib/clock";
 import { placeLabel } from "@/lib/customers";
@@ -17,18 +19,19 @@ import styles from "./AdminPages.module.css";
 const DAY = 86_400;
 
 /** Validity choices; the API takes one hour to one year, 30 days by default. */
-const VALIDITY: [number, string][] = [
-  [DAY, "1 day"],
-  [7 * DAY, "7 days"],
-  [30 * DAY, "30 days"],
-  [90 * DAY, "90 days"],
-  [365 * DAY, "1 year"],
-];
+const VALIDITY = [
+  [DAY, "install.validity.1d"],
+  [7 * DAY, "install.validity.7d"],
+  [30 * DAY, "install.validity.30d"],
+  [90 * DAY, "install.validity.90d"],
+  [365 * DAY, "install.validity.1y"],
+] as const;
 
 /** "3 of 10 hosts", or "3 hosts" without a limit. */
 export function hostsWords(key: Pick<InstallKey, "host_count" | "max_hosts">): string {
-  const unit = (key.max_hosts ?? key.host_count) === 1 ? "server" : "servers";
-  return key.max_hosts === null ? `${key.host_count} ${unit}` : `${key.host_count} of ${key.max_hosts} ${unit}`;
+  return key.max_hosts === null
+    ? t("install.hosts", { count: key.host_count })
+    : t("install.hostsOf", { done: key.host_count, count: key.max_hosts });
 }
 
 /** The form that creates a site's install command (ADR-0073); every field has a default. */
@@ -66,7 +69,7 @@ export function CreateInstallKey({
       );
       setLimit("");
     } catch (e) {
-      setError(`Creating the install command failed. ${describeError(e)}`);
+      setError(t("install.key.createFailed", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -75,14 +78,12 @@ export function CreateInstallKey({
   return (
     <form className={styles.panel} onSubmit={submit} aria-labelledby={titleId}>
       <h2 id={titleId} className={styles.sectionTitle}>
-        Install command
+        {t("install.key.title")}
       </h2>
-      <p className={styles.sectionNote}>
-        One command for all the servers of a site, Linux or Windows. Each server appears under its own name.
-      </p>
+      <p className={styles.sectionNote}>{t("install.key.note")}</p>
       <div className={styles.formGrid}>
         <label className={styles.field}>
-          Site
+          {t("install.key.site")}
           <select className={fieldClass} value={siteId || sites[0]?.id} onChange={(e) => setSiteId(e.target.value)}>
             {sites.map((site) => (
               <option key={site.id} value={site.id}>
@@ -92,18 +93,18 @@ export function CreateInstallKey({
           </select>
         </label>
         <label className={styles.field}>
-          Works for
+          {t("install.key.worksFor")}
           <select className={fieldClass} value={ttl} onChange={(e) => setTtl(Number(e.target.value))}>
             {VALIDITY.map(([seconds, label]) => (
               <option key={seconds} value={seconds}>
-                {label}
+                {t(label)}
               </option>
             ))}
           </select>
         </label>
         <label className={styles.field}>
           <span>
-            Up to <span className={styles.fieldNote}>— servers; empty for any number</span>
+            {t("install.key.upTo")} <span className={styles.fieldNote}>{t("install.key.upToNote")}</span>
           </span>
           <input
             className={fieldClass}
@@ -112,19 +113,19 @@ export function CreateInstallKey({
             max={100_000}
             value={limit}
             onChange={(e) => setLimit(e.target.value)}
-            placeholder="any number"
+            placeholder={t("install.key.anyNumber")}
           />
         </label>
       </div>
       <label className={styles.check}>
-        <input type="checkbox" checked={approval} onChange={(e) => setApproval(e.target.checked)} /> Approve new servers
-        before they appear
+        <input type="checkbox" checked={approval} onChange={(e) => setApproval(e.target.checked)} />{" "}
+        {t("install.key.approval")}
       </label>
       <div className={styles.formFoot}>
         <Button variant="k" type="submit" disabled={busy || sites.length === 0}>
-          Create install command
+          {t("install.key.create")}
         </Button>
-        <span className={styles.footnote}>Recorded in the audit log as {username}.</span>
+        <span className={styles.footnote}>{t("install.token.audit", { name: username })}</span>
       </div>
       {error && (
         <p className={styles.formError} role="alert">
@@ -147,61 +148,61 @@ export function PendingHosts({ hosts, now, onChange }: { hosts: PendingHost[]; n
       await api.decidePendingHost(host.peer_id, "approve");
       onChange();
     } catch (e) {
-      setError(`Approving ${host.hostname} failed. ${describeError(e)}`);
+      setError(t("install.pending.approveFailed", { name: host.hostname, error: describeError(e) }));
     }
   }
 
   const columns: Column<PendingHost>[] = [
     {
       key: "host",
-      header: "Server",
+      header: t("install.pending.column.server"),
       cell: (host) => (
         <>
           <span className={styles.peer}>{host.hostname}</span>
-          {host.peer_id !== host.hostname && <span className={styles.dim}> · named {host.peer_id}</span>}
+          {host.peer_id !== host.hostname && (
+            <span className={styles.dim}>{t("install.pending.named", { name: host.peer_id })}</span>
+          )}
         </>
       ),
     },
-    { key: "site", header: "Site", cell: (host) => host.site_name },
-    { key: "source", header: "From", cell: (host) => <span className={styles.mono}>{host.source ?? "—"}</span> },
-    { key: "when", header: "Installed", cell: (host) => formatWhen(new Date(host.created_at), now) },
+    { key: "site", header: t("install.pending.column.site"), cell: (host) => host.site_name },
+    { key: "source", header: t("install.pending.column.from"), cell: (host) => (host.source ? <span className={styles.mono}>{host.source}</span> : <Missing word="unknown" className={styles.dim} />) },
+    { key: "when", header: t("install.pending.column.installed"), cell: (host) => formatWhen(new Date(host.created_at), now) },
   ];
   return (
     <section className={styles.section} aria-labelledby={titleId}>
       <div className={styles.sectionHead}>
         <h2 id={titleId} className={styles.sectionTitle}>
-          Waiting for approval
+          {t("install.pending.title")}
         </h2>
         <span className={styles.dim}>{hosts.length}</span>
       </div>
-      <p className={styles.sectionNote}>
-        These servers ran an install command that asks for approval. They appear under Servers once approved.
-      </p>
+      <p className={styles.sectionNote}>{t("install.pending.note")}</p>
       <DataTable
         bare
-        label="Servers waiting for approval"
+        label={t("install.pending.label")}
         columns={columns}
         rows={hosts}
         rowKey={(host) => host.peer_id}
         rowActions={(host) => (
           <div className={styles.buttons}>
-            <Button variant="k" onClick={() => void approve(host)} aria-label={`Approve ${host.hostname}`}>
-              Approve
+            <Button variant="k" onClick={() => void approve(host)} aria-label={t("install.pending.approveName", { name: host.hostname })}>
+              {t("install.pending.approve")}
             </Button>
             <InlineConfirm
               layout="row"
-              trigger="Reject"
+              trigger={t("install.pending.reject")}
               triggerVariant="default"
-              triggerName={`Reject ${host.hostname}`}
-              title="Reject this server?"
-              consequence={`Its certificate is revoked: it can never connect as ${host.peer_id}.`}
-              confirmLabel="Reject server"
-              pendingLabel="Rejecting…"
+              triggerName={t("install.pending.rejectName", { name: host.hostname })}
+              title={t("install.pending.rejectTitle")}
+              consequence={t("install.pending.rejectConsequence", { name: host.peer_id })}
+              confirmLabel={t("install.pending.rejectConfirm")}
+              pendingLabel={t("install.pending.rejecting")}
               onConfirm={async () => {
                 await api.decidePendingHost(host.peer_id, "reject");
                 onChange();
               }}
-              describeError={(e) => `Rejecting the server failed. ${describeError(e)}`}
+              describeError={(e) => t("install.pending.rejectFailed", { error: describeError(e) })}
             />
           </div>
         )}
@@ -228,32 +229,34 @@ export function InstallKeyTable({
   const titleId = useId();
   const multiCustomer = useMultiCustomer();
   const columns: Column<InstallKey>[] = [
-    { key: "site", header: "Site", cell: (key) => placeLabel(key.customer_name, key.site_name, multiCustomer) },
+    { key: "site", header: t("install.keys.column.site"), cell: (key) => placeLabel(key.customer_name, key.site_name, multiCustomer) },
     {
       key: "hosts",
-      header: "Installed on",
+      header: t("install.keys.column.installedOn"),
       cell: (key) => (
         <>
           {hostsWords(key)}
-          {key.role === "relay" && <span className={styles.dim}> · relay</span>}
-          {key.require_approval && <span className={styles.dim}> · with approval</span>}
+          {key.role === "relay" && <span className={styles.dim}>{t("install.keys.relay")}</span>}
+          {key.require_approval && <span className={styles.dim}>{t("install.keys.withApproval")}</span>}
         </>
       ),
     },
-    { key: "state", header: "State", cell: (key) => <StatusLabel kind="installKey" value={key.state} /> },
+    { key: "state", header: t("install.keys.column.state"), cell: (key) => <StatusLabel kind="installKey" value={key.state} /> },
     {
       key: "created",
-      header: "Created",
+      header: t("install.keys.column.created"),
       cell: (key) => (
         <>
           {formatWhen(new Date(key.created_at), now)}{" "}
-          <span className={styles.dim}>by {key.created_by_username ?? "the server CLI or a removed user"}</span>
+          <span className={styles.dim}>
+            {t("install.tokens.by", { name: key.created_by_username ?? t("install.tokens.byUnknown") })}
+          </span>
         </>
       ),
     },
     {
       key: "expires",
-      header: "Expires",
+      header: t("install.keys.column.expires"),
       cell: (key) => {
         const expires = new Date(key.expires_at);
         return key.state === "active" ? (
@@ -270,16 +273,18 @@ export function InstallKeyTable({
     <section className={styles.section} aria-labelledby={titleId}>
       <div className={styles.sectionHead}>
         <h2 id={titleId} className={styles.sectionTitle}>
-          Install commands
+          {t("install.keys.title")}
         </h2>
-        <span className={styles.dim}>{keys?.filter((key) => key.state === "active").length ?? 0} active</span>
+        <span className={styles.dim}>
+          {t("install.keys.active", { count: keys?.filter((key) => key.state === "active").length ?? 0 })}
+        </span>
       </div>
       {keys && keys.length === 0 ? (
-        <p className={styles.sectionNote}>None yet: create one above, then paste it on your servers.</p>
+        <p className={styles.sectionNote}>{t("install.keys.none")}</p>
       ) : (
         <DataTable
           bare
-          label="Install commands"
+          label={t("install.keys.title")}
           columns={columns}
           rows={keys ?? []}
           rowKey={(key) => key.id}
@@ -289,22 +294,20 @@ export function InstallKeyTable({
             key.state === "active" ? (
               <InlineConfirm
                 layout="row"
-                trigger="Revoke"
+                trigger={t("install.tokens.revoke")}
                 triggerVariant="default"
-                triggerName={`Revoke the install command of ${key.site_name}`}
-                title="Revoke this install command?"
-                consequence="No new server can install with it. Servers already installed keep working."
-                confirmLabel="Revoke command"
-                pendingLabel="Revoking…"
+                triggerName={t("install.keys.revokeName", { site: key.site_name })}
+                title={t("install.keys.revokeTitle")}
+                consequence={t("install.keys.revokeConsequence")}
+                confirmLabel={t("install.keys.revokeConfirm")}
+                pendingLabel={t("install.revoking")}
                 onConfirm={async () => {
                   await api.revokeInstallKey(key.id);
                   onChange();
                 }}
-                describeError={(e) => `Revoking the install command failed. ${describeError(e)}`}
+                describeError={(e) => t("install.keys.revokeFailed", { error: describeError(e) })}
               />
-            ) : (
-              <span className={styles.dim}>—</span>
-            )
+            ) : null
           }
         />
       )}

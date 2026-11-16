@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { As, customerAdmin, me, siteAdmin } from "@/test/admin";
 import { CAMPAIGN_ID, WEB1, campaign, detail } from "@/test/campaigns";
 import { stubFetch } from "@/test/fetch";
@@ -46,6 +47,23 @@ describe("CampaignListPage", () => {
     const tiles = screen.getByRole("group", { name: "Summary, click to filter" });
     expect(within(tiles).getByRole("link", { name: /Running/ })).toHaveTextContent("Running1");
     expect(within(tiles).getByRole("link", { name: /Succeeded, 30 d/ })).toHaveTextContent("0");
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch(routes());
+    render(
+      <As user={customerAdmin}>
+        <CampaignListPage />
+      </As>,
+    );
+    const table = await screen.findByRole("table", { name: "Campagnes" });
+    const row = within(table).getByRole("link", { name: "October updates" }).closest("tr")!;
+    expect(row).toHaveTextContent("2 lots · sécurité uniquement");
+    expect(row).toHaveTextContent("En cours lot 1 sur 2");
+    expect(row).toHaveTextContent("0 / 2 · 1 en cours");
+    expect(row).toHaveTextContent("sam., dim. 22:00–04:00");
+    expect(screen.getByRole("link", { name: "Nouvelle campagne" })).toBeInTheDocument();
   });
 
   it("shows the servers of the running campaign", async () => {

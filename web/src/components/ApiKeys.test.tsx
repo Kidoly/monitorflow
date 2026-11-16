@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { ApiKey, Customer, Site } from "@/lib/api";
 import { As, customerAdmin, me, single } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -62,6 +63,13 @@ describe("words", () => {
     expect(reachWords(siteKey, true)).toBe("acme › paris");
   });
 
+  it("speaks French", () => {
+    setActiveLocale("fr");
+    expect(accessWords(KEY)).toBe("Lecture et modification · Alertes et contrôles");
+    expect(accessWords({ ...KEY, role: "viewer", areas: null })).toBe("Lecture seule · tous les domaines");
+    expect(reachWords(KEY, false)).toBe("Tout");
+  });
+
   it("offers customers only to someone who sees several", () => {
     expect(reachOptions(root, false, [ACME], [PARIS]).map((o) => o.label)).toEqual(["Everything", "paris"]);
     expect(reachOptions(root, true, [ACME, GLOBEX], [PARIS, BERLIN]).map((o) => o.label)).toEqual([
@@ -80,6 +88,25 @@ describe("words", () => {
 });
 
 describe("ApiKeysPage", () => {
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    stubFetch({
+      "GET /api/api-keys": { status: 200, body: { keys: [KEY] } },
+      "GET /api/customers": { status: 200, body: { customers: [ACME] } },
+      "GET /api/sites": { status: 200, body: { sites: [PARIS] } },
+    });
+    render(
+      <As user={single(root)}>
+        <ApiKeysPage />
+      </As>,
+    );
+    expect(await screen.findByText(/Lecture et modification · Alertes et contrôles · Tout\. Créée par alice\./)).toBeInTheDocument();
+    expect(screen.getByText(/N’expire jamais\. Pas encore utilisée\./)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Nouvelle clé d’API" }));
+    expect(screen.getByLabelText(/^À quoi sert-elle/)).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Dans 90 jours" })).toBeInTheDocument();
+  });
+
   it("makes a key limited to some areas and shows its secret once", async () => {
     const fetchMock = stubFetch({
       "GET /api/auth/me": { status: 200, body: root },
