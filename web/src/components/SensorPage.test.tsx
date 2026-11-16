@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { EffectiveSensors, ServerDetail } from "@/lib/api";
 import { As, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -119,6 +120,20 @@ describe("SensorPage", () => {
       "Critical open11:40 today2 h 52 min94.6%",
       "Resolved was Warning14 Oct 03:1048 min83.9%",
     ]);
+  });
+
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    stub();
+    render(<SensorPage id={ID} sensor="disk_used_ratio" instance="/var" />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Disque utilisé /var" })).toBeInTheDocument();
+    expect(screen.getByText(/sur web-1 · capteur disk · toutes les 30 s/)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Résumé" })).toHaveTextContent(/Actuel94,2 %.*Au-delà du seuil critique depuis2 h 52 min/);
+    const configuration = screen.getByRole("region", { name: "Configuration" });
+    expect(configuration).toHaveTextContent(/Fréquence\s*toutes les 30 s\s*Délai\s*10 s/);
+    expect(configuration).toHaveTextContent(/S’applique depuis\s*Ce serveur/);
+    const incidents = screen.getByRole("region", { name: "Incidents de ce capteur" });
+    expect(incidents).toHaveTextContent("ouverts : 1 · sur 30 jours : 2");
   });
 
   it("changes the range through the URL", async () => {

@@ -2,6 +2,8 @@
 
 import { useId, useMemo, useState } from "react";
 
+import { t } from "@/i18n";
+
 import {
   type CatalogueEntry,
   type Filters,
@@ -56,31 +58,31 @@ export function CheckCatalogue({
   };
 
   return (
-    <div className={styles.catalogue} role="group" aria-label="Check catalogue">
+    <div className={styles.catalogue} role="group" aria-label={t("checks.catalogue.label")}>
       <div className={styles.head}>
         <label htmlFor={searchId} className={styles.searchLabel}>
-          Find a check
+          {t("checks.catalogue.find")}
         </label>
         <input
           id={searchId}
           type="search"
           className={cx(fieldClass, styles.search)}
-          placeholder="PostgreSQL, 443, nginx, updates…"
+          placeholder={t("checks.catalogue.placeholder")}
           value={filters.query}
           onChange={(e) => set({ query: e.target.value })}
           aria-describedby={countId}
           autoFocus
         />
         <span id={countId} className={styles.count} aria-live="polite">
-          {matching.length} matching
+          {t("checks.catalogue.matching", { count: matching.length })}
         </span>
         <Button size="small" className={styles.cancel} onClick={onCancel}>
-          Cancel
+          {t("checks.catalogue.cancel")}
         </Button>
       </div>
 
       <FilterRow
-        label="What to monitor"
+        label={t("checks.catalogue.purpose")}
         options={PURPOSES}
         value={filters.purpose}
         count={(purpose) => filterEntries(entries, { ...filters, purpose }).length}
@@ -88,7 +90,7 @@ export function CheckCatalogue({
       />
       {systems.length > 1 && (
         <FilterRow
-          label="System"
+          label={t("checks.catalogue.system")}
           options={SYSTEMS.filter((s) => systems.includes(s.value))}
           value={filters.system}
           count={(system) => filterEntries(entries, { ...filters, system }).length}
@@ -96,7 +98,7 @@ export function CheckCatalogue({
         />
       )}
       <FilterRow
-        label="How it works"
+        label={t("checks.catalogue.technology")}
         options={TECHNOLOGIES}
         value={filters.technology}
         count={(technology) => filterEntries(entries, { ...filters, technology }).length}
@@ -104,8 +106,8 @@ export function CheckCatalogue({
       />
 
       {!filtered && top.length > 0 && (
-        <section aria-label={mostUsed.length > 0 ? "Most used" : "Common checks"}>
-          <h3 className={styles.rowTitle}>{mostUsed.length > 0 ? "Most used" : "Common checks"}</h3>
+        <section aria-label={mostUsed.length > 0 ? t("checks.catalogue.mostUsed") : t("checks.catalogue.common")}>
+          <h3 className={styles.rowTitle}>{mostUsed.length > 0 ? t("checks.catalogue.mostUsed") : t("checks.catalogue.common")}</h3>
           <ul className={cx(styles.grid, styles.top)}>
             {top.map((entry) => (
               <EntryCard key={entry.id} entry={entry} onPick={pick} />
@@ -116,19 +118,19 @@ export function CheckCatalogue({
 
       {shown && (
         <p className={styles.always} role="status">
-          {shown.title} is checked on every server already. Set when it alerts under When to alert.
+          {t("checks.catalogue.always", { title: shown.title })}
         </p>
       )}
 
-      <section aria-label={filtered ? "Matching checks" : "All checks"}>
-        <h3 className={styles.rowTitle}>{filtered ? "Matching checks" : "All checks"}</h3>
+      <section aria-label={filtered ? t("checks.catalogue.matchingChecks") : t("checks.catalogue.all")}>
+        <h3 className={styles.rowTitle}>{filtered ? t("checks.catalogue.matchingChecks") : t("checks.catalogue.all")}</h3>
         {matching.length === 0 ? (
           <p className={admin.sectionNote}>
-            No check matches.{" "}
+            {t("checks.catalogue.noMatch")}{" "}
             <Button size="small" onClick={() => set(NO_FILTERS)}>
-              Clear the search and filters
+              {t("checks.catalogue.clear")}
             </Button>{" "}
-            Anything else can be checked with your own script.
+            {t("checks.catalogue.ownScript")}
           </p>
         ) : (
           <>
@@ -139,7 +141,7 @@ export function CheckCatalogue({
             </ul>
             {!filtered && !all && matching.length > FIRST && (
               <Button size="small" className={styles.more} onClick={() => setAll(true)}>
-                Show all {matching.length} checks
+                {t("checks.catalogue.showAll", { count: matching.length })}
               </Button>
             )}
           </>
@@ -169,7 +171,7 @@ function FilterRow<T extends string>({
     <div className={styles.filters} role="group" aria-label={label}>
       <span className={styles.filterLabel}>{label}</span>
       <Button size="small" active={value === null} aria-pressed={value === null} onClick={() => onChange(null)}>
-        All
+        {t("checks.catalogue.allChoice")}
       </Button>
       {options.map((o) => {
         const n = count(o.value);
@@ -197,7 +199,7 @@ function EntryCard({ entry, onPick }: { entry: CatalogueEntry; onPick: (entry: C
         <span className={styles.cardTitle}>{entry.title}</span>
         <span className={styles.cardText}>{entry.description}</span>
         <span className={styles.cardFacts}>
-          {entry.type ? entryFacts(entry) : "Checked on every server already"}
+          {entry.type ? entryFacts(entry) : t("checks.catalogue.everyServer")}
         </span>
       </button>
     </li>

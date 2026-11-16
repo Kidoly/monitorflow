@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { FollowUpPolicyList } from "@/lib/api";
 import { As, customerAdmin } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -69,6 +70,22 @@ describe("FollowUpSection", () => {
     expect(await screen.findByText(/Critical alerts not acknowledged within 15 minutes go to the nearest administrators/)).toBeInTheDocument();
     const acme = screen.getByRole("group", { name: "Follow-up for All of acme" });
     expect(within(acme).getByText("After 10 minutes without acknowledgement, tell the person on call of Ops and bob.")).toBeInTheDocument();
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch({ "GET /api/follow-up/policies": { status: 200, body: LIST }, ...places });
+    const user = userEvent.setup();
+    show();
+    expect(await screen.findByText(/Les alertes critiques non prises en charge sous 15 minutes/)).toBeInTheDocument();
+    const acme = screen.getByRole("group", { name: "Relance pour Tout acme" });
+    expect(
+      within(acme).getByText("Après 10 minutes sans prise en charge, prévenir la personne d’astreinte de Ops et bob."),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Modifier" }));
+    const step = await screen.findByRole("listitem", { name: "Étape 1" });
+    expect(within(step).getByRole("spinbutton", { name: "Minutes avant l’étape 1" })).toHaveValue(10);
+    expect(within(step).getByText(/sans prise en charge, prévenir/)).toBeInTheDocument();
   });
 
   it("edits the steps of a place, offering only what covers all of it", async () => {

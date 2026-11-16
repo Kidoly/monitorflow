@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { CSRF_HEADER } from "@/lib/api";
 import { requestHeaders, stubFetch } from "@/test/fetch";
 
@@ -42,6 +43,20 @@ describe("LoginForm", () => {
       username: "alice",
       password: "correct horse",
     });
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch({ ...HEALTHY, "POST /api/auth/login": { status: 401, body: { error: "invalid credentials" } } });
+    const user = userEvent.setup();
+    render(<LoginForm />);
+    expect(screen.getByRole("heading", { name: "Se connecter" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Nom d’utilisateur"), "alice");
+    await user.type(screen.getByLabelText("Mot de passe"), "faux");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Nom d’utilisateur ou mot de passe incorrect. Vérifiez les deux et réessayez.",
+    );
   });
 
   it("says the credentials are wrong, marks both fields and clears the password", async () => {

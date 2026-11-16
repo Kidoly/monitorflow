@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { Customer, NotificationChannel, Site } from "@/lib/api";
 import { customerAdmin, me, single, siteAdmin } from "@/test/admin";
 
@@ -79,5 +80,12 @@ describe("a saved channel", () => {
     expect(scopeName(onCustomer, false)).toBe("All sites");
     expect(scopeValue(channel({}))).toBe("everything");
     expect(scopeName(channel({}), true)).toBe("Everything");
+  });
+
+  it("names the choices in French", () => {
+    setActiveLocale("fr");
+    expect(labels(global, [acme, globex], [paris, berlin]).slice(0, 2)).toEqual(["Tout", "Tout acme"]);
+    expect(channelScopes(single(customerAdmin), [acme], [paris, lyon])[0]!.note).toBe("Les alertes de tous vos sites.");
+    expect(scopeName(channel({ customer_id: "c1" }), false)).toBe("Tous les sites");
   });
 });

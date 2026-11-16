@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import type { DashboardSpec, Panel, Server, Sharing } from "./api";
 import {
-  READY_MADE,
   copyName,
   copySpec,
   defaultInstance,
@@ -12,6 +11,7 @@ import {
   newPanel,
   newPanelId,
   placePanel,
+  readyMades,
   serversWithin,
   sharingLabel,
   suggestedTitle,
@@ -129,7 +129,7 @@ describe("dashboards", () => {
   });
 
   it("come ready-made with valid panels", () => {
-    for (const d of READY_MADE) {
+    for (const d of readyMades()) {
       const ids = d.spec.panels.map((p) => p.id);
       expect(new Set(ids).size).toBe(ids.length);
       for (const p of d.spec.panels) {

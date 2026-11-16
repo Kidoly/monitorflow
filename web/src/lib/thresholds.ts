@@ -1,8 +1,18 @@
+import { t } from "@/i18n";
+
 import type { EffectiveThreshold } from "./api";
 
 export type Severity = "warning" | "critical";
 
-export const SEVERITY_LABELS: Record<Severity, string> = { warning: "Warning", critical: "Critical" };
+/** "Warning", "Critical", in the active language: read when shown. */
+export const SEVERITY_LABELS: Record<Severity, string> = {
+  get warning() {
+    return t("sensors.severity.warning");
+  },
+  get critical() {
+    return t("sensors.severity.critical");
+  },
+};
 
 /** A threshold value to draw on a chart, with its label. */
 export interface ThresholdLine {
@@ -55,9 +65,12 @@ export function thresholdLines(
   return [...groups.values()].map(({ severity, value, instances: covered }) => {
     let label = SEVERITY_LABELS[severity];
     if (covered.length < instances.length) {
-      const names = covered.slice(0, MAX_NAMES).map((i) => i || "no instance");
+      const names = covered.slice(0, MAX_NAMES).map((i) => i || t("sensors.line.noInstance"));
       const more = covered.length - names.length;
-      label += ` (${names.join(", ")}${more > 0 ? ` and ${more} more` : ""})`;
+      label =
+        more > 0
+          ? t("sensors.line.more", { label, names: names.join(", "), count: more })
+          : t("sensors.line.some", { label, names: names.join(", ") });
     }
     return { severity, value, label };
   });

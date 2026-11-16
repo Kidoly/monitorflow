@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 import type { Incident, IncidentQuery, IncidentSeverity, IncidentState, ThresholdSnapshot } from "./api";
 import { seriesTitle } from "./sensors";
 import { UUID } from "./uuid";
@@ -12,7 +14,7 @@ export function isOffline(incident: Pick<Incident, "metric">): boolean {
 
 /** "Offline", or the series' title for a threshold incident. */
 export function incidentTitle(incident: Pick<Incident, "metric" | "instance">): string {
-  return isOffline(incident) ? "Offline" : seriesTitle(undefined, incident.metric, incident.instance);
+  return isOffline(incident) ? t("incidents.offline") : seriesTitle(undefined, incident.metric, incident.instance);
 }
 
 /** What the incidents list shows; reflected in its query string. */
@@ -106,19 +108,33 @@ export function incidentWindow(
   return { start: Math.floor(from / step) * step, end: Math.ceil(to / step) * step, step };
 }
 
-/** Margins of the incident chart's window buttons, "± 3 h" and so on. */
+/**
+ * Margins of the incident chart's window buttons, "± 3 h" and so on;
+ * `param` is the `?window=` value, the same in every language.
+ */
 export const INCIDENT_MARGINS = [
-  { label: "± 3 h", seconds: 10_800 },
-  { label: "± 12 h", seconds: 43_200 },
-  { label: "± 3 d", seconds: 259_200 },
+  {
+    param: "3h",
+    get label() {
+      return t("incidents.margin.3h");
+    },
+    seconds: 10_800,
+  },
+  {
+    param: "12h",
+    get label() {
+      return t("incidents.margin.12h");
+    },
+    seconds: 43_200,
+  },
+  {
+    param: "3d",
+    get label() {
+      return t("incidents.margin.3d");
+    },
+    seconds: 259_200,
+  },
 ] as const;
-
-const RECOVERY: Record<ThresholdSnapshot["comparison"], string> = {
-  ">": "at or below",
-  ">=": "below",
-  "<": "at or above",
-  "<=": "above",
-};
 
 /**
  * When the engine resolves an incident under `threshold` (ADR-0017): once
@@ -130,5 +146,5 @@ export function resolvesWhen(threshold: ThresholdSnapshot, format: (value: numbe
   const lowest = threshold.warning ?? threshold.critical;
   if (lowest === null) return null;
   const limit = above ? lowest - threshold.hysteresis : lowest + threshold.hysteresis;
-  return `the value is ${RECOVERY[threshold.comparison]} ${format(limit)}`;
+  return t(`incidents.resolves.${threshold.comparison}`, { value: format(limit) });
 }

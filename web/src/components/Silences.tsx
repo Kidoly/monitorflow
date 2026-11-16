@@ -2,11 +2,12 @@
 
 import { type FormEvent, useCallback, useState } from "react";
 
+import { t } from "@/i18n";
 import { type Silence, type SilenceRequest, type SilenceScope, api, describeError, isUnauthorized } from "@/lib/api";
 import { customerWide } from "@/lib/customers";
 import { administersEverything, modifiesCustomer, modifiesSite, useMe, useMultiCustomer } from "@/lib/me";
 import { useScope } from "@/lib/scope";
-import { DEFAULT_REASON, MAX_DAYS, fromLocalInput, inOneHour, silenceTitle, tomorrowMorning } from "@/lib/silences";
+import { MAX_DAYS, defaultReason, fromLocalInput, inOneHour, silenceTitle, tomorrowMorning } from "@/lib/silences";
 import { usePolledData } from "@/lib/usePolledData";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { type Column, DataTable } from "@/components/ui/DataTable";
@@ -42,7 +43,7 @@ function SilenceForm({
   onCancel?: () => void;
   children?: React.ReactNode;
 }) {
-  const [reason, setReason] = useState(DEFAULT_REASON);
+  const [reason, setReason] = useState(defaultReason);
   const [from, setFrom] = useState("");
   const [until, setUntil] = useState("");
   const [busy, setBusy] = useState(false);
@@ -51,7 +52,7 @@ function SilenceForm({
   async function submit(event: FormEvent) {
     event.preventDefault();
     const end = fromLocalInput(until);
-    if (!end) return setError("Say when it ends. Every silence ends on its own.");
+    if (!end) return setError(t("silences.form.noEnd"));
     setBusy(true);
     setError(null);
     try {
@@ -66,28 +67,28 @@ function SilenceForm({
     <form className={styles.form} onSubmit={(e) => void submit(e)}>
       {children}
       <label className={admin.field}>
-        Why
+        {t("silences.form.why")}
         <input className={fieldClass} required maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
       </label>
       <div className={admin.formGrid}>
         <label className={admin.field}>
-          From
+          {t("silences.form.from")}
           <input className={fieldClass} type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
-          <span className={admin.fieldNote}>Empty is now.</span>
+          <span className={admin.fieldNote}>{t("silences.form.fromNote")}</span>
         </label>
         <label className={admin.field}>
-          Until
+          {t("silences.form.until")}
           <input className={fieldClass} type="datetime-local" required value={until} onChange={(e) => setUntil(e.target.value)} />
-          <span className={admin.fieldNote}>At most {MAX_DAYS} days.</span>
+          <span className={admin.fieldNote}>{t("silences.form.untilNote", { count: MAX_DAYS })}</span>
         </label>
       </div>
       <div className={admin.formFoot}>
         <Button type="submit" variant="k" disabled={busy}>
-          {busy ? "Saving…" : submitLabel}
+          {busy ? t("silences.form.saving") : submitLabel}
         </Button>
         {onCancel && (
           <Button onClick={onCancel} disabled={busy}>
-            Cancel
+            {t("silences.form.cancel")}
           </Button>
         )}
         {error && (
@@ -118,8 +119,8 @@ function EndSilence({ silence, onEnded }: { silence: Silence; onEnded: () => voi
   }
   return (
     <>
-      <Button size="small" disabled={busy} onClick={() => void end()} aria-label={`End the silence of ${silenceTitle(silence, multiCustomer)}`}>
-        {silence.active ? "End now" : "Call off"}
+      <Button size="small" disabled={busy} onClick={() => void end()} aria-label={t("silences.end.label", { name: silenceTitle(silence, multiCustomer) })}>
+        {silence.active ? t("silences.end.now") : t("silences.end.callOff")}
       </Button>
       {error && <span role="alert"> {error}</span>}
     </>
@@ -128,7 +129,7 @@ function EndSilence({ silence, onEnded }: { silence: Silence; onEnded: () => voi
 
 /** "Planned maintenance, by alice": who answers for it. */
 function because(silence: Silence): string {
-  return `${silence.reason}, by ${silence.created_by_username ?? "a removed user"}`;
+  return t("silences.because", { reason: silence.reason, name: silence.created_by_username ?? t("silences.removedUser") });
 }
 
 /**
@@ -161,7 +162,7 @@ export function SilenceBar({ target }: { target: SilenceTarget }) {
     setBusy(true);
     setError(null);
     try {
-      await silence({ ends_at: end.toISOString(), reason: DEFAULT_REASON });
+      await silence({ ends_at: end.toISOString(), reason: defaultReason() });
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -173,13 +174,14 @@ export function SilenceBar({ target }: { target: SilenceTarget }) {
     <>
       {last && (
         <Banner tone="warn">
-          <strong>Silenced until {formatDay(new Date(last.ends_at), now)}.</strong> Nobody is told about {name} until then.
-          Incidents still open and show here, and what is still open at the end is sent then.
+          <strong>{t("silences.bar.until", { when: formatDay(new Date(last.ends_at), now) })}</strong>{" "}
+          {t("silences.bar.nobody", { name })}
           <ul className={styles.lines}>
             {active.map((s) => (
               <li key={s.id}>
-                {s.scope === scope ? "" : `With ${silenceTitle(s, multiCustomer)}: `}
-                {because(s)}, until {formatDay(new Date(s.ends_at), now)}. {s.can_end && <EndSilence silence={s} onEnded={refresh} />}
+                {s.scope === scope ? "" : t("silences.bar.with", { name: silenceTitle(s, multiCustomer) })}
+                {t("silences.bar.line", { because: because(s), when: formatDay(new Date(s.ends_at), now) })}{" "}
+                {s.can_end && <EndSilence silence={s} onEnded={refresh} />}
               </li>
             ))}
           </ul>
@@ -187,26 +189,37 @@ export function SilenceBar({ target }: { target: SilenceTarget }) {
       )}
       {upcoming.map((s) => (
         <Banner key={s.id} tone="plain">
-          Silence planned{s.scope === scope ? "" : ` with ${silenceTitle(s, multiCustomer)}`} from {formatDay(new Date(s.starts_at), now)} to{" "}
-          {formatDay(new Date(s.ends_at), now)}: {because(s)}. {s.can_end && <EndSilence silence={s} onEnded={refresh} />}
+          {s.scope === scope
+            ? t("silences.bar.planned", {
+                from: formatDay(new Date(s.starts_at), now),
+                to: formatDay(new Date(s.ends_at), now),
+                because: because(s),
+              })
+            : t("silences.bar.plannedWith", {
+                name: silenceTitle(s, multiCustomer),
+                from: formatDay(new Date(s.starts_at), now),
+                to: formatDay(new Date(s.ends_at), now),
+                because: because(s),
+              })}{" "}
+          {s.can_end && <EndSilence silence={s} onEnded={refresh} />}
         </Banner>
       ))}
       {modifiesSite(me, target.customerId, target.siteId) && (
-        <div className={styles.bar} role="group" aria-label={`Silence notifications about ${name}`}>
-          <span className={styles.label}>{last ? "Silence longer" : "Silence for"}</span>
+        <div className={styles.bar} role="group" aria-label={t("silences.bar.label", { name })}>
+          <span className={styles.label}>{last ? t("silences.bar.longer") : t("silences.bar.for")}</span>
           <Button size="small" disabled={busy} onClick={() => void until(inOneHour(new Date()))}>
-            1 hour
+            {t("silences.bar.hour")}
           </Button>
           <Button size="small" disabled={busy} onClick={() => void until(tomorrowMorning(new Date()))}>
-            Until tomorrow, 8:00
+            {t("silences.bar.tomorrow")}
           </Button>
           <Button size="small" aria-expanded={custom} onClick={() => setCustom(!custom)}>
-            Custom…
+            {t("silences.bar.custom")}
           </Button>
           {error && <span role="alert">{error}</span>}
         </div>
       )}
-      {custom && <SilenceForm submitLabel={`Silence ${name}`} onSubmit={silence} onCancel={() => setCustom(false)} />}
+      {custom && <SilenceForm submitLabel={t("silences.bar.submit", { name })} onSubmit={silence} onCancel={() => setCustom(false)} />}
     </>
   );
 }
@@ -232,28 +245,28 @@ function NewSilence({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
   const { data } = usePolledData(loadChoices);
   const [value, setValue] = useState("");
   const choices: Choice[] = [
-    ...(everything ? [{ value: "all", label: "Everything", scope: "all" as const }] : []),
+    ...(everything ? [{ value: "all", label: t("silences.choice.everything"), scope: "all" as const }] : []),
     // For a single company, Everything says it all; a customer's user gets "All sites" (ADR-0104).
     ...(data?.customers ?? [])
       .filter((c) => modifiesCustomer(me, c.id) && (multiCustomer || !everything))
       .map((c) => ({
         value: `customer/${c.id}`,
-        label: customerWide(`Customer ${c.name}`, multiCustomer),
+        label: customerWide(t("silences.choice.customer", { name: c.name }), multiCustomer),
         scope: "customer" as const,
         id: c.id,
       })),
     ...(data?.sites ?? [])
       .filter((s) => modifiesSite(me, s.customer_id, s.id))
-      .map((s) => ({ value: `site/${s.id}`, label: `Site ${s.name}`, scope: "site" as const, id: s.id })),
+      .map((s) => ({ value: `site/${s.id}`, label: t("silences.choice.site", { name: s.name }), scope: "site" as const, id: s.id })),
     ...(data?.servers ?? [])
       .filter((s) => modifiesSite(me, s.customer_id, s.site_id))
-      .map((s) => ({ value: `server/${s.id}`, label: `Server ${s.hostname}`, scope: "server" as const, id: s.id })),
+      .map((s) => ({ value: `server/${s.id}`, label: t("silences.choice.server", { name: s.hostname }), scope: "server" as const, id: s.id })),
   ];
   // Nothing chosen at first: a wide silence is never a default.
   const chosen = choices.find((c) => c.value === value);
   return (
     <SilenceForm
-      submitLabel="Silence"
+      submitLabel={t("silences.submit")}
       onCancel={onCancel}
       onSubmit={async (period) => {
         if (!chosen) return;
@@ -262,10 +275,10 @@ function NewSilence({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
       }}
     >
       <label className={admin.field}>
-        What
+        {t("silences.form.what")}
         <select className={fieldClass} required value={value} onChange={(e) => setValue(e.target.value)}>
           <option value="" disabled>
-            Choose…
+            {t("silences.form.choose")}
           </option>
           {choices.map((c) => (
             <option key={c.value} value={c.value}>
@@ -296,34 +309,33 @@ export function SilencesPage() {
   );
   const canSilence = me?.roles.some((grant) => grant.role !== "viewer") ?? false;
   const columns: Column<Silence>[] = [
-    { key: "what", header: "What", cell: (s) => silenceTitle(s, multiCustomer) },
+    { key: "what", header: t("silences.column.what"), cell: (s) => silenceTitle(s, multiCustomer) },
     {
       key: "state",
-      header: "State",
-      cell: (s) => <Label tone={s.active ? "warn" : "neutral"}>{s.active ? "Active" : "Upcoming"}</Label>,
+      header: t("silences.column.state"),
+      cell: (s) => <Label tone={s.active ? "warn" : "neutral"}>{s.active ? t("silences.active") : t("silences.upcoming")}</Label>,
     },
-    { key: "from", header: "From", cell: (s) => formatDay(new Date(s.starts_at), now) },
-    { key: "until", header: "Until", cell: (s) => formatDay(new Date(s.ends_at), now) },
-    { key: "why", header: "Why", cell: (s) => s.reason },
-    { key: "by", header: "Created by", cell: (s) => s.created_by_username ?? "A removed user" },
+    { key: "from", header: t("silences.column.from"), cell: (s) => formatDay(new Date(s.starts_at), now) },
+    { key: "until", header: t("silences.column.until"), cell: (s) => formatDay(new Date(s.ends_at), now) },
+    { key: "why", header: t("silences.column.why"), cell: (s) => s.reason },
+    { key: "by", header: t("silences.column.by"), cell: (s) => s.created_by_username ?? t("silences.removedUserCell") },
     { key: "end", header: "", cell: (s) => s.can_end && <EndSilence silence={s} onEnded={refresh} /> },
   ];
   return (
     <Page>
       <PageHeader
-        title="Silences"
+        title={t("silences.title")}
         meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
         actions={
           canSilence && (
             <Button variant="k" aria-expanded={adding} onClick={() => setAdding(!adding)}>
-              New silence
+              {t("silences.add")}
             </Button>
           )
         }
       />
       <p className={styles.intro}>
-        A silence stops notifications for a while, for planned work. Incidents still open and show as usual. When it ends, what is
-        still open is sent, once. To silence one server or site, open its page.
+        {t("silences.intro")}
       </p>
       {adding && (
         <NewSilence
@@ -336,11 +348,11 @@ export function SilencesPage() {
       )}
       {stale && updatedAt && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {!data && error !== null && !isUnauthorized(error) ? (
-        <ErrorState what="silences" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what={t("silences.load")} error={describeError(error)} onRetry={refresh} />
       ) : data && silences.length === 0 ? (
-        <EmptyState>Nothing is silenced. Notifications go out as usual.</EmptyState>
+        <EmptyState>{t("silences.empty")}</EmptyState>
       ) : (
-        <DataTable label="Silences" columns={columns} rows={silences} rowKey={(s) => s.id} loading={!data} />
+        <DataTable label={t("silences.title")} columns={columns} rows={silences} rowKey={(s) => s.id} loading={!data} />
       )}
     </Page>
   );

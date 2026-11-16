@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { t } from "@/i18n";
 import {
   ApiError,
   type Command,
@@ -160,16 +161,16 @@ export function ServerPage({ id }: { id: string | null }) {
   if (!valid || (error instanceof ApiError && error.status === 404)) {
     return (
       <NotFound
-        title="Server not found"
-        actions={<ButtonLink href="/">Back to the fleet</ButtonLink>}
+        title={t("server.notFound")}
+        actions={<ButtonLink href="/">{t("server.back")}</ButtonLink>}
       />
     );
   }
   if (!data || !updatedAt) {
     return error !== null && !isUnauthorized(error) ? (
-      <ErrorState what="the server" error={describeError(error)} onRetry={refresh} />
+      <ErrorState what={t("server.what")} error={describeError(error)} onRetry={refresh} />
     ) : (
-      <LoadingBlock label="Loading server" />
+      <LoadingBlock label={t("server.loading")} />
     );
   }
 
@@ -211,7 +212,7 @@ export function ServerPage({ id }: { id: string | null }) {
       )}
       <ServerFacts server={server} latestAgent={latestAgent} now={updatedAt} stale={stale} onChanged={refresh} />
       <Tabs
-        label="Server sections"
+        label={t("server.sections")}
         idBase="server"
         selected={tab}
         // The logs' filters and time belong to that tab.
@@ -219,10 +220,18 @@ export function ServerPage({ id }: { id: string | null }) {
           setParams({ tab: next === "sensors" ? null : next, level: null, unit: null, q: null, from: null, to: null })
         }
         tabs={[
-          { id: "sensors", label: "Sensors", extra: "sensors" in sensors ? `· ${rows.length}` : undefined },
-          { id: "logs", label: "Logs" },
-          { id: "updates", label: "Updates" },
-          { id: "commands", label: "Commands", extra: active > 0 ? `· ${active} running` : undefined },
+          {
+            id: "sensors",
+            label: t("server.tab.sensors"),
+            extra: "sensors" in sensors ? t("server.tab.count", { count: rows.length }) : undefined,
+          },
+          { id: "logs", label: t("server.tab.logs") },
+          { id: "updates", label: t("server.tab.updates") },
+          {
+            id: "commands",
+            label: t("server.tab.commands"),
+            extra: active > 0 ? t("server.tab.running", { count: active }) : undefined,
+          },
         ]}
       />
       <TabPanel idBase="server" id={tab}>
@@ -259,7 +268,7 @@ function ServerHeading({ server }: { server: ServerDetail }) {
   const scope = useScope();
   return (
     <Breadcrumb
-      parents={[{ label: "Fleet", href: scopedHref("/", scope) }]}
+      parents={[{ label: t("server.fleet"), href: scopedHref("/", scope) }]}
       current={server.hostname}
       siblings={serverSiblings(server, scope)}
     />
@@ -295,17 +304,20 @@ function UpdateAgent({
   }
   return (
     <InlineConfirm
-      trigger={`Update agent to ${latest}…`}
+      trigger={t("server.update.trigger", { version: latest })}
       triggerVariant="default"
-      title={`Update the agent of ${server.hostname} to ${latest}?`}
-      consequence={`The agent downloads ${latest}, checks its signature and restarts into it. If the new agent does not connect within 5 minutes, ${server.agent_version ?? "the current version"} comes back. Follow it in the Commands tab.`}
-      confirmLabel={`Update ${server.hostname}`}
-      pendingLabel="Queuing…"
+      title={t("server.update.title", { server: server.hostname, version: latest })}
+      consequence={t("server.update.consequence", {
+        version: latest,
+        current: server.agent_version ?? t("server.update.current"),
+      })}
+      confirmLabel={t("server.update.confirm", { server: server.hostname })}
+      pendingLabel={t("server.update.queuing")}
       onConfirm={async () => {
         await api.updateAgent(server.id, latest);
         onQueued();
       }}
-      describeError={(e) => `The update was not queued. ${describeError(e)}`}
+      describeError={(e) => t("server.update.failed", { error: describeError(e) })}
     />
   );
 }
@@ -313,32 +325,29 @@ function UpdateAgent({
 /** How to turn on AI commands on this server, or who can. */
 function AllowOnThisServer({ server }: { server: ServerDetail }) {
   const me = useMe();
-  const where = server.os_family === "windows" ? ", in PowerShell as an administrator" : "";
+  const where = server.os_family === "windows" ? t("server.allow.windows") : "";
   if (aiSwitch(server) === "both") {
     return (
       <Banner tone="warn">
-        <strong>AI commands are off on {server.hostname}.</strong> AI&apos;s commands are refused here and its incidents
-        go to a person.{" "}
+        <strong>{t("server.allow.off", { server: server.hostname })}</strong> {t("server.allow.refused")}{" "}
         {administersSite(me, server.customer_id, server.site_id)
-          ? "Turn them on from AI commands, above."
-          : "An administrator of its site can turn them on from this page."}
+          ? t("server.allow.turnOnAbove")
+          : t("server.allow.askSite")}
       </Banner>
     );
   }
   return (
     <Banner tone="warn">
-      <strong>AI commands are off on {server.hostname}.</strong>{" "}
+      <strong>{t("server.allow.off", { server: server.hostname })}</strong>{" "}
       {administersSite(me, server.customer_id, server.site_id) ? (
         <>
-          AI&apos;s commands are refused here and its incidents go to a person. They can only be turned on on the server.
-          To let administrators turn them on and off from this page, run this once on the server{where}. This page
-          changes by itself when it is done.
+          {t("server.allow.onlyOnServer", { where })}
           <AllowCommandsLine osFamily={server.os_family} fromWeb />
-          Or, to turn them on for good from the server itself:
+          {t("server.allow.forGood")}
           <AllowCommandsLine osFamily={server.os_family} />
         </>
       ) : (
-        "AI's commands are refused here and its incidents go to a person. An administrator can turn them on on the server."
+        t("server.allow.askAdmin")
       )}
     </Banner>
   );
@@ -348,12 +357,13 @@ function AllowOnThisServer({ server }: { server: ServerDetail }) {
 function AiCommandsFact({ server, onChanged }: { server: ServerDetail; onChanged: () => void }) {
   const scope = useScope();
   const state = aiCommands(server);
-  const lastContact = server.status === "offline" && " As of its last contact.";
+  const lastContact = server.status === "offline" && t("server.ai.lastContact");
   switch (state) {
     case "accepted":
       return (
         <>
-          <Label tone="ok">On</Label> Runs the commands AI sends.{lastContact}
+          <Label tone="ok">{t("server.ai.on")}</Label> {t("server.ai.runs")}
+          {lastContact}
           <AiCommandsChangeLine server={server} />
           <AiCommandsSwitch server={server} on={false} onChanged={onChanged} />
         </>
@@ -361,15 +371,16 @@ function AiCommandsFact({ server, onChanged }: { server: ServerDetail; onChanged
     case "off":
       return (
         <>
-          <Label tone="warn">Off</Label> Refuses AI&apos;s commands.{lastContact}
+          <Label tone="warn">{t("server.ai.off")}</Label> {t("server.ai.refuses")}
+          {lastContact}
           <AiCommandsChangeLine server={server} />
           {aiSwitch(server) === "both" ? (
             <AiCommandsSwitch server={server} on onChanged={onChanged} />
           ) : (
             <>
               {" "}
-              Can only be turned on on the server:{" "}
-              <Link href={scopedHref(serverHref(server.id, "commands"), scope)}>how</Link>
+              {t("server.ai.onlyOnServer")}{" "}
+              <Link href={scopedHref(serverHref(server.id, "commands"), scope)}>{t("server.ai.how")}</Link>
             </>
           )}
         </>
@@ -377,14 +388,14 @@ function AiCommandsFact({ server, onChanged }: { server: ServerDetail; onChanged
     case "unsupported":
       return (
         <>
-          <Label tone="neutral">Not available</Label> {unsupportedReason(server.os_family)}
+          <Label tone="neutral">{t("server.ai.notAvailable")}</Label> {unsupportedReason(server.os_family)}
         </>
       );
     case "unknown":
       return (
         <>
-          <Label tone="neutral">Not known yet</Label>{" "}
-          {server.via_relay ? "The agent and its relay" : "The agent"} will say once updated, which happens by itself.
+          <Label tone="neutral">{t("server.ai.notKnown")}</Label>{" "}
+          {server.via_relay ? t("server.ai.relayWillSay") : t("server.ai.agentWillSay")}
         </>
       );
   }
@@ -397,23 +408,24 @@ function AiCommandsFact({ server, onChanged }: { server: ServerDetail; onChanged
 function AiCommandsChangeLine({ server }: { server: ServerDetail }) {
   const change = server.ai_commands_change;
   if (!change) return null;
-  const word = change.on ? "on" : "off";
-  const who = change.requested_by ?? "a removed user";
-  const asked = `asked by ${who} at ${minutes(change.issued_at)}`;
+  const who = change.requested_by ?? t("server.change.removedUser");
+  const at = minutes(change.issued_at);
   if (isActive(change)) {
-    const later = server.status === "offline" ? " It applies when the server is back." : "";
-    return <> Turning {word}… {asked}.{later}</>;
+    const later = server.status === "offline" ? t("server.change.whenBack") : "";
+    return <>{t(change.on ? "server.change.turningOn" : "server.change.turningOff", { who, at }) + later}</>;
   }
   if (change.state === "succeeded") {
     // A later change on the server itself makes the request history, not the reason.
     if (change.on !== (aiCommands(server) === "accepted")) return null;
-    return <> Turned {word} by {who} at {minutes(change.finished_at ?? change.issued_at)}.</>;
+    const done = minutes(change.finished_at ?? change.issued_at);
+    return <>{t(change.on ? "server.change.turnedOn" : "server.change.turnedOff", { who, at: done })}</>;
   }
   if (change.state === "failed") {
-    return <> The request to turn them {word}, {asked}, failed: {change.error ?? "unknown error"}.</>;
+    const error = change.error ?? t("server.change.unknownError");
+    return <>{t(change.on ? "server.change.failedOn" : "server.change.failedOff", { who, at, error })}</>;
   }
   if (change.state === "expired") {
-    return <> The request to turn them {word}, {asked}, expired before the server was back.</>;
+    return <>{t(change.on ? "server.change.expiredOn" : "server.change.expiredOff", { who, at })}</>;
   }
   return null;
 }
@@ -430,28 +442,23 @@ function AiCommandsSwitch({ server, on, onChanged }: { server: ServerDetail; on:
   ) {
     return null;
   }
-  const word = on ? "on" : "off";
   return (
     <>
       {" "}
       <InlineConfirm
-        trigger={`Turn ${word}…`}
+        trigger={on ? t("server.switch.onTrigger") : t("server.switch.offTrigger")}
         triggerVariant={on ? "default" : "danger"}
         layout="row"
-        title={`Turn AI commands ${word} on ${server.hostname}?`}
-        consequence={
-          on
-            ? "AI runs read-only commands here at once, and changes once an approver accepts them. The channels covering this server are told."
-            : "AI's commands are refused here and its incidents go to a person. The channels covering this server are told."
-        }
-        confirmLabel={`Turn ${word}`}
+        title={t(on ? "server.switch.onTitle" : "server.switch.offTitle", { server: server.hostname })}
+        consequence={on ? t("server.switch.onConsequence") : t("server.switch.offConsequence")}
+        confirmLabel={on ? t("server.switch.onConfirm") : t("server.switch.offConfirm")}
         confirmVariant={on ? "k" : "danger"}
-        pendingLabel="Sending…"
+        pendingLabel={t("server.switch.sending")}
         onConfirm={async () => {
           await api.switchAiCommands(server.id, on);
           onChanged();
         }}
-        describeError={(e) => `Nothing changed. ${describeError(e)}`}
+        describeError={(e) => t("server.switch.failed", { error: describeError(e) })}
       />
     </>
   );
@@ -481,7 +488,7 @@ function ServerFacts({
       columns={2}
       facts={[
         {
-          label: "Site",
+          label: t("server.fact.site"),
           value: (
             <>
               <Link href={siteHref(server.site_id)}>{server.site_name}</Link>
@@ -490,45 +497,52 @@ function ServerFacts({
           ),
         },
         {
-          label: "Last seen",
-          value: server.last_heartbeat ? <RelativeTime value={server.last_heartbeat} now={now} stale={stale} /> : "never",
+          label: t("server.fact.lastSeen"),
+          value: server.last_heartbeat ? (
+            <RelativeTime value={server.last_heartbeat} now={now} stale={stale} />
+          ) : (
+            t("server.fact.never")
+          ),
         },
-        { label: "OS", value: formatOs(server.os_family, server.os_version) },
+        { label: t("server.fact.os"), value: formatOs(server.os_family, server.os_version) },
         {
-          label: server.connected_at ? "Connected since" : "Connected",
-          value: server.connected_at ? minutes(server.connected_at) : "not now",
+          label: server.connected_at ? t("server.fact.connectedSince") : t("server.fact.connected"),
+          value: server.connected_at ? minutes(server.connected_at) : t("server.fact.notNow"),
         },
         {
-          label: "Agent",
+          label: t("server.fact.agent"),
           value: [
-            server.agent_version ?? "unknown",
-            updateAvailable(server.agent_version, latestAgent) && `${latestAgent} available`,
-            server.via_relay && `via ${server.via_relay}`,
+            server.agent_version ?? t("server.fact.unknown"),
+            updateAvailable(server.agent_version, latestAgent) && t("server.fact.available", { version: latestAgent ?? "" }),
+            server.via_relay && t("server.fact.via", { relay: server.via_relay }),
           ]
             .filter(Boolean)
             .join(" · "),
         },
-        { label: "Certificate", value: certificate ? <CertificateFact certificate={certificate} now={now} /> : "none issued" },
+        {
+          label: t("server.fact.certificate"),
+          value: certificate ? <CertificateFact certificate={certificate} now={now} /> : t("server.fact.noCertificate"),
+        },
         ...(server.package_updates === false
-          ? [{ label: "Package updates", value: "Package updates aren't available on this system; monitoring works normally" }]
+          ? [{ label: t("server.fact.packageUpdates"), value: t("server.fact.noPackageUpdates") }]
           : []),
-        { label: "Added", value: minutes(server.created_at) },
+        { label: t("server.fact.added"), value: minutes(server.created_at) },
         ...(server.revoked_at
           ? []
           : [
-              { label: "AI commands", value: <AiCommandsFact server={server} onChanged={onChanged} /> },
-              { label: "Offline alerts", value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> },
+              { label: t("server.fact.aiCommands"), value: <AiCommandsFact server={server} onChanged={onChanged} /> },
+              { label: t("server.fact.offlineAlerts"), value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> },
               // What a change gets first; the Proxmox mapping for administrators of the customer.
               {
-                label: "Rollback",
+                label: t("server.fact.rollback"),
                 value: <RollbackFact server={server} canMap={administersCustomer(me, server.customer_id)} />,
               },
             ]),
       ]}
       details={[
-        ...(summary ? [{ label: "Commands", value: summary }] : []),
-        { label: "Certificate ID", value: server.peer_id, mono: true },
-        ...(certificate ? [{ label: "Certificate valid until", value: formatExact(new Date(certificate.not_after)).slice(0, 10) }] : []),
+        ...(summary ? [{ label: t("server.fact.commands"), value: summary }] : []),
+        { label: t("server.fact.certificateId"), value: server.peer_id, mono: true },
+        ...(certificate ? [{ label: t("server.fact.certificateUntil"), value: formatExact(new Date(certificate.not_after)).slice(0, 10) }] : []),
       ]}
     />
   );
@@ -546,7 +560,7 @@ function CertificateFact({ certificate, now }: { certificate: NonNullable<Server
     );
   }
   const problem = certificateProblem(certificate.not_after, now);
-  if (!problem) return <>Valid, renews automatically</>;
+  if (!problem) return <>{t("server.fact.certificateValid")}</>;
   return (
     <>
       <Label tone={certificateState(certificate.not_after, now) === "failed" ? "bad" : "warn"}>{problem}</Label> {date}

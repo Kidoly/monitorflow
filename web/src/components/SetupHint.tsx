@@ -1,4 +1,5 @@
 import { CopyButton } from "@/components/ui/SecretField";
+import { t } from "@/i18n";
 
 import styles from "./LoginForm.module.css";
 
@@ -10,11 +11,11 @@ export function SetupHint() {
   return (
     <>
       <p className={styles.text}>
-        Open the setup link printed by the installer or in the server log. To print a new one, run this on the server:
+        {t("auth.setupHint.text")}
       </p>
       <div className={styles.command}>
         <code>{SETUP_LINK_COMMAND}</code>
-        <CopyButton text={SETUP_LINK_COMMAND} name="Copy the command" size="small" />
+        <CopyButton text={SETUP_LINK_COMMAND} name={t("auth.setupHint.copy")} size="small" />
       </div>
     </>
   );

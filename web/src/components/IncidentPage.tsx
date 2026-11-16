@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 
+import { rich, t } from "@/i18n";
 import {
   ApiError,
   type IncidentDetail,
@@ -102,7 +103,7 @@ export function IncidentPage({ id }: { id: string | null }) {
   const valid = id !== null && UUID.test(id);
   const scope = useScope();
   const [params, setParams] = useUrlParams();
-  const margin = INCIDENT_MARGINS.find((m) => m.label.replace(/[± ]/g, "") === params.get("window")) ?? INCIDENT_MARGINS[0];
+  const margin = INCIDENT_MARGINS.find((m) => m.param === params.get("window")) ?? INCIDENT_MARGINS[0];
   // A resolved incident no longer changes: refreshes reuse it until the window changes.
   const last = useRef<Loaded | null>(null);
   const fetcher = useCallback(
@@ -119,24 +120,24 @@ export function IncidentPage({ id }: { id: string | null }) {
   const incident = data?.incident;
   const title = incident ? incidentTitle(incident) : "";
   useEffect(() => {
-    if (incident) document.title = `${title} on ${incident.hostname} · MonitorFlow`;
+    if (incident) document.title = t("incidents.documentTitle", { title, host: incident.hostname });
   }, [incident, title]);
 
   if (!valid || (error instanceof ApiError && error.status === 404)) {
     return (
       <NotFound
-        title="Incident not found"
-        actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>Back to the incidents</ButtonLink>}
+        title={t("incidents.notFound")}
+        actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>{t("incidents.backToIncidents")}</ButtonLink>}
       >
-        It may have been removed with its server, or your roles do not cover its site.
+        {t("incidents.notFoundText")}
       </NotFound>
     );
   }
   if (!data || !incident || !updatedAt) {
     return error !== null && !isUnauthorized(error) ? (
-      <ErrorState what="the incident" error={describeError(error)} onRetry={refresh} />
+      <ErrorState what={t("incidents.load.one")} error={describeError(error)} onRetry={refresh} />
     ) : (
-      <LoadingBlock label="Loading incident" />
+      <LoadingBlock label={t("incidents.loading")} />
     );
   }
 
@@ -157,50 +158,46 @@ export function IncidentPage({ id }: { id: string | null }) {
 
   return (
     <Page>
-      <Breadcrumb parents={[{ label: "Incidents", href: scopedHref(incidentsHref(), scope) }]} current={`#${incident.id.slice(0, 8)}`} />
+      <Breadcrumb parents={[{ label: t("incidents.title"), href: scopedHref(incidentsHref(), scope) }]} current={`#${incident.id.slice(0, 8)}`} />
       <PageHeader
         detail
         title={
           offline ? (
-            <>
-              {host} {open ? "is offline" : "was offline"}
-            </>
+            rich(open ? "incidents.isOffline" : "incidents.wasOffline", { host })
           ) : (
-            <>
-              {title} on {host}
-            </>
+            rich("incidents.on", { title, host })
           )
         }
         status={
           <>
             <StatusLabel kind="severity" value={open ? incident.severity : "resolved"} />
             <span className={styles.muted}>
-              {open ? "open" : `was ${SEVERITY_LABELS[incident.severity]}`} · {incident.site_name}
+              {open ? t("incidents.openWord") : t("incidents.was", { severity: SEVERITY_LABELS[incident.severity] })} · {incident.site_name}
             </span>
             {incident.silenced_until ? (
               <>
-                <Label tone="neutral">Silenced</Label>
+                <Label tone="neutral">{t("incidents.silenced")}</Label>
                 <span className={styles.muted}>
-                  nobody is told until {formatDay(new Date(incident.silenced_until), now)}; if still open then, it is sent
+                  {t("incidents.silencedText", { when: formatDay(new Date(incident.silenced_until), now) })}
                 </span>
               </>
             ) : (
-              incident.silenced && <Label tone="neutral">Was silenced</Label>
+              incident.silenced && <Label tone="neutral">{t("incidents.wasSilenced")}</Label>
             )}
           </>
         }
-        meta={open ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : "Resolved: it no longer changes."}
+        meta={open ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : t("incidents.resolvedMeta")}
         actions={
           <>
             {incident.server_id && !offline && (
-              <ButtonLink href={scopedHref(sensorHref(incident.server_id, incident.metric, incident.instance), scope)}>Open sensor</ButtonLink>
+              <ButtonLink href={scopedHref(sensorHref(incident.server_id, incident.metric, incident.instance), scope)}>{t("incidents.openSensor")}</ButtonLink>
             )}
             {incident.server_id && (
               <ButtonLink href={scopedHref(incidentLogsHref(incident.server_id, incident.opened_at, incident.resolved_at), scope)}>
-                Logs around this incident
+                {t("incidents.logsAround")}
               </ButtonLink>
             )}
-            <ButtonLink href={scopedHref(incidentPeerHref(incident), scope)}>Open {incident.hostname}</ButtonLink>
+            <ButtonLink href={scopedHref(incidentPeerHref(incident), scope)}>{t("incidents.openHost", { host: incident.hostname })}</ButtonLink>
           </>
         }
       />
@@ -209,36 +206,39 @@ export function IncidentPage({ id }: { id: string | null }) {
       <SentTogether incident={incident} now={now} />
       <StatTiles
         compact
-        label="Summary"
+        label={t("incidents.tile.summary")}
         tiles={[
           ...(offline
-            ? [{ label: "Last heard from", value: minutes(incident.opened_at), tone: open ? tone : ("plain" as const) }]
+            ? [{ label: t("incidents.tile.lastHeard"), value: minutes(incident.opened_at), tone: open ? tone : ("plain" as const) }]
             : [
-                { label: "Last value", value: format(incident.last_value), tone: open ? tone : ("plain" as const) },
-                { label: "Peak", value: format(incident.peak_value) },
+                { label: t("incidents.tile.last"), value: format(incident.last_value), tone: open ? tone : ("plain" as const) },
+                { label: t("incidents.tile.peak"), value: format(incident.peak_value) },
               ]),
           {
             label: new Date(incident.opened_at).toDateString() === now.toDateString()
-              ? "Opened"
-              : `Opened, ${formatShortDate(new Date(incident.opened_at))}`,
+              ? t("incidents.tile.opened")
+              : t("incidents.tile.openedOn", { day: formatShortDate(new Date(incident.opened_at)) }),
             value: minutes(incident.opened_at),
           },
-          { label: open ? "Duration" : "Lasted", value: formatDuration(((resolved ?? now.getTime() / 1000) - opened)) },
+          { label: open ? t("incidents.tile.duration") : t("incidents.tile.lasted"), value: formatDuration(((resolved ?? now.getTime() / 1000) - opened)) },
         ]}
       />
       {chart === null ? null : "error" in chart ? (
         <Banner tone="bad">{chart.error}</Banner>
       ) : (
         <TimeChart
-          title="Around the incident"
-          subtitle={`${minutes(new Date(chart.start * 1000).toISOString())} → ${minutes(new Date(chart.end * 1000).toISOString())} · hover or use ← → for exact values`}
+          title={t("incidents.chart.title")}
+          subtitle={t("incidents.chart.subtitle", {
+            from: minutes(new Date(chart.start * 1000).toISOString()),
+            to: minutes(new Date(chart.end * 1000).toISOString()),
+          })}
           actions={
-            <div role="group" aria-label="Window" className={styles.segments}>
+            <div role="group" aria-label={t("incidents.chart.window")} className={styles.segments}>
               {INCIDENT_MARGINS.map((m) => (
                 <Button
-                  key={m.label}
+                  key={m.param}
                   aria-pressed={m === margin}
-                  onClick={() => setParams({ window: m === INCIDENT_MARGINS[0] ? null : m.label.replace(/[± ]/g, "") })}
+                  onClick={() => setParams({ window: m === INCIDENT_MARGINS[0] ? null : m.param })}
                 >
                   {m.label}
                 </Button>
@@ -254,29 +254,29 @@ export function IncidentPage({ id }: { id: string | null }) {
           max={ratio ? 1 : undefined}
           thresholds={snapshotLines(incident.threshold)}
           markers={[
-            { t: opened, label: `Opened ${minutes(incident.opened_at)}`, kind: "opened" },
+            { t: opened, label: t("incidents.chart.opened", { time: minutes(incident.opened_at) }), kind: "opened" },
             resolved !== null
-              ? { t: resolved, label: `Resolved ${minutes(incident.resolved_at!)}`, kind: "resolved" }
-              : { t: chart.end, label: "Now · open", kind: "now" },
+              ? { t: resolved, label: t("incidents.chart.resolved", { time: minutes(incident.resolved_at!) }), kind: "resolved" }
+              : { t: chart.end, label: t("incidents.chart.now"), kind: "now" },
           ]}
           band={{ start: opened, end: resolved ?? undefined, severity: incident.severity }}
-          emptyText="No data around this incident. Metrics are kept for a limited time."
+          emptyText={t("incidents.chart.empty")}
         />
       )}
       <div className={styles.pair}>
         {offline ? (
           <FactsBox
-            title="Rule"
+            title={t("incidents.rule.title")}
             facts={[
-              { label: "Opens", value: `after ${formatSeconds(OFFLINE_AFTER_S)} without contact` },
-              { label: "Resolves when", value: "it connects again, its offline alerts are turned off, or it is removed" },
-              { label: "Turn off", value: <>Offline alerts on {host}, or for its site in Settings › Sites</> },
+              { label: t("incidents.rule.opens"), value: t("incidents.rule.opensValue", { duration: formatSeconds(OFFLINE_AFTER_S) }) },
+              { label: t("incidents.rule.resolvesWhen"), value: t("incidents.rule.resolvesValue") },
+              { label: t("incidents.rule.turnOff"), value: rich("incidents.rule.turnOffValue", { host }) },
             ]}
           />
         ) : (
-          <FactsBox title="Threshold when it opened" facts={thresholdFacts(incident.threshold, format)} />
+          <FactsBox title={t("incidents.threshold.title")} facts={thresholdFacts(incident.threshold, format)} />
         )}
-        <TableBox title="Timeline">
+        <TableBox title={t("incidents.timeline")}>
           <Timeline events={incident.events} format={format} now={now} />
         </TableBox>
       </div>
@@ -297,27 +297,36 @@ function thresholdFacts(threshold: ThresholdSnapshot, format: (v: number) => str
   const above = threshold.comparison === ">" || threshold.comparison === ">=";
   const resolves = resolvesWhen(threshold, format);
   return [
-    { label: "Comparison", value: threshold.comparison, mono: true },
-    { label: "Warning", value: threshold.warning === null ? "none" : format(threshold.warning) },
-    { label: "Critical", value: threshold.critical === null ? "none" : format(threshold.critical) },
+    { label: t("incidents.threshold.comparison"), value: threshold.comparison, mono: true },
     {
-      label: "Duration",
+      label: t("incidents.threshold.warning"),
+      value: threshold.warning === null ? t("incidents.threshold.none") : format(threshold.warning),
+    },
+    {
+      label: t("incidents.threshold.critical"),
+      value: threshold.critical === null ? t("incidents.threshold.none") : format(threshold.critical),
+    },
+    {
+      label: t("incidents.threshold.duration"),
       value: (
         <>
-          {formatSeconds(threshold.duration_s)} <span className={styles.muted}>past the threshold before opening</span>
+          {formatSeconds(threshold.duration_s)} <span className={styles.muted}>{t("incidents.threshold.durationNote")}</span>
         </>
       ),
     },
     {
-      label: "Recovery margin",
+      label: t("incidents.threshold.margin"),
       value: (
         <>
-          {format(threshold.hysteresis)} <span className={styles.muted}>{above ? "below" : "above"} the threshold before resolving</span>
+          {format(threshold.hysteresis)}{" "}
+          <span className={styles.muted}>{above ? t("incidents.threshold.marginBelow") : t("incidents.threshold.marginAbove")}</span>
         </>
       ),
     },
-    ...(resolves ? [{ label: "Resolves when", value: resolves }] : []),
-    ...(threshold.instance === null ? [] : [{ label: "Applies to", value: threshold.instance || "no instance", mono: true }]),
+    ...(resolves ? [{ label: t("incidents.rule.resolvesWhen"), value: resolves }] : []),
+    ...(threshold.instance === null
+      ? []
+      : [{ label: t("incidents.threshold.appliesTo"), value: threshold.instance || t("incidents.threshold.noInstance"), mono: true }]),
   ];
 }
 
@@ -337,25 +346,29 @@ function eventWords(event: IncidentEvent): string {
   const severity = event.severity ? SEVERITY_LABELS[event.severity] : "";
   switch (event.kind) {
     case "opened":
-      return `Opened as ${severity}`;
+      return t("incidents.event.opened", { severity });
     case "escalated":
-      return `Escalated to ${severity}`;
+      return t("incidents.event.escalated", { severity });
     case "deescalated":
-      return `De-escalated to ${severity}`;
+      return t("incidents.event.deescalated", { severity });
     case "resolved":
-      return "Resolved";
+      return t("incidents.event.resolved");
     case "silenced":
-      return "Silenced";
+      return t("incidents.event.silenced");
     case "silence_ended":
-      return event.details.notified ? "Silence ended, sent" : "Silence ended, nothing to send";
+      return event.details.notified ? t("incidents.event.silenceSent") : t("incidents.event.silenceQuiet");
     case "acknowledged":
-      return `${typeof event.details.username === "string" ? `Acknowledged by ${event.details.username}` : "Acknowledged"}${
-        typeof event.details.note === "string" ? `: ${event.details.note}` : ""
-      }`;
+      return `${
+        typeof event.details.username === "string"
+          ? t("incidents.event.acknowledgedBy", { name: event.details.username })
+          : t("incidents.event.acknowledged")
+      }${typeof event.details.note === "string" ? `: ${event.details.note}` : ""}`;
     case "followed_up": {
-      const told = Array.isArray(event.details.told) ? event.details.told.filter((t) => typeof t === "string") : [];
-      const after = typeof event.details.minutes === "number" ? ` after ${minutesText(event.details.minutes)}` : "";
-      return `Not acknowledged${after}: ${told.length ? `told ${listNames(told)}` : "nobody could be told"}`;
+      const names = Array.isArray(event.details.told) ? event.details.told.filter((n) => typeof n === "string") : [];
+      const told = names.length ? t("incidents.event.told", { names: listNames(names) }) : t("incidents.event.nobody");
+      return typeof event.details.minutes === "number"
+        ? t("incidents.event.notAcknowledgedAfter", { minutes: minutesText(event.details.minutes), told })
+        : t("incidents.event.notAcknowledged", { told });
     }
   }
 }
@@ -369,8 +382,11 @@ function Acknowledgement({ incident, now, onDone }: { incident: IncidentDetail; 
   if (incident.acknowledged_at) {
     return (
       <Banner tone="plain">
-        Acknowledged by <strong>{incident.acknowledged_by ?? "someone"}</strong> {formatDay(new Date(incident.acknowledged_at), now)}
-        {incident.acknowledged_via === "link" && ", from the notification link"}
+        {rich("incidents.ack.banner", {
+          name: <strong>{incident.acknowledged_by ?? t("incidents.someone")}</strong>,
+          when: formatDay(new Date(incident.acknowledged_at), now),
+        })}
+        {incident.acknowledged_via === "link" && t("incidents.ack.fromLink")}
         {incident.acknowledged_note ? `: ${incident.acknowledged_note}` : "."}
       </Banner>
     );
@@ -388,7 +404,7 @@ function Acknowledgement({ incident, now, onDone }: { incident: IncidentDetail; 
         {incident.can_acknowledge && (
           <>
             <AcknowledgeButton variant="k" onAcknowledge={acknowledge} describeError={describeError} />
-            <span className={styles.muted}>Says you are on it: nobody else is told next.</span>
+            <span className={styles.muted}>{t("incidents.ack.says")}</span>
           </>
         )}
       </div>
@@ -406,19 +422,18 @@ function SentTogether({ incident, now }: { incident: IncidentDetail; now: Date }
   const others = group.incidents - 1;
   return (
     <Banner tone="plain">
-      Sent together with {others} other {others === 1 ? "incident" : "incidents"} in one notification,{" "}
-      {formatDay(new Date(group.created_at), now)}.{" "}
-      <Link href={scopedHref(incidentsHref({ groupId: group.id }), scope)}>Show them</Link>
+      {t("incidents.sentTogether", { count: others, when: formatDay(new Date(group.created_at), now) })}{" "}
+      <Link href={scopedHref(incidentsHref({ groupId: group.id }), scope)}>{t("incidents.showThem")}</Link>
     </Banner>
   );
 }
 
 function Timeline({ events, format, now }: { events: IncidentEvent[]; format: (v: number) => string; now: Date }) {
-  if (events.length === 0) return <p>No events recorded.</p>;
+  if (events.length === 0) return <p>{t("incidents.timeline.empty")}</p>;
   const columns: Column<IncidentEvent>[] = [
     {
       key: "time",
-      header: "Time",
+      header: t("incidents.timeline.time"),
       className: styles.muted,
       cell: (e) => {
         const at = new Date(e.occurred_at);
@@ -432,7 +447,7 @@ function Timeline({ events, format, now }: { events: IncidentEvent[]; format: (v
     },
     {
       key: "event",
-      header: "Event",
+      header: t("incidents.timeline.event"),
       cell: (e) => {
         const reason = typeof e.details.reason === "string" ? e.details.reason.replaceAll("_", " ") : null;
         return (
@@ -443,20 +458,20 @@ function Timeline({ events, format, now }: { events: IncidentEvent[]; format: (v
         );
       },
     },
-    { key: "value", header: "Value", cell: (e) => (e.value === null ? <span className={styles.muted}>—</span> : format(e.value)) },
+    { key: "value", header: t("incidents.timeline.value"), cell: (e) => (e.value === null ? null : format(e.value)) },
   ];
-  return <DataTable bare dense label="Timeline" columns={columns} rows={events} rowKey={(e) => String(e.id)} pageSize={100} />;
+  return <DataTable bare dense label={t("incidents.timeline")} columns={columns} rows={events} rowKey={(e) => String(e.id)} pageSize={100} />;
 }
 
 /** One line on what the AI remediation loop did; its decisions are made elsewhere. */
 function Remediation({ remediation }: { remediation: RemediationIncident }) {
   return (
     <div className={styles.remediation}>
-      <strong>AI remediation</strong>
+      <strong>{t("incidents.ai.title")}</strong>
       <StatusLabel kind="remediation" value={remediation.state} />
       <span>
-        {remediation.event_count} {remediation.event_count === 1 ? "event" : "events"} · opened {minutes(remediation.opened_at)}
-        {remediation.closed_at && ` · closed ${minutes(remediation.closed_at)}`}
+        {t("incidents.ai.events", { count: remediation.event_count, time: minutes(remediation.opened_at) })}
+        {remediation.closed_at && t("incidents.ai.closed", { time: minutes(remediation.closed_at) })}
       </span>
     </div>
   );

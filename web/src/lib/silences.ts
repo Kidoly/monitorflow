@@ -1,7 +1,9 @@
+import { t } from "@/i18n";
+
 import type { Silence } from "./api";
 
-/** What a one-click silence says; the custom form lets people say more. */
-export const DEFAULT_REASON = "Planned maintenance";
+/** What a one-click silence says, in the active language; the custom form lets people say more. */
+export const defaultReason = () => t("silences.defaultReason");
 
 /** The longest silence the API accepts (ADR-0079). */
 export const MAX_DAYS = 30;
@@ -31,12 +33,12 @@ export function silenceTitle(silence: Pick<Silence, "scope" | "target_name">, mu
     case "server":
       return name;
     case "relay":
-      return `relay ${name}`;
+      return t("silences.title.relay", { name });
     case "site":
-      return `site ${name}`;
+      return t("silences.title.site", { name });
     case "customer":
-      return multiCustomer ? `customer ${name}` : "all sites";
+      return multiCustomer ? t("silences.title.customer", { name }) : t("silences.title.allSites");
     case "all":
-      return "everything";
+      return t("silences.title.everything");
   }
 }
