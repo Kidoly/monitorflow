@@ -76,6 +76,12 @@ const PATHS = {
       <path d="M8 2a6 6 0 0 0 0 12z" />
     </>
   ),
+  language: (
+    <>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M2 8h12M8 2c1.8 1.7 2.6 3.7 2.6 6S9.8 12.3 8 14C6.2 12.3 5.4 10.3 5.4 8S6.2 3.7 8 2z" />
+    </>
+  ),
   signOut: <path d="M6 3H3v10h3M10 5l3 3-3 3M13 8H6" />,
   menu: <path d="M2 4h12M2 8h12M2 12h12" />,
 } satisfies Record<string, ReactNode>;

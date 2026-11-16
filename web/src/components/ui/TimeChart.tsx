@@ -2,10 +2,14 @@
 
 import { type KeyboardEvent, type PointerEvent, type ReactNode, useId, useState } from "react";
 
+import { t } from "@/i18n";
 import { formatNumber } from "@/lib/format";
 
 import { niceTicks, nearestIndex, segments, timeTicks } from "./chartScale";
 import { cx } from "./cx";
+import { missingText } from "./Missing";
+import { dateLocale } from "@/i18n/locale";
+
 import { formatClock } from "./time";
 import styles from "./TimeChart.module.css";
 
@@ -72,7 +76,7 @@ export function TimeChart({
   thresholds = [],
   markers = [],
   band,
-  emptyText = "No data in this range.",
+  emptyText = t("ui.chart.empty"),
   footer,
 }: {
   title: string;
@@ -118,7 +122,7 @@ export function TimeChart({
   const daily = end - start > 86_400;
   const timeText = (t: number) => {
     const d = new Date(t * 1000);
-    return daily ? `${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} ${formatClock(d).slice(0, 5)}` : formatClock(d);
+    return daily ? `${d.toLocaleDateString(dateLocale(), { day: "2-digit", month: "short" })} ${formatClock(d).slice(0, 5)}` : formatClock(d);
   };
 
   const summary = [
@@ -137,7 +141,7 @@ export function TimeChart({
   const readoutText =
     at === undefined || at === null
       ? ""
-      : `${timeText(at)}, ${readout.map((r) => `${r.s.label} ${r.value === null ? "no value" : format(r.value)}`).join(", ")}`;
+      : `${timeText(at)}, ${readout.map((r) => `${r.s.label} ${r.value === null ? t("ui.chart.noValue") : format(r.value)}`).join(", ")}`;
 
   function onPointerMove(event: PointerEvent<SVGRectElement>) {
     const svg = event.currentTarget.ownerSVGElement;
@@ -296,7 +300,7 @@ export function TimeChart({
                     <text x={boxX + 24} y={TOP + 71 + 16 * i}>
                       {r.s.label}
                       {"  "}
-                      {r.value === null ? "—" : format(r.value)}
+                      {r.value === null ? missingText("noData") : format(r.value)}
                     </text>
                   </g>
                 ))}
@@ -312,11 +316,11 @@ export function TimeChart({
           height={BOTTOM - TOP}
           tabIndex={0}
           role="slider"
-          aria-label={`${title}: the left and right arrow keys move the cursor`}
+          aria-label={t("ui.chart.cursor", { title })}
           aria-valuemin={0}
           aria-valuemax={Math.max(0, times.length - 1)}
           aria-valuenow={cursor ?? times.length - 1}
-          aria-valuetext={at === null || at === undefined ? "No cursor" : timeText(at)}
+          aria-valuetext={at === null || at === undefined ? t("ui.chart.noCursor") : timeText(at)}
           onPointerMove={onPointerMove}
           onPointerLeave={() => setCursor(null)}
           onKeyDown={onKeyDown}

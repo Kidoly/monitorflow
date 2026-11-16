@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { Fragment, type ReactNode, useState } from "react";
 
+import { t } from "@/i18n";
 import type { ServerState } from "@/lib/api";
-import { SERVER_STATES, STATE_WORDS } from "@/lib/serverState";
+import { SERVER_STATES, STATE_TONES, stateWord } from "@/lib/serverState";
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { type Column, type SortState, nextSort, sortRows } from "@/components/ui/DataTable";
@@ -114,7 +115,7 @@ export function FleetTree<T extends TreeRow>({
               <Icon name="chevron" className={cx(styles.chevron, !open && styles.folded)} />
               {group.name}
               <span className={styles.size}>
-                {group.rows.length} {group.rows.length === 1 ? "server" : "servers"}
+                {t("fleet.tree.servers", { count: group.rows.length })}
               </span>
             </button>
             <Pills rows={group.rows} href={(state) => stateHref(state, place)} />
@@ -148,7 +149,7 @@ export function FleetTree<T extends TreeRow>({
           <tr>
             <td colSpan={span} className={cx(!flat && styles.indent)}>
               <Button size="small" onClick={() => setLimits((m) => new Map(m).set(group.key, limit + GROUP_PAGE))}>
-                Show {Math.min(more, GROUP_PAGE)} more of {group.name}
+                {t("fleet.tree.more", { count: Math.min(more, GROUP_PAGE), group: group.name })}
               </Button>
             </td>
           </tr>
@@ -157,8 +158,9 @@ export function FleetTree<T extends TreeRow>({
           <tr>
             <td colSpan={span} className={cx(!flat && styles.indent)}>
               <Button size="small" onClick={() => setUnfolded((u) => new Set(u).add(group.key))}>
-                Show {healthy} OK {healthy === 1 ? "server" : "servers"}
-                {flat ? "" : ` of ${group.name}`}
+                {flat
+                  ? t("fleet.tree.ok", { count: healthy })
+                  : t("fleet.tree.okOf", { count: healthy, group: group.name })}
               </Button>
             </td>
           </tr>
@@ -176,7 +178,7 @@ export function FleetTree<T extends TreeRow>({
 
   return (
     <div className={tableStyles.box}>
-      <table className={cx(tableStyles.table, styles.tree)} aria-label="Servers">
+      <table className={cx(tableStyles.table, styles.tree)} aria-label={t("fleet.table")}>
         <thead>
           <tr>
             {shownColumns.map((column) => {
@@ -216,7 +218,8 @@ function Pills<T extends TreeRow>({ rows, href }: { rows: T[]; href: (state: Ser
   for (const state of SERVER_STATES) {
     const of = rows.filter((r) => r.state === state);
     if (of.length === 0) continue;
-    const [word, tone] = STATE_WORDS[state];
+    const word = stateWord(state);
+    const tone = STATE_TONES[state];
     const lone = of.length === 1 && NAMED.includes(state) ? of[0]! : null;
     pills.push(
       <li key={state}>
@@ -226,12 +229,12 @@ function Pills<T extends TreeRow>({ rows, href }: { rows: T[]; href: (state: Ser
         >
           {lone ? (
             <>
-              <span className="visually-hidden">{word}: </span>
+              <span className="visually-hidden">{t("fleet.tree.lone", { state: word })}</span>
               {lone.problem}
             </>
           ) : (
             <>
-              <b>{of.length}</b> {state === "ok" ? word : word.toLowerCase()}
+              <b>{of.length}</b> {t(`fleet.tree.pill.${state}`)}
             </>
           )}
         </Link>

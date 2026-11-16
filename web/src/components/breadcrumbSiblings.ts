@@ -1,3 +1,4 @@
+import { t } from "@/i18n";
 import { type EffectiveSensor, type SensorValueList, type ServerDetail, api } from "@/lib/api";
 import { sensorHref, serverHref } from "@/lib/routes";
 import { type Scope, scopedHref } from "@/lib/scope";
@@ -7,7 +8,7 @@ import type { Sibling, Siblings } from "@/components/ui/Breadcrumb";
 /** The other servers of `server`'s site, loaded when the list opens. */
 export function serverSiblings(server: ServerDetail, scope: Scope): Siblings {
   return {
-    label: `Other servers of ${server.site_name}`,
+    label: t("server.siblings.servers", { site: server.site_name }),
     load: async (signal) => {
       const { servers } = await api.siteServers(server.site_id, signal);
       return servers.map((s) => ({ label: s.hostname, href: scopedHref(serverHref(s.id), scope), current: s.id === server.id }));
@@ -39,5 +40,5 @@ export function sensorSiblings(
   });
   const byLabel = new Intl.Collator("en", { numeric: true });
   list.sort((a, b) => byLabel.compare(a.label, b.label));
-  return { label: `Other sensors of ${server.hostname}`, load: async () => list };
+  return { label: t("server.siblings.sensors", { server: server.hostname }), load: async () => list };
 }

@@ -3,6 +3,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 import { type DashboardSummary, type DisplayLink, type DisplayLinkExpiry, api, describeError } from "@/lib/api";
+import { t } from "@/i18n";
 import { MAX_NAME } from "@/lib/dashboards";
 import { usePolledData } from "@/lib/usePolledData";
 import { Button, fieldClass } from "@/components/ui/Button";
@@ -13,11 +14,11 @@ import { formatDay, formatDuration } from "@/components/ui/time";
 
 import admin from "./AdminPages.module.css";
 
-const EXPIRIES: { value: DisplayLinkExpiry; label: string }[] = [
-  { value: "1y", label: "In a year" },
-  { value: "30d", label: "In 30 days" },
-  { value: "never", label: "Never" },
-];
+const EXPIRIES = [
+  { value: "1y", label: "display.links.inAYear" },
+  { value: "30d", label: "display.links.in30Days" },
+  { value: "never", label: "display.links.never" },
+] as const satisfies { value: DisplayLinkExpiry; label: string }[];
 
 const PAGE_TIMES = [15, 30, 60, 120, 300];
 
@@ -27,10 +28,13 @@ const MAX_DASHBOARDS = 12;
 /** "Shows NOC, then Disks, 30 s each" in plain words. */
 export function linkSummary(link: DisplayLink): string {
   const names = link.dashboards.map((d) => d.name);
-  if (link.other_dashboards > 0) names.push(`${link.other_dashboards} more`);
+  if (link.other_dashboards > 0) names.push(t("display.links.more", { count: link.other_dashboards }));
   return names.length > 1
-    ? `Shows ${names.join(", then ")}, ${formatDuration(link.seconds_per_page)} each`
-    : `Shows ${names[0] ?? "nothing you can see"}`;
+    ? t("display.links.showsInTurn", {
+        names: names.join(t("display.links.then")),
+        duration: formatDuration(link.seconds_per_page),
+      })
+    : t("display.links.shows", { name: names[0] ?? t("display.links.nothing") });
 }
 
 /**
@@ -49,39 +53,40 @@ export function DisplayLinks({ dashboard }: { dashboard: { id: string; name: str
     <section className={admin.section} aria-labelledby="display-links">
       <div className={admin.sectionHead}>
         <h2 id="display-links" className={admin.sectionTitle}>
-          Display links
+          {t("display.links.title")}
         </h2>
-        <span className={admin.dim}>Show this dashboard on a TV or a wall screen without signing in.</span>
+        <span className={admin.dim}>{t("display.links.note")}</span>
       </div>
       {created && (
         <>
-          <Banner tone="warn">
-            Open this address in the browser of “{created.name}”. It is shown only now: whoever has it sees this dashboard
-            until you turn it off.
-          </Banner>
-          <SecretField label="Address for the screen" value={created.url} copyName="Copy the address" />
+          <Banner tone="warn">{t("display.links.created", { name: created.name })}</Banner>
+          <SecretField label={t("display.links.address")} value={created.url} copyName={t("display.links.copy")} />
         </>
       )}
-      {error !== null && !data && <Banner tone="bad">Could not load the display links: {describeError(error)}</Banner>}
+      {error !== null && !data && <Banner tone="bad">{t("display.links.failed", { error: describeError(error) })}</Banner>}
       {data && data.links.length > 0 && (
         <ul className={admin.linkList}>
           {data.links.map((link) => (
             <li key={link.id}>
               <b>{link.name}</b> <span className={admin.dim}>{linkSummary(link)}.</span>{" "}
               <span className={admin.dim}>
-                Made by {link.created_by_username}.{" "}
-                {link.expires_at ? `Expires ${formatDay(new Date(link.expires_at), now)}.` : "Never expires."}{" "}
-                {link.last_used_at ? `Last used ${formatDay(new Date(link.last_used_at), now)}.` : "Not used yet."}
+                {t("display.links.madeBy", { name: link.created_by_username })}{" "}
+                {link.expires_at
+                  ? t("display.links.expires", { day: formatDay(new Date(link.expires_at), now) })
+                  : t("display.links.neverExpires")}{" "}
+                {link.last_used_at
+                  ? t("display.links.lastUsed", { day: formatDay(new Date(link.last_used_at), now) })
+                  : t("display.links.notUsed")}
               </span>{" "}
               <InlineConfirm
                 layout="row"
-                trigger="Turn off"
+                trigger={t("display.links.turnOff")}
                 triggerVariant="default"
-                triggerName={`Turn off ${link.name}`}
-                title={`Turn off ${link.name}?`}
-                consequence="Its screens stop within a minute and say the link no longer works."
-                confirmLabel="Turn off"
-                pendingLabel="Turning off…"
+                triggerName={t("display.links.turnOffName", { name: link.name })}
+                title={t("display.links.turnOffTitle", { name: link.name })}
+                consequence={t("display.links.turnOffText")}
+                confirmLabel={t("display.links.turnOff")}
+                pendingLabel={t("display.links.turningOff")}
                 describeError={describeError}
                 onConfirm={async () => {
                   await api.revokeDisplayLink(link.id);
@@ -104,7 +109,7 @@ export function DisplayLinks({ dashboard }: { dashboard: { id: string; name: str
         />
       ) : (
         <div>
-          <Button onClick={() => setCreating(true)}>New display link</Button>
+          <Button onClick={() => setCreating(true)}>{t("display.links.new")}</Button>
         </div>
       )}
     </section>
@@ -140,7 +145,7 @@ function NewLink({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!name.trim()) return setFailure("Say where the screen is, like “Reception TV”.");
+    if (!name.trim()) return setFailure(t("display.links.nameRequired"));
     setBusy(true);
     setFailure(null);
     try {
@@ -158,21 +163,22 @@ function NewLink({
   }
 
   return (
-    <form className={`${admin.panel} ${admin.stack}`} onSubmit={(e) => void submit(e)} aria-label="New display link">
+    <form className={`${admin.panel} ${admin.stack}`} onSubmit={(e) => void submit(e)} aria-label={t("display.links.new")}
+    >
       <label className={admin.field}>
-        Where is the screen?
+        {t("display.links.where")}
         <input
           className={fieldClass}
           required
           maxLength={MAX_NAME}
           value={name}
-          placeholder="Reception TV"
+          placeholder={t("display.links.placeholder")}
           onChange={(e) => setName(e.target.value)}
         />
       </label>
       {others.length > 0 && (
         <fieldset className={admin.fieldset}>
-          <legend className={admin.legend}>Also show in turn</legend>
+          <legend className={admin.legend}>{t("display.links.alsoShow")}</legend>
           {others.map((d) => (
             <label key={d.id}>
               <input
@@ -188,7 +194,7 @@ function NewLink({
       )}
       {chosen.length > 0 && (
         <label className={admin.field}>
-          Each dashboard stays
+          {t("display.links.stays")}
           <select className={fieldClass} value={seconds} onChange={(e) => setSeconds(Number(e.target.value))}>
             {PAGE_TIMES.map((s) => (
               <option key={s} value={s}>
@@ -199,23 +205,23 @@ function NewLink({
         </label>
       )}
       <label className={admin.field}>
-        The link stops working
+        {t("display.links.stops")}
         <select className={fieldClass} value={expires} onChange={(e) => setExpires(e.target.value as DisplayLinkExpiry)}>
           {EXPIRIES.map((x) => (
             <option key={x.value} value={x.value}>
-              {x.label}
+              {t(x.label)}
             </option>
           ))}
         </select>
-        <span className={admin.fieldNote}>It shows what you see now, and stops if you lose access.</span>
+        <span className={admin.fieldNote}>{t("display.links.stopsNote")}</span>
       </label>
       {failure && <Banner tone="bad">{failure}</Banner>}
       <div className={admin.formFoot}>
         <Button type="submit" variant="k" disabled={busy}>
-          {busy ? "Making…" : "Make the link"}
+          {busy ? t("display.links.making") : t("display.links.make")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("display.links.cancel")}
         </Button>
       </div>
     </form>

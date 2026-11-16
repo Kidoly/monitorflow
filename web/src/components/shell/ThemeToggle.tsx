@@ -3,7 +3,8 @@
 import { useSyncExternalStore } from "react";
 
 import { Button } from "@/components/ui/Button";
-import { THEME_LABELS, type Theme, applyTheme, nextTheme, storedTheme, subscribeTheme } from "@/lib/theme";
+import { t } from "@/i18n";
+import { type Theme, applyTheme, nextTheme, storedTheme, subscribeTheme } from "@/lib/theme";
 
 import { Icon } from "./icons";
 import styles from "./Shell.module.css";
@@ -17,9 +18,9 @@ export function ThemeToggle() {
   const theme = useSyncExternalStore(subscribeTheme, storedTheme, (): Theme => "system");
 
   return (
-    <Button className={styles.themeButton} onClick={() => applyTheme(nextTheme(theme))} title="Switch theme">
+    <Button className={styles.themeButton} onClick={() => applyTheme(nextTheme(theme))} title={t("shell.theme.switch")}>
       <Icon name="theme" />
-      <span className={styles.themeText}>Theme: {THEME_LABELS[theme]}</span>
+      <span className={styles.themeText}>{t("shell.theme.current", { name: t(`shell.theme.${theme}`) })}</span>
     </Button>
   );
 }

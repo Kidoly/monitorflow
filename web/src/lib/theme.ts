@@ -7,8 +7,6 @@ export const THEME_KEY = "monitorflow.theme";
 /** The order the theme button cycles through. */
 export const THEMES: readonly Theme[] = ["system", "light", "dark"];
 
-export const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
-
 /**
  * Runs in `<head>` before the first paint so a stored theme never flashes
  * the default one. Kept in sync with `applyTheme` by hand: it is a string.

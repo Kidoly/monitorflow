@@ -4,6 +4,7 @@ import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 
 import { buttonClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
+import { t } from "@/i18n";
 import type { Customer, Site } from "@/lib/api";
 import { type Scope, useScope } from "@/lib/scope";
 import { replaceParams } from "@/lib/urlState";
@@ -42,7 +43,7 @@ export function ScopeSwitcher({
   const list = useRef<HTMLUListElement>(null);
   const root = useRef<HTMLDivElement>(null);
 
-  const all = multiCustomer ? "All customers" : "All sites";
+  const all = multiCustomer ? t("shell.scope.allCustomers") : t("shell.scope.allSites");
   const current = multiCustomer
     ? customers.find((c) => c.id === scope.customerId)
     : sites.find((s) => s.id === scope.siteId);
@@ -63,7 +64,7 @@ export function ScopeSwitcher({
   // One group per customer, or the sites alone.
   const groups = multiCustomer
     ? customers.map((c) => ({ key: c.id, label: c.name, options: options.filter((o) => o.scope.customerId === c.id) }))
-    : [{ key: "sites", label: "Sites", options: options.slice(1) }];
+    : [{ key: "sites", label: t("shell.scope.sites"), options: options.slice(1) }];
   const selectedIndex = Math.max(
     0,
     options.findIndex((o) => o.scope.customerId === scope.customerId && o.scope.siteId === scope.siteId),
@@ -145,7 +146,7 @@ export function ScopeSwitcher({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        aria-label={`Scope: ${name}`}
+        aria-label={t("shell.scope.current", { name })}
         onClick={() => (open ? close() : show())}
         onKeyDown={(e) => {
           if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -159,7 +160,7 @@ export function ScopeSwitcher({
         <Icon name="chevron" className={styles.scopeChevron} />
       </button>
       {open && (
-        <ul ref={list} id={listId} role="listbox" aria-label="Scope" className={styles.popup} onKeyDown={onKeyDown}>
+        <ul ref={list} id={listId} role="listbox" aria-label={t("shell.scope.label")} className={styles.popup} onKeyDown={onKeyDown}>
           {renderOption(options[0]!)}
           {groups.map((group) => (
             <li key={group.key} role="presentation">

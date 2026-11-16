@@ -6,6 +6,7 @@ import { type ReactNode, Suspense, useCallback, useEffect, useState } from "reac
 import { SettingsStatusProvider } from "@/components/settings/SettingsStatus";
 import { AppShell } from "@/components/shell/AppShell";
 import { Banner, LoadingBlock } from "@/components/ui/PageState";
+import { t } from "@/i18n";
 import {
   ApiError,
   LOGIN_PATH,
@@ -57,7 +58,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   }
   const loading = (
     <main id="main" className={styles.main}>
-      <LoadingBlock label="Loading…" />
+      <LoadingBlock label={t("common.loading")} />
     </main>
   );
   if (!user) return loading;

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback } from "react";
 
+import { t } from "@/i18n";
 import { type Incident, type Server, type ServerState, api, describeError, isUnauthorized, isAbortError } from "@/lib/api";
 import { certificateProblem, certificateState } from "@/lib/certificates";
 import { formatOs } from "@/lib/format";
@@ -11,7 +12,7 @@ import { administersCustomer, multiCustomer, useMe } from "@/lib/me";
 import { incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
-import { isServerState, SERVER_STATES, STATE_WORDS, serverState, stateHref } from "@/lib/serverState";
+import { isServerState, SERVER_STATES, STATE_TONES, serverState, stateWord, stateHref } from "@/lib/serverState";
 import { REFRESH_MS, usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -82,7 +83,7 @@ function toRows(fleet: Fleet, now: Date): Row[] {
     const rank = state === "ok" && certificateWarning ? CERTIFICATE_RANK : RANK[state];
     const what = incident
       ? `${incidentTitle(incident)}${isOffline(incident) ? "" : ` ${formatSensorValue(incident.metric, incident.last_value)}`}`
-      : STATE_WORDS[state][0];
+      : stateWord(state);
     return {
       key: server.id,
       customer: { id: server.customer_id, name: server.customer_name },
@@ -138,22 +139,22 @@ export function FleetOverview() {
   const canEnroll = administersCustomer(me, scope.customerId ?? undefined);
   const enroll = canEnroll && (
     <ButtonLink variant="k" href={scopedHref(TOKENS_PATH, scope)}>
-      Add servers
+      {t("fleet.addServers")}
     </ButtonLink>
   );
 
   const columns: Column<Row>[] = [
     {
       key: "host",
-      header: "Server",
+      header: t("fleet.column.server"),
       cell: (r) => (
         <PrimaryCell
           title={r.server.hostname}
           href={scopedHref(serverHref(r.server.id), scope)}
           sub={[
             formatOs(r.server.os_family, r.server.os_version),
-            `agent ${r.server.agent_version ?? "unknown"}`,
-            r.server.via_relay && `via ${r.server.via_relay}`,
+            t("fleet.agent", { version: r.server.agent_version ?? t("fleet.agentUnknown") }),
+            r.server.via_relay && t("fleet.via", { relay: r.server.via_relay }),
           ]
             .filter(Boolean)
             .join(" · ")}
@@ -163,17 +164,17 @@ export function FleetOverview() {
     },
     {
       key: "status",
-      header: "Status",
-      cell: (r) => <Label tone={STATE_WORDS[r.state][1]}>{STATE_WORDS[r.state][0]}</Label>,
+      header: t("fleet.column.status"),
+      cell: (r) => <Label tone={STATE_TONES[r.state]}>{stateWord(r.state)}</Label>,
       sortValue: (r) => SERVER_STATES.indexOf(r.state),
     },
-    { key: "problem", header: "Problem", cell: (r) => <Problem row={r} now={now} scope={scope} /> },
-    { key: "site", header: "Site", cell: (r) => r.server.site_name, sortValue: (r) => r.server.site_name },
+    { key: "problem", header: t("fleet.column.problem"), cell: (r) => <Problem row={r} now={now} scope={scope} /> },
+    { key: "site", header: t("fleet.column.site"), cell: (r) => r.server.site_name, sortValue: (r) => r.server.site_name },
     {
       key: "seen",
-      header: "Last seen",
+      header: t("fleet.column.lastSeen"),
       className: styles.muted,
-      cell: (r) => (r.server.last_heartbeat ? <RelativeTime value={r.server.last_heartbeat} now={now} stale={stale} /> : "never"),
+      cell: (r) => (r.server.last_heartbeat ? <RelativeTime value={r.server.last_heartbeat} now={now} stale={stale} /> : t("fleet.never")),
       sortValue: (r) => r.server.last_heartbeat,
     },
   ];
@@ -181,16 +182,16 @@ export function FleetOverview() {
   return (
     <Page>
       <PageHeader
-        title="Fleet"
+        title={t("fleet.title")}
         meta={
           <>
-            {data && `${all.length} ${all.length === 1 ? "server" : "servers"}, ${online} online · `}
+            {data && t("fleet.count", { count: all.length, online })}
             <RefreshLine updatedAt={updatedAt} stale={stale} />
           </>
         }
         actions={
           <>
-            <Button onClick={refresh}>Refresh now</Button>
+            <Button onClick={refresh}>{t("fleet.refresh")}</Button>
             {enroll}
           </>
         }
@@ -199,36 +200,36 @@ export function FleetOverview() {
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
       {!data && error !== null && !isUnauthorized(error) ? (
-        <ErrorState what="servers" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what={t("fleet.servers")} error={describeError(error)} onRetry={refresh} />
       ) : data && all.length === 0 ? (
-        <EmptyState title="No servers yet" actions={enroll}>
-          Paste one install command on your servers: each appears here under its name as soon as it connects.
+        <EmptyState title={t("fleet.empty.title")} actions={enroll}>
+          {t("fleet.empty.text")}
         </EmptyState>
       ) : (
         <>
           <FilterBar
-            search={{ name: "q", label: "Search", placeholder: "Search servers…", width: 240 }}
+            search={{ name: "q", label: t("fleet.search"), placeholder: t("fleet.searchPlaceholder"), width: 240 }}
             filters={[
               {
                 name: "state",
-                label: "Status",
-                options: SERVER_STATES.map((value) => ({ value, label: STATE_WORDS[value][0] })),
+                label: t("fleet.filter.status"),
+                options: SERVER_STATES.map((value) => ({ value, label: stateWord(value) })),
               },
-              ...(scope.siteId ? [] : [{ name: "site", label: "Site", options: sites.map(([value, label]) => ({ value, label })) }]),
-              { name: "os", label: "OS", options: families.map((f) => ({ value: f, label: formatOs(f, null) })) },
-              { kind: "toggle" as const, name: "incidents", label: "Has incidents" },
+              ...(scope.siteId ? [] : [{ name: "site", label: t("fleet.filter.site"), options: sites.map(([value, label]) => ({ value, label })) }]),
+              { name: "os", label: t("fleet.filter.os"), options: families.map((f) => ({ value: f, label: formatOs(f, null) })) },
+              { kind: "toggle" as const, name: "incidents", label: t("fleet.filter.incidents") },
             ]}
             trailing={
               <Button onClick={() => setSort(null)}>
-                Problems first
+                {t("fleet.problemsFirst")}
               </Button>
             }
           />
           {!data ? (
-            <DataTable label="Servers" columns={columns} rows={[]} rowKey={(r) => r.key} loading />
+            <DataTable label={t("fleet.table")} columns={columns} rows={[]} rowKey={(r) => r.key} loading />
           ) : filtered.length === 0 ? (
             <NoMatches names={["q", "state", "status", "os", "incidents", ...(scope.siteId ? [] : ["site"])]}>
-              No servers match these filters.
+              {t("fleet.noMatch")}
             </NoMatches>
           ) : (
             <FleetTree
@@ -249,7 +250,7 @@ export function FleetOverview() {
           )}
           {data && anyFilter && filtered.length > 0 && (
             <p className={styles.summary}>
-              {filtered.length} of {all.length} shown
+              {t("fleet.shown", { count: filtered.length, total: all.length })}
             </p>
           )}
         </>
@@ -281,11 +282,17 @@ function Problem({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
 function whoAndWhy(row: Pick<Row, "server" | "state">, now: Date): string | null {
   const { silence, acknowledgement } = row.server;
   if (row.state === "silenced" && silence) {
-    return `Silenced by ${silence.by ?? "someone"} until ${formatDay(new Date(silence.until), now)}: ${silence.reason}`;
+    return t("fleet.silencedBy", {
+      who: silence.by ?? t("fleet.someone"),
+      until: formatDay(new Date(silence.until), now),
+      reason: silence.reason,
+    });
   }
   if (row.state === "acknowledged" && acknowledgement) {
-    const said = acknowledgement.note ? `: ${acknowledgement.note}` : "";
-    return `Acknowledged by ${acknowledgement.by} ${formatSince(new Date(acknowledgement.at), now)}${said}`;
+    const at = formatSince(new Date(acknowledgement.at), now);
+    return acknowledgement.note
+      ? t("fleet.acknowledgedByNote", { who: acknowledgement.by, at, note: acknowledgement.note })
+      : t("fleet.acknowledgedBy", { who: acknowledgement.by, at });
   }
   return null;
 }
@@ -314,15 +321,17 @@ function What({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
     // The incidents list did not load; the server's own count still links to them.
     return (
       <Link href={scopedHref(incidentsHref({ state: "open", serverId: server.id }), scope)} className={styles.problem}>
-        {row.warning} open {row.warning === 1 ? "incident" : "incidents"}
+        {t("fleet.openIncidents", { count: row.warning })}
       </Link>
     );
   }
   if (server.status === "offline") {
-    if (!server.last_heartbeat) return <span className={styles.muted}>Never connected</span>;
+    if (!server.last_heartbeat) return <span className={styles.muted}>{t("fleet.neverConnected")}</span>;
     return (
       <span className={styles.muted}>
-        Last contact {formatSince(new Date(server.last_heartbeat), now).replace(/^Yesterday/, "yesterday")}
+        {t("fleet.lastContact", {
+          when: formatSince(new Date(server.last_heartbeat), now).replace(/^Yesterday/, "yesterday"),
+        })}
       </span>
     );
   }
@@ -331,12 +340,12 @@ function What({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
     const failed = certificateState(server.cert_not_after, now) === "failed";
     return (
       <span className={styles.problem}>
-        <Label tone={failed ? "bad" : "warn"}>{failed ? "Critical" : "Warning"}</Label>
-        &nbsp; Certificate: {certificate} <span>{formatExact(new Date(server.cert_not_after)).slice(0, 10)}</span>
+        <Label tone={failed ? "bad" : "warn"}>{failed ? t("common.state.critical") : t("common.state.warning")}</Label>
+        &nbsp; {t("fleet.certificate", { problem: certificate })} <span>{formatExact(new Date(server.cert_not_after)).slice(0, 10)}</span>
       </span>
     );
   }
-  return <span className={styles.muted}>—</span>;
+  return null;
 }
 
 /** Live status of a relay or attached agent, for the relay pages until their redesign. */
@@ -348,9 +357,9 @@ export function StatusBadge({
   const online = server.status === "online";
   return (
     <span className={online ? styles.online : styles.offline}>
-      <span aria-hidden="true">{online ? "●" : "○"}</span> {online ? "Online" : "Offline"}
-      {server.via_relay && ` via ${server.via_relay}`}
-      {server.revoked_at && ", revoked"}
+      <span aria-hidden="true">{online ? "●" : "○"}</span> {online ? t("fleet.online") : t("fleet.offline")}
+      {server.via_relay && ` ${t("fleet.via", { relay: server.via_relay })}`}
+      {server.revoked_at && t("fleet.revoked")}
     </span>
   );
 }

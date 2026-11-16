@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 import type { LogLine } from "./api";
 import type { Tone } from "@/components/ui/tone";
 
@@ -10,11 +12,10 @@ export const LOG_PAGE = 200;
 /** The API's largest limit. */
 export const MAX_LOG_LINES = 1000;
 
-const PRIORITIES = ["Emergency", "Alert", "Critical", "Error", "Warning", "Notice", "Info", "Debug"];
-
 /** The syslog priority in a word: 3 is "Error". */
 export function priorityWord(priority: number | null): string {
-  return priority === null ? "Unknown" : (PRIORITIES[priority] ?? "Unknown");
+  if (priority === null || !Number.isInteger(priority) || priority < 0 || priority > 7) return t("server.logs.priority.unknown");
+  return t(`server.logs.priority.${priority as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7}`);
 }
 
 /** Errors and worse are bad, warnings warn, the rest is plain. */

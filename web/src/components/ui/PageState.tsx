@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { t } from "@/i18n";
+
 import { Button, ButtonLink } from "./Button";
 import { cx } from "./cx";
 import styles from "./PageState.module.css";
@@ -33,7 +35,7 @@ function Retry({ onRetry }: { onRetry?: () => void }) {
     <>
       {" "}
       <button type="button" className={styles.retry} onClick={onRetry}>
-        Retry now
+        {t("ui.page.retry")}
       </button>
     </>
   ) : null;
@@ -82,9 +84,10 @@ export function PageHeader({
  * warning colour when the data is stale.
  */
 export function RefreshLine({ updatedAt, stale, intervalMs = 15_000 }: { updatedAt: Date | null; stale?: boolean; intervalMs?: number }) {
-  const every = `refreshes every ${Math.round(intervalMs / 1000)} seconds`;
-  if (!updatedAt) return <>Could not load. Retrying every {Math.round(intervalMs / 1000)} seconds.</>;
-  const time = `Updated ${formatClock(updatedAt)}`;
+  const seconds = Math.round(intervalMs / 1000);
+  const every = t("ui.page.refreshes", { count: seconds });
+  if (!updatedAt) return <>{t("ui.page.retrying", { count: seconds })}</>;
+  const time = t("ui.page.updated", { time: formatClock(updatedAt) });
   return (
     <>
       {stale ? <strong className={styles.stale}>{time}</strong> : time}, {every}
@@ -93,7 +96,7 @@ export function RefreshLine({ updatedAt, stale, intervalMs = 15_000 }: { updated
 }
 
 /** Skeleton bars for a first load: never a spinner, never on refresh. */
-export function LoadingBlock({ label = "Loading" }: { label?: string }) {
+export function LoadingBlock({ label = t("ui.page.loading") }: { label?: string }) {
   return (
     <div className={styles.skeleton} aria-busy="true" aria-label={label} role="status">
       <div className={styles.skel} style={{ width: "40%" }} />
@@ -119,10 +122,10 @@ export function ErrorState({ what, error, onRetry }: { what: string; error: stri
   return (
     <>
       <Banner tone="bad">
-        <strong>Could not load {what}:</strong> {error} Retrying automatically.
+        <strong>{t("ui.page.loadFailed", { what })}</strong> {error} {t("ui.page.retryingAutomatically")}
       </Banner>
-      <EmptyState actions={onRetry && <Button onClick={onRetry}>Retry now</Button>}>
-        Nothing to show until the first successful load.
+      <EmptyState actions={onRetry && <Button onClick={onRetry}>{t("ui.page.retry")}</Button>}>
+        {t("ui.page.nothingYet")}
       </EmptyState>
     </>
   );
@@ -145,8 +148,8 @@ export function StaleBanner({
 }) {
   return (
     <Banner tone="warn">
-      <strong>Refresh failed:</strong> {error} Showing the last data received, from {formatClock(updatedAt)}.{" "}
-      {failures} {failures === 1 ? "attempt" : "attempts"} failed.
+      <strong>{t("ui.page.refreshFailed")}</strong> {error} {t("ui.page.showingLast", { time: formatClock(updatedAt) })}{" "}
+      {t("ui.page.attemptsFailed", { count: failures })}
       <Retry onRetry={onRetry} />
     </Banner>
   );
@@ -159,7 +162,7 @@ export function StaleBanner({
 export function NotFound({ title, actions, children }: { title: string; actions?: ReactNode; children?: ReactNode }) {
   return (
     <EmptyState title={title} actions={actions}>
-      {children ?? "It may have been removed, or your roles do not cover its site."}
+      {children ?? t("ui.page.notFound")}
     </EmptyState>
   );
 }
@@ -167,7 +170,7 @@ export function NotFound({ title, actions, children }: { title: string; actions?
 /** A page the user's roles do not open; reached only by a direct link. */
 export function NoPermission({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <EmptyState title={title} actions={<ButtonLink href="/">Back to the fleet</ButtonLink>}>
+    <EmptyState title={title} actions={<ButtonLink href="/">{t("ui.page.backToFleet")}</ButtonLink>}>
       {children}
     </EmptyState>
   );

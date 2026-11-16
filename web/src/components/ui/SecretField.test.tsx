@@ -13,8 +13,8 @@ describe("SecretField", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
-    render(<SecretField label="Enrollment token — shown once" value={TOKEN} />);
-    const input = screen.getByRole("textbox", { name: "Enrollment token — shown once" });
+    render(<SecretField label="Enrollment token, shown once" value={TOKEN} />);
+    const input = screen.getByRole("textbox", { name: "Enrollment token, shown once" });
     expect(input).toHaveValue(TOKEN);
     expect(input).toHaveAttribute("readonly");
 

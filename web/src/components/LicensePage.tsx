@@ -2,6 +2,7 @@
 
 import { type ChangeEvent, type FormEvent, useCallback, useState } from "react";
 
+import { t } from "@/i18n";
 import { type AddedServer, ApiError, type LicenseView, api, describeError } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { centralServers, formatDay, licenseSummary } from "@/lib/license";
@@ -14,13 +15,14 @@ import { Button } from "./ui/Button";
 import { FactsBox } from "./ui/FactsBox";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
+import { missingText } from "./ui/Missing";
 import { Label } from "./ui/StatusLabel";
 
 /** `/settings/license/`: global administrators only, like the API (ADR-0100). */
 export function LicensePage() {
   const me = useMe();
   if (!administersEverything(me)) {
-    return <NoPermission title="The license needs a global administrator" />;
+    return <NoPermission title={t("license.noPermission")} />;
   }
   return <LicenseAdmin />;
 }
@@ -28,12 +30,12 @@ export function LicensePage() {
 function LicenseAdmin() {
   const fetcher = useCallback((signal: AbortSignal) => api.license(signal), []);
   const { data, error, refresh } = usePolledData(fetcher);
-  const header = <PageHeader title="License" meta="Global administrators only" />;
+  const header = <PageHeader title={t("license.title")} meta={t("license.meta")} />;
   if (!data) {
     return (
       <div className={styles.page}>
         {header}
-        {error ? <ErrorState what="the license" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
+        {error ? <ErrorState what={t("license.what")} error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
       </div>
     );
   }
@@ -42,7 +44,7 @@ function LicenseAdmin() {
       <div className={styles.page}>
         {header}
         <Banner tone="neutral">
-          This build of MonitorFlow does not include the Enterprise edition. Everything else works as usual.
+          {t("license.notIncluded")}
         </Banner>
       </div>
     );
@@ -69,8 +71,7 @@ function Status({ view, onRemoved }: { view: LicenseView; onRemoved: () => void 
           </h2>
         </div>
         <p className={styles.sectionNote}>
-          A single central server needs none. An Enterprise subscription lets you add central servers on the same
-          database, so MonitorFlow keeps working when one machine stops. Its license key goes here.
+          {t("license.noneNote")}
         </p>
       </section>
     );
@@ -86,28 +87,38 @@ function Status({ view, onRemoved }: { view: LicenseView; onRemoved: () => void 
       </section>
       {license && (
         <FactsBox
-          title="Enterprise license"
+          title={t("license.facts.title")}
           facts={[
-            { label: "For", value: license.customer },
-            { label: "Allows", value: `${centralServers(license.server_instances)}, the first one included` },
-            { label: "Valid until", value: formatDay(license.expires) },
+            { label: t("license.facts.for"), value: license.customer },
             {
-              label: "Installed",
-              value: `${view.installed_at ? formatDateTime(view.installed_at) : "—"}${view.installed_by ? ` by ${view.installed_by}` : ""}`,
+              label: t("license.facts.allows"),
+              value: t("license.facts.allowsValue", { servers: centralServers(license.server_instances) }),
+            },
+            { label: t("license.facts.validUntil"), value: formatDay(license.expires) },
+            {
+              label: t("license.facts.installed"),
+              value: view.installed_by
+                ? t("license.facts.installedBy", {
+                    when: view.installed_at ? formatDateTime(view.installed_at) : missingText("unknown"),
+                    name: view.installed_by,
+                  })
+                : view.installed_at
+                  ? formatDateTime(view.installed_at)
+                  : missingText("unknown"),
             },
           ]}
           details={[
-            { label: "License ID", value: license.id, mono: true },
-            { label: "Issued", value: formatDay(license.issued) },
+            { label: t("license.facts.id"), value: license.id, mono: true },
+            { label: t("license.facts.issued"), value: formatDay(license.issued) },
           ]}
         />
       )}
       <div>
         <InlineConfirm
-          trigger="Remove the license key…"
-          title="Remove the license key?"
-          consequence="Central servers already added keep running and monitoring goes on, but no other central server can be added until a license key is installed."
-          confirmLabel="Remove the license key"
+          trigger={t("license.remove.trigger")}
+          title={t("license.remove.title")}
+          consequence={t("license.remove.consequence")}
+          confirmLabel={t("license.remove.confirm")}
           onConfirm={async () => {
             await api.removeLicense();
             onRemoved();
@@ -127,11 +138,12 @@ function AddedServers({ view, onRemoved }: { view: LicenseView; onRemoved: () =>
     <section className={styles.section} aria-labelledby="license-added">
       <div className={styles.sectionHead}>
         <h2 id="license-added" className={styles.sectionTitle}>
-          Central servers added
+          {t("license.added.title")}
         </h2>
         <span className={styles.dim}>
-          {added.length + 1}
-          {allowed ? ` of ${allowed}` : ""} with the first one
+          {allowed
+            ? t("license.added.countOf", { count: added.length + 1, allowed })
+            : t("license.added.count", { count: added.length + 1 })}
         </span>
       </div>
       <ul className={own.added}>
@@ -139,16 +151,16 @@ function AddedServers({ view, onRemoved }: { view: LicenseView; onRemoved: () =>
           <li key={server.name} className={own.addedRow}>
             <strong>{server.name}</strong>
             <Label tone={server.running ? "ok" : "neutral"} small>
-              {server.running ? "Running" : "Not running"}
+              {server.running ? t("license.added.running") : t("license.added.notRunning")}
             </Label>
-            <span className={styles.dim}>Added {formatDateTime(server.admitted_at)}</span>
+            <span className={styles.dim}>{t("license.added.when", { when: formatDateTime(server.admitted_at) })}</span>
             <InlineConfirm
               layout="row"
-              trigger="Remove…"
-              triggerName={`Remove ${server.name}`}
-              title={`Remove ${server.name}?`}
-              consequence="Its place is freed for another central server. If it still runs, it keeps running until it restarts, then needs a place again."
-              confirmLabel={`Remove ${server.name}`}
+              trigger={t("license.added.removeTrigger")}
+              triggerName={t("license.added.removeName", { name: server.name })}
+              title={t("license.added.removeTitle", { name: server.name })}
+              consequence={t("license.added.removeConsequence")}
+              confirmLabel={t("license.added.removeName", { name: server.name })}
               onConfirm={async () => {
                 await api.removeAddedServer(server.name);
                 onRemoved();
@@ -191,13 +203,13 @@ function InstallForm({ replacing, onInstalled }: { replacing: boolean; onInstall
     <section className={styles.section} aria-labelledby="license-install">
       <div className={styles.sectionHead}>
         <h2 id="license-install" className={styles.sectionTitle}>
-          {replacing ? "Replace the license key" : "Install a license key"}
+          {replacing ? t("license.install.replaceTitle") : t("license.install.title")}
         </h2>
       </div>
       <form className={own.form} onSubmit={(e) => void install(e)}>
         <label className={styles.field}>
-          License key
-          <span className={styles.fieldNote}>Paste the text you received, or choose the file.</span>
+          {t("license.install.key")}
+          <span className={styles.fieldNote}>{t("license.install.keyNote")}</span>
           <textarea
             className={own.textarea}
             value={text}
@@ -207,7 +219,7 @@ function InstallForm({ replacing, onInstalled }: { replacing: boolean; onInstall
           />
         </label>
         <label className={styles.field}>
-          File
+          {t("license.install.file")}
           <input type="file" accept=".txt,.lic,.license,text/plain" onChange={(e) => void readFile(e)} />
         </label>
         {failure && (
@@ -217,7 +229,7 @@ function InstallForm({ replacing, onInstalled }: { replacing: boolean; onInstall
         )}
         <div className={own.actions}>
           <Button type="submit" variant="k" disabled={saving || !text.trim()}>
-            {saving ? "Checking…" : replacing ? "Replace" : "Install"}
+            {saving ? t("license.install.checking") : replacing ? t("license.install.replace") : t("license.install.install")}
           </Button>
         </div>
       </form>

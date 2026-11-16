@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Me } from "@/lib/api";
+import { setActiveLocale } from "@/i18n/locale";
 import { THEME_KEY, THEME_SCRIPT } from "@/lib/theme";
 import { stubFetch } from "@/test/fetch";
 import { authority, rotation } from "@/test/certificateAuthority";
@@ -180,6 +181,19 @@ describe("AppShell", () => {
     expect(within(nav()).queryByText("Administration")).not.toBeInTheDocument();
     expect(within(nav()).getByText("Remediation")).toBeInTheDocument();
     expect(within(nav()).getByText("Updates")).toBeInTheDocument();
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    renderShell();
+    const links = within(nav())
+      .getAllByRole("link")
+      .map((a) => a.textContent);
+    expect(links.slice(1, 6)).toEqual(["Parc", "Tableaux de bord", "Incidents", "Silences", "Astreinte"]);
+    expect(within(nav()).getByText("Supervision")).toBeInTheDocument();
+    expect(await within(nav()).findByLabelText("3 incidents ouverts")).toHaveTextContent("3");
+    expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Langue" })).toBeInTheDocument();
   });
 
   it("counts open incidents in the Incidents link, within the scope", async () => {

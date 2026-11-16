@@ -1,9 +1,11 @@
+import { type PlainKey, t } from "@/i18n";
+
 import { METRIC_PREFIX } from "./metrics";
 
 /** One chart of a disk's activity: its title and its series, as metric suffixes and legend labels. */
 export interface DiskIoChart {
-  title: string;
-  series: { suffix: string; label: string }[];
+  title: PlainKey;
+  series: { suffix: string; label: PlainKey }[];
 }
 
 /**
@@ -12,22 +14,22 @@ export interface DiskIoChart {
  */
 export const DISK_IO_CHARTS: DiskIoChart[] = [
   {
-    title: "Read and written",
+    title: "server.diskio.readWritten",
     series: [
-      { suffix: "read_bytes_per_second", label: "Read" },
-      { suffix: "written_bytes_per_second", label: "Written" },
+      { suffix: "read_bytes_per_second", label: "server.diskio.read" },
+      { suffix: "written_bytes_per_second", label: "server.diskio.written" },
     ],
   },
   {
-    title: "Reads and writes",
+    title: "server.diskio.readsWrites",
     series: [
-      { suffix: "reads_per_second", label: "Reads" },
-      { suffix: "writes_per_second", label: "Writes" },
+      { suffix: "reads_per_second", label: "server.diskio.reads" },
+      { suffix: "writes_per_second", label: "server.diskio.writes" },
     ],
   },
-  { title: "Busy", series: [{ suffix: "busy_ratio", label: "Busy" }] },
-  { title: "Average wait per I/O", series: [{ suffix: "wait_seconds", label: "Wait" }] },
-  { title: "I/Os in flight", series: [{ suffix: "queue_depth", label: "Queue" }] },
+  { title: "server.diskio.busy", series: [{ suffix: "busy_ratio", label: "server.diskio.busy" }] },
+  { title: "server.diskio.waitTitle", series: [{ suffix: "wait_seconds", label: "server.diskio.wait" }] },
+  { title: "server.diskio.inFlight", series: [{ suffix: "queue_depth", label: "server.diskio.queue" }] },
 ];
 
 /**
@@ -37,7 +39,7 @@ export const DISK_IO_CHARTS: DiskIoChart[] = [
  */
 export function diskIoCharts(name: string, metric: string): { title: string; series: { metric: string; label: string }[] }[] {
   return DISK_IO_CHARTS.map((chart) => ({
-    title: chart.title,
-    series: chart.series.map((s) => ({ metric: `${METRIC_PREFIX}${name}_${s.suffix}`, label: s.label })),
+    title: t(chart.title),
+    series: chart.series.map((s) => ({ metric: `${METRIC_PREFIX}${name}_${s.suffix}`, label: t(s.label) })),
   })).filter((chart) => !(chart.series.length === 1 && chart.series[0]!.metric === metric));
 }

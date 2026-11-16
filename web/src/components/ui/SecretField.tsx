@@ -2,6 +2,8 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 
+import { t } from "@/i18n";
+
 import { Button, type ButtonSize, fieldClass } from "./Button";
 import { cx } from "./cx";
 import styles from "./SecretField.module.css";
@@ -16,7 +18,7 @@ export const COPIED_MS = 2000;
  */
 export function CopyButton({
   text,
-  label = "Copy",
+  label = t("ui.copy"),
   name,
   size,
   className,
@@ -46,10 +48,10 @@ export function CopyButton({
   return (
     <>
       <Button size={size} className={className} aria-label={name} onClick={() => void copy()}>
-        {status === "copied" ? "Copied" : label}
+        {status === "copied" ? t("ui.copied") : label}
       </Button>
       <span className="visually-hidden" aria-live="polite">
-        {status === "copied" ? "Copied" : status === "failed" ? "Copying failed; select the text instead." : ""}
+        {status === "copied" ? t("ui.copied") : status === "failed" ? t("ui.copyFailed") : ""}
       </span>
     </>
   );
@@ -62,7 +64,7 @@ export function CopyButton({
 export function SecretField({
   label,
   value,
-  copyLabel = "Copy",
+  copyLabel = t("ui.copy"),
   copyName,
 }: {
   label: string;

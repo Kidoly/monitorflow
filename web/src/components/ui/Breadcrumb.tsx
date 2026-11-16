@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { Fragment, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 
+import { t } from "@/i18n";
+
 import styles from "./Breadcrumb.module.css";
 
 /** A page next to the current one: another server of the site, another sensor of the server. */
@@ -42,7 +44,7 @@ export function Breadcrumb({
   siblings?: Siblings;
 }) {
   return (
-    <nav className={styles.crumb} aria-label="Breadcrumb">
+    <nav className={styles.crumb} aria-label={t("ui.breadcrumb.label")}>
       {parents.map((parent) => (
         <Fragment key={parent.href}>
           <span className={styles.item}>
@@ -164,7 +166,7 @@ function SiblingMenu({ siblings }: { siblings: Siblings }) {
             </p>
           ) : list === "error" ? (
             <p className={styles.note} role="status">
-              Could not load the list.
+              {t("ui.breadcrumb.loadFailed")}
             </p>
           ) : (
             <>
@@ -172,8 +174,8 @@ function SiblingMenu({ siblings }: { siblings: Siblings }) {
                 <input
                   type="search"
                   className={styles.filter}
-                  aria-label={`Filter: ${siblings.label}`}
-                  placeholder="Filter"
+                  aria-label={t("ui.breadcrumb.filter", { label: siblings.label })}
+                  placeholder={t("ui.breadcrumb.filterPlaceholder")}
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                 />
@@ -193,7 +195,7 @@ function SiblingMenu({ siblings }: { siblings: Siblings }) {
                   </li>
                 ))}
               </ul>
-              {shown.length === 0 && <p className={styles.note}>Nothing matches.</p>}
+              {shown.length === 0 && <p className={styles.note}>{t("ui.breadcrumb.noMatch")}</p>}
             </>
           )}
         </div>

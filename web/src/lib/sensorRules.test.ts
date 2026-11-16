@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import type { EffectiveSensor, EffectiveThreshold, SensorConfigEntry } from "./api";
 import { shapeOf } from "./alerts";
 import {
+  LEVEL_LABELS,
   applyToChoices,
   applyToFor,
   ownOverrides,
@@ -83,6 +86,20 @@ describe("sensor rules", () => {
     const event = shapeOf([port], "monitorflow_port_443_up", null);
     const up = rule({ metric: "monitorflow_port_443_up", comparison: "<", warning: null, critical: 1, duration_s: 0 });
     expect(ruleSummary(event, up, 60_000)).toBe("every 1 min · critical when it fails");
+  });
+
+  it("speaks French", () => {
+    setActiveLocale("fr");
+    const percent = shapeOf([disk], "monitorflow_disk_used_ratio", null);
+    expect(ruleSummary(percent, rule({ warning: 0.7, critical: 0.8 }), 60_000)).toBe(
+      "toutes les 1 min · avert. > 70\u00a0% · crit. > 80\u00a0% · pendant 5 min",
+    );
+    expect(applyToChoices(disk, "/var", "web-1", "paris").map((c) => c.label)).toEqual([
+      "ce capteur uniquement (/var)",
+      "chaque disque sur web-1",
+      "chaque serveur de paris (défaut du site)",
+    ]);
+    expect(LEVEL_LABELS.site).toBe("Défaut du site");
   });
 
   it("offers this sensor only where it has several instances, and preselects the level in effect", () => {

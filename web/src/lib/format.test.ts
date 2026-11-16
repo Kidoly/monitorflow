@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import {
   formatBytes,
   formatDuration,
@@ -75,5 +77,17 @@ describe("format", () => {
     expect(formatValue(5e8, "bytes_per_second")).toBe("477 MiB/s");
     expect(formatValue(1234.5, "per_second")).toBe("1,235/s");
     expect(formatValue(null, "ratio")).toBe("–");
+  });
+
+  it("formats for the active language", () => {
+    setActiveLocale("fr");
+    expect(formatPercent(0.853)).toBe("85,3\u00a0%");
+    expect(formatValue(1234.567, "number")).toBe("1\u202f234,57");
+    expect(formatBytes(1536)).toBe("1,5 Kio");
+    expect(formatValue(5e8, "bytes_per_second")).toBe("477 Mio/s");
+    expect(formatValue(2 * 86_400, "seconds")).toBe("2 j");
+    expect(formatDuration(86_400)).toBe("1 jour");
+    expect(formatDuration(5_400)).toBe("90 minutes");
+    expect(formatRelative("2026-10-18T11:55:00Z", new Date("2026-10-18T12:00:00Z"))).toBe("il y a 5 minutes");
   });
 });

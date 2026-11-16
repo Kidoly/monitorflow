@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { t } from "@/i18n";
 import type { Me } from "@/lib/api";
 
 import { SETTINGS_ITEM, visibleNavigation } from "./navigation";
@@ -10,7 +11,7 @@ const as = (customer_id: string | null): Me => ({
   roles: [{ role: "administrator", customer_id, site_id: null }],
 });
 
-const labels = (me: Me) => visibleNavigation(me).flatMap((section) => section.items.map((item) => item.label));
+const labels = (me: Me) => visibleNavigation(me).flatMap((section) => section.items.map((item) => t(item.label)));
 
 describe("visibleNavigation", () => {
   it("shows Mirrors to global administrators only", () => {

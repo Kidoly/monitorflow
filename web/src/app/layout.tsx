@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+import { LocaleProvider } from "@/i18n/LocaleProvider";
 import { THEME_SCRIPT } from "@/lib/theme";
 
 // Inter is bundled with the build: the product is self-hosted and never
@@ -19,12 +20,15 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    // The inline script sets data-theme before hydration, hence the warning opt-out.
+    // The inline script sets data-theme before hydration, and LocaleProvider
+    // sets lang after it, hence the warning opt-out.
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
-      <body>{children}</body>
+      <body>
+        <LocaleProvider>{children}</LocaleProvider>
+      </body>
     </html>
   );
 }

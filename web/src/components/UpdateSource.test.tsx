@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { WindowsUpdateSource } from "@/lib/api";
 
 import { describeUpdateSource } from "./UpdateSource";
@@ -20,6 +21,15 @@ const microsoft: WindowsUpdateSource = {
 const wsus: WindowsUpdateSource = { ...microsoft, origin: "wsus", wsus_url: "http://wsus.example:8530", managed: true };
 
 describe("describeUpdateSource", () => {
+  it("speaks French when that is the language", () => {
+    setActiveLocale("fr");
+    const words = describeUpdateSource({ ...wsus, quality_deferral_days: 7, feature_deferral_days: 1 });
+    expect(words.text).toBe("Les mises à jour viennent de WSUS à http://wsus.example:8530.");
+    expect(words.details).toEqual([
+      "Après leur publication par Microsoft, Windows attend 7 jours pour les mises à jour mensuelles et 1 jour pour les mises à jour de fonctionnalités avant de les proposer.",
+    ]);
+  });
+
   it("says nothing it doesn't know", () => {
     const words = describeUpdateSource(null);
     expect(words.label).toBe("Not known yet");

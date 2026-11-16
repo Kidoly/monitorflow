@@ -208,6 +208,22 @@
   display: none;
 }
 
+/* Language: a native select, under the theme button */
+.language {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.language svg {
+  display: none;
+}
+
+.languageSelect {
+  width: 100%;
+}
+
 /* Scope switcher */
 .scope {
   position: relative;
@@ -392,8 +408,29 @@
   }
 
   .signOut svg,
-  .themeButton svg {
+  .themeButton svg,
+  .language svg {
     display: block;
+  }
+
+  /* The icon stands for the select, which stays on top of it, invisible, to open the list. */
+  .language {
+    justify-content: center;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .language:has(:focus-visible) {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
+  }
+
+  .languageSelect {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
   }
 
   .themeButton {

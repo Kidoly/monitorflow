@@ -4,6 +4,8 @@
 // never sees or stores a token. Requests go to the page's own origin, which
 // the reverse proxy (or `next dev` in development) forwards to the API.
 
+import { t } from "@/i18n";
+
 /** Header the API requires on every state-changing request (ADR-0006). */
 export const CSRF_HEADER = "X-MonitorFlow-CSRF";
 
@@ -2636,19 +2638,18 @@ export function isAbortError(error: unknown): boolean {
 /** A short English sentence for showing `error` to the user. */
 export function describeError(error: unknown): string {
   if (!(error instanceof ApiError)) {
-    return "Something went wrong.";
+    return t("common.error.unknown");
   }
   switch (error.status) {
     case 0:
-      return "Cannot reach the MonitorFlow server.";
+      return t("common.error.unreachable");
     case 401:
-      return "Your session has ended. Sign in again.";
+      return t("common.error.signedOut");
     case 403:
-      return "You do not have access to this. Ask an administrator for a role.";
+      return t("common.error.forbidden");
     default:
-      return error.status >= 500
-        ? "The server could not handle the request. Try again later."
-        : `The request failed (${error.message}).`;
+      // The server's own message stays in English (ADR-0136).
+      return error.status >= 500 ? t("common.error.server") : t("common.error.failed", { message: error.message });
   }
 }
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import type { AddedServer, License, LicenseView } from "./api";
+
 import { centralServers, formatDay, licenseNotice, licenseSummary } from "./license";
 
 const license: License = {
@@ -23,6 +26,8 @@ describe("license", () => {
   it("formats days in UTC", () => {
     expect(formatDay("2027-11-30")).toBe("30 November 2027");
     expect(formatDay("2027-01-01")).toBe("1 January 2027");
+    setActiveLocale("fr");
+    expect(formatDay("2027-11-30")).toBe("30 novembre 2027");
   });
 
   it("counts central servers", () => {
@@ -58,5 +63,10 @@ describe("license", () => {
     expect(licenseNotice(view("none", { added }))).toBe(
       "There is no Enterprise license key. The central server already added keeps running, but no other can be added.",
     );
+    setActiveLocale("fr");
+    expect(licenseNotice(view("none", { added: [...added, ...added] }))).toBe(
+      "Il n’y a pas de clé de licence Enterprise. Les 2 serveurs centraux déjà ajoutés continuent de fonctionner, mais aucun autre ne peut être ajouté.",
+    );
+    expect(licenseSummary(view("valid"))[0]).toBe("Valide jusqu’au 30 novembre 2027, pour 3 serveurs centraux.");
   });
 });

@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { ServerUpdateCheck, ServerUpdateRun, ServerUpdateView } from "@/lib/api";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -83,6 +84,26 @@ describe("ServerUpdatePage", () => {
     stubFetch({});
     renderPage(customerAdmin);
     expect(screen.getByText("Server updates need a global administrator")).toBeInTheDocument();
+  });
+
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    const user = userEvent.setup();
+    stubFetch({
+      "GET /api/server-update": { status: 200, body: view({ update: run() }) },
+      "POST /api/server-update/check": { status: 200, body: available },
+      "GET /api/agent-releases": { status: 200, body: { versions: [] } },
+    });
+    renderPage();
+    expect(await screen.findByText("prêt")).toBeInTheDocument();
+    expect(screen.getByText("build local")).toBeInTheDocument();
+    expect(screen.getByText("Mis à jour")).toBeInTheDocument();
+    expect(screen.getByText("Le serveur est en version 0.2.0.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Rechercher des mises à jour" }));
+    expect(await screen.findByText("MonitorFlow 0.2.0 est disponible.")).toBeInTheDocument();
+    const changes = within(screen.getByRole("list", { name: "Ce qui change" })).getAllByRole("listitem");
+    expect(changes[0]).toHaveTextContent("Serveur : 0.1.0 → 0.2.0");
+    expect(screen.getByRole("button", { name: "Mettre à jour vers 0.2.0…" })).toBeInTheDocument();
   });
 
   it("checks for an update, shows what changes and starts it after confirmation", async () => {
