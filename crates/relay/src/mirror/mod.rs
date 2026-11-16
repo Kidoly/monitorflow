@@ -4,17 +4,14 @@
 //! under `mirror_dir`.
 //!
 //! [`meta`] describes the files of a snapshot, read by [`apt`] and [`dnf`]
-//! from the repository metadata, decompressed by [`compress`]; [`sync`] copies a snapshot with
+//! from the repository metadata, decompressed by [`compress`]; these and
+//! [`fetch`] live in [`monitorflow_common::mirror::repo`], shared with the
+//! server's on-demand mirrors (ADR-0142). [`sync`] copies a snapshot with
 //! [`fetch`]; [`task`] runs the sync loop and [`retention`] bounds the
 //! snapshots kept. [`report`] tells the server what the relay serves.
 //! [`agent`] copies the newest agent releases for self-updates (ADR-0053).
 
 pub mod agent;
-pub mod apt;
-pub mod compress;
-pub mod dnf;
-pub mod fetch;
-pub mod meta;
 pub mod report;
 pub mod retention;
 pub mod sync;
@@ -22,6 +19,8 @@ pub mod task;
 
 use std::io;
 use std::path::Path;
+
+pub use monitorflow_common::mirror::repo::{apt, compress, dnf, fetch, meta};
 
 use monitorflow_common::mirror::{Family, Served};
 

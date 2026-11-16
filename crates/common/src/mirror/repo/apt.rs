@@ -7,7 +7,7 @@ use std::io::BufRead;
 use std::path::Path;
 
 use super::compress::{self, Compression};
-use super::meta::{join, Algorithm, Checksum, Entry, MetaError};
+use super::meta::{join, Algorithm, Checksum, Entry, MetaError, Package};
 
 /// Signed files of a suite, not listed in `Release` itself, all
 /// required.
@@ -73,28 +73,51 @@ pub fn read_packages(file: &str, path: &Path) -> Result<Vec<Entry>, MetaError> {
     packages(file, compress::open(file, path)?)
 }
 
+/// As [`read_packages`], with each package's name, version and
+/// architecture (ADR-0142). Blocking.
+pub fn read_package_list(file: &str, path: &Path) -> Result<Vec<Package>, MetaError> {
+    package_list(file, compress::open(file, path)?)
+}
+
 /// The packages a `Packages` index lists, with paths from the snapshot
 /// root. Blocking when `reader` is.
 pub fn packages(file: &str, reader: impl BufRead) -> Result<Vec<Entry>, MetaError> {
-    let mut entries = Vec::new();
-    let (mut path, mut size, mut sha) = (None, None, None);
-    let mut finish = |path: &mut Option<String>,
-                      size: &mut Option<String>,
-                      sha: &mut Option<String>|
-     -> Result<(), MetaError> {
-        match (path.take(), size.take(), sha.take()) {
-            (None, None, None) => Ok(()),
-            (Some(p), Some(s), Some(h)) => {
-                entries.push(Entry {
+    Ok(package_list(file, reader)?
+        .into_iter()
+        .map(|p| p.entry)
+        .collect())
+}
+
+/// The fields of one stanza that [`package_list`] reads.
+#[derive(Default)]
+struct Stanza {
+    path: Option<String>,
+    size: Option<String>,
+    sha: Option<String>,
+    name: Option<String>,
+    version: Option<String>,
+    arch: Option<String>,
+}
+
+impl Stanza {
+    /// The package, `None` for an empty stanza.
+    fn finish(&mut self, file: &str) -> Result<Option<Package>, MetaError> {
+        let stanza = std::mem::take(self);
+        match (stanza.path, stanza.size, stanza.sha) {
+            (None, None, None) => Ok(None),
+            (Some(p), Some(s), Some(h)) => Ok(Some(Package {
+                entry: Entry {
                     path: join(file, "", &p)?,
                     size: s
                         .parse()
                         .map_err(|_| MetaError::invalid(file, format!("bad size `{s}`")))?,
                     checksum: Checksum::new(Algorithm::Sha256, &h)
                         .ok_or_else(|| MetaError::invalid(file, format!("bad SHA256 `{h}`")))?,
-                });
-                Ok(())
-            }
+                },
+                name: stanza.name.unwrap_or_default(),
+                version: stanza.version.unwrap_or_default(),
+                arch: stanza.arch.unwrap_or_default(),
+            })),
             (p, _, _) => Err(MetaError::invalid(
                 file,
                 format!(
@@ -103,11 +126,18 @@ pub fn packages(file: &str, reader: impl BufRead) -> Result<Vec<Entry>, MetaErro
                 ),
             )),
         }
-    };
+    }
+}
+
+/// As [`packages`], with each package's `Package`, `Version` and
+/// `Architecture`. Blocking when `reader` is.
+pub fn package_list(file: &str, reader: impl BufRead) -> Result<Vec<Package>, MetaError> {
+    let mut packages = Vec::new();
+    let mut stanza = Stanza::default();
     for line in reader.lines() {
         let line = line.map_err(|e| compress::read_error(file, &e))?;
         if line.trim().is_empty() {
-            finish(&mut path, &mut size, &mut sha)?;
+            packages.extend(stanza.finish(file)?);
             continue;
         }
         if line.starts_with([' ', '\t']) {
@@ -118,14 +148,17 @@ pub fn packages(file: &str, reader: impl BufRead) -> Result<Vec<Entry>, MetaErro
         };
         let value = Some(value.trim().to_owned());
         match key.to_ascii_lowercase().as_str() {
-            "filename" => path = value,
-            "size" => size = value,
-            "sha256" => sha = value,
+            "filename" => stanza.path = value,
+            "size" => stanza.size = value,
+            "sha256" => stanza.sha = value,
+            "package" => stanza.name = value,
+            "version" => stanza.version = value,
+            "architecture" => stanza.arch = value,
             _ => {}
         }
     }
-    finish(&mut path, &mut size, &mut sha)?;
-    Ok(entries)
+    packages.extend(stanza.finish(file)?);
+    Ok(packages)
 }
 
 #[cfg(test)]
@@ -235,6 +268,14 @@ mod tests {
         assert_eq!(entries[0].size, 3);
         assert_eq!(entries[1].path, "pool/main/b/b_2_all.deb");
         assert!(packages("P", &b""[..]).unwrap().is_empty());
+        let text = text.replace("Version: 1.0\n", "Version: 1:1.0-2\nArchitecture: amd64\n");
+        let listed = package_list("P", text.as_bytes()).unwrap();
+        let what: Vec<_> = listed
+            .iter()
+            .map(|p| (p.name.as_str(), p.version.as_str(), p.arch.as_str()))
+            .collect();
+        assert_eq!(what, [("a", "1:1.0-2", "amd64"), ("b", "", "")]);
+        assert_eq!(listed[0].entry, entries[0]);
 
         for bad in [
             "Package: a\nFilename: pool/a.deb\nSize: 3\n".to_owned(),

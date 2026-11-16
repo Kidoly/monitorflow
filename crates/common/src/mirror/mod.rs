@@ -3,7 +3,8 @@
 //! what is published, and the atomic `current` link.
 //!
 //! With the `mirror` feature, `serve` holds the listener and `index` the
-//! index built from the tree.
+//! index built from the tree; `repo` reads repositories and `packages`
+//! lists what an on-demand snapshot can fetch (ADR-0142).
 
 #[cfg(unix)]
 use std::io;
@@ -13,6 +14,10 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "mirror")]
 pub mod index;
+#[cfg(feature = "mirror")]
+pub mod packages;
+#[cfg(feature = "mirror")]
+pub mod repo;
 #[cfg(feature = "mirror")]
 pub mod serve;
 
