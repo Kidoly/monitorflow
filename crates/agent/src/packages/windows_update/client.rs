@@ -1,16 +1,20 @@
-//! The agent's side of Windows Update (ADR-0049): package reports and
-//! `apply_updates` through the update service. Written against
-//! [`UpdateService`] so it is tested with a fake; the pipe client is in
-//! `pipe`.
+//! The agent's side of Windows Update (ADR-0049) and winget (ADR-0139):
+//! package reports and `apply_updates` through the update service.
+//! Written against [`UpdateService`] so it is tested with a fake; the pipe
+//! client is in `pipe`.
 
 use std::sync::Arc;
 
-use monitorflow_common::proto::v1::{ApplyUpdates, Command, Package, WindowsUpdateSource};
+use monitorflow_common::proto::v1::{
+    ApplyUpdates, Command, Package, ThirdPartySelection, WindowsUpdateSource,
+};
+use monitorflow_common::third_party;
 use prost::Message;
 
 use super::{describe, to_packages, Installed, Reply, Request, Scan, Status, Step};
 use crate::commands::{Handler, Output};
-use crate::packages::{PackageError, PackageManager, Reports};
+use crate::packages::winget::{self, Apps};
+use crate::packages::{PackageError, PackageManager, Reports, ThirdParty};
 
 /// Sends one request to the update service and returns its reply.
 #[async_trait::async_trait]
@@ -83,6 +87,32 @@ impl PackageManager for WindowsUpdates {
         #[cfg(not(windows))]
         None
     }
+
+    /// winget's apps, listed by the update service as LocalSystem
+    /// (ADR-0139). Its status is always sent, whatever happened.
+    async fn third_party(&self) -> ThirdParty {
+        let apps = winget_scan(self.service.as_ref()).await;
+        let (status, packages) = winget::to_report(&apps);
+        ThirdParty {
+            packages,
+            managers: vec![status],
+        }
+    }
+}
+
+/// An update service from before ADR-0139 refuses the request.
+pub const SERVICE_TOO_OLD: &str =
+    "the update service is too old for winget; it updates with the agent";
+
+async fn winget_scan(service: &dyn UpdateService) -> Apps {
+    match service.call(&Request::WingetScan).await {
+        Ok(Reply::Apps(apps)) => apps,
+        Ok(Reply::Error(error)) if error.contains("unknown variant `winget_scan`") => {
+            Apps::unusable(SERVICE_TOO_OLD)
+        }
+        Ok(other) => Apps::unusable(&unexpected(other).to_string()),
+        Err(error) => Apps::unusable(&error.to_string()),
+    }
 }
 
 /// `apply_updates` on Windows: the update service installs, the agent
@@ -119,52 +149,83 @@ fn line(request: &Request) -> String {
     }
 }
 
+/// `winget upgrade A B`, or `all`, for the output.
+fn winget_line(selection: &ThirdPartySelection) -> String {
+    if selection.packages.is_empty() {
+        "upgrade all".into()
+    } else {
+        format!("upgrade {}", selection.packages.join(" "))
+    }
+}
+
 #[async_trait::async_trait]
 impl Handler for WindowsApplyHandler {
     async fn run(&self, _payload: &[u8]) -> Output {
         Output::rejected("apply_updates needs its signed command")
     }
 
+    /// Windows updates unless the command skips the OS, then winget's apps
+    /// when it selects them (ADR-0138, ADR-0139), stopping at the first
+    /// failure; a report; then a restart when allowed and needed.
     async fn run_command(&self, command: &Command) -> Output {
         let Ok(apply) = ApplyUpdates::decode(command.payload.as_slice()) else {
             return Output::rejected("invalid ApplyUpdates payload");
         };
-        let request = Request::install(&apply);
-        if let Err(error) = request.validate() {
+        if let Err(error) = third_party::check(&apply, Some("windows")) {
             return Output::rejected(error.to_string());
         }
+        let os = (!apply.skip_os).then(|| Request::install(&apply));
+        if let Some(Err(error)) = os.as_ref().map(Request::validate) {
+            return Output::rejected(error.to_string());
+        }
+        // `check` leaves only winget on Windows.
+        let apps = apply.third_party.first();
+        let mut steps: Vec<(String, Step)> = Vec::new();
+        if let Some(request) = &os {
+            steps.push((format!("windows update {}", line(request)), Step::Install));
+        }
+        if let Some(selection) = apps {
+            steps.push((format!("winget {}", winget_line(selection)), Step::Winget));
+        }
         let mut output = Output::default();
-        output
-            .stdout
-            .extend_from_slice(format!("$ windows update {}\n", line(&request)).as_bytes());
-        // The service checks the signed command and builds the same
-        // request from it (ADR-0108).
-        let signed = Request::signed(command, Step::Install, None);
-        let result = self.install(&signed).await;
+        let mut reboot_required = false;
+        let mut failure = None;
+        for (shown, step) in steps {
+            output
+                .stdout
+                .extend_from_slice(format!("$ {shown}\n").as_bytes());
+            // The service checks the signed command and builds the same
+            // request from it (ADR-0108).
+            let installed = match self.install(&Request::signed(command, step, None)).await {
+                Ok(installed) => installed,
+                Err(error) => {
+                    failure = Some((-1, error.to_string()));
+                    break;
+                }
+            };
+            let (text, error) = describe(&installed);
+            output.stdout.extend_from_slice(text.as_bytes());
+            reboot_required |= installed.reboot_required;
+            tracing::info!(
+                step = ?step,
+                updates = installed.results.len(),
+                failed = error.is_some(),
+                reboot_required = installed.reboot_required,
+                "updates installed"
+            );
+            if let Some(error) = error {
+                failure = Some((1, error));
+                break;
+            }
+        }
         // Whatever happened, the server gets the state of the host.
         self.reports.collect().await;
-        let installed = match result {
-            Ok(installed) => installed,
-            Err(error) => {
-                output.exit_code = -1;
-                output.error = Some(error.to_string());
-                return output;
-            }
-        };
-        let (text, error) = describe(&installed);
-        output.stdout.extend_from_slice(text.as_bytes());
-        tracing::info!(
-            updates = installed.results.len(),
-            failed = error.is_some(),
-            reboot_required = installed.reboot_required,
-            "windows updates installed"
-        );
-        if let Some(error) = error {
-            output.exit_code = 1;
+        if let Some((exit_code, error)) = failure {
+            output.exit_code = exit_code;
             output.error = Some(error);
             return output;
         }
-        if apply.allow_reboot && installed.reboot_required {
+        if apply.allow_reboot && reboot_required {
             let reboot = Request::signed(command, Step::Reboot, None);
             match self.service.call(&reboot).await {
                 Ok(Reply::Rebooting(())) => {
@@ -202,6 +263,8 @@ mod tests {
         calls: Mutex<Vec<Request>>,
         install: Option<Reply>,
         reboot: Option<Reply>,
+        winget: Option<Reply>,
+        apps: Option<Reply>,
     }
 
     #[async_trait::async_trait]
@@ -223,12 +286,13 @@ mod tests {
                 Request::Signed { step, .. } => match step {
                     Step::Install => self.install.clone(),
                     Step::Reboot => self.reboot.clone(),
-                    Step::SelfUpdate | Step::Winget => None,
+                    Step::Winget => self.winget.clone(),
+                    Step::SelfUpdate => None,
                 },
+                Request::WingetScan => self.apps.clone(),
                 Request::Install { .. }
                 | Request::Reboot
                 | Request::SelfUpdate(_)
-                | Request::WingetScan
                 | Request::WingetUpgrade { .. } => None,
             };
             reply.ok_or_else(|| PackageError::Helper("the update service is not running".into()))
@@ -388,7 +452,10 @@ mod tests {
                 .collect()
         };
         assert!(matches!(calls[0], Request::Signed { .. }), "{calls:?}");
-        assert_eq!(calls[1..], [Request::Scan, Request::Status]);
+        assert_eq!(
+            calls[1..],
+            [Request::Scan, Request::Status, Request::WingetScan]
+        );
         assert_eq!(steps(&calls), [Step::Install]);
 
         let (output, calls, _) = run(fake(), apply(true)).await;
@@ -460,5 +527,152 @@ mod tests {
             Some("`openssl` is not a KB number or update ID")
         );
         assert!(calls.is_empty());
+    }
+
+    fn signed_steps(calls: &[Request]) -> Vec<Step> {
+        calls
+            .iter()
+            .filter_map(|call| match call {
+                Request::Signed { step, .. } => Some(*step),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn winget_apply(ids: &[&str], skip_os: bool) -> ApplyUpdates {
+        ApplyUpdates {
+            skip_os,
+            allow_reboot: true,
+            third_party: vec![ThirdPartySelection {
+                manager: monitorflow_common::proto::v1::PackageManager::Winget.into(),
+                packages: ids.iter().map(|s| s.to_string()).collect(),
+            }],
+            ..ApplyUpdates::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn reports_carry_winget_apps_or_why_there_are_none() {
+        use monitorflow_common::proto::v1::package_manager_status::State;
+        let apps = winget::Apps {
+            state: winget::Availability::Available,
+            version: "1.29.380".into(),
+            error: String::new(),
+            apps: vec![winget::App {
+                id: "Example.App".into(),
+                name: "Example".into(),
+                source: "winget".into(),
+                version: "1.0".into(),
+                available: "2.0".into(),
+            }],
+        };
+        let collect = |apps: Option<Reply>| async move {
+            let fake = Fake {
+                apps,
+                ..Fake::default()
+            };
+            WindowsUpdates::new(Arc::new(fake)).third_party().await
+        };
+        let found = collect(Some(Reply::Apps(apps))).await;
+        assert_eq!(found.managers.len(), 1);
+        assert_eq!(found.managers[0].state, i32::from(State::Available));
+        assert_eq!(found.packages[0].id, "Example.App");
+        assert_eq!(found.packages[0].available_version, "2.0");
+
+        let absent = collect(Some(Reply::Apps(winget::Apps::absent(
+            winget::NO_POWERSHELL,
+        ))))
+        .await;
+        assert_eq!(absent.managers[0].state, i32::from(State::Absent));
+        assert_eq!(absent.managers[0].error, winget::NO_POWERSHELL);
+        assert!(absent.packages.is_empty());
+
+        // What a service from before ADR-0139 answers.
+        let old = Reply::Error(
+            "invalid request: a message is not valid: unknown variant `winget_scan`, expected one of `scan`".into(),
+        );
+        let old = collect(Some(old)).await;
+        assert_eq!(old.managers[0].state, i32::from(State::Unusable));
+        assert_eq!(old.managers[0].error, SERVICE_TOO_OLD);
+
+        let down = collect(None).await;
+        assert_eq!(down.managers[0].state, i32::from(State::Unusable));
+        assert_eq!(down.managers[0].error, "the update service is not running");
+    }
+
+    #[tokio::test]
+    async fn winget_runs_after_windows_updates_and_its_restart_counts() {
+        let fake = || Fake {
+            install: Some(installed(&[("KB1", Outcome::Succeeded)], false)),
+            winget: Some(installed(&[("Example.App", Outcome::Succeeded)], true)),
+            reboot: Some(Reply::Rebooting(())),
+            ..Fake::default()
+        };
+        let (output, calls, reported) = run(fake(), winget_apply(&["Example.App"], false)).await;
+        assert_eq!((output.exit_code, output.error.as_deref()), (0, None));
+        assert!(reported);
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            "$ windows update install all\n\
+             KB1 succeeded: KB1 title\n\
+             $ winget upgrade Example.App\n\
+             Example.App succeeded: Example.App title\n\
+             a restart is required\n\
+             restarting in one minute\n"
+        );
+        assert_eq!(
+            signed_steps(&calls),
+            [Step::Install, Step::Winget, Step::Reboot]
+        );
+
+        // Skipping the OS sends no Windows Update step.
+        let (output, calls, _) = run(fake(), winget_apply(&[], true)).await;
+        assert_eq!(output.exit_code, 0);
+        assert!(String::from_utf8(output.stdout)
+            .unwrap()
+            .starts_with("$ winget upgrade all\n"));
+        assert_eq!(signed_steps(&calls), [Step::Winget, Step::Reboot]);
+    }
+
+    #[tokio::test]
+    async fn the_first_failure_stops_the_command() {
+        let os_fails = Fake {
+            install: Some(installed(&[("KB2", Outcome::Failed)], false)),
+            winget: Some(installed(&[("Example.App", Outcome::Succeeded)], false)),
+            ..Fake::default()
+        };
+        let (output, calls, reported) = run(os_fails, winget_apply(&[], false)).await;
+        assert_eq!(output.exit_code, 1);
+        assert!(reported);
+        assert_eq!(signed_steps(&calls), [Step::Install]);
+
+        let winget_fails = Fake {
+            winget: Some(installed(&[("Example.App", Outcome::Failed)], true)),
+            reboot: Some(Reply::Rebooting(())),
+            ..Fake::default()
+        };
+        let (output, calls, _) = run(winget_fails, winget_apply(&[], true)).await;
+        assert_eq!(output.exit_code, 1);
+        assert_eq!(
+            output.error.as_deref(),
+            Some("1 of 1 updates did not install: Example.App (0x80240022)")
+        );
+        assert_eq!(signed_steps(&calls), [Step::Winget]);
+    }
+
+    #[tokio::test]
+    async fn bad_selections_are_refused_before_anything_runs() {
+        let bad_id = winget_apply(&["Example App"], true);
+        let nothing = ApplyUpdates {
+            skip_os: true,
+            ..ApplyUpdates::default()
+        };
+        let mut linux = winget_apply(&[], true);
+        linux.third_party[0].manager = monitorflow_common::proto::v1::PackageManager::Snap.into();
+        for apply in [bad_id, nothing, linux] {
+            let (output, calls, _) = run(Fake::default(), apply.clone()).await;
+            assert!(output.rejected, "{apply:?}");
+            assert!(calls.is_empty(), "{apply:?}");
+        }
     }
 }
