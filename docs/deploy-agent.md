@@ -138,7 +138,8 @@ What the rules allow:
 | --- | --- |
 | `monitorflow-agent packages update` | `apply_updates`: every kind, all packages, security only or named packages |
 | `shutdown -r +1` | `apply_updates` with `allow_reboot` |
-| `monitorflow-agent sources apply`, `… sources revert` | `configure_sources`, `revert_sources` |
+| `monitorflow-agent sources apply`, `… sources revert` | Third-party apps | winget apps installed machine-wide, listed with every report and updated after Windows updates when a command or campaign selects them. Needs PowerShell 7 and the winget module ([above](#third-party-apps-through-winget)) |
+| `configure_sources`, `revert_sources` |
 | `monitorflow-agent self-update` | `self_update`: installs a signed agent release (below) |
 | `monitorflow-agent snapshots inspect`, `… snapshots take`, `… snapshots delete` | The storage part of each package report, `take_snapshot` and `delete_snapshot`: local snapshots before a change (below) |
 
@@ -318,6 +319,17 @@ The service logs to `%ProgramData%\MonitorFlow\update\update.log`, rotated at 16
 
 Updates come from the source the machine is configured for: Windows Update, Microsoft Update, or the WSUS server set by Group Policy, together with its approvals. MonitorFlow never changes that source, and its mirrors do not apply to Windows. Windows keeps its own automatic updates. On servers patched by campaigns, set them to notify or download only (Group Policy "Configure Automatic Updates", option 2 or 3), so installs happen in campaign windows. The server's Updates tab shows the source the agent reads from that policy, like "Updates come from WSUS at http://wsus.example:8530", and warns when the policy contradicts itself, for example a WSUS server named but not turned on[^0086].
 
+### Third-party apps through winget
+
+Apps that winget knows, installed machine-wide, are listed and updated through the update service, which runs winget as LocalSystem[^0139]. winget supports that only through its PowerShell module in PowerShell 7, so an administrator installs both once. MonitorFlow never installs them. In an elevated PowerShell:
+
+```powershell
+# PowerShell 7, machine-wide, from its MSI; then, in pwsh:
+Install-Module Microsoft.WinGet.Client -Scope AllUsers
+```
+
+Without them the server's Updates tab shows winget as not installed, with the reason ("PowerShell 7 is not installed"), and Windows updates work as before. winget is supported on Windows Server 2025 and Windows 10 and 11; on Windows Server 2019 and 2022 it works only experimentally, and not at all on Server Core. Updates use the sources winget has configured, except the store source, and follow the App Installer Group Policy: with "Enable App Installer" off nothing runs, and with "Enable App Installer Default Source" off the community source is left out. Apps installed for a single user are not seen. Each app has 30 minutes, and at most 100 are updated by one command.
+
 ### What works on Windows
 
 | Feature | State |
@@ -374,3 +386,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0111]: [ADR-0111: Agent-side limit on where port checks connect](adr/0111-port-check-targets.md)
 [^0112]: [ADR-0112: Script arguments need the host's consent](adr/0112-script-arguments-policy.md)
 [^0126]: [ADR-0126: Containers without capabilities, third-party images by digest](adr/0126-container-hardening-and-pinned-images.md)
+[^0139]: [ADR-0139: Third-party updates on Windows through winget](adr/0139-winget-updates.md)
