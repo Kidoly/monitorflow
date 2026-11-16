@@ -24,7 +24,7 @@ import {
   validateCampaign,
 } from "@/lib/campaigns";
 import { formatDuration } from "@/lib/format";
-import { administersCustomer, multiCustomer, useMe } from "@/lib/me";
+import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
 
 import own from "./Campaigns.module.css";
@@ -198,11 +198,15 @@ export function CampaignForm({ me }: { me: Me }) {
                     disabled={noPackages(s) || s.site_id === draft.siteId}
                     onChange={(e) => set({ serverIds: toggle(draft.serverIds, s.id, e.target.checked) })}
                   />
-                  {s.hostname}{" "}
-                  <span className={own.dim}>
-                    ({s.site_name}
-                    {noPackages(s) && `, ${t("campaigns.form.noPackages")}`})
-                  </span>
+                  {s.hostname}
+                  {(multiSite(me) || noPackages(s)) && (
+                    <>
+                      {" "}
+                      <span className={own.dim}>
+                        ({[multiSite(me) && s.site_name, noPackages(s) && t("campaigns.form.noPackages")].filter(Boolean).join(", ")})
+                      </span>
+                    </>
+                  )}
                 </label>
               </li>
             ))}

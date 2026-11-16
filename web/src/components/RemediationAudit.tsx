@@ -26,6 +26,7 @@ import {
 } from "@/lib/remediation";
 import { t } from "@/i18n";
 import { APPROVALS_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
+import { useMultiSite } from "@/lib/me";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -65,6 +66,7 @@ interface Loaded {
  */
 export function RemediationAudit({ filters }: { filters: AuditFilters }) {
   const scope = useScope();
+  const severalSites = useMultiSite();
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [servers, setServers] = useState<Server[]>([]);
 
@@ -124,7 +126,7 @@ export function RemediationAudit({ filters }: { filters: AuditFilters }) {
           href={scopedHref(serverHref(e.server_id), scope)}
           sub={
             <>
-              {e.site_name} ·{" "}
+              {severalSites && `${e.site_name} · `}
               <Link href={scopedHref(auditHref({ incident: e.incident_id }), scope)} title={t("remediation.audit.onlyThis")}>
                 {t("remediation.audit.eventOf", { title: seriesTitle(undefined, e.metric, e.instance), seq: String(e.seq) })}
               </Link>

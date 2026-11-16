@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { t } from "@/i18n";
 import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
 import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffline } from "@/lib/incidents";
-import { administersEverything, multiCustomer, useMe } from "@/lib/me";
+import { administersEverything, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref, incidentsHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
@@ -152,10 +152,8 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         i.state === "open" ? (
           <StatusLabel kind="severity" value={i.severity} />
         ) : (
-          <>
-            <StatusLabel kind="severity" value="resolved" />{" "}
-            <span className={styles.small}>{t("incidents.was", { severity: t(`sensors.severity.${i.severity}`) })}</span>
-          </>
+          // The State column says Resolved.
+          <span className={styles.small}>{t("incidents.was", { severity: t(`sensors.severity.${i.severity}`) })}</span>
         ),
     },
     {
@@ -168,7 +166,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
           sub={
             <>
               <Link href={scopedHref(incidentPeerHref(i), scope)}>{i.hostname}</Link>
-              {[" ", i.site_name, multiCustomer(me) && customers.get(i.site_id)].filter(Boolean).join(" · ")}
+              {[" ", multiSite(me) && i.site_name, multiCustomer(me) && customers.get(i.site_id)].filter(Boolean).join(" · ")}
             </>
           }
         />
@@ -238,7 +236,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
               { value: "warning", label: t("sensors.severity.warning") },
             ],
           },
-          ...(scope.siteId ? [] : [{ name: "site", label: t("incidents.filter.site"), options: siteChoices.map((s) => ({ value: s.id, label: s.name })) }]),
+          ...(scope.siteId || !multiSite(me) ? [] : [{ name: "site", label: t("incidents.filter.site"), options: siteChoices.map((s) => ({ value: s.id, label: s.name })) }]),
           { name: "server", label: t("incidents.filter.server"), options: serverChoices.map((s) => ({ value: s.id, label: s.hostname })) },
         ]}
         // Another site's server would match nothing.

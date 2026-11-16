@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
 import { NO_FILTERS } from "@/lib/incidents";
+import { As, oneSite, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { SERVER_ID, SITE_ID, incident } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
@@ -69,7 +70,7 @@ describe("IncidentList", () => {
     const rows = within(await table()).getAllByRole("row");
     expect(rows).toHaveLength(3);
     expect(rows[1]).toHaveTextContent(/^Critical\s*Disk used \/varweb-1 · paris · Acme Hosting\s*09:40 today\s*Open · 4 h 20 min\s*96\.2%\s*peak 97\.1%$/);
-    expect(rows[2]).toHaveTextContent(/^Resolved was Warning\s*Memory useddb-1 · berlin · Northwind\s*Yesterday 23:10\s*Resolved 01:42 · 2 h 32 min\s*1\.5 GiB\s*peak 2 GiB$/);
+    expect(rows[2]).toHaveTextContent(/^was Warning\s*Memory useddb-1 · berlin · Northwind\s*Yesterday 23:10\s*Resolved 01:42 · 2 h 32 min\s*1\.5 GiB\s*peak 2 GiB$/);
     expect(within(rows[1]!).getByRole("link", { name: "web-1" })).toHaveAttribute(
       "href",
       expect.stringMatching(new RegExp(`^/servers/view/?\\?id=${SERVER_ID}$`)),
@@ -81,6 +82,21 @@ describe("IncidentList", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
   });
 
+  it("names no site while there is only one", async () => {
+    stubFetch({
+      ...options,
+      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open], next_cursor: null } },
+    });
+    render(
+      <As user={oneSite(viewer)}>
+        <IncidentList filters={NO_FILTERS} />
+      </As>,
+    );
+    const rows = within(await table()).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent(/Disk used \/varweb-1\s*09:40 today/);
+    expect(screen.queryByRole("combobox", { name: "Site" })).toBeNull();
+  });
+
   it("speaks French", async () => {
     setActiveLocale("fr");
     stubFetch({
@@ -89,9 +105,10 @@ describe("IncidentList", () => {
     });
     render(<IncidentList filters={NO_FILTERS} />);
     const rows = within(await screen.findByRole("table", { name: "Incidents" })).getAllByRole("row");
-    expect(rows[0]).toHaveTextContent(/Gravité\s*Incident\s*Ouvert\s*État\s*Dernière valeur/);
+    expect(rows[0]).toHaveTextContent(/Gravité\s*Incident\s*Début\s*État\s*Dernière valeur/);
     expect(rows[1]).toHaveTextContent(/aujourd’hui 09:40\s*Ouvert · 4 h 20 min\s*96,2 %\s*pic 97,1 %/);
-    expect(rows[2]).toHaveTextContent(/était Avertissement/);
+    expect(rows[2]).toHaveTextContent(/^était Avertissement/);
+    expect(rows[2]!.textContent!.match(/Résolu/g)).toHaveLength(1);
     expect(rows[2]).toHaveTextContent(/Résolu 01:42/);
   });
 
