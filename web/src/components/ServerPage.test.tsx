@@ -238,12 +238,13 @@ describe("ServerPage", () => {
     expect(screen.getByRole("tab", { name: "Commands · 1 running" })).toBeInTheDocument();
     expect(screen.queryByText(/Configuration up to date/)).not.toBeInTheDocument();
     const rows = within(screen.getByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
-    // Each row: the sensor with why it is not OK (or its kind), its status, its value alone, then its
-    // compact rule (the sentence in its tooltip) and where the rule comes from.
+    // Each row: the sensor (no "disk · /" under it, nor an incident's reason that the status, value and
+    // rule beside it say), its status, its value alone, then its compact rule (the sentence in its
+    // tooltip) and where the rule comes from.
     expect(rows.map((r) => r.textContent)).toEqual([
-      "Disk used /var94.2% used is above the critical limit of 95%Critical94.2%30 s · > 85% / 95% · 5 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
-      "CPU usagecpuOK38.4%15 s · > 90% · 10 minevery 15 s · warn > 90% · for 10 minBuilt-in⋯",
-      "Disk used /disk · /OK61%30 s · > 85% / 95% · 5 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
+      "Disk used /varCritical94.2%30 s · > 85% / 95% · 5 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
+      "CPU usageOK38.4%15 s · > 90% · 10 minevery 15 s · warn > 90% · for 10 minBuilt-in⋯",
+      "Disk used /OK61%30 s · > 85% / 95% · 5 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
     ]);
     expect(within(rows[0]!).getByText("30 s · > 85% / 95% · 5 min").closest("[tabindex]")).toHaveAccessibleDescription(
       "every 30 s · warn > 85% · crit > 95% · for 5 min",

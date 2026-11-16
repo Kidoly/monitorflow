@@ -38470,6 +38470,13 @@
             ],
             "description": "Why the server cannot use a mirror, in a sentence for the page;\n`null` when it can."
           },
+          "problem_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "[`Self::problem`] as a code, for a client to word in its own\nlanguage: `no_package_updates`, `windows`, `no_distribution`,\n`no_catalog`, `not_enabled`, `no_mirror` or `copying`. Its values\nare [`Self::distribution`] and the server's OS version."
+          },
           "using": {
             "$ref": "#/components/schemas/SourcesUsing",
             "description": "What the last change that succeeded left; `own` when none did."

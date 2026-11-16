@@ -7,7 +7,7 @@ import type { ServerDetail, Site, SourcesStatus, WindowsUpdateSource } from "@/l
 import { As, me, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 
-import { PackageSources, SiteSources } from "./PackageSources";
+import { PackageSources, problemText, SiteSources } from "./PackageSources";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
@@ -76,8 +76,9 @@ describe("PackageSources", () => {
       [`POST ${PATH}/use-mirror`]: { status: 201, body: {} },
     });
     show();
-    expect(await screen.findByText("web-1 gets its packages from the sources it came with.")).toBeInTheDocument();
-    expect(screen.getByText("Uses its own sources")).toBeInTheDocument();
+    // The label alone says it: no sentence repeating it.
+    expect(await screen.findByText("Uses its own sources")).toBeInTheDocument();
+    expect(screen.queryByText(/sources it came with/)).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Use the Debian 12 (bookworm) mirror…" }));
     expect(screen.getByText(/set aside/)).toBeInTheDocument();
@@ -106,14 +107,26 @@ describe("PackageSources", () => {
 
   it("says plainly when no mirror carries the distribution, with the next step", async () => {
     const problem = "No mirror carries Debian 12 (bookworm) yet, so this server keeps its own package sources.";
-    stubFetch({ [`GET ${PATH}`]: ok({ ...own, problem, add_mirror: true }) });
+    stubFetch({ [`GET ${PATH}`]: ok({ ...own, problem, problem_code: "no_mirror", add_mirror: true }) });
     show();
-    expect(await screen.findByText(problem)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Add Debian 12 (bookworm) on the Mirrors page" })).toHaveAttribute(
+    // The label and the button say it: no sentence, in English or not.
+    expect(await screen.findByRole("link", { name: "Add Debian 12 (bookworm) on the Mirrors page" })).toHaveAttribute(
       "href",
       "/admin/mirrors",
     );
+    expect(screen.queryByText(/No mirror carries/)).toBeNull();
     expect(screen.queryByRole("button", { name: /mirror/ })).not.toBeInTheDocument();
+  });
+
+  it("words why not from the API's code, in French too", async () => {
+    setActiveLocale("fr");
+    const problem = "Debian 12 (bookworm) is still being copied. This server can use it after the first sync; until then it keeps its own package sources.";
+    stubFetch({ [`GET ${PATH}`]: ok({ ...own, problem, problem_code: "copying" }) });
+    show();
+    expect(
+      await screen.findByText("Debian 12 (bookworm) est encore en cours de copie. Ce serveur pourra l’utiliser après la première synchronisation."),
+    ).toBeInTheDocument();
+    expect(problemText({ problem: "older words", distribution: null }, null)).toBe("older words");
   });
 
   it("points people who cannot add mirrors to someone who can", async () => {

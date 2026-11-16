@@ -81,6 +81,12 @@ pub struct SourcesStatus {
     pub problem: Option<String>,
     /// The fix is adding [`Self::distribution`] on the Mirrors page.
     pub add_mirror: bool,
+    /// [`Self::problem`] as a code, for a client to word in its own
+    /// language: `no_package_updates`, `windows`, `no_distribution`,
+    /// `no_catalog`, `not_enabled`, `no_mirror` or `copying`. Its values
+    /// are [`Self::distribution`] and the server's OS version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub problem_code: Option<&'static str>,
     /// Windows servers: where Windows Update takes updates from, from the
     /// latest package report. `null` on Linux and until an agent that
     /// reports it sends a report (ADR-0086).
@@ -286,8 +292,15 @@ fn stand(history: &History) -> (Using, Vec<UsedMirror>, Option<Using>, Option<St
 /// What the mirrors of this install hold for one distribution.
 enum Ready {
     Yes(Vec<Selected>),
-    No { problem: String, add_mirror: bool },
+    No {
+        code: &'static str,
+        problem: String,
+        add_mirror: bool,
+    },
 }
+
+/// Why a server cannot use a mirror: a code and its sentence.
+type Problem = (&'static str, String);
 
 async fn ready(pool: &PgPool, distribution: &Distribution) -> Result<Ready, sqlx::Error> {
     let mut selected = Vec::new();
@@ -299,6 +312,7 @@ async fn ready(pool: &PgPool, distribution: &Distribution) -> Result<Ready, sqlx
                 distribution.name
             );
             return Ok(Ready::No {
+                code: "no_mirror",
                 problem,
                 add_mirror: true,
             });
@@ -310,6 +324,7 @@ async fn ready(pool: &PgPool, distribution: &Distribution) -> Result<Ready, sqlx
     }
     Ok(if waiting {
         Ready::No {
+            code: "copying",
             problem: format!(
                 "{} is still being copied. This server can use it after the first sync; until then it keeps its own package sources.",
                 distribution.name
@@ -341,27 +356,28 @@ impl<'a> Fit<'a> {
     async fn of(
         &mut self,
         host: &Host,
-    ) -> Result<(Option<&'static str>, Option<String>, bool), sqlx::Error> {
+    ) -> Result<(Option<&'static str>, Option<Problem>, bool), sqlx::Error> {
         let keeps = "It keeps its own package sources.";
         if !host.package_updates {
             let problem = format!("Package updates aren't available on this system. {keeps}");
-            return Ok((None, Some(problem), false));
+            return Ok((None, Some(("no_package_updates", problem)), false));
         }
         if host.os_family == "windows" {
             let problem = format!("Mirrors carry Linux packages only. {keeps}");
-            return Ok((None, Some(problem), false));
+            return Ok((None, Some(("windows", problem)), false));
         }
         let Some(version) = host.os_version.as_deref().filter(|v| !v.is_empty()) else {
             let problem =
                 format!("This server hasn't said which distribution it runs, so no mirror matches it. {keeps}");
-            return Ok((None, Some(problem), false));
+            return Ok((None, Some(("no_distribution", problem)), false));
         };
         let Some(distribution) = catalog::for_os_version(version) else {
             let problem = format!("MonitorFlow has no mirror for {version}. {keeps}");
-            return Ok((None, Some(problem), false));
+            return Ok((None, Some(("no_catalog", problem)), false));
         };
         if self.state.mirrors.is_none() {
-            return Ok((Some(distribution.name), Some(NOT_ENABLED.into()), false));
+            let problem = ("not_enabled", NOT_ENABLED.into());
+            return Ok((Some(distribution.name), Some(problem), false));
         }
         if !self.ready.contains_key(distribution.id) {
             let found = ready(&self.state.pool, distribution).await?;
@@ -370,9 +386,14 @@ impl<'a> Fit<'a> {
         Ok(match &self.ready[distribution.id] {
             Ready::Yes(_) => (Some(distribution.name), None, false),
             Ready::No {
+                code,
                 problem,
                 add_mirror,
-            } => (Some(distribution.name), Some(problem.clone()), *add_mirror),
+            } => (
+                Some(distribution.name),
+                Some((*code, problem.clone())),
+                *add_mirror,
+            ),
         })
     }
 
@@ -403,7 +424,8 @@ impl<'a> Fit<'a> {
                 failed,
                 campaign: campaigns.contains(&host.id),
                 distribution,
-                problem,
+                problem_code: problem.as_ref().map(|p| p.0),
+                problem: problem.map(|p| p.1),
                 add_mirror,
                 windows_update_source: host
                     .windows_update_source
@@ -723,6 +745,7 @@ mod tests {
             distribution: Some("Debian 12 (bookworm)"),
             problem: None,
             add_mirror: false,
+            problem_code: None,
             windows_update_source: None,
         };
         assert_eq!(status.refusal(), None);

@@ -123,9 +123,7 @@ function Logs({ server }: { server: ServerDetail }) {
         filtered ? (
           <NoMatches names={FILTER_KEYS}>{t("server.logs.noMatch")}</NoMatches>
         ) : (
-          <EmptyState title={t("server.logs.quiet")}>
-            {t("server.logs.quietText", { server: server.hostname })}
-          </EmptyState>
+          <EmptyState title={t("server.logs.quiet")} />
         )
       ) : (
         <>

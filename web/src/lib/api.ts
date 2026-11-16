@@ -2096,6 +2096,9 @@ export interface Rollback {
 }
 
 /** `GET /api/servers/{id}/sources` (ADR-0074). */
+/** Why a server cannot use a mirror (ADR-0074). */
+export type SourcesProblem = "no_package_updates" | "windows" | "no_distribution" | "no_catalog" | "not_enabled" | "no_mirror" | "copying";
+
 export interface SourcesStatus {
   using: "mirror" | "own";
   mirrors: { name: string; snapshot: string }[];
@@ -2111,6 +2114,8 @@ export interface SourcesStatus {
   problem: string | null;
   /** The fix is adding `distribution` on the Mirrors page. */
   add_mirror: boolean;
+  /** `problem` as a code, worded from the translations; absent from older servers. */
+  problem_code?: SourcesProblem;
   /**
    * Windows servers: where Windows Update takes updates from (ADR-0086).
    * `null` on Linux and until an agent that reports it sent its updates.

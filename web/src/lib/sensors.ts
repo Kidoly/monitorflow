@@ -80,11 +80,6 @@ export function formatSensorValue(metric: string, value: number | null | undefin
   return formatValue(value, unitOf(metric));
 }
 
-/** "disk · /var": what a sensor row measures, under its title. */
-export function sensorKind(sensor: EffectiveSensor, instance: string): string {
-  return [sensor.kind, instance && instance !== "total" ? instance : sensor.instance].filter(Boolean).join(" · ");
-}
-
 /** "disk · /var · every 30 s · timeout 10 s": a sensor with its timing. */
 export function sensorFacts(sensor: EffectiveSensor, instance: string): string {
   return [
