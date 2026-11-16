@@ -12,6 +12,7 @@ import {
   perInstance,
   ruleLevel,
   ruleOf,
+  ruleCompact,
   ruleSummary,
   rowRule,
   thresholdInstance,
@@ -83,6 +84,9 @@ describe("sensor rules", () => {
     );
     expect(ruleSummary(percent, rule({ enabled: false }), 30_000)).toBe("every 30 s · alert turned off");
     expect(ruleSummary(percent, undefined, 300_000)).toBe("every 5 min · no alert");
+    expect(ruleCompact(percent, rule({ warning: 0.7, critical: 0.8 }), 60_000)).toBe("1 min · > 70% / 80% · 5 min");
+    expect(ruleCompact(percent, rule({ warning: null, critical: 0.8 }), 30_000)).toBe("30 s · > 80% · 5 min");
+    expect(ruleCompact(percent, rule({ enabled: false }), 30_000)).toBe("30 s · alert turned off");
     const event = shapeOf([port], "monitorflow_port_443_up", null);
     const up = rule({ metric: "monitorflow_port_443_up", comparison: "<", warning: null, critical: 1, duration_s: 0 });
     expect(ruleSummary(event, up, 60_000)).toBe("every 1 min · critical when it fails");

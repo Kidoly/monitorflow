@@ -13,17 +13,26 @@ import type { Tone } from "./tone";
  * action belongs on the page, not in a tooltip.
  */
 export function Hint({ tone, label, children }: { tone: Tone; label: string; children: ReactNode }) {
-  const id = useId();
   return (
-    <span className={styles.hint} tabIndex={0} aria-describedby={id}>
+    <Tooltip text={children}>
       <Label tone={tone}>
         {label}
         <span className={styles.icon} aria-hidden="true">
           ⓘ
         </span>
       </Label>
+    </Tooltip>
+  );
+}
+
+/** Any short text with a longer one on hover or keyboard focus ("1 min · > 85%" and its sentence). */
+export function Tooltip({ text, children }: { text: ReactNode; children: ReactNode }) {
+  const id = useId();
+  return (
+    <span className={styles.hint} tabIndex={0} aria-describedby={id}>
+      {children}
       <span role="tooltip" id={id} className={styles.tip}>
-        {children}
+        {text}
       </span>
     </span>
   );
