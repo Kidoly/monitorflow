@@ -105,6 +105,10 @@ exit \"$code\"",
             shutdown: self.path("shutdown"),
             agent: self.path("monitorflow-agent"),
             reboot_required_file: self.path("reboot-required"),
+            // Absent: no third-party manager on these hosts.
+            flatpak: self.path("flatpak"),
+            snap: self.path("snap"),
+            snapd_socket: self.path("snapd.socket"),
         }
     }
 

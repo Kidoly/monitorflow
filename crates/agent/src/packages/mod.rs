@@ -19,6 +19,8 @@ pub mod configure;
 pub mod dnf;
 pub mod exec;
 #[cfg(unix)]
+pub mod flatpak;
+#[cfg(unix)]
 pub mod sources;
 #[cfg(unix)]
 pub mod update;

@@ -1,0 +1,9 @@
+# Captured on ubuntu2204, Flatpak 1.12.7, as an unprivileged user with LC_ALL=C.
+# A fake runtime and application in a local repository; version 2 exported after installing version 1.
+## flatpak list --system --app --columns=application,arch,branch,name,version,active,origin
+org.example.App	x86_64	stable	Example	1.0.0	e55756a28f22	example
+## flatpak list --system --runtime --columns=application,arch,branch,name,version,active,origin
+org.example.Platform	x86_64	1	example platform		6fa92c429125	example
+## flatpak remote-ls --updates --system --columns=application,arch,branch,version,commit
+org.example.App	x86_64	stable		63976aa194b3
+org.example.Platform	x86_64	1		825e4a169c25
