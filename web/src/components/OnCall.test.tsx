@@ -175,9 +175,14 @@ describe("OnCallPage", () => {
         <OnCallPage />
       </As>,
     );
-    expect(await screen.findByText(/No schedule yet/)).toBeInTheDocument();
+    // The intro just above already says alerts go to the channels besides.
+    expect(await screen.findByText(/^No schedule yet\.$/)).toBeInTheDocument();
+    expect(screen.queryByText(/Times are shown in your time zone/)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "New schedule" }));
     const form = screen.getByRole("form", { name: "New schedule" });
+    // The legend and the Add someone field say it: no third sentence.
+    expect(within(form).queryByText(/Nobody yet/)).toBeNull();
+    expect(within(form).getByText("The first person is on call from now.")).toBeInTheDocument();
     await userEvent.selectOptions(within(form).getByLabelText(/On call for/), "All of acme");
     await screen.findByRole("option", { name: "bob" });
     await userEvent.selectOptions(within(form).getByLabelText("Add someone"), "bob");
@@ -212,7 +217,10 @@ describe("OnCallPage", () => {
     const card = await screen.findByRole("region", { name: "Ops" });
     expect(within(card).queryByRole("button", { name: /Cover|Edit|Delete/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New schedule" })).not.toBeInTheDocument();
+    expect(screen.getByText("When you are on call, alerts come to you here.")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Email"), "alice@example.com");
+    // Not "Email only" right under the Email field.
+    expect(within(screen.getByLabelText("Also by")).getByRole("option", { name: "Nothing else" })).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText("Also by"), "Slack");
     await userEvent.type(screen.getByLabelText(/Slack webhook URL/), "https://hooks.slack.com/services/T/B/X");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));

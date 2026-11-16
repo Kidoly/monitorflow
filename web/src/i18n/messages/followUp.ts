@@ -43,7 +43,7 @@ export const en = {
   addStep: "Add a step",
   nobodyAfter: "Nobody is told after the first message.",
   title: "If nobody acknowledges",
-  intro: "Acknowledging an alert says someone is on it. Until then, the follow-up tells more people, step by step.",
+  intro: "The follow-up tells more people, step by step.",
   default: "Default",
   defaultText:
     "Critical alerts not acknowledged within {minutes} go to the nearest administrators of the place, in person. Warnings are not followed up.",
@@ -97,8 +97,7 @@ export const fr: Translation<typeof en> = {
   addStep: "Ajouter une étape",
   nobodyAfter: "Personne n’est prévenu après le premier message.",
   title: "Si personne ne prend en charge",
-  intro:
-    "Prendre en charge une alerte indique que quelqu’un s’en occupe. D’ici là, la relance prévient plus de monde, étape par étape.",
+  intro: "La relance prévient plus de monde, étape par étape.",
   default: "Par défaut",
   defaultText:
     "Les alertes critiques non prises en charge sous {minutes} vont aux administrateurs les plus proches du lieu, en personne. Les avertissements ne font pas l’objet de relances.",

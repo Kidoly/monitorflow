@@ -244,10 +244,13 @@ export function FollowUpSection({ enabled }: { enabled: boolean }) {
           <p role="alert">{describeError(error)}</p>
         ) : data ? (
           <>
-            <div>
-              <strong>{t("followUp.default")}</strong>
-              <p className={styles.stepText}>{t("followUp.defaultText", { minutes: minutesText(wait) })}</p>
-            </div>
+            {/* A new follow-up's form starts from the default and shows it. */}
+            {editing !== null && (
+              <div>
+                <strong>{t("followUp.default")}</strong>
+                <p className={styles.stepText}>{t("followUp.defaultText", { minutes: minutesText(wait) })}</p>
+              </div>
+            )}
             {data.policies.map((p) =>
               editing?.id === p.id ? (
                 <FollowUpForm
