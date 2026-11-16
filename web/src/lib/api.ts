@@ -2261,7 +2261,7 @@ export function setUnauthorizedHandler(handler: () => void): () => void {
   };
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   /** Sent as multipart, instead of `body`; the browser sets the content type. */
@@ -2691,10 +2691,22 @@ export interface AiForm {
   model: string;
 }
 
+/**
+ * What a write answers in the static demo (docs/demo.md): an `ApiError`
+ * with this message, which `describeError` shows in the reader's language.
+ */
+export const DEMO_REFUSAL = "This is a demo: changes are not saved.";
+
 async function request<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
+  // Replaced at build time: without the flag, the branch and the made-up
+  // data it loads are left out of the bundle.
+  if (process.env.NEXT_PUBLIC_MONITORFLOW_DEMO === "1") {
+    const { demoRequest } = await import("./demo/handler");
+    return demoRequest<T>(path, options);
+  }
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
   if (method !== "GET") {
@@ -2768,6 +2780,9 @@ export function isAbortError(error: unknown): boolean {
 export function describeError(error: unknown): string {
   if (!(error instanceof ApiError)) {
     return t("common.error.unknown");
+  }
+  if (error.message === DEMO_REFUSAL) {
+    return t("common.error.demo");
   }
   switch (error.status) {
     case 0:
