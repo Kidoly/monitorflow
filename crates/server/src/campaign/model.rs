@@ -7,7 +7,8 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::valid_package_name;
 use monitorflow_common::proto::v1::configure_sources::Mode;
-use monitorflow_common::proto::v1::ApplyUpdates;
+use monitorflow_common::proto::v1::{ApplyUpdates, PackageManager, ThirdPartySelection};
+use monitorflow_common::third_party;
 use prost::Message;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
@@ -279,19 +280,59 @@ impl Window {
 }
 
 /// The `ApplyUpdates` of every command of a campaign.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[schema(as = CampaignUpdateSpec)]
 pub struct UpdateSpec {
-    /// Packages to upgrade; empty upgrades everything.
+    /// OS packages to upgrade; empty upgrades everything.
     #[serde(default)]
     pub packages: Vec<String>,
-    /// Only security updates.
+    /// Only security updates of the OS. Third-party managers have no
+    /// security classification: they are included whole or not at all.
     #[serde(default)]
     pub security_only: bool,
     /// Whether the agent may reboot the server when an update needs it.
     #[serde(default)]
     pub allow_reboot: bool,
+    /// Whether the OS's own updates are included; true by default
+    /// (ADR-0138).
+    #[serde(default = "yes")]
+    pub include_os: bool,
+    /// Third-party managers to update, after the OS (ADR-0138).
+    #[serde(default)]
+    pub third_party: Vec<ThirdPartySpec>,
 }
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for UpdateSpec {
+    fn default() -> Self {
+        Self {
+            packages: Vec::new(),
+            security_only: false,
+            allow_reboot: false,
+            include_os: true,
+            third_party: Vec::new(),
+        }
+    }
+}
+
+/// What an update asks of one third-party manager (ADR-0138).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = ThirdPartySelection)]
+#[serde(deny_unknown_fields)]
+pub struct ThirdPartySpec {
+    /// `winget`, `flatpak` or `snap`.
+    pub manager: String,
+    /// Package IDs to update; empty updates every pending one.
+    #[serde(default)]
+    pub packages: Vec<String>,
+}
+
+/// Why a server gets no third-party update: its agent, or a relay on the
+/// way, predates them (ADR-0138).
+pub const NO_THIRD_PARTY: &str = "agent does not report third-party apps";
 
 impl UpdateSpec {
     pub fn validate(&self) -> Result<(), String> {
@@ -301,17 +342,63 @@ impl UpdateSpec {
         if let Some(bad) = self.packages.iter().find(|p| !valid_package_name(p)) {
             return Err(format!("invalid package name `{}`", bad.escape_debug()));
         }
-        Ok(())
+        third_party::check(&self.apply(), None).map_err(|e| e.to_string())
     }
 
-    pub fn payload(&self) -> Vec<u8> {
+    /// Whether any third-party manager is selected.
+    pub fn has_third_party(&self) -> bool {
+        !self.third_party.is_empty()
+    }
+
+    /// The managers selected; unknown names left out.
+    pub fn managers(&self) -> Vec<PackageManager> {
+        self.third_party
+            .iter()
+            .filter_map(|s| third_party::parse(&s.manager))
+            .collect()
+    }
+
+    pub fn apply(&self) -> ApplyUpdates {
         ApplyUpdates {
             packages: self.packages.clone(),
             security_only: self.security_only,
             allow_reboot: self.allow_reboot,
-            ..ApplyUpdates::default()
+            skip_os: !self.include_os,
+            third_party: self
+                .third_party
+                .iter()
+                .map(|s| ThirdPartySelection {
+                    manager: third_party::parse(&s.manager).map_or(0, Into::into),
+                    packages: s.packages.clone(),
+                })
+                .collect(),
         }
-        .encode_to_vec()
+    }
+
+    pub fn payload(&self) -> Vec<u8> {
+        self.apply().encode_to_vec()
+    }
+
+    /// The `ApplyUpdates` for one server of `os_family`: managers of
+    /// another platform are left out, and so is every manager when its
+    /// agent does not `report` third-party apps, which an OS-less update
+    /// then cannot do without (ADR-0138).
+    pub fn for_server(&self, os_family: &str, reports: bool) -> Result<ApplyUpdates, String> {
+        let mut apply = self.apply();
+        let platform = third_party::managers_for(os_family);
+        apply
+            .third_party
+            .retain(|s| platform.contains(&s.manager()));
+        if !reports && apply.skip_os {
+            return Err(NO_THIRD_PARTY.into());
+        }
+        if !reports {
+            apply.third_party.clear();
+        }
+        if apply.skip_os && apply.third_party.is_empty() {
+            return Err("nothing to update on this server".into());
+        }
+        Ok(apply)
     }
 }
 
@@ -554,7 +641,7 @@ mod tests {
         let spec = UpdateSpec {
             packages: vec!["libc6".into()],
             security_only: true,
-            allow_reboot: false,
+            ..UpdateSpec::default()
         };
         spec.validate().unwrap();
         let decoded = ApplyUpdates::decode(spec.payload().as_slice()).unwrap();
@@ -565,6 +652,83 @@ mod tests {
             ..UpdateSpec::default()
         };
         assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn older_specs_are_os_only() {
+        let spec: UpdateSpec = serde_json::from_value(
+            json!({"packages": [], "security_only": true, "allow_reboot": false}),
+        )
+        .unwrap();
+        assert!(spec.include_os && spec.third_party.is_empty());
+        let decoded = ApplyUpdates::decode(spec.payload().as_slice()).unwrap();
+        assert!(!decoded.skip_os && decoded.third_party.is_empty());
+        assert_eq!(
+            serde_json::to_value(UpdateSpec::default()).unwrap(),
+            json!({"packages": [], "security_only": false, "allow_reboot": false,
+                   "include_os": true, "third_party": []})
+        );
+    }
+
+    #[test]
+    fn third_party_specs_are_checked_and_fitted_to_each_server() {
+        let spec: UpdateSpec = serde_json::from_value(json!({
+            "include_os": false,
+            "third_party": [{"manager": "winget", "packages": ["7zip.7zip"]}, {"manager": "snap"}]
+        }))
+        .unwrap();
+        spec.validate().unwrap();
+        let windows = spec.for_server("windows", true).unwrap();
+        assert!(windows.skip_os);
+        assert_eq!(windows.third_party.len(), 1);
+        assert_eq!(windows.third_party[0].manager(), PackageManager::Winget);
+        assert_eq!(windows.third_party[0].packages, ["7zip.7zip"]);
+        let debian = spec.for_server("debian", true).unwrap();
+        assert_eq!(debian.third_party[0].manager(), PackageManager::Snap);
+        assert_eq!(
+            spec.for_server("windows", false),
+            Err(NO_THIRD_PARTY.into())
+        );
+
+        let flatpak_only = UpdateSpec {
+            include_os: false,
+            third_party: vec![ThirdPartySpec {
+                manager: "flatpak".into(),
+                packages: vec![],
+            }],
+            ..UpdateSpec::default()
+        };
+        assert!(flatpak_only.for_server("windows", true).is_err());
+
+        // With the OS kept, an older agent gets the OS part alone.
+        let both = UpdateSpec {
+            third_party: vec![ThirdPartySpec {
+                manager: "flatpak".into(),
+                packages: vec![],
+            }],
+            ..UpdateSpec::default()
+        };
+        let older = both.for_server("debian", false).unwrap();
+        assert!(!older.skip_os && older.third_party.is_empty());
+        assert_eq!(
+            both.for_server("debian", true).unwrap().third_party.len(),
+            1
+        );
+
+        for bad in [
+            json!({"include_os": false}),
+            json!({"include_os": false, "packages": ["libc6"], "third_party": [{"manager": "snap"}]}),
+            json!({"third_party": [{"manager": "chocolatey"}]}),
+            json!({"third_party": [{"manager": "snap"}, {"manager": "snap"}]}),
+            json!({"third_party": [{"manager": "snap", "packages": ["--classic"]}]}),
+        ] {
+            let spec: UpdateSpec = serde_json::from_value(bad.clone()).unwrap();
+            assert!(spec.validate().is_err(), "{bad}");
+        }
+        assert!(serde_json::from_value::<UpdateSpec>(
+            json!({"third_party": [{"manager": "snap", "scope": "user"}]})
+        )
+        .is_err());
     }
 
     #[test]

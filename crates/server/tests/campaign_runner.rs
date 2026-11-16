@@ -7,10 +7,13 @@
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use monitorflow_common::proto::v1::{ApplyUpdates, CommandResult, CommandStatus, SelfUpdate};
+use monitorflow_common::proto::v1::{
+    ApplyUpdates, CommandResult, CommandStatus, PackageManager, SelfUpdate,
+};
 use monitorflow_server::campaign::{
-    Action, CampaignState, CampaignStore, FailureThreshold, FailureUnit, NewCampaign, Runner, Step,
-    UpdateSpec, WaveSpec, Window,
+    Action, CampaignState, CampaignStore, FailureThreshold, FailureUnit, NewCampaign, PinnedMirror,
+    Runner, SourcesMode, SourcesPin, Step, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
+    NO_THIRD_PARTY,
 };
 use monitorflow_server::commands::{CommandStore, NewCommand, State};
 use prost::Message;
@@ -186,6 +189,104 @@ fn queued(step: Step) -> Vec<String> {
 }
 
 db_tests! {
+    #[sqlx::test]
+    async fn third_party_selections_fit_each_server(pool: PgPool) {
+        let f = Fleet::new(&pool, 4).await;
+        // web-4 is a Windows server; web-2's agent reports no third-party
+        // managers, as before ADR-0138.
+        sqlx::query("UPDATE servers SET os_family = 'windows' WHERE id = $1")
+            .bind(f.servers[3].0)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (i, manager) in [(0, "flatpak"), (2, "snap"), (3, "winget")] {
+            sqlx::query(
+                "INSERT INTO server_package_managers (server_id, manager, state)
+                 VALUES ($1, $2, 'available')",
+            )
+            .bind(f.servers[i].0)
+            .bind(manager)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let runner = Runner::new(pool.clone());
+        let select = |manager: &str| ThirdPartySpec { manager: manager.into(), packages: Vec::new() };
+        let payloads = |campaign: Uuid| {
+            let pool = pool.clone();
+            async move {
+                let rows: Vec<(String, Option<Vec<u8>>, Option<String>)> = sqlx::query_as(
+                    "SELECT s.hostname, c.payload, t.error FROM campaign_targets t
+                     JOIN servers s ON s.id = t.server_id LEFT JOIN commands c ON c.id = t.command_id
+                     WHERE t.campaign_id = $1 ORDER BY s.hostname",
+                )
+                .bind(campaign)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+                rows.into_iter()
+                    .map(|(host, payload, error)| {
+                        let apply = payload.map(|p| ApplyUpdates::decode(p.as_slice()).unwrap());
+                        let managers = apply.as_ref().map(|a| {
+                            (a.skip_os, a.third_party.iter().map(|s| s.manager()).collect::<Vec<_>>())
+                        });
+                        (host, managers, error)
+                    })
+                    .collect::<Vec<_>>()
+            }
+        };
+
+        // Flatpak alone: the Windows server is no target, and web-2's
+        // agent would read the command as an OS update.
+        let mut flatpak = f.campaign(Vec::new());
+        flatpak.spec = UpdateSpec { include_os: false, third_party: vec![select("flatpak")], ..UpdateSpec::default() };
+        let id = f.start(&flatpak).await;
+        runner.advance(id, Utc::now()).await.unwrap();
+        assert_eq!(
+            payloads(id).await,
+            vec![
+                ("web-1".into(), Some((true, vec![PackageManager::Flatpak])), None),
+                ("web-2".into(), None, Some(NO_THIRD_PARTY.into())),
+                ("web-3".into(), Some((true, vec![PackageManager::Flatpak])), None),
+            ]
+        );
+        let row = f.store.get(id).await.unwrap().unwrap();
+        assert_eq!(row.spec(), flatpak.spec);
+
+        // OS and every manager: each server gets its platform's, and web-2
+        // the OS part alone.
+        let mut all = f.campaign(Vec::new());
+        all.spec.packages.clear();
+        all.spec.third_party = vec![select("winget"), select("snap")];
+        let id = f.start(&all).await;
+        runner.advance(id, Utc::now()).await.unwrap();
+        assert_eq!(
+            payloads(id).await,
+            vec![
+                ("web-1".into(), Some((false, vec![PackageManager::Snap])), None),
+                ("web-2".into(), Some((false, vec![])), None),
+                ("web-3".into(), Some((false, vec![PackageManager::Snap])), None),
+                ("web-4".into(), Some((false, vec![PackageManager::Winget])), None),
+            ]
+        );
+
+        // Nobody can take an OS-less winget update on a Linux-only site.
+        sqlx::query("UPDATE servers SET revoked_at = now() WHERE id = $1")
+            .bind(f.servers[3].0)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut winget = f.campaign(Vec::new());
+        winget.spec = UpdateSpec { include_os: false, third_party: vec![select("winget")], ..UpdateSpec::default() };
+        assert!(f.store.create(&winget, USER).await.is_err());
+        // Pinned sources are for the OS.
+        let mut pinned = flatpak.clone();
+        pinned.sources = Some(SourcesPin {
+            mode: SourcesMode::Replace,
+            mirrors: vec![PinnedMirror { name: "debian-12".into(), snapshot: "20261101".into() }],
+        });
+        assert!(f.store.create(&pinned, USER).await.is_err());
+    }
     #[sqlx::test]
     async fn waves_advance_on_results_and_complete(pool: PgPool) {
         let f = Fleet::new(&pool, 3).await;

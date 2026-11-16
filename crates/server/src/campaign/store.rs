@@ -7,13 +7,14 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use monitorflow_common::command;
+use monitorflow_common::third_party;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use super::model::{
     plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, SourcesMode,
-    SourcesPin, UpdateSpec, WaveSpec, Window, MAX_TARGETS, MAX_WINDOWS,
+    SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_TARGETS, MAX_WINDOWS,
 };
 use crate::api::audit::{self, Event};
 use crate::api::commands::unfit_message;
@@ -24,7 +25,8 @@ use monitorflow_common::release::Version;
 pub(super) const COLUMNS: &str =
     "id, customer_id, name, site_id, packages, security_only, allow_reboot,
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
-     created_by, created_at, started_at, finished_at, sources_mode, agent_version";
+     created_by, created_at, started_at, finished_at, sources_mode, agent_version, include_os,
+     third_party";
 
 /// Who acts, as `(actor_kind, actor_id)` of the audit log.
 pub type Actor<'a> = (&'a str, &'a str);
@@ -90,6 +92,9 @@ pub struct CampaignRow {
     pub sources_mode: Option<SourcesMode>,
     /// Set for an agent update campaign (ADR-0053).
     pub agent_version: Option<String>,
+    /// Whether OS updates are included (ADR-0138).
+    pub include_os: bool,
+    pub third_party: sqlx::types::Json<Vec<ThirdPartySpec>>,
 }
 
 impl CampaignRow {
@@ -98,6 +103,8 @@ impl CampaignRow {
             packages: self.packages.clone(),
             security_only: self.security_only,
             allow_reboot: self.allow_reboot,
+            include_os: self.include_os,
+            third_party: self.third_party.0.clone(),
         }
     }
 
@@ -179,11 +186,19 @@ impl CampaignStore {
         let package_options = !spec.packages.is_empty()
             || spec.security_only
             || spec.allow_reboot
+            || !spec.include_os
+            || spec.has_third_party()
             || new.sources.is_some();
         if new.agent_version.is_some() && package_options {
             return Err(CampaignError::Invalid(
-                "an agent update campaign takes no packages, security_only, allow_reboot or sources"
+                "an agent update campaign takes no packages, security_only, allow_reboot, \
+                 include_os, third_party or sources"
                     .into(),
+            ));
+        }
+        if !spec.include_os && new.sources.is_some() {
+            return Err(CampaignError::Invalid(
+                "pinned sources are for OS updates, which this campaign leaves out".into(),
             ));
         }
         let mut tx = self.pool.begin().await?;
@@ -201,8 +216,8 @@ impl CampaignStore {
         let row: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
                  allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit, created_by,
-                 sources_mode, agent_version)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                 sources_mode, agent_version, include_os, third_party)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              RETURNING {COLUMNS}"
         )))
         .bind(new.customer_id)
@@ -217,6 +232,8 @@ impl CampaignStore {
         .bind(new.created_by)
         .bind(new.sources.as_ref().map(|p| p.mode))
         .bind(new.agent_version.as_ref().map(ToString::to_string))
+        .bind(new.spec.include_os)
+        .bind(sqlx::types::Json(&new.spec.third_party))
         .fetch_one(&mut *tx)
         .await?;
         let (mirror_ids, snapshot_ids): (Vec<Uuid>, Vec<Uuid>) = pinned.into_iter().unzip();
@@ -555,7 +572,9 @@ async fn check_timezones(conn: &mut PgConnection, windows: &[Window]) -> Result<
 
 /// The targets of `new`, by hostname: its servers, which must be the
 /// customer's and unrevoked, and the unrevoked servers of its site. A
-/// package campaign leaves out the servers without a package manager.
+/// package campaign leaves out the servers without a package manager,
+/// and one without OS updates those of a platform none of its managers
+/// is for (ADR-0138).
 async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>, CampaignError> {
     if let Some(site) = new.site_id {
         let found: Option<Uuid> =
@@ -592,13 +611,16 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
         "SELECT s.id FROM servers s JOIN sites t ON t.id = s.site_id
          WHERE t.customer_id = $1 AND s.revoked_at IS NULL
            AND (s.id = ANY($2) OR s.site_id = $3)
-           AND (s.package_updates OR $4)
+           AND (s.package_updates OR $4 OR NOT $5)
+           AND ($5 OR (s.os_family = 'windows') = ANY($6))
          ORDER BY s.hostname, s.peer_id",
     )
     .bind(new.customer_id)
     .bind(&new.server_ids)
     .bind(new.site_id)
     .bind(new.agent_version.is_some())
+    .bind(new.spec.include_os)
+    .bind(platforms(&new.spec))
     .fetch_all(&mut *conn)
     .await?;
     if targets.is_empty() {
@@ -612,6 +634,15 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
         )));
     }
     Ok(targets)
+}
+
+/// For each selected manager, whether it is a Windows one: the
+/// platforms an update without the OS can reach.
+fn platforms(spec: &UpdateSpec) -> Vec<bool> {
+    spec.managers()
+        .into_iter()
+        .map(|m| third_party::managers_for("windows").contains(&m))
+        .collect()
 }
 
 async fn insert_window(

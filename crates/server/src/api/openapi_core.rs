@@ -194,7 +194,8 @@ pub mod ex {
     pub fn command() -> Value {
         json!({
             "id": COMMAND, "server_id": SERVER, "kind": "apply_updates",
-            "parameters": {"packages": ["openssl", "libssl3"], "security_only": false, "allow_reboot": false},
+            "parameters": {"packages": ["openssl", "libssl3"], "security_only": false, "allow_reboot": false,
+                "include_os": true, "third_party": []},
             "state": "succeeded",
             "issued_at": "2026-11-14T09:00:00Z", "expires_at": "2026-11-14T10:00:00Z",
             "sent_at": "2026-11-14T09:00:01Z", "started_at": "2026-11-14T09:00:02Z",
