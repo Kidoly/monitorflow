@@ -302,6 +302,15 @@
   text-align: left;
 }
 
+.toggle + .toggle {
+  margin-top: 0;
+}
+
+.toggle:hover {
+  background: var(--hl);
+  text-decoration: none;
+}
+
 .toggle:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: -2px;

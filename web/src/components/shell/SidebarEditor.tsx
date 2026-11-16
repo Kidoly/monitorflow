@@ -159,20 +159,18 @@ export function SidebarEditor({ me }: { me: Me }) {
           </ul>
         </section>
       ))}
-      {SETTINGS_ITEM.visible?.(me) !== false && (
-        <ul className={styles.list}>
-          <li className={styles.row}>
-            <label className={styles.check}>
-              <input type="checkbox" checked disabled aria-describedby="sidebar-settings-always" />
-              <Icon name={SETTINGS_ITEM.icon} />
-              {t(SETTINGS_ITEM.label)}
-            </label>
-            <span className={styles.always} id="sidebar-settings-always">
-              {t("shell.sidebar.alwaysShown")}
-            </span>
-          </li>
-        </ul>
-      )}
+      <ul className={styles.list}>
+        <li className={styles.row}>
+          <label className={styles.check}>
+            <input type="checkbox" checked disabled aria-describedby="sidebar-settings-always" />
+            <Icon name={SETTINGS_ITEM.icon} />
+            {t(SETTINGS_ITEM.label)}
+          </label>
+          <span className={styles.always} id="sidebar-settings-always">
+            {t("shell.sidebar.alwaysShown")}
+          </span>
+        </li>
+      </ul>
 
       <div className={styles.actions}>
         <Button onClick={reset} disabled={!stored}>

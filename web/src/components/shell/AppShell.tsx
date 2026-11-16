@@ -12,6 +12,7 @@ import { type Customer, LOGIN_PATH, type Me, type Site, api, describeError, isAb
 import { administersEverything, multiCustomer } from "@/lib/me";
 import { setPreference, usePreferences } from "@/lib/preferences";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
+import { SIDEBAR_PREFERENCES_PATH } from "@/lib/routes";
 import { useMediaQuery } from "@/lib/useMediaQuery";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -193,24 +194,22 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
                 ))}
               </Fragment>
             ))}
-            {SETTINGS_ITEM.visible?.(me) && (
-              <Link
-                href={scopedHref(SETTINGS_ITEM.href!, scope)}
-                className={cx(styles.item, styles.pinned)}
-                aria-current={isCurrent(SETTINGS_ITEM, pathname) ? "page" : undefined}
-              >
-                <Icon name={SETTINGS_ITEM.icon} />
-                <span className={styles.text}>{t(SETTINGS_ITEM.label)}</span>
-                {pressing && (
-                  <span
-                    className={cx(styles.count, pressing.tone === "warn" && styles.countWarn)}
-                    aria-label={t("shell.settings.attention", { count: pressing.count })}
-                  >
-                    {pressing.count}
-                  </span>
-                )}
-              </Link>
-            )}
+            <Link
+              href={scopedHref(SETTINGS_ITEM.href!, scope)}
+              className={cx(styles.item, styles.pinned)}
+              aria-current={isCurrent(SETTINGS_ITEM, pathname) ? "page" : undefined}
+            >
+              <Icon name={SETTINGS_ITEM.icon} />
+              <span className={styles.text}>{t(SETTINGS_ITEM.label)}</span>
+              {pressing && (
+                <span
+                  className={cx(styles.count, pressing.tone === "warn" && styles.countWarn)}
+                  aria-label={t("shell.settings.attention", { count: pressing.count })}
+                >
+                  {pressing.count}
+                </span>
+              )}
+            </Link>
           </>
         )}
         <div className={styles.foot}>
@@ -229,6 +228,10 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         )}
         <ThemeToggle />
         <LanguageSelect />
+        <Link href={SIDEBAR_PREFERENCES_PATH} className={cx(styles.item, styles.toggle)}>
+          <Icon name="personalize" />
+          <span className={styles.text}>{t("shell.sidebar.personalize")}</span>
+        </Link>
         <button
           type="button"
           className={cx(styles.item, styles.toggle)}

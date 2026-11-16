@@ -76,6 +76,10 @@ export const ON_CALL_PATH = "/on-call/";
  * under `/admin/` before; `LEGACY_SETTINGS_PATHS` redirects those.
  */
 export const SETTINGS_PATH = "/settings/";
+/** The signed-in person's own preferences, for everyone (ADR-0137). */
+export const PREFERENCES_PATH = "/settings/preferences/";
+/** The sidebar part of it, which the rail links to. */
+export const SIDEBAR_PREFERENCES_PATH = "/settings/preferences/#sidebar";
 /** How this server runs: address, sign-in, packages, retention (ADR-0069). */
 export const GENERAL_SETTINGS_PATH = "/settings/general/";
 

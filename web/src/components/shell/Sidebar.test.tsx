@@ -17,12 +17,12 @@ const admin: Me = { id: "u1", username: "alice", roles: [{ role: "administrator"
 const viewer: Me = { id: "u1", username: "bob", roles: [{ role: "viewer", customer_id: null, site_id: "s1" }] };
 
 const nav = () => screen.getByRole("navigation", { name: "Main" });
-/** The names of the sidebar's links, in order, the brand left out. */
+/** The names of the sidebar's links, in order, the brand and the rail's own link left out. */
 const links = () =>
   within(nav())
     .getAllByRole("link")
     .map((link) => link.textContent?.replace(/\d+$/, "") ?? "")
-    .filter((name) => name !== "MonitorFlowMF");
+    .filter((name) => name !== "MonitorFlowMF" && name !== "Personalize the sidebar");
 
 /** Renders `ui` with `sidebar` as the stored preferences, loaded. */
 async function withPreferences(ui: React.ReactElement, sidebar?: SidebarPreferences) {
@@ -109,8 +109,9 @@ describe("sidebar preferences", () => {
       const names = links();
       expect(names).not.toContain("Mirrors");
       expect(names).not.toContain("Campaigns");
-      expect(names).not.toContain("Settings");
       expect(names[0]).toBe("Fleet");
+      // Settings always shows: it leads to the person's preferences.
+      expect(names.at(-1)).toBe("Settings");
     });
   });
 
@@ -185,6 +186,14 @@ describe("sidebar preferences", () => {
       expect(main.getByRole("button", { name: "Reset to default" })).toBeDisabled();
       expect(await saved(fetchMock)).toBeUndefined();
       expect(localStorage.getItem(sidebarKey("u1"))).toBeNull();
+    });
+
+    it("leads from the rail to the editor", async () => {
+      await withPreferences(<AppShell me={admin}>page</AppShell>);
+      expect(within(nav()).getByRole("link", { name: "Personalize the sidebar" })).toHaveAttribute(
+        "href",
+        expect.stringMatching(/^\/settings\/preferences\/?#sidebar$/),
+      );
     });
 
     it("lists only what the role shows", async () => {

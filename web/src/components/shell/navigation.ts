@@ -1,6 +1,6 @@
 import type { PlainKey } from "@/i18n";
 import type { Me, SidebarPreferences } from "@/lib/api";
-import { administersEverything, isAdministrator, readsCustomers } from "@/lib/me";
+import { administersEverything, readsCustomers } from "@/lib/me";
 import {
   APPROVALS_PATH,
   AUDIT_PATH,
@@ -72,14 +72,17 @@ export const NAVIGATION: NavSection[] = [
   },
 ];
 
-/** The one way to the administration pages, pinned at the bottom of the sidebar. */
+/**
+ * The one way to Settings, pinned at the bottom of the sidebar: everyone's
+ * Preferences, and the administration pages for administrators. It cannot
+ * be hidden, so Preferences stays reachable (ADR-0137).
+ */
 export const SETTINGS_ITEM: NavItem = {
   id: "settings",
   label: "shell.nav.settings",
   href: SETTINGS_PATH,
   icon: "settings",
   // Everything under /settings/ swaps the sidebar for the settings list; the list itself keeps this one.
-  visible: isAdministrator,
 };
 
 /** Whether `item` is the current page's: its path, or a page under it. */
