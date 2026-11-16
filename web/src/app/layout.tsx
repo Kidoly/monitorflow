@@ -24,16 +24,24 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+/** Set by `npm run build:demo` (docs/demo.md). */
+const DEMO = process.env.NEXT_PUBLIC_MONITORFLOW_DEMO === "1";
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Imported only by the demo build, so a normal build leaves it out.
+  const DemoBanner = DEMO ? (await import("@/components/DemoBanner")).DemoBanner : null;
   return (
     // The inline script sets data-theme before hydration, and LocaleProvider
     // sets lang after it, hence the warning opt-out.
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning data-demo={DEMO ? "" : undefined}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
-        <LocaleProvider>{children}</LocaleProvider>
+        <LocaleProvider>
+          {DemoBanner && <DemoBanner />}
+          {children}
+        </LocaleProvider>
       </body>
     </html>
   );
