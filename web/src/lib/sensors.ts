@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 import type { EffectiveSensor, Incident, SensorSeries, SensorValueList } from "./api";
 import { formatSeconds, formatValue, unitOf } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
@@ -46,18 +48,18 @@ export function seriesTitle(sensor: EffectiveSensor | undefined, metric: string,
   if (sensor && primary) {
     switch (sensor.kind) {
       case "cpu":
-        return "CPU usage";
+        return t("sensors.title.cpu");
       case "memory":
-        return "Memory available";
+        return t("sensors.title.memory");
       case "disk":
-        return `Disk used${shown ? ` ${shown}` : ""}`;
+        return shown ? t("sensors.title.diskOn", { instance: shown }) : t("sensors.title.disk");
       case "diskio":
-        return `Disk busy${shown ? ` ${shown}` : ""}`;
+        return shown ? t("sensors.title.diskioOn", { instance: shown }) : t("sensors.title.diskio");
       case "systemd":
       case "windows_service":
         return shown || sensor.name;
       case "port":
-        return `Port ${shown || sensor.name}`;
+        return t("sensors.title.port", { port: shown || sensor.name });
       case "log":
       case "eventlog":
       case "script":
@@ -71,10 +73,10 @@ export function seriesTitle(sensor: EffectiveSensor | undefined, metric: string,
 export function formatSensorValue(metric: string, value: number | null | undefined): string {
   if (value === null || value === undefined) return "–";
   const short = shortMetric(metric);
-  if (short.endsWith("_active")) return value === 1 ? "active" : "inactive";
-  if (short.endsWith("_up")) return value === 1 ? "open" : "closed";
-  if (short.endsWith("_loaded")) return value === 1 ? "loaded" : "not loaded";
-  if (short.endsWith("_installed")) return value === 1 ? "installed" : "not installed";
+  if (short.endsWith("_active")) return value === 1 ? t("sensors.value.active") : t("sensors.value.inactive");
+  if (short.endsWith("_up")) return value === 1 ? t("sensors.value.open") : t("sensors.value.closed");
+  if (short.endsWith("_loaded")) return value === 1 ? t("sensors.value.loaded") : t("sensors.value.notLoaded");
+  if (short.endsWith("_installed")) return value === 1 ? t("sensors.value.installed") : t("sensors.value.notInstalled");
   return formatValue(value, unitOf(metric));
 }
 
@@ -88,8 +90,8 @@ export function sensorFacts(sensor: EffectiveSensor, instance: string): string {
   return [
     sensor.kind,
     instance && instance !== "total" ? instance : sensor.instance,
-    `every ${formatSeconds(sensor.interval_ms / 1000)}`,
-    sensor.timeout_ms !== null && `timeout ${formatSeconds(sensor.timeout_ms / 1000)}`,
+    t("sensors.facts.every", { interval: formatSeconds(sensor.interval_ms / 1000) }),
+    sensor.timeout_ms !== null && t("sensors.facts.timeout", { interval: formatSeconds(sensor.timeout_ms / 1000) }),
   ]
     .filter(Boolean)
     .join(" · ");

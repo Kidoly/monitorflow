@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { IncidentDetail } from "@/lib/api";
 import { setUnauthorizedHandler } from "@/lib/api";
+import { setActiveLocale } from "@/i18n/locale";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
@@ -99,7 +100,7 @@ describe("IncidentPage", () => {
       "Opened as Warning87%",
       "Escalated to Critical96%",
       "De-escalated to Warning90%",
-      "Resolved · threshold removed—",
+      "Resolved · threshold removed",
     ]);
 
     const chart = screen.getByRole("figure", { name: "Around the incident" });
@@ -117,6 +118,20 @@ describe("IncidentPage", () => {
     });
     expect(screen.queryByText("AI remediation")).not.toBeInTheDocument();
     await vi.waitFor(() => expect(document.title).toBe("Disk used /var on web-1 · MonitorFlow"));
+  });
+
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    stubIncident(resolved);
+    render(<IncidentPage id={ID} />);
+    const heading = await screen.findByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(/ sur web-1$/);
+    expect(screen.getByText(/était Avertissement · paris/)).toBeInTheDocument();
+    const threshold = screen.getByRole("region", { name: "Seuil à l’ouverture" });
+    expect(threshold).toHaveTextContent(/Se résout quand\s*la valeur est inférieure ou égale à 83 %/);
+    const timeline = within(screen.getByRole("region", { name: "Chronologie" })).getAllByRole("row").slice(1);
+    expect(timeline[1]).toHaveTextContent("Aggravé en Critique");
+    expect(screen.getByRole("button", { name: "± 3 j" })).toBeInTheDocument();
   });
 
   it("says when a notification sent it together with others", async () => {

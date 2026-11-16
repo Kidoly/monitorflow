@@ -4,6 +4,8 @@
 
 import { compareVersions } from "./agentVersion";
 import type { Tone } from "@/components/ui/tone";
+import { t } from "@/i18n";
+import { activeLocale } from "@/i18n/locale";
 
 import type {
   Campaign,
@@ -30,7 +32,16 @@ export const MAX_PACKAGES = 1000;
 export const MIN_TTL_S = 60;
 export const MAX_TTL_S = 7 * 86_400;
 
-export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+/** ISO weekdays, Monday 1 to Sunday 7. */
+export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+
+/** The short name of ISO weekday `day` in the active language: "Mon", "lun.". */
+export function weekdayName(day: number): string {
+  if (!(Number.isInteger(day) && day >= 1 && day <= 7)) return String(day);
+  // 5 January 2026 is a Monday. American English says "Tue", where British English may say "Tues".
+  const locale = activeLocale() === "en" ? "en-US" : activeLocale();
+  return new Date(2026, 0, 4 + day).toLocaleString(locale, { weekday: "short" });
+}
 
 export interface WaveDraft {
   kind: "size" | "percent" | "servers";
@@ -167,8 +178,8 @@ export function planWaves(targets: string[], specs: WaveSpec[]): { waves: string
   for (const [index, spec] of specs.entries()) {
     if (!("servers" in spec)) continue;
     for (const server of spec.servers) {
-      if (!known.has(server)) return { error: `a server of batch ${index + 1} is not a target of the campaign` };
-      if (placed.has(server)) return { error: "a server is in more than one batch" };
+      if (!known.has(server)) return { error: t("campaigns.plan.notTarget", { batch: index + 1 }) };
+      if (placed.has(server)) return { error: t("campaigns.plan.twice") };
       placed.add(server);
     }
   }
@@ -181,14 +192,14 @@ export function planWaves(targets: string[], specs: WaveSpec[]): { waves: string
     } else if ("size" in spec) {
       wave = pool.splice(0, spec.size);
     } else {
-      if (!(spec.percent >= 1 && spec.percent <= 100)) return { error: "a batch percentage is 1 to 100" };
+      if (!(spec.percent >= 1 && spec.percent <= 100)) return { error: t("campaigns.plan.percent") };
       wave = pool.splice(0, Math.ceil((targets.length * spec.percent) / 100));
     }
-    if (wave.length === 0) return { error: `batch ${index + 1} would be empty` };
+    if (wave.length === 0) return { error: t("campaigns.plan.empty", { batch: index + 1 }) };
     waves.push(wave);
   }
   if (pool.length > 0) waves.push(pool);
-  if (waves.length > MAX_WAVES) return { error: `at most ${MAX_WAVES} batches` };
+  if (waves.length > MAX_WAVES) return { error: t("campaigns.plan.tooMany", { max: MAX_WAVES }) };
   return { waves };
 }
 
@@ -215,60 +226,60 @@ export function validateCampaign(request: CampaignRequest, targets: string[]): s
   const errors: string[] = [];
   const name = request.name;
   if ([...name].length < 1 || [...name].length > MAX_NAME_LEN || name.trim() !== name || /\p{Cc}/u.test(name)) {
-    errors.push(`The name must be 1 to ${MAX_NAME_LEN} characters, without control characters or surrounding spaces.`);
+    errors.push(t("campaigns.check.name", { max: MAX_NAME_LEN }));
   }
-  if (!request.customer_id) errors.push("Choose a customer.");
+  if (!request.customer_id) errors.push(t("campaigns.check.customer"));
   if (!(request.command_ttl_s >= MIN_TTL_S && request.command_ttl_s <= MAX_TTL_S)) {
-    errors.push(`Commands must stay valid between ${MIN_TTL_S} and ${MAX_TTL_S} seconds.`);
+    errors.push(t("campaigns.check.ttl", { min: String(MIN_TTL_S), max: String(MAX_TTL_S) }));
   }
   if (request.agent_version !== undefined && compareVersions(request.agent_version, request.agent_version) === null) {
-    errors.push("Choose the agent version to update to.");
+    errors.push(t("campaigns.check.agentVersion"));
   }
-  if (request.packages.length > MAX_PACKAGES) errors.push(`At most ${MAX_PACKAGES} packages.`);
+  if (request.packages.length > MAX_PACKAGES) errors.push(t("campaigns.check.packageCount", { max: String(MAX_PACKAGES) }));
   const badPackage = request.packages.find((p) => p.length > 128 || !PACKAGE.test(p));
-  if (badPackage !== undefined) errors.push(`Invalid package name "${badPackage}".`);
+  if (badPackage !== undefined) errors.push(t("campaigns.check.packageName", { name: badPackage }));
   const { value, unit } = request.failure_threshold;
   if (!isCount(value, unit === "percent" ? 100 : MAX_TARGETS)) {
     errors.push(
       unit === "percent"
-        ? "The failure threshold is a whole percentage from 0 to 100."
-        : `The failure threshold is a whole number of servers from 0 to ${MAX_TARGETS}.`,
+        ? t("campaigns.check.thresholdPercent")
+        : t("campaigns.check.thresholdCount", { max: String(MAX_TARGETS) }),
     );
   }
-  if (request.windows.length > MAX_WINDOWS) errors.push(`At most ${MAX_WINDOWS} windows.`);
+  if (request.windows.length > MAX_WINDOWS) errors.push(t("campaigns.check.windowCount", { max: MAX_WINDOWS }));
   request.windows.forEach((w, i) => {
-    const label = `Window ${i + 1}`;
+    const windowName = t("campaigns.check.window", { number: i + 1 });
     if (w.kind === "weekly") {
       if (w.weekdays.length === 0 || w.weekdays.some((d) => !(Number.isInteger(d) && d >= 1 && d <= 7))) {
-        errors.push(`${label}: choose at least one weekday.`);
+        errors.push(t("campaigns.check.weekday", { window: windowName }));
       }
-      if (!TIME.test(w.start) || w.start === "24:00") errors.push(`${label}: the start is a time before 24:00.`);
-      if (!TIME.test(w.end)) errors.push(`${label}: the end is a time such as 04:00.`);
+      if (!TIME.test(w.start) || w.start === "24:00") errors.push(t("campaigns.check.start", { window: windowName }));
+      if (!TIME.test(w.end)) errors.push(t("campaigns.check.end", { window: windowName }));
       // Midnight as an end is the end of the day.
       else if (TIME.test(w.start) && minutes(w.start) === (minutes(w.end) || 24 * 60)) {
-        errors.push(`${label}: it must end at another time than it starts.`);
+        errors.push(t("campaigns.check.sameTime", { window: windowName }));
       }
-      if (!w.timezone || w.timezone.length > 64) errors.push(`${label}: give a time zone such as Europe/Paris.`);
+      if (!w.timezone || w.timezone.length > 64) errors.push(t("campaigns.check.timezone", { window: windowName }));
     } else if (!w.starts_at || !w.ends_at) {
-      errors.push(`${label}: give a start and an end.`);
+      errors.push(t("campaigns.check.startEnd", { window: windowName }));
     } else if (new Date(w.starts_at) >= new Date(w.ends_at)) {
-      errors.push(`${label}: it must end after it starts.`);
+      errors.push(t("campaigns.check.endAfter", { window: windowName }));
     }
   });
   if (!request.site_id && request.server_ids.length === 0) {
-    errors.push("Choose a site or servers to update.");
+    errors.push(t("campaigns.check.target"));
   } else if (targets.length === 0) {
-    errors.push("The campaign targets no server.");
+    errors.push(t("campaigns.check.noTarget"));
   } else if (targets.length > MAX_TARGETS) {
-    errors.push(`At most ${MAX_TARGETS} servers.`);
+    errors.push(t("campaigns.check.serverCount", { max: String(MAX_TARGETS) }));
   }
   if (request.waves.some((w) => "size" in w && !isCount(w.size, MAX_TARGETS))) {
-    errors.push("A batch size is a whole number of servers.");
+    errors.push(t("campaigns.check.batchSize"));
   } else if (request.waves.some((w) => "percent" in w && !Number.isInteger(w.percent))) {
-    errors.push("A batch percentage is a whole number from 1 to 100.");
+    errors.push(t("campaigns.check.batchPercent"));
   } else if (targets.length > 0) {
     const plan = planWaves(targets, request.waves);
-    if ("error" in plan) errors.push(`Batches: ${plan.error}.`);
+    if ("error" in plan) errors.push(t("campaigns.check.batches", { error: plan.error }));
   }
   return errors;
 }
@@ -290,52 +301,58 @@ export function isFinal(state: CampaignState): boolean {
 }
 
 export function describeUpdate(spec: UpdateSpec, agentVersion: string | null = null): string {
-  if (agentVersion) return `Agent update to ${agentVersion}`;
+  if (agentVersion) return t("campaigns.update.agent", { version: agentVersion });
   const what =
     spec.packages.length > 0
-      ? `Packages: ${spec.packages.join(", ")}`
+      ? t("campaigns.update.packages", { packages: spec.packages.join(", ") })
       : spec.security_only
-        ? "Security updates"
-        : "All upgrades";
-  return spec.allow_reboot ? `${what}, reboot allowed` : what;
+        ? t("campaigns.update.security")
+        : t("campaigns.update.all");
+  return spec.allow_reboot ? t("campaigns.update.reboot", { update: what }) : what;
 }
 
 export function describeThreshold({ value, unit }: FailureThreshold): string {
-  if (unit === "percent") return `more than ${value}% of a batch fails`;
-  if (value === 0) return "first failure";
-  return `more than ${value} server${value === 1 ? "" : "s"} of a batch fail`;
+  if (unit === "percent") return t("campaigns.threshold.percent", { value });
+  if (value === 0) return t("campaigns.threshold.first");
+  return t("campaigns.threshold.count", { count: value });
 }
 
 export function describeWindow(window: CampaignWindow): string {
   if (window.kind === "once") {
-    return `${formatDateTime(window.starts_at)} to ${formatDateTime(window.ends_at)}`;
+    return t("campaigns.window.once", { start: formatDateTime(window.starts_at), end: formatDateTime(window.ends_at) });
   }
-  const days = window.weekdays.map((d) => WEEKDAYS[d - 1] ?? String(d)).join(", ");
+  const days = window.weekdays.map(weekdayName).join(", ");
   return `${days} ${window.start}–${window.end} (${window.timezone})`;
 }
 
-/** Status words of campaigns and their servers (the handoff says Succeeded for completed). */
-export const CAMPAIGN_STATES: Record<CampaignState, readonly [string, Tone]> = {
-  draft: ["Draft", "neutral"],
-  scheduled: ["Scheduled", "neutral"],
-  running: ["Running", "info"],
-  paused: ["Paused", "warn"],
-  stopped: ["Stopped", "neutral"],
-  completed: ["Succeeded", "ok"],
-  failed: ["Failed", "bad"],
+/** Tints of campaign states; their words come from `campaignStateWord`. */
+export const CAMPAIGN_STATES: Record<CampaignState, Tone> = {
+  draft: "neutral",
+  scheduled: "neutral",
+  running: "info",
+  paused: "warn",
+  stopped: "neutral",
+  completed: "ok",
+  failed: "bad",
 };
 
-export const SERVER_STATUSES: Record<CampaignServerStatus, readonly [string, Tone]> = {
-  pending: ["Pending", "neutral"],
-  queued: ["Queued", "neutral"],
-  sent: ["Sent", "info"],
-  running: ["Running", "info"],
-  succeeded: ["Succeeded", "ok"],
-  failed: ["Failed", "bad"],
-  expired: ["Expired", "bad"],
-  cancelled: ["Cancelled", "neutral"],
-  skipped: ["Skipped", "bad"],
+/** A campaign state's word (the handoff says Succeeded for completed). */
+export const campaignStateWord = (state: CampaignState): string => t(`campaigns.state.${state}`);
+
+/** Tints of a server's status in a campaign; their words come from `serverStatusWord`. */
+export const SERVER_STATUSES: Record<CampaignServerStatus, Tone> = {
+  pending: "neutral",
+  queued: "neutral",
+  sent: "info",
+  running: "info",
+  succeeded: "ok",
+  failed: "bad",
+  expired: "bad",
+  cancelled: "neutral",
+  skipped: "bad",
 };
+
+export const serverStatusWord = (status: CampaignServerStatus): string => t(`campaigns.server.${status}`);
 
 /** "debian-12/20261022T143000Z, rocky-9/…". */
 export function describeSources(pin: SourcesPin): string {
@@ -345,18 +362,20 @@ export function describeSources(pin: SourcesPin): string {
 /** The grey line under a campaign's name: "2 batches · snapshot debian-12/s1 · security only · reboot allowed". */
 export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources" | "spec" | "agent_version">): string {
   const { spec } = campaign;
+  const batches = t("campaigns.batches", { count: campaign.wave_count });
   if (campaign.agent_version) {
-    return `${campaign.wave_count} ${campaign.wave_count === 1 ? "batch" : "batches"} · agent ${campaign.agent_version}`;
+    return `${batches} · ${t("campaigns.subline.agent", { version: campaign.agent_version })}`;
   }
   return [
-    `${campaign.wave_count} ${campaign.wave_count === 1 ? "batch" : "batches"}`,
-    campaign.sources && `snapshot${campaign.sources.mirrors.length === 1 ? "" : "s"} ${describeSources(campaign.sources)}`,
+    batches,
+    campaign.sources &&
+      t("campaigns.subline.snapshots", { count: campaign.sources.mirrors.length, sources: describeSources(campaign.sources) }),
     spec.packages.length > 0
-      ? `${spec.packages.length} package${spec.packages.length === 1 ? "" : "s"}`
+      ? t("campaigns.subline.packages", { count: spec.packages.length })
       : spec.security_only
-        ? "security only"
-        : "all packages",
-    spec.allow_reboot && "reboot allowed",
+        ? t("campaigns.subline.security")
+        : t("campaigns.subline.all"),
+    spec.allow_reboot && t("campaigns.subline.reboot"),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -365,7 +384,7 @@ export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources
 /** A window in a table cell: "Sat, Sun 22:00–04:00", "23 Oct 02:00–05:00". */
 export function shortWindow(window: CampaignWindow): string {
   if (window.kind === "weekly") {
-    return `${window.weekdays.map((d) => WEEKDAYS[d - 1] ?? String(d)).join(", ")} ${window.start}–${window.end}`;
+    return `${window.weekdays.map(weekdayName).join(", ")} ${window.start}–${window.end}`;
   }
   const start = new Date(window.starts_at);
   const end = new Date(window.ends_at);

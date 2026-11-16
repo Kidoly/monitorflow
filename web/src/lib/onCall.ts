@@ -1,15 +1,24 @@
-import { dateLocale } from "@/i18n/locale";
+import { t } from "@/i18n";
+import { activeLocale, dateLocale } from "@/i18n/locale";
 
 import type { OnCallProblem, OnCallSchedule, OnCallTurn } from "./api";
-import { ALL_SITES } from "./customers";
 
 /** ISO weekdays, 1 for Monday. */
-export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+
+/** The name of ISO weekday `day` in the active language: "Monday", "lundi". */
+export function weekdayName(day: number): string {
+  // 2024-01-01 was a Monday.
+  return new Date(Date.UTC(2024, 0, day)).toLocaleString(activeLocale(), { weekday: "long", timeZone: "UTC" });
+}
 
 /** "Every Monday at 09:00, Europe/Paris time". */
 export function handoffRule(schedule: Pick<OnCallSchedule, "rotation" | "handoff_day" | "handoff_time" | "time_zone">): string {
-  const day = schedule.rotation === "weekly" && schedule.handoff_day ? WEEKDAYS[schedule.handoff_day - 1] : "day";
-  return `Hands off every ${day} at ${schedule.handoff_time}, ${schedule.time_zone.replaceAll("_", " ")} time`;
+  const time = schedule.handoff_time;
+  const zone = schedule.time_zone.replaceAll("_", " ");
+  return schedule.rotation === "weekly" && schedule.handoff_day
+    ? t("onCall.handoffWeekly", { day: weekdayName(schedule.handoff_day), time, zone })
+    : t("onCall.handoffDaily", { time, zone });
 }
 
 /**
@@ -22,26 +31,27 @@ export function placeName(
   multiCustomer = true,
 ): string {
   if (schedule.site_name) return severalCustomers ? `${schedule.customer_name} / ${schedule.site_name}` : (schedule.site_name ?? "");
-  if (!schedule.customer_name) return "Everything";
-  return multiCustomer ? `All of ${schedule.customer_name}` : ALL_SITES;
+  if (!schedule.customer_name) return t("notifications.scope.everything");
+  return multiCustomer ? t("notifications.scope.allOf", { name: schedule.customer_name }) : t("notifications.scope.allSites");
 }
 
 /** Why a turn is a gap, in plain words: "bob has not added a way to reach them". */
 export function problemText(problem: OnCallProblem, username: string | null, place: string): string {
-  const who = username ?? "a removed user";
+  const who = username ?? t("onCall.removedUser");
+  const wide = place === t("notifications.scope.everything") || place === t("notifications.scope.allSites");
   switch (problem) {
     case "nobody":
-      return "Nobody is on this schedule";
+      return t("onCall.problem.nobody");
     case "removed":
-      return "This turn is a removed user's";
+      return t("onCall.problem.removed");
     case "disabled":
-      return `${who}'s account is disabled`;
+      return t("onCall.problem.disabled", { who });
     case "no_access":
-      return `${who} can no longer see ${place === "Everything" || place === ALL_SITES ? place.toLowerCase() : place}`;
+      return t("onCall.problem.noAccess", { who, place: wide ? place.toLowerCase() : place });
     case "no_contact":
-      return `${who} has not added an email address or a chat`;
+      return t("onCall.problem.noContact", { who });
     case "no_mail_server":
-      return `${who} has only an email address, and no email channel can send it`;
+      return t("onCall.problem.noMailServer", { who });
   }
 }
 
@@ -64,7 +74,7 @@ export function formatWhen(date: Date): string {
 
 /** Who is on call in a turn, for a sentence: "alice", or "nobody" in a gap without a person. */
 export function who(turn: Pick<OnCallTurn, "username" | "user_id">): string {
-  return turn.username ?? (turn.user_id ? "a removed user" : "nobody");
+  return turn.username ?? (turn.user_id ? t("onCall.removedUser") : t("onCall.nobody"));
 }
 
 /** A `datetime-local` value for `date`, in the browser's time zone. */

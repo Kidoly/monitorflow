@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { t } from "@/i18n";
 import { customerAdmin, me, single, viewer } from "@/test/admin";
 
 import { currentSettingsEntry, filterSettings, insideSettings, visibleSettings } from "./catalogue";
@@ -10,7 +11,7 @@ const ids = (groups: ReturnType<typeof visibleSettings>) => groups.flatMap((g) =
 describe("settings catalogue", () => {
   it("shows global administrators every page, in the five groups", () => {
     const groups = visibleSettings(global);
-    expect(groups.map((g) => g.heading)).toEqual(["Fleet", "Alerting", "Access", "AI & extensions", "System"]);
+    expect(groups.map((g) => t(g.heading))).toEqual(["Fleet", "Alerting", "Access", "AI & extensions", "System"]);
     expect(ids(groups)).toHaveLength(14);
   });
 
