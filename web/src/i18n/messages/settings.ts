@@ -145,11 +145,10 @@ export const en = {
   "page.packagesNote":
     "Where servers download packages and agent updates from this server. Change it when they reach it through another name or port.",
   "page.packagesField": "Address",
-  "page.packagesDefault": "(default {url}; leave empty to use it)",
   "page.packagesUrl": "(http or https URL)",
   "page.addressFieldNote": "(used in every install command)",
   "page.retention": "Data retention",
-  "page.retentionNote": "How long metrics and logs stay on disk. Longer needs more disk.",
+  "page.retentionNote": "How long metrics and logs stay on disk.",
   "page.noUpdater": "This server has no updater to apply it, so the metrics and log stores keep their own settings.",
   "page.retentionFailed": "Changing retention failed. {error}",
   "page.keepMetrics": "Keep metrics, in days",
@@ -313,11 +312,10 @@ export const fr: Translation<typeof en> = {
   "page.packagesNote":
     "D’où les serveurs téléchargent les paquets et les mises à jour de l’agent sur ce serveur. Changez-la s’ils le joignent par un autre nom ou un autre port.",
   "page.packagesField": "Adresse",
-  "page.packagesDefault": "(par défaut {url} ; laissez vide pour l’utiliser)",
   "page.packagesUrl": "(URL http ou https)",
   "page.addressFieldNote": "(utilisée dans chaque commande d’installation)",
   "page.retention": "Conservation des données",
-  "page.retentionNote": "Combien de temps les métriques et les journaux restent sur le disque. Plus long demande plus de disque.",
+  "page.retentionNote": "Combien de temps les métriques et les journaux restent sur le disque.",
   "page.noUpdater":
     "Ce serveur n’a pas de programme de mise à jour pour l’appliquer : les stockages de métriques et de journaux gardent leurs propres réglages.",
   "page.retentionFailed": "Le changement de conservation a échoué. {error}",

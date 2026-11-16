@@ -98,7 +98,12 @@ describe("ServerUpdatePage", () => {
     expect(await screen.findByText("prêt")).toBeInTheDocument();
     expect(screen.getByText("build local")).toBeInTheDocument();
     expect(screen.getByText("Mis à jour")).toBeInTheDocument();
-    expect(screen.getByText("Le serveur est en version 0.2.0.")).toBeInTheDocument();
+    // The version is in the facts and the heading: no green box repeats it.
+    expect(screen.queryByText("Le serveur est en version 0.2.0.")).not.toBeInTheDocument();
+    expect(screen.getByText("Programme de mise à jour")).toBeInTheDocument();
+    expect(screen.getByText(/Journal brut du programme de mise à jour/)).toBeInTheDocument();
+    // The check is a button of the page header, not a section of its own.
+    expect(screen.queryByRole("heading", { name: "Mises à jour" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Rechercher des mises à jour" }));
     expect(await screen.findByText("MonitorFlow 0.2.0 est disponible.")).toBeInTheDocument();
     const changes = within(screen.getByRole("list", { name: "Ce qui change" })).getAllByRole("listitem");

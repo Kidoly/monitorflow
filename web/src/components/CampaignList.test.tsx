@@ -42,7 +42,7 @@ describe("CampaignListPage", () => {
     expect(row).toHaveTextContent("Sat, Sun 22:00–04:00");
     expect(within(table).getByRole("link", { name: "Draft" }).closest("tr")).toHaveTextContent("Draft");
     expect(screen.getByRole("link", { name: "New campaign" })).toBeInTheDocument();
-    expect(screen.getByText(/Showing the newest 2 campaigns\./)).toBeInTheDocument();
+    expect(screen.getByText("Showing the newest 2 campaigns.")).toBeInTheDocument();
 
     const tiles = screen.getByRole("group", { name: "Summary, click to filter" });
     expect(within(tiles).getByRole("link", { name: /Running/ })).toHaveTextContent("Running1");
@@ -63,6 +63,7 @@ describe("CampaignListPage", () => {
     expect(row).toHaveTextContent("En cours lot 1 sur 2");
     expect(row).toHaveTextContent("0 / 2 · 1 en cours");
     expect(row).toHaveTextContent("sam., dim. 22:00–04:00");
+    expect(screen.queryByText(/Ouvrez une campagne/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Nouvelle campagne" })).toBeInTheDocument();
   });
 
@@ -82,7 +83,8 @@ describe("CampaignListPage", () => {
     expect(first).toHaveTextContent("Running");
   });
 
-  it("filters by state in the URL and acts from the row", async () => {
+  it("filters by state with the counters, not a dropdown, and acts from the row", async () => {
+    setUrl("/campaigns/?state=running");
     const user = userEvent.setup();
     const fetchMock = stubFetch({
       ...routes(),
@@ -93,13 +95,13 @@ describe("CampaignListPage", () => {
         <CampaignListPage />
       </As>,
     );
-    await user.selectOptions(await screen.findByRole("combobox", { name: "State" }), "draft");
-    expect(window.location.search).toBe("?state=draft");
-    const table = screen.getByRole("table", { name: "Campaigns" });
-    expect(within(table).queryByRole("link", { name: "October updates" })).not.toBeInTheDocument();
-    expect(within(table).getByRole("button", { name: "Start Draft" })).toBeInTheDocument();
-
-    await user.selectOptions(screen.getByRole("combobox", { name: "State" }), "");
+    const table = await screen.findByRole("table", { name: "Campaigns" });
+    expect(screen.queryByRole("combobox", { name: "State" })).not.toBeInTheDocument();
+    const running = within(screen.getByRole("group", { name: "Summary, click to filter" })).getByRole("link", { name: /Running/ });
+    expect(running).toHaveAttribute("aria-current", "true");
+    // A second click on the active counter clears the filter.
+    expect(running).toHaveAttribute("href", "/campaigns");
+    expect(within(table).queryByRole("link", { name: "Draft" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Pause October updates" }));
     expect(fetchMock).toHaveBeenCalledWith(`/api/campaigns/${CAMPAIGN_ID}/pause`, expect.objectContaining({ method: "POST" }));
   });

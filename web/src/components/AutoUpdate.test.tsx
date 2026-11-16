@@ -8,7 +8,7 @@ import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { setUrl } from "@/test/navigation";
 
-import { AutoUpdatePage, summary } from "./AutoUpdate";
+import { AutoUpdatePage, summary, versionsText } from "./AutoUpdate";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
@@ -55,7 +55,7 @@ function status(overrides: Partial<AutoUpdateStatus> = {}): AutoUpdateStatus {
 const halted = (): AutoUpdateStatus => {
   const s = status();
   s.agents.rollout = { ...s.agents.rollout!, state: "halted", halted_at: "2026-10-27T11:00:00Z", reason: "2 automatic updates to 0.3.0 failed (threshold 2)" };
-  s.agents.history = [s.agents.rollout];
+  s.agents.history = [{ ...s.agents.rollout, outcome: "halted" }];
   s.agents.sites[0]!.phase = "blocked";
   return s;
 };
@@ -72,8 +72,9 @@ describe("AutoUpdatePage", () => {
       </As>,
     );
     expect(await screen.findByRole("heading", { name: "Mises à jour automatiques" })).toBeInTheDocument();
-    expect(screen.getByText("Déploiement de 0.3.0 : 1 en cours, 4 en attente.")).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Agents par site" })).toHaveTextContent("3 à jour · 1 en cours · 4 en attente");
+    expect(screen.getByText("Cible 0.3.0 : la dernière version détenue, et celle du serveur.")).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Agents par site" })).toHaveTextContent("En cours");
+    expect(screen.getByRole("button", { name: "Suspendre tous les déploiements" })).toBeInTheDocument();
     expect(summary(halted(), halted().agents)[0]).toBe("Interrompu\u00a0: 2 automatic updates to 0.3.0 failed (threshold 2).");
   });
 
@@ -93,13 +94,19 @@ describe("AutoUpdatePage", () => {
         <AutoUpdatePage />
       </As>,
     );
-    expect(await screen.findByText("Rolling out 0.3.0: 1 in progress, 4 waiting.")).toBeInTheDocument();
-    const sites = screen.getByRole("table", { name: "Agents by site" });
+    const sites = await screen.findByRole("table", { name: "Agents by site" });
+    // The tiles carry the counts; no banner or row repeats them.
+    expect(screen.queryByText(/Rolling out 0.3.0/)).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Agents" })).toHaveTextContent("Waiting4");
     const paris = within(sites).getByRole("row", { name: /paris/ });
-    expect(paris).toHaveTextContent("server default");
-    expect(paris).toHaveTextContent("Rolling out");
-    expect(paris).toHaveTextContent("3 up to date · 1 in progress · 4 waiting");
+    expect(paris).toHaveTextContent("In progress");
+    expect(paris).not.toHaveTextContent("up to date");
+    // Only the site that overrides the server-wide setting says so.
+    expect(paris).not.toHaveTextContent(/On|server default/);
     expect(within(sites).getByRole("row", { name: /lyon/ })).toHaveTextContent("Off");
+    // The versions are told once for both kinds.
+    expect(screen.getAllByText(/Target 0.3.0/)).toHaveLength(1);
+    expect(screen.queryByText(/Relays update first/)).not.toBeInTheDocument();
   });
 
   it("pauses automatic updates and resumes a halted rollout", async () => {
@@ -118,7 +125,7 @@ describe("AutoUpdatePage", () => {
     expect(within(screen.getByRole("table", { name: "Agents by site" })).getByText("Canary failed")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Resume 0.3.0" }));
     expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith("/resume") && init?.method === "POST")).toBe(true);
-    await user.click(await screen.findByRole("button", { name: "Pause automatic updates" }));
+    await user.click(await screen.findByRole("button", { name: "Pause every rollout" }));
     const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
     expect(put?.[1]?.body).toBe(JSON.stringify({ paused: true }));
   });
@@ -147,6 +154,36 @@ describe("AutoUpdatePage", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
     expect(put?.[1]?.body).toBe(JSON.stringify({ failure_threshold: 5 }));
+  });
+});
+
+describe("history", () => {
+  beforeEach(() => setUrl("/admin/updates/"));
+
+  it("shows older rollouts as superseded and the target's as finished", async () => {
+    const s = status();
+    s.agents.totals = { ...zero, up_to_date: 5 };
+    const base = s.agents.rollout!;
+    s.agents.history = [
+      { ...base, outcome: "finished" },
+      { ...base, version: "0.2.0", outcome: "superseded" },
+    ];
+    stubFetch({ "GET /api/auto-update": { status: 200, body: s } });
+    render(
+      <As user={globalAdmin}>
+        <AutoUpdatePage />
+      </As>,
+    );
+    const history = await screen.findByRole("table", { name: "Agents rollouts" });
+    expect(within(history).getByRole("row", { name: /0\.3\.0/ })).toHaveTextContent("Finished");
+    expect(within(history).getByRole("row", { name: /0\.2\.0/ })).toHaveTextContent("Superseded");
+    expect(within(history).queryByText("In progress")).not.toBeInTheDocument();
+  });
+
+  it("names three different versions when they differ", () => {
+    const s = status({ server_version: "0.4.0" });
+    s.agents.latest = "0.5.0";
+    expect(versionsText(s)).toBe("Target 0.3.0 · newest release held 0.5.0 · server 0.4.0");
   });
 });
 

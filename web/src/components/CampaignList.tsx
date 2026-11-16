@@ -255,16 +255,7 @@ function CampaignList() {
       />
       <FilterBar
         label={t("campaigns.filters")}
-        filters={[
-          {
-            name: "state",
-            label: t("campaigns.column.state"),
-            options: (Object.keys(CAMPAIGN_STATES) as CampaignState[]).map((s) => ({
-              value: s,
-              label: campaignStateWord(s),
-            })),
-          },
-        ]}
+        filters={[]}
         search={{ name: "q", label: t("campaigns.search"), placeholder: t("campaigns.searchPlaceholder"), width: 200 }}
       />
       {inScope.length === 0 ? (
@@ -298,10 +289,7 @@ function CampaignList() {
         />
       )}
       {running && <RunningServers campaign={running} sites={data.sites} now={now} />}
-      <p className={own.note}>
-        {data.more ? `${t("campaigns.showing", { count: data.campaigns.length })} ` : ""}
-        {t("campaigns.openHint")}
-      </p>
+      {data.more && <p className={own.note}>{t("campaigns.showing", { count: data.campaigns.length })}</p>}
     </div>
   );
 }

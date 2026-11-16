@@ -69,7 +69,8 @@ describe("MonitoringSettings", () => {
 
     const alerts = await screen.findByRole("region", { name: "When to alert" });
     const first = within(alerts).getByText("Warn when a disk is over 85% full, critical over 95%, for 5 min.").closest("li")!;
-    expect(first).toHaveTextContent("Built-in");
+    // Built-in values are not marked: only what differs from the defaults is.
+    expect(first).not.toHaveTextContent("Built-in");
     const site = within(alerts).getByText(/disk \/data is over 70% full/).closest("li")!;
     expect(site).toHaveTextContent("Site default");
     const checks = screen.getByRole("region", { name: "What is checked" });
@@ -259,8 +260,9 @@ describe("MonitoringSettings", () => {
     });
     const { unmount } = render(<MonitoringSettings target={SERVER} canEdit />);
 
-    // Inherited: the site's value, which a choice copies to this server.
-    const often = await screen.findByRole("combobox", { name: "How often to check Disk space" });
+    // Inherited: nothing said on the row until asked, then the site's value, which a choice copies to this server.
+    await user.click(await screen.findByRole("button", { name: "How often to check Disk space" }));
+    const often = screen.getByRole("combobox", { name: "How often to check Disk space" });
     expect(often).toHaveDisplayValue("every 1 min (site default)");
     await user.selectOptions(often, "every 1 h");
     await vi.waitFor(() =>
@@ -308,11 +310,18 @@ describe("MonitoringSettings", () => {
   });
 
   it("shows intervals as text without a role", async () => {
-    stubFetch(serverRoutes([disk()], [sensor({ interval_ms: 30_000 })]));
-    render(<MonitoringSettings target={SERVER} canEdit={false} />);
+    stubFetch(serverRoutes([disk()], [sensor({ interval_ms: 30_000 })], [], [sensor({})]));
+    const { unmount } = render(<MonitoringSettings target={SERVER} canEdit={false} />);
     const checks = await screen.findByRole("region", { name: "What is checked" });
     expect(within(checks).getByText("Built-in checks run every 1 min on every server of paris.")).toBeInTheDocument();
     expect(within(checks).getByText("· every 30 s")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    unmount();
+
+    // A check at its default interval says nothing more than the line above.
+    stubFetch(serverRoutes([disk()], [sensor({})]));
+    render(<MonitoringSettings target={SERVER} canEdit={false} />);
+    const quiet = await screen.findByRole("region", { name: "What is checked" });
+    expect(within(quiet).getByText("Disk space").closest("li")).not.toHaveTextContent("every");
   });
 });

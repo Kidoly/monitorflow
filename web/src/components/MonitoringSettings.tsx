@@ -112,9 +112,12 @@ export function MonitoringSettings({ target, canEdit }: { target: Target; canEdi
   );
 }
 
-/** "Built-in", "Site default", "This server only": where a value comes from. */
+/**
+ * "Site default", "This server only": where a value comes from. Built-in
+ * values say nothing: only what differs from the defaults is marked.
+ */
 function Origin({ target, origin }: { target: Target; origin: EffectiveThreshold["origin"] }) {
-  if (origin === "default") return <Label tone="neutral">{t("monitoring.origin.builtin")}</Label>;
+  if (origin === "default") return null;
   if (target.kind === "site") return <Label tone="info">{t("monitoring.origin.site")}</Label>;
   return origin === "site" ? (
     <Label tone="neutral">{t("monitoring.origin.siteDefault")}</Label>
@@ -546,7 +549,9 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
                   {canEdit ? (
                     <CheckInterval target={target} data={data} sensor={sensor} title={title} onChanged={onChanged} />
                   ) : (
-                    <span className={admin.dim}>· {every(sensor.interval_ms)}</span>
+                    inheritedInterval(target, data, sensor) !== sensor.interval_ms && (
+                      <span className={admin.dim}>· {every(sensor.interval_ms)}</span>
+                    )
                   )}
                 </span>
                 <Origin target={target} origin={sensor.origin} />
@@ -655,6 +660,7 @@ function CheckInterval({
   title: string;
   onChanged: () => void;
 }) {
+  const [open, setOpen] = useState(false);
   const row = data.rows.find((r) => r.enabled && r.name === sensor.name && r.instance === sensor.instance);
   const inherited = inheritedInterval(target, data, sensor);
   const inherit: Inherit | undefined =
@@ -664,6 +670,14 @@ function CheckInterval({
           ms: inherited,
           label: target.kind === "server" ? t("monitoring.inherit.siteDefault") : t("monitoring.inherit.default"),
         };
+  // A check that follows the default says nothing until asked: the default is told once, above.
+  if (!row && inherit && !open) {
+    return (
+      <Button size="small" aria-label={t("monitoring.howOftenCheck", { title })} onClick={() => setOpen(true)}>
+        {t("monitoring.changeInterval")}
+      </Button>
+    );
+  }
   return (
     <IntervalControl
       label={t("monitoring.howOftenCheck", { title })}

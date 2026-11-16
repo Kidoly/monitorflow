@@ -360,12 +360,17 @@ export function describeThreshold({ value, unit }: FailureThreshold): string {
   return t("campaigns.threshold.count", { count: value });
 }
 
+/** "Sat, Sun", or "Every day" rather than the seven names. */
+export function weekdaysText(weekdays: number[]): string {
+  if (new Set(weekdays).size === 7) return t("campaigns.everyDay");
+  return weekdays.map(weekdayName).join(", ");
+}
+
 export function describeWindow(window: CampaignWindow): string {
   if (window.kind === "once") {
     return t("campaigns.window.once", { start: formatDateTime(window.starts_at), end: formatDateTime(window.ends_at) });
   }
-  const days = window.weekdays.map(weekdayName).join(", ");
-  return `${days} ${window.start}–${window.end} (${window.timezone})`;
+  return `${weekdaysText(window.weekdays)} ${window.start}–${window.end} (${window.timezone})`;
 }
 
 /** Tints of campaign states; their words come from `campaignStateWord`. */
@@ -429,7 +434,7 @@ export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources
 /** A window in a table cell: "Sat, Sun 22:00–04:00", "23 Oct 02:00–05:00". */
 export function shortWindow(window: CampaignWindow): string {
   if (window.kind === "weekly") {
-    return `${window.weekdays.map(weekdayName).join(", ")} ${window.start}–${window.end}`;
+    return `${weekdaysText(window.weekdays)} ${window.start}–${window.end}`;
   }
   const start = new Date(window.starts_at);
   const end = new Date(window.ends_at);

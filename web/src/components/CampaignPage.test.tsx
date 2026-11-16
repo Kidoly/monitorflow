@@ -31,6 +31,21 @@ describe("CampaignPage", () => {
     expect(within(first).getByRole("progressbar", { name: "Batch 1 progress" })).toHaveAttribute("value", "0");
     expect(screen.getByRole("group", { name: "Servers by status" })).toHaveTextContent("In progress1");
     expect(screen.getByText("Customer")).toBeInTheDocument();
+    // Numbers are the counters'; a batch line has its bar, and a server row no "Not yet".
+    expect(first).not.toHaveTextContent(/succeeded of|not started/);
+    expect(first).not.toHaveTextContent("Not yet");
+  });
+
+  it("says a scheduled campaign's start was only requested", async () => {
+    stubFetch({
+      [`GET ${PATH}`]: {
+        status: 200,
+        body: detail({ state: "scheduled", current_wave: null, started_at: "2026-11-02T09:30:00Z" }),
+      },
+    });
+    render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
+    expect(await screen.findByText("Start requested")).toBeInTheDocument();
+    expect(screen.queryByText("Started")).not.toBeInTheDocument();
   });
 
   it("names no customer for a single company or a customer's user (ADR-0104)", async () => {

@@ -111,10 +111,8 @@ function CertificateAuthority() {
         <p className={styles.note}>{t("authority.about")}</p>
         <FactsBox
           columns={2}
-          facts={[
-            { label: t("authority.facts.created"), value: formatDate(data.created_at) },
-            { label: t("authority.facts.expires"), value: formatDate(data.expires_at) },
-          ]}
+          // The status above names the expiry date; the facts do not repeat it.
+          facts={[{ label: t("authority.facts.created"), value: formatDate(data.created_at) }]}
           details={[
             { label: t("authority.facts.fingerprint"), value: data.fingerprint, mono: true },
             ...(data.rotation?.other_fingerprint

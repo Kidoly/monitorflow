@@ -91,8 +91,11 @@ describe("SitesAdmin", () => {
           <SitesAdmin me={single(me({ role: "administrator", customer_id: null, site_id: null }))} />
         </RefreshMeContext.Provider>,
       );
-      const section = await screen.findByRole("region", { name: "Your sites" });
+      const section = await screen.findByRole("region", { name: "Sites" });
       expect(within(section).getByRole("table", { name: "Sites" })).toBeInTheDocument();
+      // The page title names the list: no "Your sites" heading under it, no counts that repeat the table.
+      expect(screen.getAllByRole("heading").map((h) => h.textContent)).not.toContain("Your sites");
+      expect(screen.queryByText(/2 sites/)).not.toBeInTheDocument();
       expect(screen.queryByText(/customers?,/)).not.toBeInTheDocument();
       expect(screen.queryByText("default")).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Rename/ })).not.toBeInTheDocument();
@@ -113,7 +116,7 @@ describe("SitesAdmin", () => {
     it("shows a customer's administrator no customer and no way to add one", async () => {
       stubFetch(routes);
       render(<SitesAdmin me={single(customerAdmin)} />);
-      await screen.findByRole("region", { name: "Your sites" });
+      await screen.findByRole("region", { name: "Sites" });
       expect(document.body).not.toHaveTextContent(/customer/i);
       expect(screen.queryByRole("button", { name: "Add a customer" })).not.toBeInTheDocument();
     });
@@ -154,7 +157,6 @@ describe("SitesAdmin", () => {
     });
     render(<SitesAdmin me={customerAdmin} />);
     const acme = await screen.findByRole("region", { name: "acme" });
-    expect(acme).toHaveTextContent("1 site · 3 servers · 1 relay");
     expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent(/paris\s*Alerts and checks\s*3 · 1 online\s*1 · relay-paris-1/);
     const globex = screen.getByRole("region", { name: "globex" });
     expect(within(globex).queryByRole("form")).not.toBeInTheDocument();
@@ -179,10 +181,10 @@ describe("SitesAdmin", () => {
       "GET /api/relays": relays,
     });
     render(<SitesAdmin me={single(customerAdmin)} />);
-    const own = await screen.findByRole("region", { name: "Vos sites" });
-    expect(own).toHaveTextContent("1 site · 3 serveurs · 1 relais");
+    const own = await screen.findByRole("region", { name: "Sites" });
     expect(within(own).getByRole("row", { name: /paris/ })).toHaveTextContent(/Alertes et contrôles\s*3 · 1 en ligne/);
     expect(screen.getByText(/Un site ne peut pas être renommé/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Mises à jour automatiques" })).toHaveAttribute("href", "/admin/updates");
   });
 
   it("links each site to the fleet scoped on it", async () => {
@@ -208,7 +210,8 @@ describe("SitesAdmin", () => {
     });
     render(<SitesAdmin me={customerAdmin} />);
     const input = await screen.findByLabelText("New site name");
-    expect(screen.getByText("Lowercase letters, digits and dashes. Permanent.")).toBeInTheDocument();
+    // "Cannot be renamed" is the banner's to say, once.
+    expect(screen.getByText("Lowercase letters, digits and dashes.")).toBeInTheDocument();
     await userEvent.type(input, "Paris DC");
     await userEvent.click(screen.getByRole("button", { name: "Create site" }));
     expect(screen.getByRole("alert")).toHaveTextContent("lowercase letters, digits and dashes only");
@@ -252,17 +255,17 @@ describe("SitesAdmin", () => {
     });
     render(<SitesAdmin me={customerAdmin} />);
     const acme = await screen.findByRole("region", { name: "acme" });
-    expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent("Manual");
+    // The select alone says what applies: no badge or "server default" next to it.
+    expect(within(acme).getByRole("row", { name: /paris/ })).not.toHaveTextContent("Manual");
     const select = within(acme).getByRole("combobox", { name: "Automatic updates for paris" });
     expect(select).toHaveValue("inherit");
     expect(within(acme).getByRole("option", { name: "Server default (off)" })).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "globex" })).queryByRole("combobox")).not.toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "globex" })).getByRole("row", { name: /lyon/ })).toHaveTextContent("server default");
+    expect(within(screen.getByRole("region", { name: "globex" })).getByRole("row", { name: /lyon/ })).toHaveTextContent("Manual");
     await userEvent.selectOptions(select, "on");
     const call = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
     expect(call?.[1]?.body).toBe(JSON.stringify({ enabled: true }));
     expect(await within(acme).findByRole("combobox", { name: "Automatic updates for paris" })).toHaveValue("on");
-    expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent("Automatic");
-    expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent("set for this site");
+    expect(within(acme).getByRole("row", { name: /paris/ })).not.toHaveTextContent("set for this site");
   });
 });

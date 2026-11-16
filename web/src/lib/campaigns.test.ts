@@ -228,6 +228,9 @@ describe("campaign states and labels", () => {
     expect(shortWindow({ kind: "weekly", weekdays: [6, 7], start: "22:00", end: "04:00", timezone: "UTC" })).toBe(
       "Sat, Sun 22:00–04:00",
     );
+    const daily = { kind: "weekly" as const, weekdays: [1, 2, 3, 4, 5, 6, 7], start: "04:00", end: "05:00", timezone: "UTC" };
+    expect(shortWindow(daily)).toBe("Every day 04:00–05:00");
+    expect(describeWindow(daily)).toBe("Every day 04:00–05:00 (UTC)");
     const once = (a: Date, b: Date) => shortWindow({ kind: "once", starts_at: a.toISOString(), ends_at: b.toISOString() });
     expect(once(new Date(2026, 9, 23, 2, 0), new Date(2026, 9, 23, 5, 0))).toBe("23 Oct 02:00–05:00");
     expect(once(new Date(2026, 9, 23, 22, 0), new Date(2026, 9, 24, 4, 0))).toBe("23 Oct 22:00–24 Oct 04:00");

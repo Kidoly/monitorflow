@@ -29,7 +29,7 @@ export const en = {
   what: "the license",
   notIncluded: "This build of MonitorFlow does not include the Enterprise edition. Everything else works as usual.",
   noneNote:
-    "A single central server needs none. An Enterprise subscription lets you add central servers on the same database, so MonitorFlow keeps working when one machine stops. Its license key goes here.",
+    "A single central server needs none. An Enterprise subscription lets you add central servers on the same database, so MonitorFlow keeps working when one machine stops.",
   "facts.title": "Enterprise license",
   "facts.for": "For",
   "facts.allows": "Allows",
@@ -58,7 +58,6 @@ export const en = {
   "install.replaceTitle": "Replace the license key",
   "install.title": "Install a license key",
   "install.key": "License key",
-  "install.keyNote": "Paste the text you received, or choose the file.",
   "install.file": "File",
   "install.checking": "Checking…",
   "install.replace": "Replace",
@@ -94,7 +93,7 @@ export const fr: Translation<typeof en> = {
   what: "la licence",
   notIncluded: "Cette version de MonitorFlow n’inclut pas l’édition Enterprise. Tout le reste fonctionne normalement.",
   noneNote:
-    "Un seul serveur central n’en a pas besoin. Un abonnement Enterprise vous permet d’ajouter des serveurs centraux sur la même base de données, pour que MonitorFlow continue de fonctionner quand une machine s’arrête. Sa clé de licence se colle ici.",
+    "Un seul serveur central n’en a pas besoin. Un abonnement Enterprise vous permet d’ajouter des serveurs centraux sur la même base de données, pour que MonitorFlow continue de fonctionner quand une machine s’arrête.",
   "facts.title": "Licence Enterprise",
   "facts.for": "Pour",
   "facts.allows": "Autorise",
@@ -123,7 +122,6 @@ export const fr: Translation<typeof en> = {
   "install.replaceTitle": "Remplacer la clé de licence",
   "install.title": "Installer une clé de licence",
   "install.key": "Clé de licence",
-  "install.keyNote": "Collez le texte reçu, ou choisissez le fichier.",
   "install.file": "Fichier",
   "install.checking": "Vérification…",
   "install.replace": "Remplacer",

@@ -9,7 +9,8 @@ import {
   type AutoUpdateKind,
   type AutoUpdateSite,
   type AutoUpdateStatus,
-  type Rollout,
+  type HistoryRollout,
+  type RolloutOutcome,
   type SitePhase,
   api,
   describeError,
@@ -114,71 +115,66 @@ function AutoUpdate() {
   const agents = data.agents;
   const [text, tone] = summary(data, agents);
   const halted = [data.relays.rollout, agents.rollout].find((r) => r?.state === "halted") ?? null;
+  // Progress is told by the tiles below; the banner is for what holds updates back.
+  const quiet = tone === "ok" || tone === "info";
   return (
     <div className={styles.page}>
       {header}
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {actionError && <Banner tone="bad">{actionError}</Banner>}
-      <Banner tone={tone === "neutral" ? "plain" : tone} role={tone === "bad" ? "alert" : "status"}>
-        {text}
-        {halted && (
-          <>
-            {" "}
-            <Button
-              size="small"
-              disabled={busy}
-              onClick={() =>
-                void act(
-                  () => api.resumeRollout(halted.kind, halted.version),
-                  t("autoUpdate.resuming", { version: halted.version }),
-                )
-              }
-            >
-              {t("autoUpdate.resume", { version: halted.version })}
-            </Button>
-          </>
-        )}
-      </Banner>
+      <p className={styles.sectionNote}>{versionsText(data)}</p>
+      {!quiet && (
+        <Banner tone={tone === "neutral" ? "plain" : tone} role={tone === "bad" ? "alert" : "status"}>
+          {text}
+          {halted && (
+            <>
+              {" "}
+              <Button
+                size="small"
+                disabled={busy}
+                onClick={() =>
+                  void act(
+                    () => api.resumeRollout(halted.kind, halted.version),
+                    t("autoUpdate.resuming", { version: halted.version }),
+                  )
+                }
+              >
+                {t("autoUpdate.resume", { version: halted.version })}
+              </Button>
+            </>
+          )}
+        </Banner>
+      )}
       <Settings status={data} busy={busy} onChange={change} />
-      <Kind relays kind={data.relays} status={data} now={updatedAt} />
-      <Kind relays={false} kind={agents} status={data} now={updatedAt} />
+      <Kind relays kind={data.relays} now={updatedAt} />
+      <Kind relays={false} kind={agents} now={updatedAt} />
     </div>
   );
 }
 
+/** The release peers move to, the newest one held and the server's, once for both kinds. */
+export function versionsText(status: AutoUpdateStatus): string {
+  const { target, latest } = status.agents;
+  if (target && target === latest && target === status.server_version) {
+    return t("autoUpdate.factsSame", { version: target });
+  }
+  return t("autoUpdate.facts", {
+    target: target ?? t("autoUpdate.none"),
+    latest: latest ?? t("autoUpdate.none"),
+    server: status.server_version,
+  });
+}
+
 /** Progress of one kind of peer: totals, sites and rollouts. */
-function Kind({
-  relays,
-  kind,
-  status,
-  now,
-}: {
-  relays: boolean;
-  kind: AutoUpdateKind;
-  status: AutoUpdateStatus;
-  now: Date;
-}) {
+function Kind({ relays, kind, now }: { relays: boolean; kind: AutoUpdateKind; now: Date }) {
   const title = relays ? t("autoUpdate.relays") : t("autoUpdate.agents");
   return (
     <section className={styles.section} aria-label={title}>
       <div className={styles.sectionHead}>
         <h2 className={styles.sectionTitle}>{title}</h2>
-        <span className={styles.dim}>
-          {t("autoUpdate.facts", {
-            target: kind.target ?? t("autoUpdate.none"),
-            latest: kind.latest ?? t("autoUpdate.none"),
-            server: status.server_version,
-          })}
-        </span>
       </div>
-      {relays ? (
-        <p className={styles.sectionNote}>{t("autoUpdate.relaysFirst")}</p>
-      ) : (
-        kind.totals.waiting_for_relay > 0 && (
-          <p className={styles.sectionNote}>
-            {t("autoUpdate.waitingForRelay", { count: kind.totals.waiting_for_relay })}
-          </p>
-        )
+      {!relays && kind.totals.waiting_for_relay > 0 && (
+        <p className={styles.sectionNote}>{t("autoUpdate.waitingForRelay", { count: kind.totals.waiting_for_relay })}</p>
       )}
       <StatTiles
         dense
@@ -194,11 +190,7 @@ function Kind({
           },
         ]}
       />
-      <Sites
-        sites={kind.sites}
-        label={relays ? t("autoUpdate.relaysBySite") : t("autoUpdate.agentsBySite")}
-        relays={relays}
-      />
+      <Sites sites={kind.sites} label={relays ? t("autoUpdate.relaysBySite") : t("autoUpdate.agentsBySite")} />
       <History
         rollouts={kind.history}
         now={now}
@@ -291,7 +283,7 @@ function Settings({
   );
 }
 
-function Sites({ sites, label, relays }: { sites: AutoUpdateSite[]; label: string; relays: boolean }) {
+function Sites({ sites, label }: { sites: AutoUpdateSite[]; label: string }) {
   const multiCustomer = useMultiCustomer();
   const columns: Column<AutoUpdateSite>[] = [
     {
@@ -303,16 +295,17 @@ function Sites({ sites, label, relays }: { sites: AutoUpdateSite[]; label: strin
         </>
       ),
     },
-    {
-      key: "policy",
-      header: t("autoUpdate.column.automatic"),
-      cell: (s) => (
-        <>
-          {s.enabled ? t("autoUpdate.on") : t("autoUpdate.off")}
-          {s.auto_update === null && <span className={styles.dim}>{t("autoUpdate.serverDefault")}</span>}
-        </>
-      ),
-    },
+    // Only sites that override the server-wide setting say anything here.
+    ...(sites.some((s) => s.auto_update !== null)
+      ? [
+          {
+            key: "policy",
+            header: t("autoUpdate.column.automatic"),
+            cell: (s: AutoUpdateSite) =>
+              s.auto_update === null ? null : s.auto_update ? t("autoUpdate.on") : t("autoUpdate.off"),
+          },
+        ]
+      : []),
     {
       key: "phase",
       header: t("autoUpdate.column.rollout"),
@@ -321,33 +314,25 @@ function Sites({ sites, label, relays }: { sites: AutoUpdateSite[]; label: strin
         return <Label tone={PHASE_TONES[s.phase]}>{t(`autoUpdate.phase.${s.phase}`)}</Label>;
       },
     },
-    {
-      key: "progress",
-      header: relays ? t("autoUpdate.relays") : t("autoUpdate.agents"),
-      cell: (s) => (
-        <span className={styles.dim}>
-          {t("autoUpdate.progress", { upToDate: s.totals.up_to_date, pending: s.totals.pending, waiting: s.totals.waiting })}
-          {s.totals.failed > 0 && t("autoUpdate.progressFailed", { failed: s.totals.failed })}
-        </span>
-      ),
-    },
   ];
   return <DataTable bare label={label} columns={columns} rows={sites} rowKey={(s) => s.id} />;
 }
 
-function History({ rollouts, now, label }: { rollouts: Rollout[]; now: Date; label: string }) {
+const OUTCOME_TONES: Record<RolloutOutcome, Tone> = {
+  rolling: "info",
+  halted: "bad",
+  finished: "ok",
+  superseded: "neutral",
+};
+
+function History({ rollouts, now, label }: { rollouts: HistoryRollout[]; now: Date; label: string }) {
   if (rollouts.length === 0) return null;
-  const columns: Column<Rollout>[] = [
+  const columns: Column<HistoryRollout>[] = [
     { key: "version", header: t("autoUpdate.column.release"), cell: (r) => <strong>{r.version}</strong> },
     {
       key: "state",
       header: t("autoUpdate.column.state"),
-      cell: (r) =>
-        r.state === "halted" ? (
-          <Label tone="bad">{t("autoUpdate.halted")}</Label>
-        ) : (
-          <Label tone="info">{t("autoUpdate.rolling")}</Label>
-        ),
+      cell: (r) => <Label tone={OUTCOME_TONES[r.outcome]}>{t(`autoUpdate.outcome.${r.outcome}`)}</Label>,
     },
     { key: "started", header: t("autoUpdate.column.started"), cell: (r) => <RelativeTime value={r.started_at} now={now} /> },
     {

@@ -124,7 +124,6 @@ export function TokensAdmin({ me }: { me: Me }) {
           ) : (
             <CreateInstallKey
               sites={administered}
-              username={me.username}
               onCreated={(key) => {
                 setCreatedKey(key);
                 refresh();
@@ -138,11 +137,11 @@ export function TokensAdmin({ me }: { me: Me }) {
               <h2 id={advancedId} className={styles.sectionTitle}>
                 {t("install.advanced")}
               </h2>
+              <InfoTip label={t("install.about")}>{t("install.tokens.note")}</InfoTip>
               <Button size="small" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>
                 {advanced ? t("install.tokens.hide") : t("install.tokens.show")}
               </Button>
             </div>
-            <InfoTip label={t("install.about")}>{t("install.tokens.note")}</InfoTip>
           </section>
           {advanced && (
             <>
@@ -297,7 +296,6 @@ function CreateToken({
         <Button variant="k" type="submit" disabled={busy || sites.length === 0}>
           {t("install.token.create")}
         </Button>
-        <span className={styles.footnote}>{t("install.token.audit", { name: me.username })}</span>
       </div>
       {error && (
         <p className={styles.formError} role="alert">
@@ -819,24 +817,27 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
                     link: <Link href={SERVER_UPDATE_PATH}>{t("install.source.importOne")}</Link>,
                   })}
             </p>
-            <label className={styles.field}>
-              <span>
-                {t("install.source.custom.label")}{" "}
-                <span className={styles.fieldNote}>
-                  {current.custom_url_from_config ? t("install.source.custom.fromConfig") : t("install.source.custom.note")}
+            {/* The URL is asked only for a custom source; one already set stays visible, as commands can choose it. */}
+            {(source === "custom" || url !== "" || current.custom_url_from_config) && (
+              <label className={styles.field}>
+                <span>
+                  {t("install.source.custom.label")}{" "}
+                  <span className={styles.fieldNote}>
+                    {current.custom_url_from_config ? t("install.source.custom.fromConfig") : t("install.source.custom.note")}
+                  </span>
                 </span>
-              </span>
-              <input
-                className={cx(fieldClass, styles.mono)}
-                value={customUrl}
-                onChange={(e) => setCustomUrl(e.target.value)}
-                placeholder="https://files.example.com/monitorflow/0.3.0"
-                disabled={!editable || current.custom_url_from_config}
-                aria-invalid={!urlValid}
-                spellCheck={false}
-                autoCapitalize="none"
-              />
-            </label>
+                <input
+                  className={cx(fieldClass, styles.mono)}
+                  value={customUrl}
+                  onChange={(e) => setCustomUrl(e.target.value)}
+                  placeholder="https://files.example.com/monitorflow/"
+                  disabled={!editable || current.custom_url_from_config}
+                  aria-invalid={!urlValid}
+                  spellCheck={false}
+                  autoCapitalize="none"
+                />
+              </label>
+            )}
             {editable && (
               <div className={styles.formFoot}>
                 <Button

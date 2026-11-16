@@ -37,11 +37,9 @@ export function hostsWords(key: Pick<InstallKey, "host_count" | "max_hosts">): s
 /** The form that creates a site's install command (ADR-0073); every field has a default. */
 export function CreateInstallKey({
   sites,
-  username,
   onCreated,
 }: {
   sites: Site[];
-  username: string;
   onCreated: (key: CreatedInstallKey) => void;
 }) {
   const titleId = useId();
@@ -125,7 +123,6 @@ export function CreateInstallKey({
         <Button variant="k" type="submit" disabled={busy || sites.length === 0}>
           {t("install.key.create")}
         </Button>
-        <span className={styles.footnote}>{t("install.token.audit", { name: username })}</span>
       </div>
       {error && (
         <p className={styles.formError} role="alert">

@@ -209,7 +209,6 @@ function InstallForm({ replacing, onInstalled }: { replacing: boolean; onInstall
       <form className={own.form} onSubmit={(e) => void install(e)}>
         <label className={styles.field}>
           {t("license.install.key")}
-          <span className={styles.fieldNote}>{t("license.install.keyNote")}</span>
           <textarea
             className={own.textarea}
             value={text}

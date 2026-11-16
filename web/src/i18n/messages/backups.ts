@@ -27,8 +27,6 @@ export const en = {
   secretOne:
     "A backup holds the database and the server's certificate authority and keys. Anyone with the file can read all the data and pose as this server: keep downloaded copies somewhere safe.",
   "facts.last": "Last backup",
-  "facts.noneYet": "none yet",
-  "facts.size": "Size",
   "facts.notScheduled": "Not scheduled",
   "facts.next": "Next automatic backup",
   "facts.kept": "Kept",
@@ -72,14 +70,12 @@ export const fr: Translation<typeof en> = {
   backUpNow: "Sauvegarder maintenant",
   disabled:
     "Ce serveur ne fait pas de sauvegardes : elles nécessitent le service updater du fichier compose de production (deploy/docker-compose.yml).",
-  updaterDown: "L’updater ne tourne pas, aucune sauvegarde n’est donc faite. Sur le serveur central : {command}",
+  updaterDown: "Le programme de mise à jour ne tourne pas, aucune sauvegarde n’est donc faite. Sur le serveur central : {command}",
   secret:
     "Une sauvegarde contient la base de données ainsi que l’autorité de certification et les clés du serveur. Quiconque a le fichier peut lire les données de chaque client et se faire passer pour ce serveur : conservez les copies téléchargées en lieu sûr.",
   secretOne:
     "Une sauvegarde contient la base de données ainsi que l’autorité de certification et les clés du serveur. Quiconque a le fichier peut lire toutes les données et se faire passer pour ce serveur : conservez les copies téléchargées en lieu sûr.",
   "facts.last": "Dernière sauvegarde",
-  "facts.noneYet": "aucune pour l’instant",
-  "facts.size": "Taille",
   "facts.notScheduled": "Non planifiée",
   "facts.next": "Prochaine sauvegarde automatique",
   "facts.kept": "Conservées",
