@@ -103,7 +103,6 @@ describe("ApprovalQueue", () => {
       /^Disk used \/var on web-1Step 3 of 10 · paris · Acme Hosting\s*Low-impact\s*journalctl --vacuum-size=500M\s*20 min 5 s left\s*Review$/,
     );
     expect(rows[2]).toHaveTextContent(/High-impact/);
-    expect(screen.getByText(/2 waiting · Updated/)).toBeInTheDocument();
     await act(() => vi.advanceTimersByTimeAsync(2000));
     expect(rows[1]).toHaveTextContent("20 min 3 s left");
   });
@@ -276,7 +275,6 @@ describe("ApprovalQueue", () => {
     const rows = within(await table()).getAllByRole("row");
     expect(rows).toHaveLength(2);
     expect(rows[1]).toHaveTextContent(/on db-1/);
-    expect(screen.getByText(/2 waiting/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Audit log" })).toHaveAttribute(
       "href",
       expect.stringMatching(new RegExp(`^/remediation/audit/?\\?customer=${CUSTOMER_ID}$`)),

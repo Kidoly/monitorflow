@@ -6,7 +6,7 @@ import { Button, ButtonLink } from "./Button";
 import { cx } from "./cx";
 import styles from "./PageState.module.css";
 import { toneClass } from "./StatusLabel";
-import { formatClock } from "./time";
+import { formatAgo, formatClock } from "./time";
 import type { Tone } from "./tone";
 
 /**
@@ -82,19 +82,13 @@ export function PageHeader({
 }
 
 /**
- * "Updated 14:32:05, refreshes every 15 seconds", with the time in the
- * warning colour when the data is stale.
+ * Nothing while the data is fresh: refreshing is the normal state. When a
+ * refresh failed, a muted "Updated 3 min ago"; before any load, the retry.
  */
 export function RefreshLine({ updatedAt, stale, intervalMs = 15_000 }: { updatedAt: Date | null; stale?: boolean; intervalMs?: number }) {
-  const seconds = Math.round(intervalMs / 1000);
-  const every = t("ui.page.refreshes", { count: seconds });
-  if (!updatedAt) return <>{t("ui.page.retrying", { count: seconds })}</>;
-  const time = t("ui.page.updated", { time: formatClock(updatedAt) });
-  return (
-    <>
-      {stale ? <strong className={styles.stale}>{time}</strong> : time}, {every}
-    </>
-  );
+  if (!updatedAt) return <>{t("ui.page.retrying", { count: Math.round(intervalMs / 1000) })}</>;
+  if (!stale) return null;
+  return <span className={styles.stale}>{t("ui.page.updatedAgo", { ago: formatAgo(updatedAt, new Date()) })}</span>;
 }
 
 /** Skeleton bars for a first load: never a spinner, never on refresh. */

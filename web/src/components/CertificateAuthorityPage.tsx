@@ -64,17 +64,7 @@ function CertificateAuthority() {
   const header = (
     <PageHeader
       title={t("authority.title")}
-      meta={
-        <>
-          {t("authority.meta")}
-          {(updatedAt !== null || error !== null) && (
-            <>
-              {" · "}
-              <RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={intervalMs} />
-            </>
-          )}
-        </>
-      }
+      meta={updatedAt !== null || error !== null ? <RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={intervalMs} /> : undefined}
     />
   );
   if (error instanceof ApiError && error.status === 403) {

@@ -93,8 +93,6 @@ export function IncidentsView() {
 interface Loaded {
   incidents: Incident[];
   more: boolean;
-  /** Every open incident, for the counts in the title line. */
-  open: Incident[];
 }
 
 /** Sites of the scope's customer; null is every site. */
@@ -120,11 +118,8 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
 
   const fetcher = useCallback(
     async (signal: AbortSignal): Promise<Loaded> => {
-      const [page, open] = await Promise.all([
-        api.incidents({ ...apiQuery(filters), limit }, signal),
-        api.incidents({ state: "open", limit: MAX_LIMIT }, signal),
-      ]);
-      return { incidents: page.incidents, more: page.next_cursor !== null, open: open.incidents };
+      const page = await api.incidents({ ...apiQuery(filters), limit }, signal);
+      return { incidents: page.incidents, more: page.next_cursor !== null };
     },
     [filters, limit],
   );
@@ -138,7 +133,6 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
   const inScope = scopeSites(scope, sites);
   const visible = (i: Incident) => !inScope || inScope.has(i.site_id);
   const incidents = data?.incidents.filter(visible) ?? [];
-  const open = data?.open.filter(visible) ?? [];
   const customers = new Map(sites.map((s) => [s.id, s.customer_name]));
   const now = updatedAt ?? new Date();
   const filtered = Boolean(
@@ -217,18 +211,12 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     { key: "peak", header: t("incidents.column.peak"), cell: (i) => value(i, i.peak_value) },
   ];
 
-  const critical = open.filter((i) => i.severity === "critical").length;
   const acknowledgeable = incidents.filter((i) => i.state === "open" && i.can_acknowledge && !i.acknowledged_at);
   return (
     <Page>
       <PageHeader
         title={t("incidents.title")}
-        meta={
-          <>
-            {data && `${t("incidents.count.open", { count: open.length })}, ${t("incidents.count.critical", { count: critical })} · `}
-            <RefreshLine updatedAt={updatedAt} stale={stale} />
-          </>
-        }
+        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
       />
       <FilterBar
         filters={[

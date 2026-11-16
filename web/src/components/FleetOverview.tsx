@@ -115,7 +115,6 @@ export function FleetOverview() {
 
   const now = updatedAt ?? new Date();
   const all = data ? toRows({ ...data, servers: data.servers.filter((s) => inScope(s, scope)) }, now) : [];
-  const online = all.filter((r) => r.server.status === "online").length;
 
   // `status` (online, offline) is kept for older links.
   const status = params.get("status");
@@ -183,12 +182,7 @@ export function FleetOverview() {
     <Page>
       <PageHeader
         title={t("fleet.title")}
-        meta={
-          <>
-            {data && t("fleet.count", { count: all.length, online })}
-            <RefreshLine updatedAt={updatedAt} stale={stale} />
-          </>
-        }
+        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
         actions={
           <>
             <Button onClick={refresh}>{t("fleet.refresh")}</Button>
