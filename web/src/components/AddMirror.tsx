@@ -94,7 +94,9 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
           d.added ? (
             <Label tone="neutral">{t("mirrors.addedLabel")}</Label>
           ) : d.problem ? (
-            <span className={styles.dim}>{d.problem}</span>
+            // The server's sentence is in English; the free space is in the
+            // header and the size in the "Disk space" column.
+            <span className={styles.dim}>{t("mirrors.notEnoughSpace")}</span>
           ) : (
             <Button
               size="small"

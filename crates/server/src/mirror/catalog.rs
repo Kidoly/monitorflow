@@ -252,17 +252,26 @@ impl Distribution {
             .collect()
     }
 
-    /// One plain sentence when `free_bytes` cannot hold this distribution.
+    /// One plain sentence when `free_bytes` cannot hold this distribution,
+    /// for the API. Free space is in GiB with one decimal, as the web
+    /// interface writes it, so both say the same number.
     pub fn too_big(&self, free_bytes: u64) -> Option<String> {
         (free_bytes < self.size_bytes).then(|| {
             format!(
                 "{} needs about {} GiB and this server has {} GiB free.",
                 self.name,
                 self.size_bytes / GIB,
-                free_bytes / GIB
+                gib(free_bytes)
             )
         })
     }
+}
+
+/// `bytes` in GiB with one decimal, rounded like the web interface's
+/// `formatBytes`: `3.3`, or `60` when the decimal is zero.
+fn gib(bytes: u64) -> String {
+    let tenths = (bytes as f64 / GIB as f64 * 10.0).round() / 10.0;
+    format!("{tenths}")
 }
 
 /// Space of the file system holding `path`.
@@ -329,6 +338,12 @@ mod tests {
         assert_eq!(
             debian.too_big(60 * GIB).unwrap(),
             "Debian 12 (bookworm) needs about 125 GiB and this server has 60 GiB free."
+        );
+        // The same number the page shows in its header, not 3.
+        let free = 3 * GIB + GIB * 3 / 10;
+        assert_eq!(
+            debian.too_big(free).unwrap(),
+            "Debian 12 (bookworm) needs about 125 GiB and this server has 3.3 GiB free."
         );
     }
 
