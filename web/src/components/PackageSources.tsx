@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 
+import { t } from "@/i18n";
 import { type ServerDetail, type Site, type SiteSourcesChange, type SourcesStatus, api, describeError } from "@/lib/api";
 import { administersCustomer, administersEverything, useMe } from "@/lib/me";
 import { MIRRORS_PATH, serverHref } from "@/lib/routes";
@@ -20,26 +21,20 @@ import { UpdateSource, describeUpdateSource } from "./UpdateSource";
 
 /** The word for where a server's packages come from. */
 function standing(status: SourcesStatus): [string, Tone] {
-  if (status.changing_to === "mirror") return ["Moving to a mirror", "info"];
-  if (status.changing_to === "own") return ["Going back to its own sources", "info"];
-  return status.using === "mirror" ? ["Uses a mirror", "ok"] : ["Uses its own sources", "neutral"];
+  if (status.changing_to === "mirror") return [t("mirrors.sources.movingToMirror"), "info"];
+  if (status.changing_to === "own") return [t("mirrors.sources.goingBack"), "info"];
+  return status.using === "mirror"
+    ? [t("mirrors.sources.usesMirror"), "ok"]
+    : [t("mirrors.sources.usesOwn"), "neutral"];
 }
 
 /** "debian-12, debian-12-updates at snapshot 2026…": snapshots only when pinned. */
 function mirrorsText(status: SourcesStatus): string {
   return status.mirrors
-    .map((m) => (m.snapshot === "current" ? m.name : `${m.name} at snapshot ${m.snapshot}`))
+    .map((m) => (m.snapshot === "current" ? m.name : t("mirrors.sources.atSnapshot", { name: m.name, snapshot: m.snapshot })))
     .join(", ");
 }
 
-const USE_CONSEQUENCE =
-  "Its other package sources are set aside and its packages come from the mirror, through its relay when the relay has a copy. " +
-  "If the mirror doesn't answer, the change undoes itself. You can go back at any time.";
-const USE_SITE_CONSEQUENCE =
-  "Their other package sources are set aside and their packages come from the mirror, through the relay when it has a copy. " +
-  "On a server the mirror doesn't answer, the change undoes itself. You can go back at any time.";
-const BACK_CONSEQUENCE = "Its original package sources are put back exactly as they were.";
-const FAILED = "A change that fails puts the server's own sources back.";
 
 /** The section of a server's Updates tab (ADR-0074); for Windows, its update source (ADR-0086). */
 export function PackageSources({ server }: { server: ServerDetail }) {
@@ -51,9 +46,9 @@ export function PackageSources({ server }: { server: ServerDetail }) {
 
   if (!status) {
     return error ? (
-      <ErrorState what="the package sources" error={describeError(error)} onRetry={refresh} />
+      <ErrorState what={t("mirrors.sources.what")} error={describeError(error)} onRetry={refresh} />
     ) : (
-      <LoadingBlock label="Loading the package sources" />
+      <LoadingBlock label={t("mirrors.sources.loading")} />
     );
   }
   if (server.os_family === "windows") return <UpdateSource source={status.windows_update_source} />;
@@ -63,55 +58,53 @@ export function PackageSources({ server }: { server: ServerDetail }) {
     <section className={admin.section} aria-labelledby="sources-title">
       <div className={admin.sectionHead}>
         <h2 id="sources-title" className={admin.sectionTitle}>
-          Package sources
+          {t("mirrors.sources.title")}
         </h2>
         <Label tone={tone}>{word}</Label>
       </div>
       <div className={styles.body}>
         {status.failed && (
-          <Banner tone="bad">
-            The last change didn&apos;t work: {status.failed} {FAILED}
-          </Banner>
+          <Banner tone="bad">{t("mirrors.sources.failed", { reason: status.failed })}</Banner>
         )}
         <p className={styles.note}>
           {status.using === "mirror"
-            ? `${server.hostname} gets its packages from ${mirrorsText(status)}.`
-            : `${server.hostname} gets its packages from the sources it came with.`}{" "}
-          {status.changing_to && "The change reaches it at its next contact."}
-          {status.campaign && "An update campaign has its sources for now and puts them back when it is done."}
+            ? t("mirrors.sources.fromMirror", { server: server.hostname, mirrors: mirrorsText(status) })
+            : t("mirrors.sources.fromOwn", { server: server.hostname })}{" "}
+          {status.changing_to && t("mirrors.sources.nextContact")}
+          {status.campaign && t("mirrors.sources.campaign")}
         </p>
         {status.using === "own" && status.problem && <Problem status={status} />}
         {canChange && settled && status.using === "own" && !status.problem && (
           <div className={styles.actions}>
             <InlineConfirm
-              trigger={`Use the ${status.distribution} mirror…`}
+              trigger={t("mirrors.sources.use.trigger", { distribution: status.distribution ?? "" })}
               triggerVariant="k"
-              title={`Use the mirror on ${server.hostname}?`}
-              consequence={USE_CONSEQUENCE}
-              confirmLabel={`Use the mirror on ${server.hostname}`}
-              pendingLabel="Sending…"
+              title={t("mirrors.sources.use.title", { server: server.hostname })}
+              consequence={t("mirrors.sources.useConsequence")}
+              confirmLabel={t("mirrors.sources.use.confirm", { server: server.hostname })}
+              pendingLabel={t("mirrors.sources.sending")}
               onConfirm={async () => {
                 await api.useMirror(id);
                 refresh();
               }}
-              describeError={(e) => `Nothing changed. ${describeError(e)}`}
+              describeError={(e) => t("mirrors.sources.nothingChanged", { error: describeError(e) })}
             />
           </div>
         )}
         {canChange && settled && status.using === "mirror" && (
           <div className={styles.actions}>
             <InlineConfirm
-              trigger="Go back to its own sources…"
+              trigger={t("mirrors.sources.back.trigger")}
               triggerVariant="default"
-              title={`Put back the own sources of ${server.hostname}?`}
-              consequence={BACK_CONSEQUENCE}
-              confirmLabel={`Go back on ${server.hostname}`}
-              pendingLabel="Sending…"
+              title={t("mirrors.sources.back.title", { server: server.hostname })}
+              consequence={t("mirrors.sources.backConsequence")}
+              confirmLabel={t("mirrors.sources.back.confirm", { server: server.hostname })}
+              pendingLabel={t("mirrors.sources.sending")}
               onConfirm={async () => {
                 await api.revertSources(id);
                 refresh();
               }}
-              describeError={(e) => `Nothing changed. ${describeError(e)}`}
+              describeError={(e) => t("mirrors.sources.nothingChanged", { error: describeError(e) })}
             />
           </div>
         )}
@@ -129,10 +122,12 @@ function Problem({ status }: { status: SourcesStatus }) {
       {status.add_mirror &&
         (administersEverything(me) ? (
           <div className={styles.actions}>
-            <ButtonLink href={MIRRORS_PATH}>Add {status.distribution} on the Mirrors page</ButtonLink>
+            <ButtonLink href={MIRRORS_PATH}>
+              {t("mirrors.sources.addOnMirrors", { distribution: status.distribution ?? "" })}
+            </ButtonLink>
           </div>
         ) : (
-          <p className={styles.note}>A global administrator can add it on the Mirrors page.</p>
+          <p className={styles.note}>{t("mirrors.sources.askGlobal")}</p>
         ))}
     </>
   );
@@ -144,15 +139,15 @@ function windowsDetails(s: SiteRow): string {
   return [words.text, ...words.warnings].join(" ");
 }
 
-const count = (n: number) => `${n} ${n === 1 ? "server" : "servers"}`;
+const count = (n: number) => t("mirrors.sources.servers", { count: n });
 
 /** What a change of the whole site did, server by server. */
 function ChangeResult({ change }: { change: SiteSourcesChange }) {
   return (
     <Banner tone={change.queued.length > 0 ? "ok" : "warn"} role="status">
       {change.queued.length > 0
-        ? `Sent to ${count(change.queued.length)}. Each one changes at its next contact.`
-        : "No server was changed."}
+        ? t("mirrors.sources.sent", { servers: count(change.queued.length) })
+        : t("mirrors.sources.noneChanged")}
       {change.skipped.length > 0 && (
         <ul className={styles.skipped}>
           {change.skipped.map((s) => (
@@ -179,9 +174,9 @@ export function SiteSources({ site }: { site: Site }) {
 
   if (!data) {
     return error ? (
-      <ErrorState what="the package sources" error={describeError(error)} onRetry={refresh} />
+      <ErrorState what={t("mirrors.sources.what")} error={describeError(error)} onRetry={refresh} />
     ) : (
-      <LoadingBlock label="Loading the package sources" />
+      <LoadingBlock label={t("mirrors.sources.loading")} />
     );
   }
   if (data.servers.length === 0) return null;
@@ -191,12 +186,12 @@ export function SiteSources({ site }: { site: Site }) {
   const columns: Column<SiteRow>[] = [
     {
       key: "server",
-      header: "Server",
+      header: t("mirrors.sources.column.server"),
       cell: (s) => <Link href={serverHref(s.id, "updates")}>{s.hostname}</Link>,
     },
     {
       key: "sources",
-      header: "Package sources",
+      header: t("mirrors.sources.title"),
       cell: (s) => {
         if (s.os_family === "windows") {
           const words = describeUpdateSource(s.windows_update_source);
@@ -208,19 +203,19 @@ export function SiteSources({ site }: { site: Site }) {
     },
     {
       key: "note",
-      header: "Details",
+      header: t("mirrors.sources.column.details"),
       className: styles.reason,
       cell: (s) => (
         <span className={styles.dim}>
           {s.os_family === "windows"
             ? windowsDetails(s)
             : s.failed
-              ? `The last change didn't work: ${s.failed}`
+              ? t("mirrors.sources.lastFailed", { reason: s.failed })
               : s.campaign
-                ? "An update campaign has its sources for now."
+                ? t("mirrors.sources.campaignShort")
                 : s.using === "mirror"
                   ? mirrorsText(s)
-                  : (s.problem ?? `Can use ${s.distribution}.`)}
+                  : (s.problem ?? t("mirrors.sources.canUse", { distribution: s.distribution ?? "" }))}
         </span>
       ),
     },
@@ -229,46 +224,49 @@ export function SiteSources({ site }: { site: Site }) {
     <section className={admin.section} aria-labelledby="site-sources-title">
       <div className={admin.sectionHead}>
         <h2 id="site-sources-title" className={admin.sectionTitle}>
-          Package sources
+          {t("mirrors.sources.title")}
         </h2>
       </div>
       <div className={styles.body}>
-        <p className={styles.note}>
-          Point the servers of {site.name} at the mirror of their own distribution, or back at the sources they came with.
-          A server whose distribution has no mirror is left as it is.
-        </p>
+        <p className={styles.note}>{t("mirrors.sources.site", { site: site.name })}</p>
         {change && <ChangeResult change={change} />}
-        <DataTable dense label="Package sources of the site's servers" columns={columns} rows={data.servers} rowKey={(s) => s.id} />
+        <DataTable
+          dense
+          label={t("mirrors.sources.siteTable")}
+          columns={columns}
+          rows={data.servers}
+          rowKey={(s) => s.id}
+        />
         {canChange && (canUse > 0 || canGoBack > 0) && (
           <div className={styles.actions}>
             {canUse > 0 && (
               <InlineConfirm
-                trigger={`Use mirrors on ${count(canUse)}…`}
+                trigger={t("mirrors.sources.useSite.trigger", { servers: count(canUse) })}
                 triggerVariant="k"
-                title={`Use mirrors on ${count(canUse)} of ${site.name}?`}
-                consequence={USE_SITE_CONSEQUENCE}
-                confirmLabel={`Use mirrors on ${count(canUse)}`}
-                pendingLabel="Sending…"
+                title={t("mirrors.sources.useSite.title", { servers: count(canUse), site: site.name })}
+                consequence={t("mirrors.sources.useSiteConsequence")}
+                confirmLabel={t("mirrors.sources.useSite.confirm", { servers: count(canUse) })}
+                pendingLabel={t("mirrors.sources.sending")}
                 onConfirm={async () => {
                   setChange(await api.useMirrorOnSite(id));
                   refresh();
                 }}
-                describeError={(e) => `Nothing changed. ${describeError(e)}`}
+                describeError={(e) => t("mirrors.sources.nothingChanged", { error: describeError(e) })}
               />
             )}
             {canGoBack > 0 && (
               <InlineConfirm
-                trigger={`Go back on ${count(canGoBack)}…`}
+                trigger={t("mirrors.sources.backSite.trigger", { servers: count(canGoBack) })}
                 triggerVariant="default"
-                title={`Put back the own sources of ${count(canGoBack)}?`}
-                consequence="Their original package sources are put back exactly as they were."
-                confirmLabel={`Go back on ${count(canGoBack)}`}
-                pendingLabel="Sending…"
+                title={t("mirrors.sources.backSite.title", { servers: count(canGoBack) })}
+                consequence={t("mirrors.sources.backSiteConsequence")}
+                confirmLabel={t("mirrors.sources.backSite.confirm", { servers: count(canGoBack) })}
+                pendingLabel={t("mirrors.sources.sending")}
                 onConfirm={async () => {
                   setChange(await api.revertSiteSources(id));
                   refresh();
                 }}
-                describeError={(e) => `Nothing changed. ${describeError(e)}`}
+                describeError={(e) => t("mirrors.sources.nothingChanged", { error: describeError(e) })}
               />
             )}
           </div>

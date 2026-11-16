@@ -1,14 +1,16 @@
+import { t } from "@/i18n";
+
 import type { FollowUp, FollowUpStep, FollowUpStepView, Incident } from "./api";
 
 /** "bob", "bob and Slack #ops", "alice, bob and Slack #ops". */
 export function listNames(names: string[]): string {
   if (names.length <= 1) return names[0] ?? "";
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return t("followUp.and", { list: names.slice(0, -1).join(", "), last: names[names.length - 1]! });
 }
 
 /** "1 minute", "15 minutes". */
 export function minutesText(n: number): string {
-  return n === 1 ? "1 minute" : `${n} minutes`;
+  return t("format.minutes", { count: n });
 }
 
 /**
@@ -22,23 +24,23 @@ export function followUpLine(
   clock: (iso: string) => string,
 ): string | null {
   if (incident.state !== "open" || incident.acknowledged_at) return null;
-  if (!followUp) return incident.severity === "warning" ? "Warnings are not followed up." : null;
-  const who = listNames(followUp.next);
+  if (!followUp) return incident.severity === "warning" ? t("followUp.warnings") : null;
+  const next = { count: followUp.next.length, who: listNames(followUp.next) };
   switch (followUp.state) {
     case "waiting":
       return followUp.next.length > 0 && followUp.next_at
-        ? `${who} will be told at ${clock(followUp.next_at)} if nobody acknowledges.`
-        : "Nobody can be told next: the people of the next step have no way to be reached or cannot see this place.";
+        ? t("followUp.willBeTold", { ...next, time: clock(followUp.next_at) })
+        : t("followUp.nobodyNext");
     case "silenced":
       return followUp.next.length > 0 && followUp.next_at
-        ? `Silenced: after it ends, ${who} will be told at ${clock(followUp.next_at)} if nobody acknowledges.`
-        : "Silenced: nobody is told until it ends.";
+        ? t("followUp.silencedThen", { ...next, time: clock(followUp.next_at) })
+        : t("followUp.silenced");
     case "stopped":
       switch (followUp.stop_reason) {
         case "finished":
-          return "Everyone in the follow-up was told; nobody acknowledged.";
+          return t("followUp.finished");
         case "not_critical":
-          return "No longer critical: nobody else is told.";
+          return t("followUp.notCritical");
         default:
           return null;
       }
@@ -48,17 +50,17 @@ export function followUpLine(
 /** Who a step tells, in words: "the person on call of Ops, alice, Slack #ops and the administrators of the place". */
 export function stepTargets(step: FollowUpStepView): string {
   const names = [
-    ...step.on_call.map((s) => `the person on call of ${s.name ?? "a removed schedule"}`),
-    ...step.users.map((u) => u.name ?? "a removed user"),
-    ...step.channels.map((c) => c.name ?? "a removed channel"),
-    ...(step.administrators ? ["the administrators of the place"] : []),
+    ...step.on_call.map((s) => t("followUp.personOnCall", { name: s.name ?? t("followUp.removedSchedule") })),
+    ...step.users.map((u) => u.name ?? t("onCall.removedUser")),
+    ...step.channels.map((c) => c.name ?? t("followUp.removedChannel")),
+    ...(step.administrators ? [t("followUp.administrators")] : []),
   ];
-  return names.length ? listNames(names) : "nobody";
+  return names.length ? listNames(names) : t("onCall.nobody");
 }
 
 /** "After 15 minutes without acknowledgement, tell: …". */
 export function stepSentence(step: FollowUpStepView): string {
-  return `After ${minutesText(step.after_minutes)} without acknowledgement, tell ${stepTargets(step)}.`;
+  return t("followUp.step", { minutes: minutesText(step.after_minutes), targets: stepTargets(step) });
 }
 
 /** The step as saved from how it is shown. */

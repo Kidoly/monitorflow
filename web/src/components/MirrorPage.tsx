@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
+import { t } from "@/i18n";
 import { ApiError, type MirrorDetail, type MirrorRun, type MirrorSnapshot, api, describeError } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
@@ -17,33 +18,26 @@ import styles from "./Mirrors.module.css";
 import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, ButtonLink } from "./ui/Button";
 import { type Column, DataTable } from "./ui/DataTable";
+import { Missing } from "./ui/Missing";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, EmptyState, ErrorState, LoadingBlock, NoPermission, NotFound, PageHeader, StaleBanner } from "./ui/PageState";
 import { StatTiles } from "./ui/StatTiles";
 import { Label, StatusLabel, statusWord } from "./ui/StatusLabel";
 import type { Tone } from "./ui/tone";
 
-const SNAPSHOT_STATES: Record<MirrorSnapshot["state"], [string, Tone]> = {
-  creating: ["Creating", "info"],
-  published: ["Published", "ok"],
-  failed: ["Failed", "bad"],
-  pruning: ["Being removed", "info"],
-  pruned: ["Removed", "neutral"],
+const SNAPSHOT_TONES: Record<MirrorSnapshot["state"], Tone> = {
+  creating: "info",
+  published: "ok",
+  failed: "bad",
+  pruning: "info",
+  pruned: "neutral",
 };
 
-const KEPT: Record<NonNullable<MirrorSnapshot["kept"]>, string> = {
-  current: "The current snapshot",
-  campaign: "An update campaign is pinned to it",
-  server: "A server uses it",
-  relay: "A relay uses it",
-  newest: "Among the newest",
-};
-
-const LAST_RUN: Record<MirrorRun["state"] | "never", [string, Tone]> = {
-  running: ["Running", "info"],
-  succeeded: ["Last run succeeded", "ok"],
-  failed: ["Last run failed", "bad"],
-  never: ["Never run", "neutral"],
+const LAST_RUN_TONES: Record<MirrorRun["state"] | "never", Tone> = {
+  running: "info",
+  succeeded: "ok",
+  failed: "bad",
+  never: "neutral",
 };
 
 /** `/admin/mirrors/view/?id=…` (ADR-0020 routing). */
@@ -52,26 +46,26 @@ export function MirrorView() {
   const me = useMe();
   if (!administersEverything(me)) {
     return (
-      <NoPermission title="Mirrors need a global administrator">
-        Mirrors are shared by {multiCustomer(me) ? "every customer" : "all sites"}. Ask a global administrator for a role.
+      <NoPermission title={t("mirrors.role.title")}>
+        {multiCustomer(me) ? t("mirrors.role.everyCustomer") : t("mirrors.role.allSites")}
       </NoPermission>
     );
   }
   return <MirrorPage key={id} id={id} />;
 }
 
-const notFound = (
+const notFound = () => (
   <NotFound
-    title="Mirror not found"
-    actions={<ButtonLink href={MIRRORS_PATH}>Back to mirrors</ButtonLink>}
+    title={t("mirrors.notFound")}
+    actions={<ButtonLink href={MIRRORS_PATH}>{t("mirrors.backToMirrors")}</ButtonLink>}
   >
-    It may have been removed.
+    {t("mirrors.notFoundText")}
   </NotFound>
 );
 
-const removed = (
-  <NotFound title="Mirror removed" actions={<ButtonLink href={MIRRORS_PATH}>Back to mirrors</ButtonLink>}>
-    Its packages are gone from this server and the disk space is free. Relays delete their copy at their next sync.
+const removed = () => (
+  <NotFound title={t("mirrors.removed")} actions={<ButtonLink href={MIRRORS_PATH}>{t("mirrors.backToMirrors")}</ButtonLink>}>
+    {t("mirrors.removedText")}
   </NotFound>
 );
 
@@ -86,14 +80,15 @@ export function MirrorPage({ id }: { id: string | null }) {
     if (data) document.title = `${data.name} · MonitorFlow`;
   }, [data]);
 
-  if (!valid || (error instanceof ApiError && error.status === 404)) return data?.deleting_at ? removed : notFound;
+  if (!valid || (error instanceof ApiError && error.status === 404)) return data?.deleting_at ? removed() : notFound();
   if (!data || !updatedAt) {
-    return error ? <ErrorState what="the mirror" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />;
+    return error ? <ErrorState what={t("mirrors.theMirror")} error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />;
   }
 
   const mirror = data;
   const running = mirror.last_run?.state === "running";
-  const [word, tone] = LAST_RUN[mirror.last_run?.state ?? "never"];
+  const lastRun = mirror.last_run?.state ?? "never";
+  const tone = LAST_RUN_TONES[lastRun];
   const lastSync = mirror.runs.find((r) => r.kind === "sync") ?? (mirror.runs.length === 0 ? null : undefined);
   const disabled = jobs.busy !== null || running || mirror.deleting_at !== null;
   const toggle = (runId: string) =>
@@ -107,25 +102,25 @@ export function MirrorPage({ id }: { id: string | null }) {
   const snapshotNext = mirror.runs.length > 0 && !mirror.auto_snapshot;
   const emptyAction = (
     <Button variant="k" disabled={disabled} onClick={() => void jobs.start(mirror, snapshotNext ? "snapshot" : "sync")}>
-      {snapshotNext ? "Create snapshot" : "Sync now"}
+      {snapshotNext ? t("mirrors.createSnapshot") : t("mirrors.syncNow")}
     </Button>
   );
 
   return (
     <div className={styles.page}>
-      <Breadcrumb parents={[{ label: "Mirrors", href: MIRRORS_PATH }]} current={mirror.name} />
+      <Breadcrumb parents={[{ label: t("mirrors.title"), href: MIRRORS_PATH }]} current={mirror.name} />
       <PageHeader
         detail
         title={mirror.name}
-        status={mirror.deleting_at ? <RemovalLabel mirror={mirror} /> : <Label tone={tone}>{word}</Label>}
+        status={mirror.deleting_at ? <RemovalLabel mirror={mirror} /> : <Label tone={tone}>{t(`mirrors.lastRun.${lastRun}`)}</Label>}
         meta={`${describeMirror(mirror, { distribution: true })} · ${intervalText(mirror.sync_interval_s)}`}
         actions={
           <>
             <Button disabled={disabled} onClick={() => void jobs.start(mirror, "snapshot")}>
-              Create snapshot
+              {t("mirrors.createSnapshot")}
             </Button>
             <Button variant="k" disabled={disabled} onClick={() => void jobs.start(mirror, "sync")}>
-              Sync now
+              {t("mirrors.syncNow")}
             </Button>
           </>
         }
@@ -135,15 +130,19 @@ export function MirrorPage({ id }: { id: string | null }) {
       {mirror.deleting_at && <Removing mirror={mirror} onRetried={refresh} />}
       <StatTiles
         dense
-        label="Summary"
+        label={t("mirrors.summary")}
         tiles={[
-          { label: "Snapshots", value: mirror.snapshots.filter((s) => s.state === "published").length, tone: "neutral" },
           {
-            label: "Last run",
-            value: mirror.last_run ? statusWord("run", mirror.last_run.state)[0] : "Never",
+            label: t("mirrors.tile.snapshots"),
+            value: mirror.snapshots.filter((s) => s.state === "published").length,
+            tone: "neutral",
+          },
+          {
+            label: t("mirrors.tile.lastRun"),
+            value: mirror.last_run ? statusWord("run", mirror.last_run.state)[0] : t("mirrors.tile.never"),
             tone,
           },
-          { label: "Next sync", value: nextSyncText(mirror, lastSync, updatedAt), tone: "neutral" },
+          { label: t("mirrors.tile.nextSync"), value: nextSyncText(mirror, lastSync, updatedAt), tone: "neutral" },
         ]}
       />
       <Snapshots mirror={mirror} action={emptyAction} />
@@ -155,7 +154,9 @@ export function MirrorPage({ id }: { id: string | null }) {
 
 /** What a refusal to remove a mirror says, in the server's words when it has a reason. */
 function notRemoved(error: unknown): string {
-  return error instanceof ApiError && error.status === 409 ? `Not removed: ${error.message}.` : `Not removed. ${describeError(error)}`;
+  return error instanceof ApiError && error.status === 409
+    ? t("mirrors.notRemovedReason", { reason: error.message })
+    : t("mirrors.notRemoved", { error: describeError(error) });
 }
 
 /** The way to remove a mirror, or what has to happen first. */
@@ -163,13 +164,14 @@ function RemoveMirror({ mirror, onRemoving }: { mirror: MirrorDetail; onRemoving
   const { campaigns, servers } = mirror.used_by;
   if (campaigns.length > 0 || servers.length > 0) {
     return (
-      <section className={styles.inUse} aria-label="Remove this mirror">
+      <section className={styles.inUse} aria-label={t("mirrors.removeThis")}>
         <p>
-          <strong>{mirror.name} can&apos;t be removed yet</strong>, because it is in use.
+          <strong>{t("mirrors.inUse", { name: mirror.name })}</strong>
+          {t("mirrors.inUseWhy")}
         </p>
         {campaigns.length > 0 && (
           <>
-            <p>Wait until these update campaigns finish, or stop them:</p>
+            <p>{t("mirrors.waitCampaigns")}</p>
             <ul>
               {campaigns.map((c) => (
                 <li key={c.id}>
@@ -181,7 +183,7 @@ function RemoveMirror({ mirror, onRemoving }: { mirror: MirrorDetail; onRemoving
         )}
         {servers.length > 0 && (
           <>
-            <p>Send these servers back to their own package sources, on their Updates tab:</p>
+            <p>{t("mirrors.sendBack")}</p>
             <ul>
               {servers.map((s) => (
                 <li key={s.id}>
@@ -194,18 +196,15 @@ function RemoveMirror({ mirror, onRemoving }: { mirror: MirrorDetail; onRemoving
       </section>
     );
   }
-  const stopped = mirror.last_run?.state === "running" ? "The run going now is stopped. " : "";
+  const stopped = mirror.last_run?.state === "running" ? `${t("mirrors.runStopped")} ` : "";
   return (
     <div>
       <InlineConfirm
-        trigger={`Remove ${mirror.name}…`}
-        title={`Remove ${mirror.name}?`}
-        consequence={
-          `${stopped}Its snapshots and packages are deleted from this server, and the disk space comes back. ` +
-          "Relays delete their copy at their next sync. This can't be undone: adding the mirror again downloads everything again."
-        }
-        confirmLabel={`Remove ${mirror.name}`}
-        pendingLabel="Removing…"
+        trigger={t("mirrors.remove.trigger", { name: mirror.name })}
+        title={t("mirrors.remove.title", { name: mirror.name })}
+        consequence={`${stopped}${t("mirrors.remove.consequence")}`}
+        confirmLabel={t("mirrors.remove.confirm", { name: mirror.name })}
+        pendingLabel={t("mirrors.remove.pending")}
         onConfirm={async () => {
           await api.deleteMirror(mirror.id);
           onRemoving();
@@ -235,17 +234,16 @@ function Removing({ mirror, onRetried }: { mirror: MirrorDetail; onRetried: () =
   if (!mirror.delete_error) {
     return (
       <Banner tone="info" role="status">
-        Removing this mirror. Nothing can use it any more. It finishes by itself once the syncs running now have ended, so
-        you can leave this page.
+        {t("mirrors.removing")}
       </Banner>
     );
   }
   return (
     <Banner tone="bad">
-      The mirror could not be fully removed: {mirror.delete_error}. MonitorFlow tries again every hour.{" "}
+      {t("mirrors.removeError", { error: mirror.delete_error })}{" "}
       {error && `${error} `}
       <Button size="small" disabled={busy} onClick={() => void retry()}>
-        Try again now
+        {t("mirrors.tryAgain")}
       </Button>
     </Banner>
   );
@@ -254,39 +252,45 @@ function Removing({ mirror, onRetried }: { mirror: MirrorDetail; onRetried: () =
 function Snapshots({ mirror, action }: { mirror: MirrorDetail; action: ReactNode }) {
   if (mirror.snapshots.length === 0) {
     return (
-      <EmptyState title="No snapshots yet" actions={action}>
-        {mirror.auto_snapshot ? "A snapshot is published after each successful sync." : "Create one after a sync."}
+      <EmptyState title={t("mirrors.snapshots.empty")} actions={action}>
+        {mirror.auto_snapshot ? t("mirrors.snapshots.auto") : t("mirrors.snapshots.manual")}
       </EmptyState>
     );
   }
   const columns: Column<MirrorSnapshot>[] = [
-    { key: "name", header: "Snapshot", className: styles.strong, cell: (s) => s.name },
+    { key: "name", header: t("mirrors.snapshot"), className: styles.strong, cell: (s) => s.name },
     {
       key: "state",
-      header: "State",
+      header: t("mirrors.column.state"),
       cell: (s) => (
         <>
-          <Label tone={SNAPSHOT_STATES[s.state][1]}>{SNAPSHOT_STATES[s.state][0]}</Label>
-          {s.state === "published" && s.name === mirror.current_snapshot && <span className={styles.dim}> current</span>}
+          <Label tone={SNAPSHOT_TONES[s.state]}>{t(`mirrors.snapshot.${s.state}`)}</Label>
+          {s.state === "published" && s.name === mirror.current_snapshot && (
+            <span className={styles.dim}> {t("mirrors.current")}</span>
+          )}
           {s.error && <span className={styles.dim}> {s.error}</span>}
         </>
       ),
     },
-    { key: "size", header: "Size", cell: (s) => (s.size_bytes === null ? <Dash /> : formatBytes(s.size_bytes)) },
-    { key: "created", header: "Created", cell: (s) => minuteText(s.created_at) },
-    { key: "published", header: "Published", cell: (s) => (s.published_at ? minuteText(s.published_at) : <Dash />) },
+    { key: "size", header: t("mirrors.column.size"), cell: (s) => (s.size_bytes === null ? <Missing word="unknown" className={styles.dim} /> : formatBytes(s.size_bytes)) },
+    { key: "created", header: t("mirrors.column.created"), cell: (s) => minuteText(s.created_at) },
+    {
+      key: "published",
+      header: t("mirrors.column.published"),
+      cell: (s) => (s.published_at ? minuteText(s.published_at) : <Missing word="notYet" className={styles.dim} />),
+    },
     {
       key: "kept",
-      header: "Kept because",
+      header: t("mirrors.column.kept"),
       cell: (s) => {
-        if (s.kept) return KEPT[s.kept];
-        return s.state === "published" ? <span className={styles.dim}>Removed at the next cleanup</span> : <Dash />;
+        if (s.kept) return t(`mirrors.kept.${s.kept}`);
+        return s.state === "published" ? <span className={styles.dim}>{t("mirrors.nextCleanup")}</span> : null;
       },
     },
   ];
   return (
     <>
-      <DataTable dense label="Snapshots" columns={columns} rows={mirror.snapshots} rowKey={(s) => s.id} />
+      <DataTable dense label={t("mirrors.snapshots")} columns={columns} rows={mirror.snapshots} rowKey={(s) => s.id} />
       <p className={styles.note}>{retentionText(mirror.keep_snapshots)}</p>
     </>
   );
@@ -305,50 +309,52 @@ function Runs({
 }) {
   if (mirror.runs.length === 0) {
     // Without snapshots either, the empty state above has the same button.
-    return mirror.snapshots.length === 0 ? null : <EmptyState actions={action}>No runs yet.</EmptyState>;
+    return mirror.snapshots.length === 0 ? null : <EmptyState actions={action}>{t("mirrors.noRuns")}</EmptyState>;
   }
   const snapshotName = (id: string | null) => mirror.snapshots.find((s) => s.id === id)?.name;
   const summary = (run: MirrorRun) => {
     if (run.error) return run.error;
-    if (run.state === "running") return run.kind === "sync" ? "Syncing" : "Creating a snapshot";
+    if (run.state === "running") return run.kind === "sync" ? t("mirrors.syncing") : t("mirrors.creatingSnapshot");
     const name = snapshotName(run.snapshot_id);
-    if (run.kind === "snapshot") return name ? `Snapshot ${name} published` : "Snapshot published";
-    return name ? `Synced, snapshot ${name} published` : "Synced";
+    if (run.kind === "snapshot") {
+      return name ? t("mirrors.snapshotPublished", { name }) : t("mirrors.snapshotPublishedNoName");
+    }
+    return name ? t("mirrors.synced", { name }) : t("mirrors.syncedNoName");
   };
   const columns: Column<MirrorRun>[] = [
-    { key: "run", header: "Run", className: styles.strong, cell: (r) => minuteText(r.started_at) },
-    { key: "state", header: "State", cell: (r) => <StatusLabel kind="run" value={r.state} /> },
+    { key: "run", header: t("mirrors.column.run"), className: styles.strong, cell: (r) => minuteText(r.started_at) },
+    { key: "state", header: t("mirrors.column.state"), cell: (r) => <StatusLabel kind="run" value={r.state} /> },
     {
       key: "duration",
-      header: "Duration",
+      header: t("mirrors.column.duration"),
       cell: (r) =>
         r.finished_at ? (
           durationText(new Date(r.finished_at).getTime() - new Date(r.started_at).getTime())
         ) : (
-          <Dash />
+          <Missing word="notYet" className={styles.dim} />
         ),
     },
-    { key: "trigger", header: "Trigger", cell: (r) => `${r.trigger} · ${r.kind}` },
-    { key: "summary", header: "Summary", className: styles.summary, cell: summary },
+    { key: "trigger", header: t("mirrors.column.trigger"), cell: (r) => `${r.trigger} · ${r.kind}` },
+    { key: "summary", header: t("mirrors.column.summary"), className: styles.summary, cell: summary },
   ];
   return (
     <>
       <DataTable
         dense
         detailInset
-        label="Runs"
+        label={t("mirrors.runs")}
         columns={columns}
         rows={mirror.runs}
         rowKey={(r) => r.id}
         rowActions={(r) => (
           <Button size="small" aria-expanded={open.has(r.id)} onClick={() => onToggle(r.id)}>
-            {open.has(r.id) ? "Hide log " : "Log "}
-            <span className="visually-hidden">of the run at {minuteText(r.started_at)}</span>
+            {open.has(r.id) ? t("mirrors.hideLog") : t("mirrors.log")}{" "}
+            <span className="visually-hidden">{t("mirrors.ofRun", { time: minuteText(r.started_at) })}</span>
           </Button>
         )}
         rowDetail={(r) => (open.has(r.id) ? <RunLog output={r.output} /> : null)}
       />
-      <p className={styles.note}>The 10 newest runs, with the tools&apos; output.</p>
+      <p className={styles.note}>{t("mirrors.newestRuns")}</p>
     </>
   );
 }
@@ -356,17 +362,13 @@ function Runs({
 /** The tools' output, plain text, scrolling, with a "Wrap lines" toggle. */
 export function RunLog({ output }: { output: string }) {
   const [wrap, setWrap] = useState(false);
-  if (!output) return <span className={styles.dim}>No output.</span>;
+  if (!output) return <span className={styles.dim}>{t("mirrors.noOutput")}</span>;
   return (
     <div className={styles.log}>
       <Button size="small" aria-pressed={wrap} onClick={() => setWrap((w) => !w)}>
-        Wrap lines
+        {t("mirrors.wrap")}
       </Button>
       <pre className={wrap ? styles.wrap : undefined}>{output}</pre>
     </div>
   );
-}
-
-function Dash() {
-  return <span className={styles.dim}>—</span>;
 }
