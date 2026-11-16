@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { customerAdmin } from "@/test/admin";
 import { CAMPAIGN_ID, WEB1, WEB2, detail, server } from "@/test/campaigns";
 import { stubFetch } from "@/test/fetch";
@@ -34,6 +35,25 @@ const inventory = {
 };
 
 describe("CampaignForm", () => {
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    const user = userEvent.setup();
+    stubFetch({
+      ...inventory,
+      "GET /api/servers": {
+        status: 200,
+        body: { servers: [server(), server({ id: WEB2, peer_id: "web-2", hostname: "web-2", package_updates: false })], next_cursor: null },
+      },
+    });
+    render(<CampaignForm me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "Nouvelle campagne" });
+    await user.selectOptions(within(form).getByLabelText("Tous les serveurs du site"), "site-1");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "1 serveur ciblé. 1 laissé de côté : les mises à jour de paquets n’y sont pas disponibles.",
+    );
+    expect(within(form).getByLabelText("Chaque commande peut démarrer dans un délai de")).toHaveTextContent("1 heure");
+  });
+
   it("leaves out hosts that take no package updates, and says so", async () => {
     const user = userEvent.setup();
     stubFetch({
