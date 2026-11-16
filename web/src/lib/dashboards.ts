@@ -9,6 +9,8 @@ import type {
   TimeRangeLabel,
   Within,
 } from "./api";
+import { t } from "@/i18n";
+
 import { metricTitle, shortMetric } from "./metrics";
 
 /** Dashboards are looked at rather than watched, so they refresh less often (ADR-0095). */
@@ -19,40 +21,30 @@ export const MAX_NAME = 80;
 /** Lines of a chart showing each server. */
 export const EACH_LINES = 8;
 
-export const RANGE_LABELS: Record<TimeRangeLabel, string> = {
-  "1h": "1 h",
-  "6h": "6 h",
-  "24h": "24 h",
-  "7d": "7 d",
-  "30d": "30 d",
-};
-export const RANGES = Object.keys(RANGE_LABELS) as TimeRangeLabel[];
+export const RANGES: readonly TimeRangeLabel[] = ["1h", "6h", "24h", "7d", "30d"];
 
-export function isRange(value: string | null): value is TimeRangeLabel {
-  return value !== null && value in RANGE_LABELS;
+/** "1 h", "7 d" ("7 j" in French). */
+export function rangeLabel(range: TimeRangeLabel): string {
+  const amount = range.slice(0, -1);
+  return `${amount} ${t(range.endsWith("d") ? "format.unit.day" : "format.unit.hour")}`;
 }
 
-export const KIND_LABELS: Record<PanelKind, string> = {
-  chart: "Chart over time",
-  figure: "One figure",
-  top: "Top list",
-  alerts: "Open alerts",
-};
+export function isRange(value: string | null): value is TimeRangeLabel {
+  return value !== null && (RANGES as readonly string[]).includes(value);
+}
+
+export const PANEL_KINDS: readonly PanelKind[] = ["chart", "figure", "top", "alerts"];
+
+export const kindLabel = (kind: PanelKind): string => t(`dashboards.kind.${kind}`);
 
 /** How servers combine, in the panel form. */
-export const COMBINE_LABELS: Record<Combine, string> = {
-  each: `One line per server (the ${EACH_LINES} worst)`,
-  avg: "Average",
-  max: "Highest",
-  min: "Lowest",
-  sum: "Total",
-  count: "How many servers report it",
-};
+export const combineLabel = (combine: Combine): string =>
+  combine === "each" ? t("dashboards.combine.each", { lines: EACH_LINES }) : t(`dashboards.combine.${combine}`);
 
 export const CHART_COMBINES: Combine[] = ["each", "avg", "max", "min", "sum"];
 export const FIGURE_COMBINES: Combine[] = ["avg", "max", "min", "sum", "count"];
 
-export const WIDTH_LABELS: Record<Panel["width"], string> = { 1: "Narrow", 2: "Wide", 3: "Full width" };
+export const widthLabel = (width: Panel["width"]): string => t(`dashboards.width.${width}`);
 
 export const CPU = "monitorflow_cpu_usage_ratio";
 
@@ -81,21 +73,20 @@ export function defaultInstance(instances: string[]): string | undefined {
 
 /** A title from a panel's choices: "CPU usage total, average", "Fullest: Disk used". */
 export function suggestedTitle(panel: Panel): string {
-  if (panel.kind === "alerts") return "Open alerts";
-  const metric = panel.metric ? metricTitle(panel.metric) : "Metric";
+  if (panel.kind === "alerts") return t("dashboards.title.alerts");
+  const metric = panel.metric ? metricTitle(panel.metric) : t("dashboards.title.metric");
   const what = panel.instance && panel.instance !== "total" ? `${metric} ${panel.instance}` : metric;
-  if (panel.kind === "top") return `${panel.order === "lowest" ? "Lowest" : "Highest"}: ${what}`;
+  if (panel.kind === "top") {
+    return panel.order === "lowest" ? t("dashboards.title.lowest", { what }) : t("dashboards.title.highest", { what });
+  }
   switch (panel.combine) {
     case "count":
-      return `Servers reporting ${what.toLowerCase()}`;
+      return t("dashboards.title.count", { what: what.toLowerCase() });
     case "avg":
-      return `${what}, average`;
     case "max":
-      return `${what}, highest`;
     case "min":
-      return `${what}, lowest`;
     case "sum":
-      return `${what}, total`;
+      return t(`dashboards.title.${panel.combine}`, { what });
     default:
       return what;
   }
@@ -187,11 +178,13 @@ export function withinOf(sharing: Sharing): Within {
 export function sharingLabel(sharing: Sharing & { name?: string }, multiCustomer = true): string {
   switch (sharing.kind) {
     case "personal":
-      return "Only me";
+      return t("dashboards.sharing.personal");
     case "site":
-      return `Site ${sharing.name ?? ""}`.trim();
+      return t("dashboards.sharing.site", { name: sharing.name ?? "" }).trim();
     case "customer":
-      return multiCustomer ? `Customer ${sharing.name ?? ""}`.trim() : "All sites";
+      return multiCustomer
+        ? t("dashboards.sharing.customer", { name: sharing.name ?? "" }).trim()
+        : t("dashboards.sharing.allSites");
   }
 }
 
@@ -209,7 +202,7 @@ export function copySpec(spec: DashboardSpec, within: Within): DashboardSpec {
 }
 
 export function copyName(name: string): string {
-  return `Copy of ${name}`.slice(0, MAX_NAME);
+  return t("dashboards.copyOf", { name }).slice(0, MAX_NAME);
 }
 
 /** The sites and customers of `servers`, by name, for the panel form. */
@@ -247,43 +240,44 @@ export interface ReadyMade {
 const all: PanelServers = { kind: "all" };
 const panel = (id: string, fields: Omit<Panel, "id" | "servers">): Panel => ({ id, servers: all, ...fields });
 
-export const READY_MADE: ReadyMade[] = [
+/** The ready-made dashboards, named in the active language. */
+export const readyMades = (): ReadyMade[] => [
   {
     id: "overview",
-    name: "Fleet overview",
-    description: "How many servers report, the busiest ones, the fullest disks and the open alerts.",
+    name: t("dashboards.ready.overview"),
+    description: t("dashboards.ready.overviewText"),
     spec: {
       version: 1,
       range: "6h",
       panels: [
-        panel("servers", { title: "Servers reporting", kind: "figure", width: 1, metric: CPU, instance: "total", combine: "count" }),
-        panel("cpu", { title: "Average CPU usage", kind: "figure", width: 1, metric: CPU, instance: "total", combine: "avg" }),
-        panel("disk", { title: "Fullest disk", kind: "figure", width: 1, metric: "monitorflow_disk_used_ratio", combine: "max" }),
-        panel("cpu-lines", { title: "CPU usage, busiest servers", kind: "chart", width: 2, metric: CPU, instance: "total", combine: "each" }),
-        panel("cpu-top", { title: "Busiest servers now", kind: "top", width: 1, metric: CPU, instance: "total", order: "highest", count: 5 }),
+        panel("servers", { title: t("dashboards.ready.servers"), kind: "figure", width: 1, metric: CPU, instance: "total", combine: "count" }),
+        panel("cpu", { title: t("dashboards.ready.cpu"), kind: "figure", width: 1, metric: CPU, instance: "total", combine: "avg" }),
+        panel("disk", { title: t("dashboards.ready.disk"), kind: "figure", width: 1, metric: "monitorflow_disk_used_ratio", combine: "max" }),
+        panel("cpu-lines", { title: t("dashboards.ready.cpuLines"), kind: "chart", width: 2, metric: CPU, instance: "total", combine: "each" }),
+        panel("cpu-top", { title: t("dashboards.ready.cpuTop"), kind: "top", width: 1, metric: CPU, instance: "total", order: "highest", count: 5 }),
         panel("memory-lines", {
-          title: "Memory available, lowest servers",
+          title: t("dashboards.ready.memoryLines"),
           kind: "chart",
           width: 2,
           metric: "monitorflow_memory_available_ratio",
           combine: "each",
         }),
-        panel("disk-top", { title: "Fullest disks", kind: "top", width: 1, metric: "monitorflow_disk_used_ratio", order: "highest", count: 5 }),
-        panel("alerts", { title: "Open alerts", kind: "alerts", width: 3, count: 10 }),
+        panel("disk-top", { title: t("dashboards.ready.diskTop"), kind: "top", width: 1, metric: "monitorflow_disk_used_ratio", order: "highest", count: 5 }),
+        panel("alerts", { title: t("dashboards.title.alerts"), kind: "alerts", width: 3, count: 10 }),
       ],
     },
   },
   {
     id: "capacity",
-    name: "Disks and memory",
-    description: "Where space and memory run low, and the load of the busiest servers.",
+    name: t("dashboards.ready.capacity"),
+    description: t("dashboards.ready.capacityText"),
     spec: {
       version: 1,
       range: "7d",
       panels: [
-        panel("disk-lines", { title: "Disk used, fullest disks", kind: "chart", width: 2, metric: "monitorflow_disk_used_ratio", combine: "each" }),
+        panel("disk-lines", { title: t("dashboards.ready.diskLines"), kind: "chart", width: 2, metric: "monitorflow_disk_used_ratio", combine: "each" }),
         panel("disk-free", {
-          title: "Least disk space left",
+          title: t("dashboards.ready.diskFree"),
           kind: "top",
           width: 1,
           metric: "monitorflow_disk_available_bytes",
@@ -291,26 +285,26 @@ export const READY_MADE: ReadyMade[] = [
           count: 5,
         }),
         panel("memory-avg", {
-          title: "Memory available, average",
+          title: t("dashboards.ready.memoryAvg"),
           kind: "chart",
           width: 2,
           metric: "monitorflow_memory_available_ratio",
           combine: "avg",
         }),
         panel("memory-low", {
-          title: "Least memory available",
+          title: t("dashboards.ready.memoryLow"),
           kind: "top",
           width: 1,
           metric: "monitorflow_memory_available_ratio",
           order: "lowest",
           count: 5,
         }),
-        panel("load", { title: "Load average, 15 min", kind: "chart", width: 3, metric: "monitorflow_cpu_load15", combine: "each" }),
+        panel("load", { title: t("dashboards.ready.load"), kind: "chart", width: 3, metric: "monitorflow_cpu_load15", combine: "each" }),
       ],
     },
   },
 ];
 
 export function readyMade(id: string | null): ReadyMade | undefined {
-  return READY_MADE.find((d) => d.id === id);
+  return readyMades().find((d) => d.id === id);
 }

@@ -116,7 +116,7 @@ describe("DisplayScreen with a display link", () => {
     await act(() => vi.advanceTimersByTimeAsync(59_000));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await act(() => vi.advanceTimersByTimeAsync(3_000));
-    expect(screen.getByRole("alert")).toHaveTextContent(/^Data from \d\d:\d\d — this screen has lost its connection to MonitorFlow\./);
+    expect(screen.getByRole("alert")).toHaveTextContent(/^Data from \d\d:\d\d\. This screen has lost its connection to MonitorFlow and keeps trying\./);
     expect(screen.getByRole("main")).toHaveAttribute("data-stale");
   });
 
