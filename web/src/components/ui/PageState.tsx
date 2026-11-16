@@ -64,8 +64,10 @@ export function PageHeader({
   tone?: Tone;
   reason?: ReactNode;
 }) {
+  // An OK state stays quiet: only a problem tints the header.
+  const tinted = tone !== undefined && tone !== "ok";
   return (
-    <div className={cx(styles.header, detail && styles.detail, tone && styles.tinted, tone && styles[`tint-${tone}`])}>
+    <div className={cx(styles.header, detail && styles.detail, tinted && styles.tinted, tinted && styles[`tint-${tone}`])}>
       <h1 className={styles.title}>{title}</h1>
       {status}
       {meta !== undefined && (

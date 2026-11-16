@@ -357,7 +357,7 @@ export function StatusBadge({
   const online = server.status === "online";
   return (
     <span className={online ? styles.online : styles.offline}>
-      <span aria-hidden="true">{online ? "●" : "○"}</span> {online ? t("fleet.online") : t("fleet.offline")}
+      {online ? t("fleet.online") : t("fleet.offline")}
       {server.via_relay && ` ${t("fleet.via", { relay: server.via_relay })}`}
       {server.revoked_at && t("fleet.revoked")}
     </span>

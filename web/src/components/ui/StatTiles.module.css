@@ -50,7 +50,14 @@ a.tile:hover,
 }
 
 .plain {
-  background: var(--hl);
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-panel);
+}
+
+a.plain:hover,
+.plain.active {
+  border-color: var(--border-strong);
 }
 
 .plain .label {
