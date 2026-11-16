@@ -202,11 +202,15 @@ db_tests! {
             .find(|d| d["id"] == "rocky-9").unwrap();
         assert_eq!((rocky["family"].as_str(), rocky["added"].as_bool()), (Some("dnf"), Some(false)));
         assert!(rocky["size_bytes"].as_u64().unwrap() > 1 << 30);
+        // On demand (ADR-0142) is a fraction of it, and needs its indexes.
+        let on_demand = rocky["on_demand_size_bytes"].as_u64().unwrap();
+        assert!(on_demand * 5 < rocky["size_bytes"].as_u64().unwrap());
+        assert!(rocky["index_bytes"].as_u64().unwrap() < on_demand);
 
         let add = Some(json!({"distribution": "rocky-9"}));
         let free = catalog["disk"]["free_bytes"].as_u64().unwrap();
         let (status, body) = h.call("POST", "/api/mirrors", &admin, add.clone()).await;
-        if free < rocky["size_bytes"].as_u64().unwrap() {
+        if free < rocky["index_bytes"].as_u64().unwrap() {
             // A small test disk: refused in plain words, nothing created.
             assert_eq!(status, StatusCode::CONFLICT);
             assert!(body["error"].as_str().unwrap().contains("needs about"), "{body}");
@@ -218,6 +222,7 @@ db_tests! {
             .map(|m| m["name"].as_str().unwrap()).collect();
         assert_eq!(names, ["rocky-9-baseos", "rocky-9-appstream"]);
         assert_eq!(body["mirrors"][0]["sync_interval_s"], 86_400);
+        assert_eq!(body["mirrors"][0]["mode"], "on_demand", "the default");
         let due: Vec<_> = store::due(&pool).await.unwrap().into_iter().map(|m| m.name).collect();
         assert_eq!(due.len(), 2, "the scheduler starts them: {due:?}");
 
@@ -369,6 +374,48 @@ db_tests! {
         let (status, list) = h.call("GET", "/api/mirrors", &admin, None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(list["mirrors"], json!([]));
+    }
+
+    #[sqlx::test]
+    async fn a_mirror_switches_modes_and_the_cache_cap_is_set(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let admin = h.user("root", Role::Administrator, GrantScope::Global).await;
+        let mirror = store::create(&pool, &dnf("rocky"), ("system", "test")).await.unwrap();
+        let path = format!("/api/mirrors/{}", mirror.id);
+        let (status, body) = h.call("PATCH", &path, &admin, Some(json!({"mode": "on_demand"}))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["mode"], "on_demand");
+        let (status, _) = h.call("PATCH", &path, &admin, Some(json!({"mode": "partial"}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, body) = h.call("PATCH", &path, &admin, Some(json!({"mode": "full"}))).await;
+        assert_eq!((status, body["mode"].as_str()), (StatusCode::OK, Some("full")));
+        let changes: Vec<serde_json::Value> = sqlx::query_scalar(
+            "SELECT details FROM audit_log WHERE action = 'mirror.mode' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(changes.len(), 2);
+        assert_eq!((changes[1]["from"].as_str(), changes[1]["to"].as_str()), (Some("on_demand"), Some("full")));
+
+        let (status, cache) = h.call("GET", "/api/mirrors/cache", &admin, None).await;
+        assert_eq!(status, StatusCode::OK, "{cache}");
+        assert_eq!(cache["cap_set"], false);
+        assert_eq!(cache["used_bytes"], 0);
+        let (status, _) = h.call("PUT", "/api/mirrors/cache", &admin, Some(json!({"cap_bytes": 1}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let cap = 20u64 << 30;
+        let (status, cache) = h.call("PUT", "/api/mirrors/cache", &admin, Some(json!({"cap_bytes": cap}))).await;
+        assert_eq!(status, StatusCode::OK, "{cache}");
+        assert_eq!((cache["cap_bytes"].as_u64(), cache["cap_set"].as_bool()), (Some(cap), Some(true)));
+        let (_, cache) = h.call("PUT", "/api/mirrors/cache", &admin, Some(json!({"cap_bytes": null}))).await;
+        assert_eq!(cache["cap_set"], false);
+
+        // Removing it: no switching any more.
+        let viewer = h.user("someone", Role::Viewer, GrantScope::Global).await;
+        assert_eq!(h.call("PATCH", &path, &viewer, Some(json!({"mode": "full"}))).await.0, StatusCode::FORBIDDEN);
+        sqlx::query("UPDATE mirrors SET deleting_at = now() WHERE id = $1").bind(mirror.id).execute(&pool).await.unwrap();
+        assert_eq!(h.call("PATCH", &path, &admin, Some(json!({"mode": "on_demand"}))).await.0, StatusCode::CONFLICT);
     }
 
     #[sqlx::test]

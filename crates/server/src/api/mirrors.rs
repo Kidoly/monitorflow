@@ -21,8 +21,8 @@ use crate::mirror::jobs::{self, JobError, JobKind};
 use crate::mirror::removal::{self, RemovalError, Users};
 use crate::mirror::retention::{self, Kept, KEEP_SNAPSHOTS};
 use crate::mirror::{
-    signing, store, tools, Family, Mirror, Mirrors, Run, RunKind, RunState, Snapshot, StoreError,
-    Trigger,
+    signing, store, tools, Family, Mirror, Mirrors, Mode, Run, RunKind, RunState, Snapshot,
+    StoreError, Trigger,
 };
 
 /// Snapshots and runs shown in a mirror's detail.
@@ -136,12 +136,20 @@ pub struct CatalogEntry {
     /// Its name on screen, such as `Debian 12`.
     pub name: &'static str,
     pub family: Family,
-    /// About what its mirrors take on disk, in bytes.
+    /// About what its mirrors take on disk in full mode, in bytes.
     pub size_bytes: u64,
+    /// About what they take on demand (ADR-0142): indexes and the packages
+    /// a fleet typically installs, in bytes.
+    pub on_demand_size_bytes: u64,
+    /// What on demand needs at least: the indexes, in bytes.
+    pub index_bytes: u64,
     /// Every mirror of the distribution exists.
     pub added: bool,
-    /// Why it cannot be added now: too little free space.
+    /// Why it cannot be added in full mode now: too little free space.
     pub problem: Option<String>,
+    /// Why it cannot be added on demand now: too little free space even
+    /// for its indexes.
+    pub on_demand_problem: Option<String>,
 }
 
 /// Body of `GET /api/mirrors/catalog`.
@@ -190,6 +198,18 @@ pub struct SetCacheRequest {
 pub struct AddRequest {
     /// An `id` of the catalog.
     pub distribution: String,
+    /// `on_demand` (the default) or `full` (ADR-0142).
+    #[serde(default)]
+    pub mode: Option<Mode>,
+}
+
+/// Body of `PATCH /api/mirrors/{id}`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = UpdateMirrorRequest)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateRequest {
+    /// What the next sync downloads (ADR-0142).
+    pub mode: Mode,
 }
 
 pub(super) fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
@@ -327,11 +347,15 @@ pub async fn catalog(
             name: distribution.name,
             family: distribution.family,
             size_bytes: distribution.size_bytes,
+            on_demand_size_bytes: distribution.on_demand_bytes,
+            index_bytes: distribution.index_bytes,
             added: distribution
                 .specs()
                 .iter()
                 .all(|spec| existing.iter().any(|m| m.name == spec.name)),
             problem: disk.and_then(|d| distribution.too_big(d.free_bytes)),
+            on_demand_problem: disk
+                .and_then(|d| distribution.too_big_in(Mode::OnDemand, d.free_bytes)),
         })
         .collect();
     Ok(Json(Catalog {
@@ -349,7 +373,8 @@ pub async fn add(
     request: Result<Json<AddRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<MirrorList>), ApiError> {
     require_global_admin(&user)?;
-    let id = body(request)?.distribution;
+    let request = body(request)?;
+    let (id, mode) = (request.distribution, request.mode.unwrap_or(Mode::OnDemand));
     let distribution = catalog::find(&id)
         .ok_or_else(|| ApiError::Invalid(format!("unknown distribution `{id}`")))?;
     let mirrors = state.mirrors.as_ref();
@@ -360,7 +385,7 @@ pub async fn add(
     let mirrors = mirrors.expect("the tools answered");
     let existing = store::list(&state.pool).await?;
     let missing: Vec<_> = distribution
-        .specs()
+        .specs_in(mode)
         .into_iter()
         .filter(|spec| !existing.iter().any(|m| m.name == spec.name))
         .collect();
@@ -371,7 +396,7 @@ pub async fn add(
         )));
     }
     let room = disk(Some(mirrors)).await;
-    if let Some(problem) = room.and_then(|d| distribution.too_big(d.free_bytes)) {
+    if let Some(problem) = room.and_then(|d| distribution.too_big_in(mode, d.free_bytes)) {
         return Err(ApiError::Conflict(problem));
     }
     let layout = mirrors.layout().clone();
@@ -403,6 +428,25 @@ pub async fn add(
             keep_snapshots: KEEP_SNAPSHOTS,
         }),
     ))
+}
+
+/// `PATCH /api/mirrors/{id}`: the mode of its next sync (ADR-0142),
+/// audited as `mirror.mode`. Refused while it is being removed.
+pub async fn update(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    request: Result<Json<UpdateRequest>, JsonRejection>,
+) -> Result<Json<MirrorView>, ApiError> {
+    require_global_admin(&user)?;
+    let mode = body(request)?.mode;
+    let mirror = find(&state, &id).await?;
+    if mirror.deleting_at.is_some() {
+        return Err(ApiError::Conflict("this mirror is being removed".into()));
+    }
+    let mirror =
+        store::set_mode(&state.pool, &mirror, mode, ("user", &user.id.to_string())).await?;
+    Ok(Json(view(&state, mirror).await?))
 }
 
 /// `GET /api/mirrors/{id}`.

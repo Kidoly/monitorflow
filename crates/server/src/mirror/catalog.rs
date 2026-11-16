@@ -3,14 +3,17 @@
 //! for amd64, synced daily. Anything else stays the CLI's `mirror add`.
 //!
 //! Sizes are what the upstream package indexes added up to on 2026-10-31,
-//! rounded up with room for metadata and a few months of updates.
+//! rounded up with room for metadata and a few months of updates. The
+//! on-demand ones (ADR-0142) come from the index files an amd64 host reads,
+//! measured on 2026-11-16 (up to 22 MiB per apt suite, up to 156 MiB per
+//! dnf repository), times 7 snapshots, plus 3,000 packages of about 1 MiB.
 
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use super::model::{Family, MirrorSpec};
+use super::model::{Family, MirrorSpec, Mode};
 
 const GIB: u64 = 1 << 30;
 const DAILY_S: i32 = 24 * 60 * 60;
@@ -47,7 +50,13 @@ pub struct Distribution {
     pub id: &'static str,
     pub name: &'static str,
     pub family: Family,
+    /// A full mirror (ADR-0067).
     pub size_bytes: u64,
+    /// An on-demand mirror (ADR-0142): its indexes for 7 snapshots plus
+    /// 3,000 packages, the high end of a fleet's working set.
+    pub on_demand_bytes: u64,
+    /// What an on-demand mirror needs at least: its indexes.
+    pub index_bytes: u64,
     repositories: &'static [Repository],
 }
 
@@ -112,6 +121,8 @@ pub const CATALOG: &[Distribution] = &[
         name: "Debian 13 (trixie)",
         family: Family::Apt,
         size_bytes: 150 * GIB,
+        on_demand_bytes: 5 * GIB,
+        index_bytes: GIB,
         repositories: &[
             apt("debian-13", DEBIAN, "trixie", DEBIAN_COMPONENTS),
             apt(
@@ -133,6 +144,8 @@ pub const CATALOG: &[Distribution] = &[
         name: "Debian 12 (bookworm)",
         family: Family::Apt,
         size_bytes: 125 * GIB,
+        on_demand_bytes: 5 * GIB,
+        index_bytes: GIB,
         repositories: &[
             apt("debian-12", DEBIAN, "bookworm", DEBIAN_COMPONENTS),
             apt(
@@ -154,6 +167,8 @@ pub const CATALOG: &[Distribution] = &[
         name: "Ubuntu 24.04 LTS (noble)",
         family: Family::Apt,
         size_bytes: 280 * GIB,
+        on_demand_bytes: 6 * GIB,
+        index_bytes: GIB,
         repositories: &[
             apt("ubuntu-24.04", UBUNTU, "noble", UBUNTU_COMPONENTS),
             apt(
@@ -175,6 +190,8 @@ pub const CATALOG: &[Distribution] = &[
         name: "Ubuntu 22.04 LTS (jammy)",
         family: Family::Apt,
         size_bytes: 390 * GIB,
+        on_demand_bytes: 6 * GIB,
+        index_bytes: GIB,
         repositories: &[
             apt("ubuntu-22.04", UBUNTU, "jammy", UBUNTU_COMPONENTS),
             apt(
@@ -196,6 +213,8 @@ pub const CATALOG: &[Distribution] = &[
         name: "Rocky Linux 10",
         family: Family::Dnf,
         size_bytes: 55 * GIB,
+        on_demand_bytes: 8 * GIB,
+        index_bytes: 2 * GIB,
         repositories: &[
             dnf(
                 "rocky-10-baseos",
@@ -216,6 +235,8 @@ pub const CATALOG: &[Distribution] = &[
         name: "Rocky Linux 9",
         family: Family::Dnf,
         size_bytes: 60 * GIB,
+        on_demand_bytes: 8 * GIB,
+        index_bytes: 2 * GIB,
         repositories: &[
             dnf(
                 "rocky-9-baseos",
@@ -236,6 +257,8 @@ pub const CATALOG: &[Distribution] = &[
         name: "AlmaLinux 10",
         family: Family::Dnf,
         size_bytes: 55 * GIB,
+        on_demand_bytes: 8 * GIB,
+        index_bytes: 2 * GIB,
         repositories: &[
             dnf(
                 "almalinux-10-baseos",
@@ -256,6 +279,8 @@ pub const CATALOG: &[Distribution] = &[
         name: "AlmaLinux 9",
         family: Family::Dnf,
         size_bytes: 60 * GIB,
+        on_demand_bytes: 8 * GIB,
+        index_bytes: 2 * GIB,
         repositories: &[
             dnf(
                 "almalinux-9-baseos",
@@ -318,6 +343,11 @@ impl Distribution {
 
     /// The mirrors of this distribution, snapshotted after every sync.
     pub fn specs(&self) -> Vec<MirrorSpec> {
+        self.specs_in(Default::default())
+    }
+
+    /// [`Self::specs`] in `mode`.
+    pub fn specs_in(&self, mode: Mode) -> Vec<MirrorSpec> {
         self.repositories
             .iter()
             .map(|repository| MirrorSpec {
@@ -337,9 +367,34 @@ impl Distribution {
                 },
                 sync_interval_s: Some(DAILY_S),
                 auto_snapshot: true,
-                mode: Default::default(),
+                mode,
             })
             .collect()
+    }
+
+    /// What `mode` needs on the disk at least: the whole distribution, or
+    /// its indexes.
+    pub fn needs(&self, mode: Mode) -> u64 {
+        match mode {
+            Mode::Full => self.size_bytes,
+            Mode::OnDemand => self.index_bytes,
+        }
+    }
+
+    /// [`Self::too_big`] in `mode`: on demand, only when even the indexes
+    /// do not fit.
+    pub fn too_big_in(&self, mode: Mode, free_bytes: u64) -> Option<String> {
+        match mode {
+            Mode::Full => self.too_big(free_bytes),
+            Mode::OnDemand => (free_bytes < self.index_bytes).then(|| {
+                format!(
+                    "{} needs about {} GiB for its indexes and this server has {} GiB free.",
+                    self.name,
+                    self.index_bytes / GIB,
+                    gib(free_bytes)
+                )
+            }),
+        }
     }
 
     /// One plain sentence when `free_bytes` cannot hold this distribution,
@@ -480,6 +535,31 @@ mod tests {
                 repository.name
             );
         }
+    }
+
+    #[test]
+    fn on_demand_needs_a_fraction_and_refuses_only_without_room_for_indexes() {
+        for distribution in CATALOG {
+            assert!(distribution.index_bytes < distribution.on_demand_bytes);
+            assert!(
+                distribution.on_demand_bytes * 5 < distribution.size_bytes,
+                "{}",
+                distribution.id
+            );
+            assert!(distribution
+                .specs_in(Mode::OnDemand)
+                .iter()
+                .all(|s| s.mode == Mode::OnDemand));
+        }
+        let debian = find("debian-13").unwrap();
+        assert_eq!(debian.needs(Mode::OnDemand), GIB);
+        let free = 3 * GIB + GIB * 3 / 10;
+        assert!(debian.too_big_in(Mode::Full, free).is_some());
+        assert_eq!(debian.too_big_in(Mode::OnDemand, free), None);
+        assert_eq!(
+            debian.too_big_in(Mode::OnDemand, GIB / 2).unwrap(),
+            "Debian 13 (trixie) needs about 1 GiB for its indexes and this server has 0.5 GiB free."
+        );
     }
 
     #[test]

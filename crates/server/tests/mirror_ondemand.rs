@@ -351,6 +351,55 @@ db_tests! {
         assert!(!stored(old));
         assert!(fx.current(Family::Apt, "debian").join(packages).is_file());
     }
+
+    #[sqlx::test]
+    async fn switching_to_on_demand_drops_the_full_copy_at_the_next_pass(pool: PgPool) {
+        let fx = Fixture::new(&pool).await;
+        let mirror = fx.create(&pool, Family::Apt).await;
+        // What full syncs left: two published full snapshots.
+        for (name, days) in [("f1", 2), ("f2", 1)] {
+            sqlx::query(
+                "INSERT INTO mirror_snapshots (mirror_id, name, state, mode, created_at, published_at)
+                 VALUES ($1, $2, 'published', 'full', now() - make_interval(days => $3),
+                         now() - make_interval(days => $3))",
+            )
+            .bind(mirror.id)
+            .bind(name)
+            .bind(days)
+            .execute(&pool)
+            .await
+            .unwrap();
+            std::fs::create_dir_all(fx.root.join("aptly/public/debian").join(name).join("pool")).unwrap();
+        }
+        let switched = store::set_mode(&pool, &Mirror { mode: Mode::Full, ..mirror.clone() }, Mode::OnDemand, ("user", "u1"))
+            .await
+            .unwrap();
+        assert_eq!(switched.mode, Mode::OnDemand);
+        let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'mirror.mode'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(audited, 1);
+
+        // Until an on-demand snapshot exists, the newest full one is
+        // current and stays.
+        fx.take_log();
+        assert_eq!(retention::prune(&fx.mirrors).await.unwrap(), 1);
+        assert!(!fx.root.join("aptly/public/debian/f1").exists());
+        assert!(fx.root.join("aptly/public/debian/f2").exists());
+
+        // After the first on-demand sync, the last full one goes too, with
+        // aptly's mirrors and the packages only they held.
+        assert_eq!(fx.run(&switched, JobKind::Sync).await.state, RunState::Succeeded);
+        fx.take_log();
+        assert_eq!(retention::prune(&fx.mirrors).await.unwrap(), 1);
+        assert!(!fx.root.join("aptly/public/debian/f2").exists());
+        let log = fx.take_log();
+        assert!(log.iter().any(|l| l.starts_with("aptly mirror list")), "{log:?}");
+        assert!(log.iter().any(|l| l.starts_with("aptly db cleanup")), "{log:?}");
+        // The on-demand snapshot is served.
+        assert!(fx.current(Family::Apt, "debian").join(PACKAGES).is_file());
+    }
 }
 
 /// Snapshots are named after the second they are made in.

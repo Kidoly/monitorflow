@@ -89,6 +89,40 @@ pub async fn create(
     Ok(mirror)
 }
 
+/// Sets the mode of `mirror`'s next sync (ADR-0142), audited as
+/// `mirror.mode` when it changes.
+pub async fn set_mode(
+    pool: &PgPool,
+    mirror: &Mirror,
+    mode: Mode,
+    actor: (&str, &str),
+) -> Result<Mirror, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    let updated: Mirror = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "UPDATE mirrors SET mode = $2 WHERE id = $1 RETURNING {MIRROR_COLUMNS}"
+    )))
+    .bind(mirror.id)
+    .bind(mode)
+    .fetch_one(&mut *tx)
+    .await?;
+    if mirror.mode != mode {
+        audit::record(
+            &mut *tx,
+            Event {
+                actor_kind: actor.0,
+                actor_id: actor.1,
+                action: "mirror.mode",
+                target: Some(("mirror", &mirror.id.to_string())),
+                details: json!({ "name": mirror.name, "from": mirror.mode, "to": mode }),
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(updated)
+}
+
 /// Every mirror, by name.
 pub async fn list(db: impl PgExecutor<'_>) -> Result<Vec<Mirror>, sqlx::Error> {
     // SQL-safe: interpolates only the constant MIRROR_COLUMNS.

@@ -186,9 +186,9 @@ struct AddMirror {
     /// Do not publish a snapshot at the end of each sync.
     #[arg(long)]
     no_auto_snapshot: bool,
-    /// `full` downloads every package; `on-demand` only the indexes, each
-    /// package being fetched when first asked for (ADR-0142).
-    #[arg(long, default_value = "full", value_parser = ["full", "on-demand"])]
+    /// `on-demand` downloads only the indexes, each package being fetched
+    /// when first asked for (ADR-0142); `full` downloads every package.
+    #[arg(long, default_value = "on-demand", value_parser = ["full", "on-demand"])]
     mode: String,
 }
 

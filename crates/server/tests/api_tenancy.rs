@@ -1160,6 +1160,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("GET", "/api/mirrors/cache")
         | ("PUT", "/api/mirrors/cache")
         | ("GET", "/api/mirrors/{id}")
+        | ("PATCH", "/api/mirrors/{id}")
         | ("DELETE", "/api/mirrors/{id}")
         | ("POST", "/api/mirrors/{id}/sync")
         | ("POST", "/api/mirrors/{id}/snapshots") => {

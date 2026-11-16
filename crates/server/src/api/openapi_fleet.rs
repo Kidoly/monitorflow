@@ -21,7 +21,7 @@ use crate::relay_commands;
         revoke_install_key, approve_pending_host, reject_pending_host,
         list_relays, relay_detail, revoke_relay, update_relay, confirm_relay_names,
         list_agent_releases, import_release, import_release_from_url,
-        list_mirrors, mirror_catalog, mirror_cache, set_mirror_cache, add_mirrors, mirror_detail, delete_mirror, sync_mirror,
+        list_mirrors, mirror_catalog, mirror_cache, set_mirror_cache, add_mirrors, mirror_detail, update_mirror, delete_mirror, sync_mirror,
         snapshot_mirror, server_sources, configure_server_sources, revert_server_sources,
         server_use_mirror, site_sources, site_use_mirror, site_revert_sources,
     ),
@@ -1024,6 +1024,45 @@ key outside the \"updates\" area: `api_key_scope`"),
 sentence names them), or what uses it could not be checked: `conflict`"),
     ))]
 fn delete_mirror() {}
+
+/// Switch a mirror between full and on demand
+///
+/// Sets what the mirror's next sync downloads (ADR-0142): `full`, every
+/// package, or `on_demand`, only the indexes, each package being fetched
+/// from the upstream the first time a server asks for it. Snapshots made
+/// before keep their mode and stay served; once a mirror is on demand,
+/// its full snapshots that nothing uses go at the next retention pass.
+/// Nothing is downloaded until the next sync. Audited as `mirror.mode`.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(patch, path = "/api/v1/mirrors/{id}", tag = "mirrors",
+    params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
+    request_body(content = mirrors::UpdateRequest, example = json!({ "mode": "on_demand" })),
+    responses(
+        (status = 200, description = "The mirror", body = mirrors::MirrorView, example = json!({
+            "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+            "name": "debian-12",
+            "family": "apt",
+            "upstream_url": "https://deb.debian.org/debian",
+            "distribution": "bookworm",
+            "components": ["main", "non-free-firmware"],
+            "architectures": ["amd64"],
+            "sync_interval_s": 86400,
+            "auto_snapshot": true,
+            "mode": "on_demand",
+            "created_at": "2026-10-01T12:00:00Z",
+            "deleting_at": null,
+            "delete_error": null,
+            "current_snapshot": "20261114T031240Z",
+            "last_run": run_summary("sync", "succeeded")
+        })),
+        (status = 400, body = ErrorBody, description = "Not a mode: `invalid`"),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such mirror: `not_found`"),
+        (status = 409, body = ErrorBody, description = "It is being removed: `conflict`"),
+    ))]
+fn update_mirror() {}
 
 /// Sync a mirror now
 ///

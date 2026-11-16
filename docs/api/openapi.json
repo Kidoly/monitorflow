@@ -10134,6 +10134,182 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "Switch a mirror between full and on demand",
+        "description": "Sets what the mirror's next sync downloads (ADR-0142): `full`, every\npackage, or `on_demand`, only the indexes, each package being fetched\nfrom the upstream the first time a server asks for it. Snapshots made\nbefore keep their mode and stay served; once a mirror is on demand,\nits full snapshots that nothing uses go at the next retention pass.\nNothing is downloaded until the next sync. Audited as `mirror.mode`.\n\nGlobal administrators only, as for the list.",
+        "operationId": "update_mirror",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The mirror's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMirrorRequest"
+              },
+              "example": {
+                "mode": "on_demand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The mirror",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorView"
+                },
+                "example": {
+                  "architectures": [
+                    "amd64"
+                  ],
+                  "auto_snapshot": true,
+                  "components": [
+                    "main",
+                    "non-free-firmware"
+                  ],
+                  "created_at": "2026-10-01T12:00:00Z",
+                  "current_snapshot": "20261114T031240Z",
+                  "delete_error": null,
+                  "deleting_at": null,
+                  "distribution": "bookworm",
+                  "family": "apt",
+                  "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "last_run": {
+                    "error": null,
+                    "finished_at": "2026-11-14T03:12:40Z",
+                    "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                    "kind": "sync",
+                    "requested_by": "user:9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                    "snapshot_id": null,
+                    "started_at": "2026-11-14T03:00:00Z",
+                    "state": "succeeded",
+                    "trigger": "manual"
+                  },
+                  "mode": "on_demand",
+                  "name": "debian-12",
+                  "sync_interval_s": 86400,
+                  "upstream_url": "https://deb.debian.org/debian"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a mode: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such mirror: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It is being removed: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/mirrors/{id}/snapshots": {
@@ -27876,6 +28052,17 @@
           "distribution": {
             "type": "string",
             "description": "An `id` of the catalog."
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MirrorMode",
+                "description": "`on_demand` (the default) or `full` (ADR-0142)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -29755,6 +29942,8 @@
           "name",
           "family",
           "size_bytes",
+          "on_demand_size_bytes",
+          "index_bytes",
           "added"
         ],
         "properties": {
@@ -29769,21 +29958,40 @@
             "type": "string",
             "description": "What `POST /api/v1/mirrors` takes, such as `debian-12`."
           },
+          "index_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What on demand needs at least: the indexes, in bytes.",
+            "minimum": 0
+          },
           "name": {
             "type": "string",
             "description": "Its name on screen, such as `Debian 12`."
+          },
+          "on_demand_problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it cannot be added on demand now: too little free space even\nfor its indexes."
+          },
+          "on_demand_size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "About what they take on demand (ADR-0142): indexes and the packages\na fleet typically installs, in bytes.",
+            "minimum": 0
           },
           "problem": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Why it cannot be added now: too little free space."
+            "description": "Why it cannot be added in full mode now: too little free space."
           },
           "size_bytes": {
             "type": "integer",
             "format": "int64",
-            "description": "About what its mirrors take on disk, in bytes.",
+            "description": "About what its mirrors take on disk in full mode, in bytes.",
             "minimum": 0
           }
         }
@@ -38675,6 +38883,20 @@
             "description": "In the metric's unit: a ratio from 0 to 1 for `_ratio` metrics."
           }
         }
+      },
+      "UpdateMirrorRequest": {
+        "type": "object",
+        "description": "Body of `PATCH /api/mirrors/{id}`.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/MirrorMode",
+            "description": "What the next sync downloads (ADR-0142)."
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateRun": {
         "type": "object",
