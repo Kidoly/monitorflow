@@ -100,3 +100,75 @@
 .add code {
   font-family: var(--mono);
 }
+
+/* The mode of a mirror to add (ADR-0142): one choice per line. */
+.modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 13px;
+}
+
+.modes legend {
+  margin-bottom: 4px;
+  padding: 0;
+  font-weight: 600;
+}
+
+.mode {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* The storage of on-demand mirrors, with its cap. */
+.cache {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.cache h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cache p {
+  margin: 0;
+}
+
+.capForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.capForm label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.capForm input {
+  width: 120px;
+}
+
+/* The mode of a mirror on its page. */
+.modeLine {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modeLine p {
+  margin: 0;
+}

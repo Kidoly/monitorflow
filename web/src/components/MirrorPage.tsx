@@ -145,10 +145,49 @@ export function MirrorPage({ id }: { id: string | null }) {
           { label: t("mirrors.tile.nextSync"), value: nextSyncText(mirror, lastSync, updatedAt), tone: "neutral" },
         ]}
       />
+      {!mirror.deleting_at && <ModeLine mirror={mirror} onSwitched={refresh} />}
       <Snapshots mirror={mirror} action={emptyAction} />
       <Runs mirror={mirror} open={open} onToggle={toggle} action={emptyAction} />
       {!mirror.deleting_at && <RemoveMirror mirror={mirror} onRemoving={refresh} />}
     </div>
+  );
+}
+
+/** The mode of the mirror, what it means, and the way to the other one (ADR-0142). */
+function ModeLine({ mirror, onSwitched }: { mirror: MirrorDetail; onSwitched: () => void }) {
+  const [switched, setSwitched] = useState(false);
+  const onDemand = mirror.mode === "on_demand";
+  const name = mirror.name;
+  return (
+    <section className={styles.modeLine} aria-label={t("mirrors.mode.label")}>
+      <p>
+        <strong>{t("mirrors.mode.current", { mode: t(`mirrors.mode.${mirror.mode}`) })}</strong>{" "}
+        <span className={styles.dim}>{onDemand ? t("mirrors.mode.onDemandHelp") : t("mirrors.mode.fullHelp")}</span>
+      </p>
+      {switched && (
+        <Banner tone="ok" role="status">
+          {t("mirrors.mode.switched")}
+        </Banner>
+      )}
+      <div>
+        <InlineConfirm
+          key={mirror.mode}
+          trigger={onDemand ? t("mirrors.mode.switchToFull") : t("mirrors.mode.switchToOnDemand")}
+          triggerVariant="default"
+          title={onDemand ? t("mirrors.mode.toFullTitle", { name }) : t("mirrors.mode.toOnDemandTitle", { name })}
+          consequence={onDemand ? t("mirrors.mode.toFull") : t("mirrors.mode.toOnDemand")}
+          confirmLabel={onDemand ? t("mirrors.mode.confirmFull", { name }) : t("mirrors.mode.confirmOnDemand", { name })}
+          confirmVariant="k"
+          pendingLabel={t("mirrors.mode.switching")}
+          onConfirm={async () => {
+            await api.setMirrorMode(mirror.id, onDemand ? "full" : "on_demand");
+            setSwitched(true);
+            onSwitched();
+          }}
+          describeError={(e) => t("mirrors.mode.notSwitched", { error: describeError(e) })}
+        />
+      </div>
+    </section>
   );
 }
 

@@ -118,6 +118,33 @@ describe("MirrorPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("says what on demand means and switches to full after a confirmation", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      [PATH]: [
+        { status: 200, body: mirrorDetail({ mode: "on_demand" }) },
+        { status: 200, body: mirrorDetail({ mode: "full" }) },
+      ],
+      [`PATCH /api/mirrors/${MIRROR_ID}`]: { status: 200, body: mirror({ mode: "full" }) },
+    });
+    render(<MirrorPage id={MIRROR_ID} />);
+    const section = await screen.findByRole("region", { name: "Mode" });
+    expect(section).toHaveTextContent("Mode: On demand.");
+    expect(section).toHaveTextContent("Without Internet access, a package never fetched cannot be installed");
+
+    await user.click(within(section).getByRole("button", { name: "Switch to full" }));
+    expect(section).toHaveTextContent("Copy every package of debian-bookworm?");
+    expect(section).toHaveTextContent("The next sync downloads every package");
+    await user.click(within(section).getByRole("button", { name: "Switch debian-bookworm to full" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/mirrors/${MIRROR_ID}`,
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ mode: "full" }) }),
+    );
+    expect(await within(section).findByRole("status")).toHaveTextContent("The next sync applies it");
+    expect(await screen.findByText("Mode: Full.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Switch to on demand" })).toBeInTheDocument();
+  });
+
   it("removes a mirror after a confirmation that says what happens", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({

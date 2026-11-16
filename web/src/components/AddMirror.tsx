@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { rich, t } from "@/i18n";
-import { ApiError, type MirrorDistribution, api, describeError } from "@/lib/api";
+import { ApiError, type MirrorDistribution, type MirrorMode, api, describeError } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -13,21 +13,25 @@ import { type Column, DataTable, PrimaryCell } from "./ui/DataTable";
 import { Banner, ErrorState, LoadingBlock } from "./ui/PageState";
 import { Label } from "./ui/StatusLabel";
 
+const MODES: MirrorMode[] = ["on_demand", "full"];
+
 /**
  * Adding a distribution of the catalog (ADR-0067): one click, with what it
- * will take on this server's disk. What cannot be added says why on its
+ * will take on this server's disk in either mode, on demand by default
+ * (ADR-0142). What cannot be added in the chosen mode says why on its
  * row. `onAdded` gets the distribution's name.
  */
 export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => void; onClose: () => void }) {
   const { data, error, refresh } = usePolledData(api.mirrorCatalog);
   const [busy, setBusy] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
+  const [mode, setMode] = useState<MirrorMode>("on_demand");
 
   const add = async (distribution: MirrorDistribution) => {
     setBusy(distribution.id);
     setRefused(null);
     try {
-      await api.addMirror(distribution.id);
+      await api.addMirror(distribution.id, mode);
       onAdded(distribution.name);
     } catch (e) {
       setRefused(
@@ -64,8 +68,13 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
       header: t("mirrors.column.distribution"),
       cell: (d) => <PrimaryCell title={d.name} sub={d.family === "apt" ? t("mirrors.apt") : t("mirrors.dnf")} />,
     },
-    { key: "size", header: t("mirrors.column.diskSpace"), cell: (d) => t("mirrors.about", { size: formatBytes(d.size_bytes) }) },
+    {
+      key: "size",
+      header: t("mirrors.column.diskSpace"),
+      cell: (d) => t("mirrors.sizes", { full: formatBytes(d.size_bytes), onDemand: formatBytes(d.on_demand_size_bytes) }),
+    },
   ];
+  const doesNotFit = (d: MirrorDistribution) => (mode === "full" ? d.problem : d.on_demand_problem) !== null;
 
   return (
     <section className={styles.add} aria-label={t("mirrors.add")}>
@@ -78,6 +87,20 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
         </Banner>
       )}
       {refused && <Banner tone="bad">{refused}</Banner>}
+      <fieldset className={styles.modes}>
+        <legend>{t("mirrors.mode.label")}</legend>
+        {MODES.map((m) => (
+          <label key={m} className={styles.mode}>
+            <input type="radio" name="mirror-mode" value={m} checked={mode === m} onChange={() => setMode(m)} />
+            <span>
+              <strong>{t(`mirrors.mode.${m}`)}</strong>{" "}
+              <span className={styles.dim}>
+                {m === "on_demand" ? t("mirrors.mode.onDemandHelp") : t("mirrors.mode.fullHelp")}
+              </span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
       <p className={styles.note}>
         {data.disk
           ? `${t("mirrors.free", { free: formatBytes(data.disk.free_bytes), total: formatBytes(data.disk.total_bytes) })} `
@@ -93,7 +116,7 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
         rowActions={(d) =>
           d.added ? (
             <Label tone="neutral">{t("mirrors.addedLabel")}</Label>
-          ) : d.problem ? (
+          ) : doesNotFit(d) ? (
             // The server's sentence is in English; the free space is in the
             // header and the size in the "Disk space" column.
             <span className={styles.dim}>{t("mirrors.notEnoughSpace")}</span>

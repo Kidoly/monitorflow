@@ -13,6 +13,7 @@ export function mirror(overrides: Partial<Mirror> = {}): Mirror {
     architectures: ["amd64", "arm64"],
     sync_interval_s: 43_200,
     auto_snapshot: true,
+    mode: "full",
     created_at: "2026-10-01T10:00:00Z",
     deleting_at: null,
     delete_error: null,
