@@ -13,6 +13,7 @@ import {
   api,
   describeError,
 } from "@/lib/api";
+import { rich, t } from "@/i18n";
 import {
   type CheckType,
   type FormErrors,
@@ -96,15 +97,15 @@ export function MonitoringSettings({ target, canEdit }: { target: Target; canEdi
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher);
   if (!data || !updatedAt) {
     return error ? (
-      <ErrorState what="the alerts and checks" error={describeError(error)} onRetry={refresh} />
+      <ErrorState what={t("monitoring.what")} error={describeError(error)} onRetry={refresh} />
     ) : (
-      <LoadingBlock label="Loading alerts and checks" />
+      <LoadingBlock label={t("monitoring.loading")} />
     );
   }
   return (
     <div className={styles.panel}>
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
-      {!canEdit && <Banner tone="info">You can see these settings. Changing them needs an operator role on this site.</Banner>}
+      {!canEdit && <Banner tone="info">{t("monitoring.readOnly")}</Banner>}
       <Alerts target={target} data={data} canEdit={canEdit} onChanged={refresh} />
       <Checks target={target} data={data} canEdit={canEdit} onChanged={refresh} />
     </div>
@@ -113,9 +114,13 @@ export function MonitoringSettings({ target, canEdit }: { target: Target; canEdi
 
 /** "Built-in", "Site default", "This server only": where a value comes from. */
 function Origin({ target, origin }: { target: Target; origin: EffectiveThreshold["origin"] }) {
-  if (origin === "default") return <Label tone="neutral">Built-in</Label>;
-  if (target.kind === "site") return <Label tone="info">Set for this site</Label>;
-  return origin === "site" ? <Label tone="neutral">Site default</Label> : <Label tone="info">This server only</Label>;
+  if (origin === "default") return <Label tone="neutral">{t("monitoring.origin.builtin")}</Label>;
+  if (target.kind === "site") return <Label tone="info">{t("monitoring.origin.site")}</Label>;
+  return origin === "site" ? (
+    <Label tone="neutral">{t("monitoring.origin.siteDefault")}</Label>
+  ) : (
+    <Label tone="info">{t("monitoring.origin.server")}</Label>
+  );
 }
 
 function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Data; canEdit: boolean; onChanged: () => void }) {
@@ -126,16 +131,16 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
     <section className={admin.section} aria-labelledby={titleId}>
       <div className={admin.sectionHead}>
         <h2 id={titleId} className={admin.sectionTitle}>
-          When to alert
+          {t("monitoring.whenToAlert")}
         </h2>
         <span className={admin.dim}>
           {target.kind === "server"
-            ? `Values set for this server replace the defaults of ${target.siteName}.`
-            : `Every server of ${target.siteName} uses these unless it has its own value.`}
+            ? t("monitoring.serverReplaces", { site: target.siteName })
+            : t("monitoring.siteDefaults", { site: target.siteName })}
         </span>
       </div>
       {data.thresholds.length === 0 ? (
-        <p className={admin.sectionNote}>No alerts. Add a check below and it comes with one.</p>
+        <p className={admin.sectionNote}>{t("monitoring.noAlerts")}</p>
       ) : (
         <ul className={styles.list}>
           {data.thresholds.map((rule) => {
@@ -206,30 +211,32 @@ function AlertActions({
       await api.deleteThreshold(rule.threshold_id!);
       onChanged();
     } catch (e) {
-      setError(`It was not changed. ${describeError(e)}`);
+      setError(t("monitoring.notChanged", { error: describeError(e) }));
     }
   }
-  const inherited = target.kind === "server" ? "the site default" : "the built-in default";
+  const inherited = target.kind === "server" ? t("monitoring.useSiteDefault") : t("monitoring.useBuiltin");
   return (
     <span className={styles.actions}>
       {rule.enabled ? (
         <Button size="small" onClick={onEdit}>
-          Edit
+          {t("monitoring.edit")}
         </Button>
       ) : own ? (
         <Button size="small" onClick={() => void reset()}>
-          Turn back on
+          {t("monitoring.turnBackOn")}
         </Button>
       ) : (
         target.kind === "server" && (
           <span className={admin.dim}>
-            Turned off for the <Link href={siteHref(target.siteId)}>whole site</Link>
+            {rich("monitoring.offForSite", {
+              site: <Link href={siteHref(target.siteId)}>{t("monitoring.wholeSite")}</Link>,
+            })}
           </span>
         )
       )}
       {own && rule.enabled && (
         <Button size="small" onClick={() => void reset()}>
-          Use {inherited}
+          {inherited}
         </Button>
       )}
       {error && (
@@ -272,7 +279,7 @@ function ThresholdEditor({
       await saveThreshold(owner, request);
       onDone();
     } catch (e) {
-      setFailure(`It was not saved. ${describeError(e)}`);
+      setFailure(t("monitoring.notSaved", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -292,11 +299,11 @@ function ThresholdEditor({
   const set = (key: keyof ThresholdForm) => (value: string) => setForm((f) => ({ ...f, [key]: value }));
   const unit = shape.type === "percent" ? "%" : shape.type === "number" ? shape.unit : undefined;
   return (
-    <form className={styles.editor} onSubmit={submit} noValidate aria-label="Edit alert">
+    <form className={styles.editor} onSubmit={submit} noValidate aria-label={t("monitoring.editAlert")}>
       <div className={styles.fields}>
         {shape.type === "event" ? (
           <label className={admin.field}>
-            Raise
+            {t("monitoring.raise")}
             <select
               className={fieldClass}
               value={form.severity}
@@ -311,39 +318,54 @@ function ThresholdEditor({
           </label>
         ) : (
           <>
-            <Field label="Warning at" unit={unit} value={form.warning} onChange={set("warning")} error={errors.warning} hint="Empty: no warning." />
-            <Field label="Critical at" unit={unit} value={form.critical} onChange={set("critical")} error={errors.critical} hint="Empty: no critical." />
+            <Field
+              label={t("monitoring.warningAt")}
+              unit={unit}
+              value={form.warning}
+              onChange={set("warning")}
+              error={errors.warning}
+              hint={t("monitoring.noWarning")}
+            />
+            <Field
+              label={t("monitoring.criticalAt")}
+              unit={unit}
+              value={form.critical}
+              onChange={set("critical")}
+              error={errors.critical}
+              hint={t("monitoring.noCritical")}
+            />
           </>
         )}
         <Field
-          label="For at least"
-          unit="min"
+          label={t("monitoring.forAtLeast")}
+          unit={t("format.unit.minute")}
           value={form.minutes}
           onChange={set("minutes")}
           error={errors.minutes}
-          hint="0 alerts on the first bad value."
+          hint={t("monitoring.firstBadValue")}
         />
       </div>
       <SlowNote durationS={Math.max(0, Number(form.minutes) || 0) * 60} intervalS={intervalS} />
       {target.kind === "server" && (
         <fieldset className={styles.scope}>
-          <legend>Apply to</legend>
+          <legend>{t("monitoring.applyTo")}</legend>
           <label>
-            <input type="radio" name="scope" checked={scope === "own"} onChange={() => setScope("own")} /> This server only
+            <input type="radio" name="scope" checked={scope === "own"} onChange={() => setScope("own")} />{" "}
+            {t("monitoring.origin.server")}
           </label>
           <label>
-            <input type="radio" name="scope" checked={scope === "site"} onChange={() => setScope("site")} /> Every server of{" "}
-            {target.siteName}
-            {rule.origin === "server" && <span className={admin.dim}> (this server keeps its own value)</span>}
+            <input type="radio" name="scope" checked={scope === "site"} onChange={() => setScope("site")} />{" "}
+            {t("monitoring.everyServerOf", { site: target.siteName })}
+            {rule.origin === "server" && <span className={admin.dim}> {t("monitoring.keepsOwn")}</span>}
           </label>
         </fieldset>
       )}
       <div className={styles.buttons}>
         <Button variant="k" type="submit" disabled={busy}>
-          {busy ? "Saving…" : "Save"}
+          {busy ? t("monitoring.saving") : t("monitoring.save")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("monitoring.cancel")}
         </Button>
         <Button
           variant="danger"
@@ -361,7 +383,7 @@ function ThresholdEditor({
             })
           }
         >
-          Turn this alert off
+          {t("monitoring.turnAlertOff")}
         </Button>
         {failure && (
           <span role="alert" className={admin.hintError}>
@@ -441,7 +463,7 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
   const [adding, setAdding] = useState(false);
   const layer = target.kind === "server" ? "server" : "site";
   const off = data.rows.filter((r) => !r.enabled);
-  const here = target.kind === "server" ? "this server" : "this site";
+  const here = target.kind === "server" ? t("monitoring.thisServer") : t("monitoring.thisSite");
 
   async function remove(sensor: EffectiveSensor) {
     await stopChecking(target, sensor, sensor.origin === layer && sensor.entry_id !== null);
@@ -452,12 +474,12 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
     <section className={admin.section} aria-labelledby={titleId}>
       <div className={admin.sectionHead}>
         <h2 id={titleId} className={admin.sectionTitle}>
-          What is checked
+          {t("monitoring.whatIsChecked")}
         </h2>
         <BuiltinInterval target={target} interval={data.interval} canEdit={canEdit} onChanged={onChanged} />
         {canEdit && !adding && (
           <Button variant="k" size="small" className={styles.push} onClick={() => setAdding(true)}>
-            Add a check
+            {t("monitoring.addCheck")}
           </Button>
         )}
       </div>
@@ -482,7 +504,7 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
         />
       )}
       {data.sensors.length === 0 && off.length === 0 ? (
-        <p className={admin.sectionNote}>Nothing is checked. Use Add a check to watch a port, a service, a log or a script.</p>
+        <p className={admin.sectionNote}>{t("monitoring.nothingChecked")}</p>
       ) : (
         <ul className={styles.list}>
           {data.sensors.map((sensor) => {
@@ -503,14 +525,18 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
                   <span className={styles.actions}>
                     <InlineConfirm
                       layout="row"
-                      trigger={own ? "Remove" : "Turn off"}
-                      triggerName={`${own ? "Remove" : "Turn off"} ${title}`}
-                      title={own ? `Remove ${title} and its alert?` : `Stop checking ${title} on ${here}?`}
-                      consequence={own ? "" : "You can turn it back on here."}
-                      confirmLabel={own ? "Remove" : "Turn off"}
-                      pendingLabel="Saving…"
+                      trigger={own ? t("monitoring.remove") : t("monitoring.turnOff")}
+                      triggerName={
+                        own ? t("monitoring.removeName", { title }) : t("monitoring.turnOffName", { title })
+                      }
+                      title={
+                        own ? t("monitoring.removeTitle", { title }) : t("monitoring.stopTitle", { title, here })
+                      }
+                      consequence={own ? "" : t("monitoring.turnBackOnHere")}
+                      confirmLabel={own ? t("monitoring.remove") : t("monitoring.turnOff")}
+                      pendingLabel={t("monitoring.saving")}
                       onConfirm={() => remove(sensor)}
-                      describeError={(e) => `It was not changed. ${describeError(e)}`}
+                      describeError={(e) => t("monitoring.notChanged", { error: describeError(e) })}
                     />
                   </span>
                 )}
@@ -520,7 +546,10 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
           {off.map((row) => (
             <li key={row.id} className={cx(styles.item, styles.row)}>
               <span className={cx(styles.text, admin.dim)}>
-                {checkTitle({ ...row, origin: layer, entry_id: row.id, params: stringParams(row.params) })}: turned off for {here}
+                {t("monitoring.offFor", {
+                  title: checkTitle({ ...row, origin: layer, entry_id: row.id, params: stringParams(row.params) }),
+                  here,
+                })}
               </span>
               {canEdit && (
                 <span className={styles.actions}>
@@ -548,27 +577,29 @@ export function BuiltinInterval({
   onChanged: () => void;
 }) {
   const siteId = target.kind === "server" ? target.siteId : target.id;
-  const where = target.kind === "server" ? `on every server of ${target.siteName}` : "on every server of this site";
+  const where =
+    target.kind === "server" ? t("monitoring.onEveryServerOf", { site: target.siteName }) : t("monitoring.onEveryServerHere");
   if (!canEdit) {
     return (
-      <span className={admin.dim}>
-        Built-in checks run {every(interval.check_interval_ms)} {where}.
-      </span>
+      <span className={admin.dim}>{t("monitoring.builtinRun", { every: every(interval.check_interval_ms), where })}</span>
     );
   }
   return (
     <span className={cx(admin.dim, styles.builtin)}>
-      Built-in checks run{" "}
-      <IntervalControl
-        label="How often the built-in checks run"
-        value={interval.check_interval_origin === "site" ? interval.check_interval_ms : null}
-        inherit={{ ms: BUILTIN_INTERVAL_MS, label: "built-in" }}
-        save={async (ms) => {
-          await api.setCheckInterval(siteId, ms);
-          onChanged();
-        }}
-      />{" "}
-      {where}.
+      {rich("monitoring.builtinRun", {
+        every: (
+          <IntervalControl
+            label={t("monitoring.builtinHowOften")}
+            value={interval.check_interval_origin === "site" ? interval.check_interval_ms : null}
+            inherit={{ ms: BUILTIN_INTERVAL_MS, label: t("monitoring.inherit.builtin") }}
+            save={async (ms) => {
+              await api.setCheckInterval(siteId, ms);
+              onChanged();
+            }}
+          />
+        ),
+        where,
+      })}
     </span>
   );
 }
@@ -598,10 +629,15 @@ function CheckInterval({
   const row = data.rows.find((r) => r.enabled && r.name === sensor.name && r.instance === sensor.instance);
   const inherited = inheritedInterval(target, data, sensor);
   const inherit: Inherit | undefined =
-    inherited === undefined ? undefined : { ms: inherited, label: target.kind === "server" ? "site default" : "default" };
+    inherited === undefined
+      ? undefined
+      : {
+          ms: inherited,
+          label: target.kind === "server" ? t("monitoring.inherit.siteDefault") : t("monitoring.inherit.default"),
+        };
   return (
     <IntervalControl
-      label={`How often to check ${title}`}
+      label={t("monitoring.howOftenCheck", { title })}
       value={row || !inherit ? sensor.interval_ms : null}
       inherit={inherit}
       save={async (ms) => {
@@ -628,10 +664,12 @@ export function TurnBackOn({ id, onChanged }: { id: string; onChanged: () => voi
       <Button
         size="small"
         onClick={() =>
-          void api.deleteSensor(id).then(onChanged, (e: unknown) => setError(`It was not changed. ${describeError(e)}`))
+          void api
+            .deleteSensor(id)
+            .then(onChanged, (e: unknown) => setError(t("monitoring.notChanged", { error: describeError(e) })))
         }
       >
-        Turn back on
+        {t("monitoring.turnBackOn")}
       </Button>
       {error && (
         <span role="alert" className={admin.hintError}>
@@ -731,21 +769,20 @@ function CheckForm({
     } catch (e) {
       setFailure(
         e instanceof ApiError && e.status === 409
-          ? "This check already exists here."
-          : `The check was not added. ${describeError(e)}`,
+          ? t("monitoring.exists")
+          : t("monitoring.notAdded", { error: describeError(e) }),
       );
     } finally {
       setBusy(false);
     }
   }
 
-  const severity = type.severity === "critical" ? "a critical alert" : "a warning";
   return (
-    <form className={styles.form} onSubmit={(e) => void submit(e)} noValidate aria-label="Add a check">
+    <form className={styles.form} onSubmit={(e) => void submit(e)} noValidate aria-label={t("monitoring.addCheckForm")}>
       <div className={styles.formHead}>
         <h3 className={styles.formTitle}>{type.label}</h3>
         <Button size="small" onClick={onBack} disabled={busy}>
-          Back to the catalogue
+          {t("monitoring.backToCatalogue")}
         </Button>
       </div>
       <div className={styles.fields}>
@@ -762,40 +799,39 @@ function CheckForm({
         ))}
       </div>
       <div className={admin.field}>
-        <span>How often</span>
-        <IntervalSelect label="How often to check" value={intervalMs} onChange={(ms) => setIntervalMs(ms ?? initialInterval)} />
+        <span>{t("monitoring.howOften")}</span>
+        <IntervalSelect label={t("monitoring.howOftenToCheck")} value={intervalMs} onChange={(ms) => setIntervalMs(ms ?? initialInterval)} />
       </div>
       {type.noAlert ? (
-        <p className={admin.fieldNote}>
-          A plugin&apos;s results show among the server&apos;s metrics; add an alert on one from there.
-        </p>
+        <p className={admin.fieldNote}>{t("monitoring.pluginNoAlert")}</p>
       ) : (
         <>
           <label className={styles.check}>
-            <input type="checkbox" checked={alert} onChange={(e) => setAlert(e.target.checked)} /> Raise {severity} when it
-            fails
+            <input type="checkbox" checked={alert} onChange={(e) => setAlert(e.target.checked)} />{" "}
+            {type.severity === "critical" ? t("monitoring.raiseCritical") : t("monitoring.raiseWarning")}
           </label>
           {alert && <SlowNote durationS={type.duration_s} intervalS={intervalMs / 1000} />}
         </>
       )}
       {target.kind === "server" && (
         <fieldset className={styles.scope}>
-          <legend>Add to</legend>
+          <legend>{t("monitoring.addTo")}</legend>
           <label>
-            <input type="radio" name="add-scope" checked={scope === "own"} onChange={() => setScope("own")} /> This server only
+            <input type="radio" name="add-scope" checked={scope === "own"} onChange={() => setScope("own")} />{" "}
+            {t("monitoring.origin.server")}
           </label>
           <label>
-            <input type="radio" name="add-scope" checked={scope === "site"} onChange={() => setScope("site")} /> Every server of{" "}
-            {target.siteName}
+            <input type="radio" name="add-scope" checked={scope === "site"} onChange={() => setScope("site")} />{" "}
+            {t("monitoring.everyServerOf", { site: target.siteName })}
           </label>
         </fieldset>
       )}
       <div className={styles.buttons}>
         <Button variant="k" type="submit" disabled={busy}>
-          {busy ? "Adding…" : "Add check"}
+          {busy ? t("monitoring.adding") : t("monitoring.addCheckButton")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("monitoring.cancel")}
         </Button>
         {failure && (
           <span role="alert" className={admin.hintError}>

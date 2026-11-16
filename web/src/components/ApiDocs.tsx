@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback } from "react";
 
+import { rich, t } from "@/i18n";
 import { type OpenApiDocument, type OpenApiOperation, type OpenApiSchema, api, describeError } from "@/lib/api";
 import { API_KEYS_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
@@ -80,17 +81,18 @@ export function ApiDocsPage() {
   const { data, error, refresh } = usePolledData(fetcher);
   const header = (
     <PageHeader
-      title="API documentation"
+      title={t("apiKeys.docs.title")}
       meta={
         <>
-          Version 1 at <code>/api/v1</code> · <a href="/api/v1/openapi.json">OpenAPI document</a> ·{" "}
-          <Link href={API_KEYS_PATH}>API keys</Link>
+          {rich("apiKeys.docs.version", { path: <code>/api/v1</code> })} ·{" "}
+          <a href="/api/v1/openapi.json">{t("apiKeys.docs.document")}</a> ·{" "}
+          <Link href={API_KEYS_PATH}>{t("apiKeys.title")}</Link>
         </>
       }
       actions={
         // Served by the central server, not this app: a plain link (ADR-0135).
         <a className={buttonClass({ variant: "k" })} href="/api/v1/swagger/" target="_blank" rel="noopener">
-          Try it out
+          {t("apiKeys.docs.try")}
         </a>
       }
     />
@@ -100,7 +102,7 @@ export function ApiDocsPage() {
       <div className={admin.page}>
         {header}
         {error ? (
-          <ErrorState what="the documentation" error={describeError(error)} onRetry={refresh} />
+          <ErrorState what={t("apiKeys.docs.what")} error={describeError(error)} onRetry={refresh} />
         ) : (
           <LoadingBlock />
         )}
@@ -117,8 +119,10 @@ export function ApiDocsPage() {
         </p>
       )}
       <p className={admin.footnote}>
-        Every operation may also answer {COMMON_ERRORS.join(", ")} with an <code className={admin.mono}>Error</code>:
-        bad parameters, no valid key, not allowed, not found or outside the key&apos;s reach, and over the rate limit.
+        {rich("apiKeys.docs.errors", {
+          statuses: COMMON_ERRORS.join(", "),
+          error: <code className={admin.mono}>Error</code>,
+        })}
       </p>
       <pre className={admin.code}>{'curl -H "Authorization: Bearer mfk_…" https://<this server>/api/v1/servers'}</pre>
       {operationsByTag(data).map(([tag, ops]) => (
@@ -134,9 +138,9 @@ export function ApiDocsPage() {
           </div>
         </section>
       ))}
-      <section className={admin.section} aria-label="Types">
+      <section className={admin.section} aria-label={t("apiKeys.docs.types")}>
         <div className={admin.sectionHead}>
-          <h2 className={admin.sectionTitle}>Types</h2>
+          <h2 className={admin.sectionTitle}>{t("apiKeys.docs.types")}</h2>
         </div>
         <div className={admin.sectionBody}>
           {Object.entries(schemas).map(([name, schema]) => (
@@ -154,10 +158,10 @@ export function ApiDocsPage() {
                       <span className={admin.mono}>{field}</span>{" "}
                       <span className={admin.dim}>
                         {typeWords(s)}
-                        {schema.required?.includes(field) ? "" : ", optional"}
+                        {schema.required?.includes(field) ? "" : t("apiKeys.docs.optional")}
                         {s.description && (
                           <>
-                            {" — "}
+                            {t("apiKeys.docs.descriptionStart")}
                             <WithCode text={s.description} />
                           </>
                         )}
@@ -200,10 +204,10 @@ function Operation({ method, path, op }: { method: string; path: string; op: Ope
             <span className={admin.mono}>{p.name}</span>{" "}
             <span className={admin.dim}>
               {p.in}, {typeWords(p.schema)}
-              {p.required ? "" : ", optional"}
+              {p.required ? "" : t("apiKeys.docs.optional")}
               {p.description && (
                 <>
-                  {" — "}
+                  {t("apiKeys.docs.descriptionStart")}
                   <WithCode text={p.description} />
                 </>
               )}

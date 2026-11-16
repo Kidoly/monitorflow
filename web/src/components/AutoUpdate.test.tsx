@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { AutoUpdateStatus } from "@/lib/api";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -61,6 +62,20 @@ const halted = (): AutoUpdateStatus => {
 
 describe("AutoUpdatePage", () => {
   beforeEach(() => setUrl("/admin/updates/"));
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch({ "GET /api/auto-update": { status: 200, body: status() } });
+    render(
+      <As user={globalAdmin}>
+        <AutoUpdatePage />
+      </As>,
+    );
+    expect(await screen.findByRole("heading", { name: "Mises à jour automatiques" })).toBeInTheDocument();
+    expect(screen.getByText("Déploiement de 0.3.0 : 1 en cours, 4 en attente.")).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Agents par site" })).toHaveTextContent("3 à jour · 1 en cours · 4 en attente");
+    expect(summary(halted(), halted().agents)[0]).toBe("Interrompu\u00a0: 2 automatic updates to 0.3.0 failed (threshold 2).");
+  });
 
   it("is for global administrators only", () => {
     render(
