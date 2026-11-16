@@ -73,7 +73,8 @@ async fn call_with(
         .header("cookie", cookie)
         .body(Body::from(body.to_string()))
         .unwrap();
-    let response = api::router(state).oneshot(request).await.unwrap();
+    // As served: `/api` and the public `/api/v1`.
+    let response = api::v1::app(state).oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
         .await
@@ -535,6 +536,10 @@ db_tests! {
         assert_eq!(status_body["agents"]["totals"]["waiting_for_relay"], 1);
         assert!(body["peers"].as_array().unwrap().iter().all(|p| p["error"].is_null()));
 
+        // The public API serves the same list (ADR-0101).
+        let (status, v1) = get("/api/v1/auto-update/agent/peers?state=waiting".into()).await;
+        assert_eq!(status, StatusCode::OK, "{v1}");
+        assert_eq!(v1, body);
         // Bounded: a page and the total.
         let (_, body) = get("/api/auto-update/agent/peers?state=waiting&limit=1&offset=1".into()).await;
         assert_eq!(names(&body), ["paris-2"]);
