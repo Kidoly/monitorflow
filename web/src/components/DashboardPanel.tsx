@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { t } from "@/i18n";
 import type { DashboardData, Panel, PanelData } from "@/lib/api";
 import { formatNumber, unitOf } from "@/lib/format";
 import { incidentTitle } from "@/lib/incidents";
@@ -19,9 +20,9 @@ import styles from "./Dashboards.module.css";
 export function emptyReason(panel: Panel, data: PanelData): string | null {
   if (data.servers > 0) return null;
   if (data.unavailable > 0 || panel.servers.kind !== "all") {
-    return "None of these servers can be shown: they were removed, or you cannot see them.";
+    return t("display.panel.unavailable");
   }
-  return "No servers here yet.";
+  return t("display.panel.noServers");
 }
 
 function Frame({ panel, children, note }: { panel: Panel; children: ReactNode; note?: ReactNode }) {
@@ -53,13 +54,13 @@ export function DashboardPanel({
   const format = (v: number) => formatSensorValue(metric, v);
   const missing =
     data && data.unavailable > 0 && data.servers > 0
-      ? `${data.unavailable} of the chosen servers ${data.unavailable === 1 ? "is" : "are"} removed or not visible to you.`
+      ? t("display.panel.missing", { count: data.unavailable })
       : undefined;
 
   if (!data || !window) {
     return (
       <Frame panel={panel}>
-        <div className={styles.loading} aria-busy="true" role="status" aria-label={`Loading ${panel.title}`} />
+        <div className={styles.loading} aria-busy="true" role="status" aria-label={t("display.panel.loading", { title: panel.title })} />
       </Frame>
     );
   }
@@ -88,7 +89,7 @@ export function DashboardPanel({
         <div className={styles.chart}>
           <TimeChart
             title={panel.title}
-            subtitle={`${data.servers} ${data.servers === 1 ? "server" : "servers"}`}
+            subtitle={t("display.panel.servers", { count: data.servers })}
             series={data.series.map((s) => ({ label: s.label, points: s.points }))}
             start={window.start}
             end={window.end}
@@ -96,7 +97,7 @@ export function DashboardPanel({
             format={format}
             min={ratio ? 0 : undefined}
             max={ratio ? 1 : undefined}
-            emptyText="No data in this range. Is this metric still collected on these servers?"
+            emptyText={t("display.panel.noData")}
           />
           {missing && <p className={styles.note}>{missing}</p>}
         </div>
@@ -114,8 +115,8 @@ export function DashboardPanel({
           </p>
           <p className={styles.muted}>
             {data.value === null
-              ? "No recent value. Is this metric still collected on these servers?"
-              : `Now, of ${data.servers} ${data.servers === 1 ? "server" : "servers"}`}
+              ? t("display.panel.noValue")
+              : t("display.panel.now", { count: data.servers })}
           </p>
         </Frame>
       );
@@ -123,7 +124,7 @@ export function DashboardPanel({
       return (
         <Frame panel={panel} note={missing}>
           {data.rows.length === 0 ? (
-            <p className={styles.muted}>No recent values. Is this metric still collected on these servers?</p>
+            <p className={styles.muted}>{t("display.panel.noValues")}</p>
           ) : (
             <ol className={styles.rows}>
               {data.rows.map((row) => (
@@ -144,19 +145,21 @@ export function DashboardPanel({
       return (
         <Frame panel={panel} note={missing}>
           {data.alerts.length === 0 ? (
-            <p className={styles.muted}>No open alerts on these servers.</p>
+            <p className={styles.muted}>{t("display.panel.noAlerts")}</p>
           ) : (
             <ul className={styles.rows}>
               {data.alerts.map((alert) => (
                 <li key={alert.id} className={styles.row}>
                   <Label tone={alert.severity === "critical" ? "bad" : "warn"}>
-                    {alert.severity === "critical" ? "Critical" : "Warning"}
+                    {alert.severity === "critical" ? t("display.panel.critical") : t("display.panel.warning")}
                   </Label>
                   <Link href={scopedHref(incidentHref(alert.id), scope)}>
                     {incidentTitle({ metric: alert.metric, instance: alert.instance })}
                   </Link>
-                  <span className={styles.muted}>on {alert.hostname}</span>
-                  <span className={styles.value}>since {formatSince(new Date(alert.opened_at), now)}</span>
+                  <span className={styles.muted}>{t("display.panel.on", { hostname: alert.hostname })}</span>
+                  <span className={styles.value}>
+                    {t("display.panel.since", { time: formatSince(new Date(alert.opened_at), now) })}
+                  </span>
                 </li>
               ))}
             </ul>
