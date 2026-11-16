@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IncidentDetail } from "@/lib/api";
 import { setUnauthorizedHandler } from "@/lib/api";
 import { setActiveLocale } from "@/i18n/locale";
+import { As, oneSite, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
@@ -77,6 +78,8 @@ describe("IncidentPage", () => {
     );
     expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Incidents›#1d6a9a3e");
     expect(screen.getByText(/was Warning · paris/)).toBeInTheDocument();
+    // The host is a link in the title; no second link to it beside.
+    expect(screen.getAllByRole("link", { name: /web-1/ })).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Open sensor" })).toHaveAttribute(
       "href",
       expect.stringMatching(/^\/servers\/sensor\/?\?id=.*&sensor=disk_used_ratio&instance=%2Fvar$/),
@@ -92,7 +95,8 @@ describe("IncidentPage", () => {
 
     const threshold = screen.getByRole("region", { name: "Threshold when it opened" });
     expect(threshold).toHaveTextContent(/Comparison\s*>\s*Warning\s*85%\s*Critical\s*95%\s*Duration\s*5 min/);
-    expect(threshold).toHaveTextContent(/Recovery margin\s*2% below the threshold before resolving/);
+    // The margin is worked out in "Resolves when", not said again.
+    expect(threshold).not.toHaveTextContent(/Recovery margin/);
     expect(threshold).toHaveTextContent(/Resolves when\s*the value is at or below 83%/);
 
     const timeline = within(screen.getByRole("region", { name: "Timeline" })).getAllByRole("row").slice(1);
@@ -188,6 +192,8 @@ describe("IncidentPage", () => {
     render(<IncidentPage id={ID} />);
     expect(await screen.findByText(/^open · paris/)).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Summary" })).toHaveTextContent(/Duration1 h/);
+    // Only its opening so far, which the tiles, the chart and the header say.
+    expect(screen.queryByRole("region", { name: "Timeline" })).toBeNull();
     expect(screen.getAllByTestId("chart-marker").map((m) => m.textContent)).toEqual([`Opened ${clock("2026-10-19T11:00:00Z")}`, "Now · open"]);
 
     fetchMock.mockClear();
@@ -291,7 +297,8 @@ describe("IncidentPage acknowledgement", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<IncidentPage id={ID} />);
     expect(await screen.findByText(/^bob and Slack #ops will be told at .* if nobody acknowledges\.$/)).toBeInTheDocument();
-    expect(screen.getByText("Says you are on it: nobody else is told next.")).toBeInTheDocument();
+    // The follow-up line says what acknowledging stops: no second explanation.
+    expect(screen.queryByText("Says you are on it: nobody else is told next.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Acknowledge" }));
     // A note first, in place: the button waits for it.
     const field = () => screen.getByRole("textbox", { name: "What are you doing about it?" });
@@ -307,6 +314,17 @@ describe("IncidentPage acknowledgement", () => {
     expect(screen.getByText("Not acknowledged after 15 minutes: told bob and Slack #ops")).toBeInTheDocument();
     const call = fetchMock.mock.calls.find(([url]) => url === "/api/incidents/acknowledge");
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ incident_ids: [ID], note: "Replacing the disk" });
+  });
+
+  it("names no site while there is only one", async () => {
+    stubIncident(resolved);
+    render(
+      <As user={oneSite(viewer)}>
+        <IncidentPage id={ID} />
+      </As>,
+    );
+    expect(await screen.findByText(/^was Warning$/)).toBeInTheDocument();
+    expect(screen.queryByText(/· paris/)).toBeNull();
   });
 
   it("says when warnings are not followed up and when everyone was told", async () => {

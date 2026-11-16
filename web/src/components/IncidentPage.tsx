@@ -21,6 +21,7 @@ import { metricsError } from "@/lib/charts";
 import { formatSeconds } from "@/lib/format";
 import { followUpLine, listNames, minutesText } from "@/lib/followUp";
 import { INCIDENT_MARGINS, OFFLINE_AFTER_S, incidentTitle, incidentWindow, isOffline, resolvesWhen } from "@/lib/incidents";
+import { useMultiSite } from "@/lib/me";
 import { incidentLogsHref, incidentPeerHref, incidentsHref, sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue, seriesTitle } from "@/lib/sensors";
@@ -102,6 +103,7 @@ const minutes = (iso: string) => formatClock(new Date(iso)).slice(0, 5);
 export function IncidentPage({ id }: { id: string | null }) {
   const valid = id !== null && UUID.test(id);
   const scope = useScope();
+  const severalSites = useMultiSite();
   const [params, setParams] = useUrlParams();
   const margin = INCIDENT_MARGINS.find((m) => m.param === params.get("window")) ?? INCIDENT_MARGINS[0];
   // A resolved incident no longer changes: refreshes reuse it until the window changes.
@@ -172,7 +174,8 @@ export function IncidentPage({ id }: { id: string | null }) {
           <>
             <StatusLabel kind="severity" value={open ? incident.severity : "resolved"} />
             <span className={styles.muted}>
-              {open ? t("incidents.openWord") : t("incidents.was", { severity: SEVERITY_LABELS[incident.severity] })} · {incident.site_name}
+              {open ? t("incidents.openWord") : t("incidents.was", { severity: SEVERITY_LABELS[incident.severity] })}
+              {severalSites && ` · ${incident.site_name}`}
             </span>
             {incident.silenced_until ? (
               <>
@@ -197,7 +200,6 @@ export function IncidentPage({ id }: { id: string | null }) {
                 {t("incidents.logsAround")}
               </ButtonLink>
             )}
-            <ButtonLink href={scopedHref(incidentPeerHref(incident), scope)}>{t("incidents.openHost", { host: incident.hostname })}</ButtonLink>
           </>
         }
       />
@@ -276,9 +278,12 @@ export function IncidentPage({ id }: { id: string | null }) {
         ) : (
           <FactsBox title={t("incidents.threshold.title")} facts={thresholdFacts(incident.threshold, format)} />
         )}
-        <TableBox title={t("incidents.timeline")}>
-          <Timeline events={incident.events} format={format} now={now} />
-        </TableBox>
+        {/* The opening alone is already in the tiles, the chart and the header. */}
+        {!onlyOpened(incident.events) && (
+          <TableBox title={t("incidents.timeline")}>
+            <Timeline events={incident.events} format={format} now={now} />
+          </TableBox>
+        )}
       </div>
       {remediation && <Remediation remediation={remediation} />}
     </Page>
@@ -314,16 +319,18 @@ function thresholdFacts(threshold: ThresholdSnapshot, format: (v: number) => str
         </>
       ),
     },
-    {
-      label: t("incidents.threshold.margin"),
-      value: (
-        <>
-          {format(threshold.hysteresis)}{" "}
-          <span className={styles.muted}>{above ? t("incidents.threshold.marginBelow") : t("incidents.threshold.marginAbove")}</span>
-        </>
-      ),
-    },
-    ...(resolves ? [{ label: t("incidents.rule.resolvesWhen"), value: resolves }] : []),
+    // With a value to resolve at, the margin is in it, worked out.
+    resolves
+      ? { label: t("incidents.rule.resolvesWhen"), value: resolves }
+      : {
+          label: t("incidents.threshold.margin"),
+          value: (
+            <>
+              {format(threshold.hysteresis)}{" "}
+              <span className={styles.muted}>{above ? t("incidents.threshold.marginBelow") : t("incidents.threshold.marginAbove")}</span>
+            </>
+          ),
+        },
     ...(threshold.instance === null
       ? []
       : [{ label: t("incidents.threshold.appliesTo"), value: threshold.instance || t("incidents.threshold.noInstance"), mono: true }]),
@@ -404,7 +411,8 @@ function Acknowledgement({ incident, now, onDone }: { incident: IncidentDetail; 
         {incident.can_acknowledge && (
           <>
             <AcknowledgeButton variant="k" onAcknowledge={acknowledge} describeError={describeError} />
-            <span className={styles.muted}>{t("incidents.ack.says")}</span>
+            {/* One line: the follow-up line, when there is one, says what acknowledging stops. */}
+            {!followUp && <span className={styles.muted}>{t("incidents.ack.says")}</span>}
           </>
         )}
       </div>
@@ -413,7 +421,11 @@ function Acknowledgement({ incident, now, onDone }: { incident: IncidentDetail; 
   );
 }
 
-/** The events in the API's order, which is the order the engine made them. */
+/** Whether the incident has done nothing yet but open. */
+export function onlyOpened(events: IncidentEvent[]): boolean {
+  return events.length === 1 && events[0]!.kind === "opened";
+}
+
 /** The last notification that told this incident with others (ADR-0080), and the way to the others. */
 function SentTogether({ incident, now }: { incident: IncidentDetail; now: Date }) {
   const scope = useScope();
@@ -428,6 +440,7 @@ function SentTogether({ incident, now }: { incident: IncidentDetail; now: Date }
   );
 }
 
+/** The events in the API's order, which is the order the engine made them. */
 function Timeline({ events, format, now }: { events: IncidentEvent[]; format: (v: number) => string; now: Date }) {
   if (events.length === 0) return <p>{t("incidents.timeline.empty")}</p>;
   const columns: Column<IncidentEvent>[] = [
