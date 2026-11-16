@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
 import { formatClock } from "@/components/ui/time";
+import { rich, t } from "@/i18n";
 import { type AcknowledgeLink, ApiError, LOGIN_PATH, api, describeError } from "@/lib/api";
 
 import styles from "./LoginForm.module.css";
@@ -64,7 +65,7 @@ export function AcknowledgeForm() {
       setState({ kind: "done", link, at: new Date() });
     } catch (e) {
       if (e instanceof ApiError && e.status === 410) setState({ kind: "gone" });
-      else if (e instanceof ApiError && e.status === 403) setFailure("Your account can no longer acknowledge these alerts.");
+      else if (e instanceof ApiError && e.status === 403) setFailure(t("incidents.link.noLonger"));
       else setFailure(describeError(e));
     } finally {
       setPending(false);
@@ -77,12 +78,12 @@ export function AcknowledgeForm() {
         <h1 className={styles.brand}>MonitorFlow</h1>
         {state.kind === "gone" ? (
           <div className={styles.box}>
-            <h2 className={styles.title}>Link no longer valid</h2>
+            <h2 className={styles.title}>{t("incidents.link.goneTitle")}</h2>
             <Banner tone="warn">
-              <strong>This link no longer works.</strong> It expired, or your account was disabled.
+              <strong>{t("incidents.link.gone")}</strong> {t("incidents.link.goneWhy")}
             </Banner>
             <p className={styles.text}>
-              <Link href={LOGIN_PATH}>Sign in</Link> and open the alert to acknowledge it.
+              {rich("incidents.link.signIn", { link: <Link href={LOGIN_PATH}>{t("incidents.link.signInLink")}</Link> })}
             </p>
           </div>
         ) : state.kind === "checking" ? (
@@ -90,11 +91,11 @@ export function AcknowledgeForm() {
         ) : (
           <div className={styles.box} aria-labelledby="acknowledge-title" role="region">
             <h2 id="acknowledge-title" className={styles.title}>
-              {state.kind === "done" ? "Acknowledged" : `Acknowledge as ${state.link.username}`}
+              {state.kind === "done" ? t("incidents.link.done") : t("incidents.link.as", { name: state.link.username })}
             </h2>
             {state.kind === "done" && (
               <Banner tone="ok">
-                Acknowledged at {formatClock(state.at).slice(0, 5)}. Nobody else is told next.
+                {t("incidents.link.doneAt", { time: formatClock(state.at).slice(0, 5) })}
               </Banner>
             )}
             <ul className={styles.text}>
@@ -102,20 +103,20 @@ export function AcknowledgeForm() {
                 <li key={i.id}>
                   {i.text}
                   {i.state === "resolved"
-                    ? " (resolved)"
+                    ? t("incidents.link.resolved")
                     : i.acknowledged_by && i.acknowledged_at
-                      ? ` (acknowledged by ${i.acknowledged_by} at ${hhmm(i.acknowledged_at)})`
+                      ? t("incidents.link.acknowledgedBy", { name: i.acknowledged_by, time: hhmm(i.acknowledged_at) })
                       : ""}
                 </li>
               ))}
             </ul>
             {state.link.incidents.length === 0 && (
-              <p className={styles.text}>Your account can no longer see these alerts.</p>
+              <p className={styles.text}>{t("incidents.link.cannotSee")}</p>
             )}
             {failure && <Banner tone="bad">{failure}</Banner>}
             {state.kind === "ready" && (
               <>
-                <p className={styles.text}>Says you are on it: nobody else is told next.</p>
+                <p className={styles.text}>{t("incidents.ack.says")}</p>
                 <Button
                   className={styles.submit}
                   variant="k"
@@ -123,7 +124,7 @@ export function AcknowledgeForm() {
                   onClick={acknowledge}
                   disabled={pending || state.link.incidents.length === 0}
                 >
-                  {pending ? "Acknowledging…" : "Acknowledge"}
+                  {pending ? t("incidents.button.busy") : t("incidents.button.acknowledge")}
                 </Button>
               </>
             )}

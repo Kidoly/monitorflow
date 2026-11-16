@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { alertDelayS, customInterval, defaultTimeoutMs, every, slowAlertNote, splitInterval } from "./intervals";
+import { setActiveLocale } from "@/i18n/locale";
+
+import { INTERVAL_UNITS, alertDelayS, customInterval, defaultTimeoutMs, every, slowAlertNote, splitInterval } from "./intervals";
 
 describe("intervals", () => {
+  it("speaks French", () => {
+    setActiveLocale("fr");
+    expect(every(30_000)).toBe("toutes les 30 s");
+    expect(customInterval("5", 1_000)).toEqual({ error: "Saisissez une valeur de 10 secondes à 24 heures." });
+    expect(INTERVAL_UNITS.map((u) => u.label)).toEqual(["secondes", "minutes", "heures"]);
+  });
+
   it("says how often in plain words", () => {
     expect(every(30_000)).toBe("every 30 s");
     expect(every(3_600_000)).toBe("every 1 h");

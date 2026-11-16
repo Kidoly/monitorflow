@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { authority, peer, rotation } from "@/test/certificateAuthority";
 
 import {
@@ -117,6 +118,21 @@ describe("authorityNotice", () => {
     expect(authorityNotice(authority({ expires_soon: true, expires_at: "2027-06-01T12:00:00Z" }))).toBe(
       "The certificate authority expires on 2027-06-01.",
     );
+  });
+});
+
+describe("in French", () => {
+  it("counts, explains and warns in French", () => {
+    setActiveLocale("fr");
+    expect(progressSentence(rotation())).toBe(
+      "312 serveurs et relais sur 315 ont appris la nouvelle autorité de certification\u202f; 2 ne se sont pas connectés depuis le début du changement.",
+    );
+    expect(authorityNotice(authority({ cut_off: [peer({ cut_off: true })] }))).toBe(
+      "1 serveur ou relais est à réinstaller après un changement d’autorité de certification.",
+    );
+    expect(authorityStatus(authority())).toEqual(["Valide jusqu’au 2036-09-29", "ok"]);
+    expect(nextStep(rotation()).label).toBe("Basculer maintenant…");
+    expect(machineWord("relay")).toBe("Relais");
   });
 });
 

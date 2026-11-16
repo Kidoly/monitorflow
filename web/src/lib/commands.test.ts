@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import type { Command } from "./api";
 import { commandLog, commandSteps, describeCommand, isActive } from "./commands";
 
@@ -22,6 +24,24 @@ const command = (overrides: Partial<Command> = {}): Command => ({
 });
 
 const clock = (d: Date) => d.toISOString().slice(11, 19);
+
+describe("in French", () => {
+  it("names commands and their steps", () => {
+    setActiveLocale("fr");
+    expect(describeCommand(command())).toEqual({
+      title: "Mises à jour de sécurité, sans redémarrage",
+      sub: "toutes les mises à jour de sécurité",
+    });
+    const five = command({ parameters: { packages: ["a", "b", "c", "d", "e"], security_only: false, allow_reboot: true } });
+    expect(describeCommand(five)).toEqual({
+      title: "Sélection : a, b, c et 2 de plus, redémarrage autorisé",
+      sub: "5 paquets",
+    });
+    expect(commandSteps(command(), clock)).toBe(
+      "en file 09:12:00 → envoyée 09:12:03 → en cours 09:12:04 → échouée 09:12:19 (sortie 100)",
+    );
+  });
+});
 
 describe("describeCommand", () => {
   it("names update commands by what they install", () => {

@@ -4,16 +4,17 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
+import { t } from "@/i18n";
 import { ApiError, type DashboardData, type DashboardSpec, type ScreenView, type Within, api, isAbortError } from "@/lib/api";
 import { DASHBOARD_REFRESH_MS, readyMade, withinOf } from "@/lib/dashboards";
 import {
   CONTROLS_MS,
-  PROBLEM_TEXT,
   type ScreenProblem,
   VIEW_REFRESH_MS,
   gridRows,
   isStale,
   nextPage,
+  problemText,
   staleText,
   textScale,
 } from "@/lib/display";
@@ -236,9 +237,9 @@ export function DisplayScreen() {
   const closeHref = !link && (id || ready) ? scopedHref(id ? dashboardHref(id) : readyMadeHref(ready ?? ""), scope) : null;
   const message =
     problem !== null
-      ? PROBLEM_TEXT[problem]
+      ? problemText(problem)
       : !screen && unreachable
-        ? { title: "Cannot reach MonitorFlow", text: "This screen keeps trying by itself." }
+        ? { title: t("display.screen.unreachable"), text: t("display.screen.unreachableText") }
         : null;
 
   return (
@@ -248,13 +249,13 @@ export function DisplayScreen() {
           <h1>{message ? "MonitorFlow" : (current?.name ?? "")}</h1>
           {count > 1 && !message && (
             <span className={styles.pageOf}>
-              {(page % count) + 1} of {count}
+              {t("display.screen.pageOf", { page: (page % count) + 1, count })}
             </span>
           )}
         </div>
         <div className={styles.clock}>
           <b>{clock}</b>
-          {dataTime && !message && <span>Updated {formatClock(dataTime)}</span>}
+          {dataTime && !message && <span>{t("display.screen.updated", { time: formatClock(dataTime) })}</span>}
         </div>
       </header>
       {message ? (
@@ -284,10 +285,10 @@ export function DisplayScreen() {
         <div className={styles.controls}>
           {canFullScreen && (
             <button type="button" onClick={fullScreen}>
-              Full screen
+              {t("display.screen.fullScreen")}
             </button>
           )}
-          {closeHref && <Link href={closeHref}>Close</Link>}
+          {closeHref && <Link href={closeHref}>{t("display.screen.close")}</Link>}
         </div>
       )}
     </div>
