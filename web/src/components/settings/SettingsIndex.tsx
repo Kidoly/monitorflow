@@ -94,7 +94,7 @@ function SettingsRow({ entry, me, status }: { entry: SettingsEntry; me: Me; stat
       </span>
       <span className={styles.rowText}>
         <span className={styles.rowName}>{t(entry.label)}</span>
-        <span className={styles.rowDescription}>{entry.description(me)}</span>
+        {entry.description && <span className={styles.rowDescription}>{entry.description(me)}</span>}
         {status && <StatusLine status={status} />}
       </span>
       <span className={styles.chevron} aria-hidden="true">

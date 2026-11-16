@@ -69,22 +69,25 @@ describe("BackupsPage", () => {
     stubFetch({ "GET /api/backups": { status: 200, body: view() } });
     renderPage({ ...globalAdmin, multi_customer: false });
     expect(await screen.findByText("Sauvegardé.")).toBeInTheDocument();
-    expect(screen.getByText(/Quiconque a le fichier peut lire toutes les données/)).toBeInTheDocument();
     expect(screen.getAllByText("3 Mio").length).toBe(2);
     const table = screen.getByRole("table", { name: "Sauvegardes" });
     expect(within(table).getByText("Quotidienne")).toBeInTheDocument();
-    expect(within(table).getByRole("link", { name: "Télécharger" })).toBeInTheDocument();
+    await userEvent.click(within(table).getByRole("button", { name: "Télécharger" }));
+    expect(within(table).getByText(/Quiconque a le fichier peut lire toutes les données/)).toBeInTheDocument();
   });
 
-  it("shows the last backup, warns about secrets, and downloads files", async () => {
+  it("shows the last backup, and warns about secrets before a download", async () => {
     stubFetch({ "GET /api/backups": { status: 200, body: view() } });
     renderPage();
-    expect(await screen.findByText("Backed up.")).toBeInTheDocument();
-    expect(screen.getByText(/Anyone with the file can read every customer's data/)).toBeInTheDocument();
+    // "Backed up." stays for screen readers only: the last backup time says it.
+    expect(await screen.findByText("Backed up.")).toHaveClass("visually-hidden");
+    expect(screen.queryByText(/Anyone with the file can read every customer's data/)).not.toBeInTheDocument();
     expect(screen.getAllByText("3 MiB").length).toBe(2);
     const table = screen.getByRole("table", { name: "Backups" });
     expect(within(table).getByText("Daily")).toBeInTheDocument();
-    const download = within(table).getByRole("link", { name: "Download" });
+    await userEvent.click(within(table).getByRole("button", { name: "Download" }));
+    expect(within(table).getByText(/Anyone with the file can read every customer's data/)).toBeInTheDocument();
+    const download = within(table).getByRole("link", { name: `Download ${NAME}` });
     expect(download).toHaveAttribute("href", `/api/backups/${NAME}`);
     expect(download).toHaveAttribute("download", NAME);
     expect(screen.getByText(`deploy/restore.sh ${NAME}`)).toBeInTheDocument();
@@ -94,7 +97,7 @@ describe("BackupsPage", () => {
     stubFetch({ "GET /api/backups": { status: 200, body: view({ downloads: false, host_dir: true }) } });
     renderPage();
     const table = await screen.findByRole("table", { name: "Backups" });
-    expect(within(table).queryByRole("link", { name: "Download" })).toBeNull();
+    expect(within(table).queryByRole("button", { name: "Download" })).toBeNull();
     expect(within(table).getByText("In BACKUP_DIR on the server")).toBeInTheDocument();
   });
 
