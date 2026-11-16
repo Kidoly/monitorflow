@@ -3,6 +3,7 @@
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 
+import { t } from "@/i18n";
 import {
   type Campaign,
   type CampaignAction,
@@ -14,7 +15,16 @@ import {
   api,
   describeError,
 } from "@/lib/api";
-import { CAMPAIGN_STATES, SERVER_STATUSES, campaignSubline, canAct, isFinal, shortWindow } from "@/lib/campaigns";
+import {
+  CAMPAIGN_STATES,
+  SERVER_STATUSES,
+  campaignStateWord,
+  campaignSubline,
+  canAct,
+  isFinal,
+  serverStatusWord,
+  shortWindow,
+} from "@/lib/campaigns";
 import { administersCustomer, multiCustomer, readsCustomers, useMe } from "@/lib/me";
 import { shortTime } from "@/lib/mirrors";
 import { NEW_CAMPAIGN_PATH, campaignHref, serverHref } from "@/lib/routes";
@@ -33,29 +43,27 @@ const DAY_MS = 86_400_000;
 
 /** "Batch 2 of 3", or how many waves before the first is queued. */
 export function waveText(campaign: Pick<Campaign, "current_wave" | "wave_count">): string {
-  const waves = `${campaign.wave_count} ${campaign.wave_count === 1 ? "batch" : "batches"}`;
-  return campaign.current_wave === null ? waves : `Batch ${campaign.current_wave + 1} of ${campaign.wave_count}`;
+  if (campaign.current_wave === null) return t("campaigns.batches", { count: campaign.wave_count });
+  return t("campaigns.batchOf", { current: campaign.current_wave + 1, total: campaign.wave_count });
 }
 
 /** A campaign state as a tinted word. */
 export function CampaignStateLabel({ state }: { state: CampaignState }) {
-  const [word, tone] = CAMPAIGN_STATES[state];
-  return <Label tone={tone}>{word}</Label>;
+  return <Label tone={CAMPAIGN_STATES[state]}>{campaignStateWord(state)}</Label>;
 }
 
 /** A server's status in a campaign as a tinted word. */
 export function ServerStatusLabel({ status }: { status: CampaignServerStatus }) {
-  const [word, tone] = SERVER_STATUSES[status];
-  return <Label tone={tone}>{word}</Label>;
+  return <Label tone={SERVER_STATUSES[status]}>{serverStatusWord(status)}</Label>;
 }
 
 /** "3 / 4" in bold, then what is not succeeded: "· 1 failed · 1 in progress". */
 export function ProgressText({ campaign }: { campaign: Pick<Campaign, "progress" | "state"> }) {
   const { total, succeeded, failed, in_progress, cancelled } = campaign.progress;
   const rest = [
-    failed > 0 && `${failed} failed`,
-    in_progress > 0 && `${in_progress} in progress`,
-    cancelled > 0 && `${cancelled} cancelled`,
+    failed > 0 && t("campaigns.progress.failed", { count: failed }),
+    in_progress > 0 && t("campaigns.progress.inProgress", { count: in_progress }),
+    cancelled > 0 && t("campaigns.progress.cancelled", { count: cancelled }),
   ].filter(Boolean);
   const count = `${succeeded} / ${total}`;
   if (campaign.state === "draft" || campaign.state === "scheduled") return <span className={own.dim}>{count}</span>;
@@ -80,7 +88,7 @@ const RANK: Record<CampaignState, number> = {
 const byRank = (a: Campaign, b: Campaign) => RANK[a.state] - RANK[b.state] || b.created_at.localeCompare(a.created_at);
 
 const ROW_ACTIONS: CampaignAction[] = ["start", "pause", "resume"];
-const ACTION_LABELS: Record<CampaignAction, string> = { start: "Start", pause: "Pause", resume: "Resume", stop: "Stop" };
+const actionLabel = (action: CampaignAction) => t(`campaigns.action.${action}`);
 
 interface Listing {
   campaigns: Campaign[];
@@ -107,13 +115,9 @@ export function CampaignListPage() {
   const me = useMe();
   if (!readsCustomers(me)) {
     return multiCustomer(me) ? (
-      <NoPermission title="Campaigns need a customer role">
-        Campaigns span sites: they need a role on a whole customer. Ask an administrator for one.
-      </NoPermission>
+      <NoPermission title={t("campaigns.role.customerTitle")}>{t("campaigns.role.customer")}</NoPermission>
     ) : (
-      <NoPermission title="Campaigns need a role on all sites">
-        Campaigns span sites: a role on one site is not enough. Ask an administrator for one.
-      </NoPermission>
+      <NoPermission title={t("campaigns.role.sitesTitle")}>{t("campaigns.role.sites")}</NoPermission>
     );
   }
   return <CampaignList />;
@@ -137,7 +141,7 @@ function CampaignList() {
         await api.campaignAction(campaign.id, action);
         refresh();
       } catch (e) {
-        setActionError(`${ACTION_LABELS[action]} ${campaign.name} failed. ${describeError(e)}`);
+        setActionError(t("campaigns.actionFailed", { action: actionLabel(action), name: campaign.name, error: describeError(e) }));
       } finally {
         setBusy(false);
       }
@@ -147,12 +151,12 @@ function CampaignList() {
 
   const newCampaign = administersCustomer(me) && (
     <ButtonLink variant="k" href={NEW_CAMPAIGN_PATH}>
-      New campaign
+      {t("campaigns.newCampaign")}
     </ButtonLink>
   );
   const header = (
     <PageHeader
-      title="Update campaigns"
+      title={t("campaigns.title")}
       meta={updatedAt !== null || error !== null ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : undefined}
       actions={newCampaign}
     />
@@ -161,7 +165,7 @@ function CampaignList() {
     return (
       <div className={own.page}>
         {header}
-        {error ? <ErrorState what="campaigns" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
+        {error ? <ErrorState what={t("campaigns.what")} error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
       </div>
     );
   }
@@ -174,7 +178,7 @@ function CampaignList() {
     (c) => (!state || c.state === state) && (!search || c.name.toLowerCase().includes(search)),
   );
   const customers = new Set(inScope.map((c) => c.customer_id));
-  const siteName = (id: string) => data.sites.find((s) => s.id === id)?.name ?? "a site";
+  const siteName = (id: string) => data.sites.find((s) => s.id === id)?.name ?? t("campaigns.aSite");
   const tile = (label: string, value: CampaignState, tone: "info" | "neutral" | "bad" | "ok", count: number) => {
     const next = new URLSearchParams(params);
     if (state === value) next.delete("state");
@@ -191,7 +195,7 @@ function CampaignList() {
   const columns: Column<Campaign>[] = [
     {
       key: "name",
-      header: "Campaign",
+      header: t("campaigns.column.campaign"),
       className: own.wide,
       sortValue: (c) => c.name,
       cell: (c) => (
@@ -204,7 +208,7 @@ function CampaignList() {
     },
     {
       key: "state",
-      header: "State",
+      header: t("campaigns.column.state"),
       className: own.wrap,
       sortValue: (c) => RANK[c.state],
       cell: (c) => (
@@ -219,17 +223,18 @@ function CampaignList() {
     },
     {
       key: "target",
-      header: "Target",
-      cell: (c) => (c.site_id ? `${siteName(c.site_id)} (${c.progress.total})` : `${c.progress.total} servers`),
+      header: t("campaigns.column.target"),
+      cell: (c) =>
+        c.site_id ? `${siteName(c.site_id)} (${c.progress.total})` : t("campaigns.servers", { count: c.progress.total }),
     },
-    { key: "progress", header: "Progress", className: own.wrap, cell: (c) => <ProgressText campaign={c} /> },
+    { key: "progress", header: t("campaigns.column.progress"), className: own.wrap, cell: (c) => <ProgressText campaign={c} /> },
     {
       key: "window",
-      header: "Window",
+      header: t("campaigns.column.window"),
       className: `${own.dim} ${own.wrap}`,
       cell: (c) =>
         c.windows.length === 0
-          ? "any time"
+          ? t("campaigns.anyTime")
           : `${shortWindow(c.windows[0]!)}${c.windows.length > 1 ? ` +${c.windows.length - 1}` : ""}`,
     },
   ];
@@ -242,39 +247,39 @@ function CampaignList() {
       <StatTiles
         dense
         tiles={[
-          tile("Running", "running", "info", count("running")),
-          tile("Scheduled", "scheduled", "neutral", count("scheduled")),
-          tile("Failed", "failed", "bad", count("failed")),
-          tile("Succeeded, 30 d", "completed", "ok", recent),
+          tile(t("campaigns.tile.running"), "running", "info", count("running")),
+          tile(t("campaigns.tile.scheduled"), "scheduled", "neutral", count("scheduled")),
+          tile(t("campaigns.tile.failed"), "failed", "bad", count("failed")),
+          tile(t("campaigns.tile.succeeded"), "completed", "ok", recent),
         ]}
       />
       <FilterBar
-        label="Campaign filters"
+        label={t("campaigns.filters")}
         filters={[
           {
             name: "state",
-            label: "State",
+            label: t("campaigns.column.state"),
             options: (Object.keys(CAMPAIGN_STATES) as CampaignState[]).map((s) => ({
               value: s,
-              label: CAMPAIGN_STATES[s][0],
+              label: campaignStateWord(s),
             })),
           },
         ]}
-        search={{ name: "q", label: "Search", placeholder: "Campaign name", width: 200 }}
+        search={{ name: "q", label: t("campaigns.search"), placeholder: t("campaigns.searchPlaceholder"), width: 200 }}
       />
       {inScope.length === 0 ? (
         <EmptyState
-          title="No campaigns yet"
-          actions={newCampaign || <ButtonLink href={scopedHref("/", scope)}>Back to the fleet</ButtonLink>}
+          title={t("campaigns.empty.title")}
+          actions={newCampaign || <ButtonLink href={scopedHref("/", scope)}>{t("campaigns.backToFleet")}</ButtonLink>}
         >
-          A campaign updates a site or chosen servers in batches, inside maintenance windows.
+          {t("campaigns.empty.text")}
         </EmptyState>
       ) : rows.length === 0 ? (
-        <NoMatches names={["state", "q"]}>No campaign matches these filters.</NoMatches>
+        <NoMatches names={["state", "q"]}>{t("campaigns.noMatch")}</NoMatches>
       ) : (
         <DataTable
           dense
-          label="Campaigns"
+          label={t("campaigns.label")}
           columns={columns}
           rows={rows}
           rowKey={(c) => c.id}
@@ -286,7 +291,7 @@ function CampaignList() {
             administersCustomer(me, c.customer_id) &&
             ROW_ACTIONS.filter((a) => canAct(a, c.state)).map((a) => (
               <Button key={a} size="small" disabled={busy} onClick={() => void act(c, a)}>
-                {ACTION_LABELS[a]} <span className="visually-hidden">{c.name}</span>
+                {actionLabel(a)} <span className="visually-hidden">{c.name}</span>
               </Button>
             ))
           }
@@ -294,8 +299,8 @@ function CampaignList() {
       )}
       {running && <RunningServers campaign={running} sites={data.sites} now={now} />}
       <p className={own.note}>
-        {data.more ? `Showing the newest ${data.campaigns.length} campaigns. ` : ""}
-        Open a campaign for its waves, windows and Stop.
+        {data.more ? `${t("campaigns.showing", { count: data.campaigns.length })} ` : ""}
+        {t("campaigns.openHint")}
       </p>
     </div>
   );
@@ -314,7 +319,7 @@ function RunningServers({ campaign, sites, now }: { campaign: CampaignDetail; si
   const columns: Column<Target>[] = [
     {
       key: "server",
-      header: `Server · ${campaign.name}`,
+      header: t("campaigns.column.serverOf", { campaign: campaign.name }),
       cell: (s) => (
         <PrimaryCell
           title={s.hostname}
@@ -323,10 +328,14 @@ function RunningServers({ campaign, sites, now }: { campaign: CampaignDetail; si
         />
       ),
     },
-    { key: "wave", header: "Batch", cell: (s) => `${s.wave + 1} of ${campaign.wave_count}` },
+    {
+      key: "wave",
+      header: t("campaigns.column.batch"),
+      cell: (s) => t("campaigns.batchOfShort", { current: s.wave + 1, total: campaign.wave_count }),
+    },
     {
       key: "state",
-      header: "State",
+      header: t("campaigns.column.state"),
       cell: (s) => (
         <>
           <ServerStatusLabel status={s.status} />
@@ -336,14 +345,14 @@ function RunningServers({ campaign, sites, now }: { campaign: CampaignDetail; si
     },
     {
       key: "result",
-      header: "Result",
-      cell: (s) => s.error ?? (s.exit_code === null ? <span className={own.dim}>—</span> : `exit ${s.exit_code}`),
+      header: t("campaigns.column.result"),
+      cell: (s) => s.error ?? (s.exit_code === null ? null : t("campaigns.exit", { code: String(s.exit_code) })),
     },
   ];
   return (
     <DataTable
       dense
-      label="Servers in the running campaign"
+      label={t("campaigns.runningServers")}
       columns={columns}
       rows={servers}
       rowKey={(s) => s.server_id}

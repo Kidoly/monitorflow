@@ -2,6 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { NO_FILTERS } from "@/lib/incidents";
 import { stubFetch } from "@/test/fetch";
 import { SERVER_ID, SITE_ID, incident } from "@/test/incidents";
@@ -83,6 +84,23 @@ describe("IncidentList", () => {
     expect(screen.getByText(/1 open, 1 critical · Updated 14:00:00/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
     expect(screen.getByText("Showing 2 incidents · 50 per page")).toBeInTheDocument();
+  });
+
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    stubFetch({
+      ...options,
+      [OPEN]: openReply,
+      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
+    });
+    render(<IncidentList filters={NO_FILTERS} />);
+    const rows = within(await screen.findByRole("table", { name: "Incidents" })).getAllByRole("row");
+    expect(rows[0]).toHaveTextContent(/Gravité\s*Serveur\s*Métrique\s*Ouvert\s*État\s*Durée\s*Dernière valeur\s*Pic/);
+    expect(rows[1]).toHaveTextContent(/aujourd’hui 09:40\s*Ouvert\s*4 h 20 min\s*96,2 %/);
+    expect(rows[2]).toHaveTextContent(/était Avertissement/);
+    expect(rows[2]).toHaveTextContent(/Résolu 01:42/);
+    expect(screen.getByText(/1 ouvert, 1 critique · /)).toBeInTheDocument();
+    expect(screen.getByText("2 incidents affichés · 50 par page")).toBeInTheDocument();
   });
 
   it("loads 50 more and keeps every loaded incident on refresh", async () => {

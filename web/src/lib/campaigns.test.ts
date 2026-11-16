@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { campaign, server } from "@/test/campaigns";
 
 import type { CampaignRequest } from "./api";
@@ -196,5 +197,23 @@ describe("agent update campaigns", () => {
     expect(
       campaignSubline({ wave_count: 2, sources: null, spec: { packages: [], security_only: false, allow_reboot: false }, agent_version: "0.3.0" }),
     ).toBe("2 batches · agent 0.3.0");
+  });
+});
+
+describe("in French", () => {
+  it("describes campaigns and their mistakes", () => {
+    setActiveLocale("fr");
+    expect(describeThreshold({ value: 1, unit: "count" })).toBe("plus de 1 serveur d’un lot en échec");
+    expect(describeThreshold({ value: 10, unit: "percent" })).toBe("plus de 10\u00a0% d’un lot en échec");
+    expect(describeUpdate({ packages: [], security_only: true, allow_reboot: true })).toBe(
+      "Mises à jour de sécurité, redémarrage autorisé",
+    );
+    expect(shortWindow({ kind: "weekly", weekdays: [1, 6], start: "22:00", end: "04:00", timezone: "UTC" })).toBe(
+      "lun., sam. 22:00–04:00",
+    );
+    expect(validateCampaign(valid({ server_ids: [] }), [])).toEqual(["Choisissez un site ou des serveurs à mettre à jour."]);
+    expect(validateCampaign(valid({ waves: [{ size: 1 }, { size: 1 }] }), ["s1"])).toEqual([
+      "Lots\u00a0: le lot 2 serait vide.",
+    ]);
   });
 });

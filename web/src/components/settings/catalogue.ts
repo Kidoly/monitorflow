@@ -1,3 +1,4 @@
+import { type PlainKey, t } from "@/i18n";
 import type { Me } from "@/lib/api";
 import { administersEverything, isAdministrator, multiCustomer } from "@/lib/me";
 import {
@@ -38,163 +39,163 @@ export type SettingsId =
 
 export interface SettingsEntry {
   id: SettingsId;
-  label: string;
+  label: PlainKey;
   /** One line under the name; `me` changes it where the words depend on what they see. */
   description: (me: Me) => string;
   href: string;
   icon: IconName;
   /** More words the search finds it by, not shown. */
-  keywords?: string;
+  keywords?: PlainKey;
   /** UX only, like the sidebar's: the API refuses what the roles do not allow. */
   visible?: (me: Me) => boolean;
 }
 
 export interface SettingsGroup {
-  heading: string;
+  heading: PlainKey;
   entries: SettingsEntry[];
 }
 
-const text = (line: string) => () => line;
+const text = (key: PlainKey) => () => t(key);
 
 /** Every settings page, in groups, in the order the Settings page and its sidebar show them. */
 export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
-    heading: "Fleet",
+    heading: "settings.group.fleet",
     entries: [
       {
         id: "sites",
-        label: "Sites",
+        label: "settings.sites.label",
         description: (me) =>
-          multiCustomer(me) ? "Customers and the sites their servers belong to." : "The places your servers are in.",
+          multiCustomer(me) ? t("settings.sites.descriptionCustomers") : t("settings.sites.description"),
         href: SITES_PATH,
         icon: "sites",
-        keywords: "customers offline alerts",
+        keywords: "settings.sites.keywords",
       },
       {
         id: "relays",
-        label: "Relays",
-        description: text("Carry the servers of a site that cannot reach this server."),
+        label: "settings.relays.label",
+        description: text("settings.relays.description"),
         href: RELAYS_PATH,
         icon: "relays",
       },
       {
         id: "add-servers",
-        label: "Add servers",
-        description: text("Install commands, single-use tokens and where agents install from."),
+        label: "settings.addServers.label",
+        description: text("settings.addServers.description"),
         href: TOKENS_PATH,
         icon: "tokens",
-        keywords: "install command token install source approval",
+        keywords: "settings.addServers.keywords",
       },
       {
         id: "certificate-authority",
-        label: "Certificate authority",
-        description: text("Gives every server and relay its certificate and signs commands."),
+        label: "settings.certificateAuthority.label",
+        description: text("settings.certificateAuthority.description"),
         href: CERTIFICATE_AUTHORITY_PATH,
         icon: "authority",
-        keywords: "certificates change",
+        keywords: "settings.certificateAuthority.keywords",
         visible: administersEverything,
       },
     ],
   },
   {
-    heading: "Alerting",
+    heading: "settings.group.alerting",
     entries: [
       {
         id: "notifications",
-        label: "Notifications",
-        description: text("Email, Slack, Teams, Discord and webhooks for incidents, approvals and failed updates."),
+        label: "settings.notifications.label",
+        description: text("settings.notifications.description"),
         href: NOTIFICATIONS_PATH,
         icon: "bell",
-        keywords: "channels follow-up",
+        keywords: "settings.notifications.keywords",
       },
       {
         id: "integrations",
-        label: "Integrations",
-        description: text("Signed events for a PSA or your own automation."),
+        label: "settings.integrations.label",
+        description: text("settings.integrations.description"),
         href: INTEGRATIONS_PATH,
         icon: "integrations",
-        keywords: "events signing secret",
+        keywords: "settings.integrations.keywords",
       },
     ],
   },
   {
-    heading: "Access",
+    heading: "settings.group.access",
     entries: [
       {
         id: "users",
-        label: "Users and roles",
-        description: text("Who signs in, and what they can do."),
+        label: "settings.users.label",
+        description: text("settings.users.description"),
         href: USERS_PATH,
         icon: "users",
-        keywords: "people invite password",
+        keywords: "settings.users.keywords",
       },
       {
         id: "api-keys",
-        label: "API keys",
-        description: text("Keys for scripts and other tools, and the API documentation."),
+        label: "settings.apiKeys.label",
+        description: text("settings.apiKeys.description"),
         href: API_KEYS_PATH,
         icon: "tokens",
-        keywords: "public api documentation",
+        keywords: "settings.apiKeys.keywords",
       },
     ],
   },
   {
-    heading: "AI & extensions",
+    heading: "settings.group.extensions",
     entries: [
       {
         id: "ai",
-        label: "AI",
-        description: text("An API key and a model to diagnose incidents and propose fixes."),
+        label: "settings.ai.label",
+        description: text("settings.ai.description"),
         href: AI_SETTINGS_PATH,
         icon: "ai",
-        keywords: "provider model local",
+        keywords: "settings.ai.keywords",
         visible: administersEverything,
       },
       {
         id: "plugins",
-        label: "Plugins",
-        description: text("Checks and notification channels someone else wrote, and the publishers you trust."),
+        label: "settings.plugins.label",
+        description: text("settings.plugins.description"),
         href: PLUGINS_PATH,
         icon: "plugin",
-        keywords: "publisher",
+        keywords: "settings.plugins.keywords",
         visible: administersEverything,
       },
     ],
   },
   {
-    heading: "System",
+    heading: "settings.group.system",
     entries: [
       {
         id: "general",
-        label: "General",
-        description: text("Server address, sign-in, package address and data retention."),
+        label: "settings.general.label",
+        description: text("settings.general.description"),
         href: GENERAL_SETTINGS_PATH,
         icon: "settings",
-        keywords: "session retention address mirror",
+        keywords: "settings.general.keywords",
         visible: administersEverything,
       },
       {
         id: "server-update",
-        label: "Server update",
-        description: text("Update this server, or import a release without Internet."),
+        label: "settings.serverUpdate.label",
+        description: text("settings.serverUpdate.description"),
         href: SERVER_UPDATE_PATH,
         icon: "update",
-        keywords: "version release",
+        keywords: "settings.serverUpdate.keywords",
         visible: administersEverything,
       },
       {
         id: "backups",
-        label: "Backups",
-        description: text("Daily backups, Back up now, and downloads."),
+        label: "settings.backups.label",
+        description: text("settings.backups.description"),
         href: BACKUPS_PATH,
         icon: "backups",
-        keywords: "restore",
+        keywords: "settings.backups.keywords",
         visible: administersEverything,
       },
       {
         id: "license",
-        label: "License",
-        description: text("The license key, for more than one central server."),
+        label: "settings.license.label",
+        description: text("settings.license.description"),
         href: LICENSE_PATH,
         icon: "license",
         visible: administersEverything,
@@ -216,8 +217,8 @@ export function visibleSettings(me: Me): SettingsGroup[] {
 }
 
 /**
- * The entries whose name, description or keywords hold every word of
- * `query`, ignoring case; a group whose heading matches keeps all of its
+ * The entries whose name, description or keywords, in the active language,
+ * hold every word of `query`, ignoring case; a group whose heading matches keeps all of its
  * entries. Empty groups are dropped.
  */
 export function filterSettings(groups: SettingsGroup[], query: string, me: Me): SettingsGroup[] {
@@ -225,9 +226,10 @@ export function filterSettings(groups: SettingsGroup[], query: string, me: Me): 
   if (words.length === 0) return groups;
   return groups
     .map((group) => {
-      if (words.every((w) => group.heading.toLowerCase().includes(w))) return group;
+      if (words.every((w) => t(group.heading).toLowerCase().includes(w))) return group;
       const entries = group.entries.filter((entry) => {
-        const haystack = `${entry.label} ${entry.description(me)} ${entry.keywords ?? ""}`.toLowerCase();
+        const keywords = entry.keywords ? t(entry.keywords) : "";
+        const haystack = `${t(entry.label)} ${entry.description(me)} ${keywords}`.toLowerCase();
         return words.every((w) => haystack.includes(w));
       });
       return { ...group, entries };

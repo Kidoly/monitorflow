@@ -2,6 +2,7 @@
 
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
+import { t } from "@/i18n";
 import {
   type EffectiveSensor,
   type EffectiveSensors,
@@ -41,6 +42,7 @@ import {
 import { Button, fieldClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { type Fact, FactsBox } from "@/components/ui/FactsBox";
+import { missingText } from "@/components/ui/Missing";
 import { Label } from "@/components/ui/StatusLabel";
 
 import admin from "./AdminPages.module.css";
@@ -108,7 +110,7 @@ export function SensorConfiguration({
     <>
       {overrides?.level && <ResetButton place={place} overrides={overrides} onChanged={onChanged} />}
       <Button size="small" onClick={() => setEditing(true)}>
-        Edit
+        {t("sensors.config.edit")}
       </Button>
     </>
   );
@@ -116,7 +118,7 @@ export function SensorConfiguration({
   return (
     <div ref={box} id="configuration">
       <FactsBox
-        title="Configuration"
+        title={t("sensors.config.title")}
         actions={actions}
         facts={facts(data, sensor, instance, rule, shape, format)}
         details={[
@@ -155,22 +157,22 @@ function facts(
 ): Fact[] {
   const watches = instance || sensor?.instance;
   return [
-    { label: "Kind", value: sensor?.kind ?? "unknown" },
-    { label: "Watches", value: watches || "—", mono: Boolean(watches) },
-    { label: "How often", value: sensor ? every(sensor.interval_ms) : "—" },
+    { label: t("sensors.config.kind"), value: sensor?.kind ?? t("sensors.config.unknown") },
+    { label: t("sensors.config.watches"), value: watches || missingText(sensor ? "none" : "unknown"), mono: Boolean(watches) },
+    { label: t("sensors.config.howOften"), value: sensor ? every(sensor.interval_ms) : missingText("unknown") },
     {
-      label: "Timeout",
+      label: t("sensors.config.timeout"),
       value: sensor
         ? sensor.timeout_ms === null
-          ? `automatic, ${formatSeconds(defaultTimeoutMs(sensor.interval_ms) / 1000)}`
+          ? t("sensors.config.automatic", { duration: formatSeconds(defaultTimeoutMs(sensor.interval_ms) / 1000) })
           : formatSeconds(sensor.timeout_ms / 1000)
-        : "—",
+        : missingText("unknown"),
     },
     ...alertFacts(rule, shape, format, data.thresholds === null, sensor?.interval_ms),
     ...(sensor && Object.keys(sensor.params).length > 0
-      ? [{ label: "Parameters", value: Object.entries(sensor.params).map(([k, v]) => `${k}=${v}`).join(" "), mono: true }]
+      ? [{ label: t("sensors.config.parameters"), value: Object.entries(sensor.params).map(([k, v]) => `${k}=${v}`).join(" "), mono: true }]
       : []),
-    ...(sensor ? [{ label: "Applies from", value: LEVEL_LABELS[ruleLevel(sensor, rule, perInstance(sensor, instance))] }] : []),
+    ...(sensor ? [{ label: t("sensors.config.appliesFrom"), value: LEVEL_LABELS[ruleLevel(sensor, rule, perInstance(sensor, instance))] }] : []),
     ...(data.config ? [configurationFact(data.config)] : []),
   ];
 }
@@ -182,23 +184,32 @@ function alertFacts(
   failed: boolean,
   intervalMs: number | undefined,
 ): Fact[] {
-  if (!rule) return [{ label: "Thresholds", value: failed ? "could not be read" : "none: this sensor never opens incidents" }];
-  if (!rule.enabled) return [{ label: "Thresholds", value: "turned off: this sensor opens no incidents" }];
+  if (!rule) {
+    return [{ label: t("sensors.config.thresholds"), value: failed ? t("sensors.config.unreadable") : t("sensors.config.none") }];
+  }
+  if (!rule.enabled) return [{ label: t("sensors.config.thresholds"), value: t("sensors.config.off") }];
   const duration = {
-    label: "Duration",
+    label: t("sensors.config.duration"),
     value: (
       <>
-        {formatSeconds(rule.duration_s)} <span className={admin.dim}>past the threshold before opening</span>
+        {formatSeconds(rule.duration_s)} <span className={admin.dim}>{t("sensors.config.durationNote")}</span>
         <SlowNote durationS={rule.duration_s} intervalS={intervalMs === undefined ? undefined : intervalMs / 1000} />
       </>
     ),
   };
   if (shape.type === "event") {
-    return [{ label: "Alert", value: `${rule.critical !== null ? "Critical" : "Warning"} ${shape.brief}` }, duration];
+    const severity = rule.critical !== null ? t("sensors.config.critical") : t("sensors.config.warning");
+    return [{ label: t("sensors.config.alert"), value: `${severity} ${shape.brief}` }, duration];
   }
   return [
-    { label: "Warning", value: rule.warning === null ? "none" : `${rule.comparison} ${format(rule.warning)}` },
-    { label: "Critical", value: rule.critical === null ? "none" : `${rule.comparison} ${format(rule.critical)}` },
+    {
+      label: t("sensors.config.warning"),
+      value: rule.warning === null ? t("sensors.config.noneShort") : `${rule.comparison} ${format(rule.warning)}`,
+    },
+    {
+      label: t("sensors.config.critical"),
+      value: rule.critical === null ? t("sensors.config.noneShort") : `${rule.comparison} ${format(rule.critical)}`,
+    },
     duration,
   ];
 }
@@ -206,10 +217,11 @@ function alertFacts(
 function marginFact(rule: EffectiveThreshold, format: (v: number) => string): Fact {
   const above = rule.comparison === ">" || rule.comparison === ">=";
   return {
-    label: "Recovery margin",
+    label: t("sensors.config.margin"),
     value: (
       <>
-        {format(rule.hysteresis)} <span className={admin.dim}>{above ? "below" : "above"} the threshold before resolving</span>
+        {format(rule.hysteresis)}{" "}
+        <span className={admin.dim}>{above ? t("sensors.config.marginBelow") : t("sensors.config.marginAbove")}</span>
       </>
     ),
   };
@@ -217,21 +229,27 @@ function marginFact(rule: EffectiveThreshold, format: (v: number) => string): Fa
 
 function setByFact(sensor: EffectiveSensor, rule: EffectiveThreshold | undefined, several: boolean): Fact {
   return {
-    label: "Set by",
+    label: t("sensors.config.setBy"),
     value: (
       <>
-        How often: {LEVEL_LABELS[timingLevel(sensor)]}
-        {rule && <span className={admin.dim}> · thresholds: {LEVEL_LABELS[thresholdLevel(rule, several)]}</span>}
+        {t("sensors.config.setByHowOften", { level: LEVEL_LABELS[timingLevel(sensor)] })}
+        {rule && (
+          <span className={admin.dim}>{t("sensors.config.setByThresholds", { level: LEVEL_LABELS[thresholdLevel(rule, several)] })}</span>
+        )}
       </>
     ),
   };
 }
 
 function configurationFact(config: EffectiveSensors): Fact {
-  if (config.applied_revision === null) return { label: "Configuration", value: <Label tone="neutral">Waiting for the agent</Label> };
+  if (config.applied_revision === null) {
+    return { label: t("sensors.config.title"), value: <Label tone="neutral">{t("sensors.config.waiting")}</Label> };
+  }
   return {
-    label: "Configuration",
-    value: <Label tone={config.in_sync ? "ok" : "warn"}>{config.in_sync ? "Up to date" : "Out of date"}</Label>,
+    label: t("sensors.config.title"),
+    value: (
+      <Label tone={config.in_sync ? "ok" : "warn"}>{config.in_sync ? t("sensors.config.upToDate") : t("sensors.config.outOfDate")}</Label>
+    ),
   };
 }
 
@@ -247,7 +265,7 @@ function ResetButton({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const to = overrides.level === "sensor" ? `every ${instanceNoun(place.sensor)} on this server` : "the site default";
+  const to = overrides.level === "sensor" ? t("sensors.reset.toEvery", { noun: instanceNoun(place.sensor) }) : t("sensors.reset.toSite");
   async function reset() {
     setBusy(true);
     setError(null);
@@ -255,7 +273,7 @@ function ResetButton({
       await resetRule(overrides);
       onChanged();
     } catch (e) {
-      setError(`It was not reset. ${describeError(e)}`);
+      setError(t("sensors.reset.failed", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -267,8 +285,8 @@ function ResetButton({
           {error}
         </span>
       )}
-      <Button size="small" disabled={busy} onClick={() => void reset()} title={`Go back to the rule of ${to}`}>
-        {busy ? "Resetting…" : "Reset to inherited"}
+      <Button size="small" disabled={busy} onClick={() => void reset()} title={t("sensors.reset.title", { to })}>
+        {busy ? t("sensors.reset.busy") : t("sensors.reset.button")}
       </Button>
     </>
   );
@@ -297,7 +315,7 @@ function timingOf(intervalMs: number, timeout: string): { interval_ms: number; t
   if (text === "") return { interval_ms: intervalMs, timeout_ms: null };
   const seconds = Number(text.replace(",", "."));
   if (!Number.isFinite(seconds) || seconds <= 0 || seconds * 1000 > intervalMs) {
-    return { error: `Enter a number of seconds up to ${formatSeconds(intervalMs / 1000)}, or leave it empty.` };
+    return { error: t("sensors.edit.timeoutError", { max: formatSeconds(intervalMs / 1000) }) };
   }
   return { interval_ms: intervalMs, timeout_ms: Math.round(seconds * 1000) };
 }
@@ -345,7 +363,7 @@ function RuleEditor({
       await saveRule(place, applyTo, change);
       onDone();
     } catch (e) {
-      setFailure(`It was not saved. ${describeError(e)}`);
+      setFailure(t("sensors.edit.failed", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -382,49 +400,63 @@ function RuleEditor({
   const timingChanged = intervalMs !== sensor.interval_ms || timeout !== (sensor.timeout_ms === null ? "" : String(sensor.timeout_ms / 1000));
 
   return (
-    <form className={styles.form} onSubmit={submit} noValidate aria-label="Edit the configuration">
+    <form className={styles.form} onSubmit={submit} noValidate aria-label={t("sensors.edit.label")}>
       <div className={styles.fields}>
         <div className={admin.field}>
-          <span>How often</span>
-          <IntervalSelect label="How often to check" value={intervalMs} onChange={(ms) => setIntervalMs(ms ?? sensor.interval_ms)} />
+          <span>{t("sensors.config.howOften")}</span>
+          <IntervalSelect label={t("sensors.edit.howOftenLabel")} value={intervalMs} onChange={(ms) => setIntervalMs(ms ?? sensor.interval_ms)} />
         </div>
         <Field
-          label="Timeout"
+          label={t("sensors.config.timeout")}
           unit="s"
           value={timeout}
           onChange={setTimeoutText}
           error={errors.timeout}
-          hint={`Empty: automatic, ${formatSeconds(defaultTimeoutMs(intervalMs) / 1000)}.`}
+          hint={t("sensors.edit.timeoutHint", { duration: formatSeconds(defaultTimeoutMs(intervalMs) / 1000) })}
         />
       </div>
       <div className={styles.fields}>
         {shape.type === "event" ? (
           <label className={admin.field}>
-            Alert
+            {t("sensors.config.alert")}
             <select className={fieldClass} value={form.severity} onChange={(e) => set("severity")(e.target.value)}>
-              <option value="critical">Critical {shape.brief}</option>
-              <option value="warning">Warning {shape.brief}</option>
+              <option value="critical">{`${t("sensors.config.critical")} ${shape.brief}`}</option>
+              <option value="warning">{`${t("sensors.config.warning")} ${shape.brief}`}</option>
             </select>
           </label>
         ) : (
           <>
-            <Field label="Warning at" unit={unit} value={form.warning} onChange={set("warning")} error={errors.warning} hint="Empty: no warning." />
-            <Field label="Critical at" unit={unit} value={form.critical} onChange={set("critical")} error={errors.critical} hint="Empty: no critical." />
+            <Field
+              label={t("sensors.edit.warningAt")}
+              unit={unit}
+              value={form.warning}
+              onChange={set("warning")}
+              error={errors.warning}
+              hint={t("sensors.edit.noWarning")}
+            />
+            <Field
+              label={t("sensors.edit.criticalAt")}
+              unit={unit}
+              value={form.critical}
+              onChange={set("critical")}
+              error={errors.critical}
+              hint={t("sensors.edit.noCritical")}
+            />
           </>
         )}
         <Field
-          label="For at least"
+          label={t("sensors.edit.forAtLeast")}
           unit="min"
           value={form.minutes}
           onChange={set("minutes")}
           error={errors.minutes}
-          hint="0 alerts on the first bad value."
+          hint={t("sensors.edit.firstValue")}
         />
       </div>
-      {rule && !rule.enabled && <p className={admin.fieldNote}>This alert is turned off. Save turns it back on with these values.</p>}
+      {rule && !rule.enabled && <p className={admin.fieldNote}>{t("sensors.edit.offNote")}</p>}
       <SlowNote durationS={Math.max(0, Number(form.minutes) || 0) * 60} intervalS={intervalMs / 1000} />
       <fieldset className={styles.applyTo}>
-        <legend>Apply to</legend>
+        <legend>{t("sensors.edit.applyTo")}</legend>
         {choices.map((choice) => (
           <label key={choice.value}>
             <input
@@ -438,20 +470,18 @@ function RuleEditor({
           </label>
         ))}
         {applyTo === "site" && hasOwn && (
-          <span className={admin.fieldNote}>This server keeps its own rule until you reset it to the inherited one.</span>
+          <span className={admin.fieldNote}>{t("sensors.edit.keepsOwn")}</span>
         )}
         {applyTo === "sensor" && timingChanged && (
-          <span className={admin.fieldNote}>
-            How often and the timeout apply to every {instanceNoun(sensor)} on {hostname}: one sensor measures them all.
-          </span>
+          <span className={admin.fieldNote}>{t("sensors.edit.timingAll", { noun: instanceNoun(sensor), host: hostname })}</span>
         )}
       </fieldset>
       <div className={styles.buttons}>
         <Button variant="k" type="submit" disabled={busy}>
-          {busy ? "Saving…" : "Save"}
+          {busy ? t("sensors.edit.saving") : t("sensors.edit.save")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("sensors.edit.cancel")}
         </Button>
         {rule?.enabled && (
           <Button
@@ -472,7 +502,7 @@ function RuleEditor({
               })
             }
           >
-            Turn this alert off
+            {t("sensors.edit.turnOff")}
           </Button>
         )}
         {failure && (

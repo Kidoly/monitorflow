@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { Button, type ButtonVariant, buttonClass, fieldClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
+import { t } from "@/i18n";
 
 import styles from "./AcknowledgeButton.module.css";
 
@@ -18,7 +19,7 @@ export const MAX_NOTE = 500;
  * rejecting keeps the form open with its error.
  */
 export function AcknowledgeButton({
-  label = "Acknowledge",
+  label = t("incidents.button.acknowledge"),
   name,
   variant,
   size,
@@ -101,23 +102,23 @@ export function AcknowledgeButton({
       }}
     >
       <label className={styles.label}>
-        <span>What are you doing about it?</span>
+        <span>{t("incidents.button.question")}</span>
         <input
           ref={field}
           className={cx(fieldClass, styles.field)}
           value={note}
           maxLength={MAX_NOTE}
-          placeholder="Replacing the disk"
+          placeholder={t("incidents.button.placeholder")}
           required
           disabled={busy}
           onChange={(e) => setNote(e.target.value)}
         />
       </label>
       <Button size="small" onClick={cancel} disabled={busy}>
-        Cancel
+        {t("incidents.button.cancel")}
       </Button>
       <button type="submit" className={buttonClass({ variant: "k", size: "small" })} disabled={busy || !note.trim()}>
-        {busy ? "Acknowledging…" : label}
+        {busy ? t("incidents.button.busy") : label}
       </button>
       {error && (
         <span className={styles.error} role="alert">

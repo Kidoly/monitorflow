@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 import type { Command, CommandDetail } from "./api";
 
 /** Package names shown in a title before "and N more". */
@@ -15,40 +17,44 @@ export function describeCommand(command: Command): { title: string; sub: string 
   switch (command.kind) {
     case "apply_updates": {
       const packages = strings(p.packages);
-      const reboot = p.allow_reboot === true ? ", allow reboot" : ", no reboot";
+      const reboot = p.allow_reboot === true ? t("server.commands.allowReboot") : t("server.commands.noReboot");
       if (packages.length > 0) {
         const names = packages.slice(0, SHOWN_PACKAGES).join(", ");
         const more = packages.length - SHOWN_PACKAGES;
         return {
-          title: `Selected: ${names}${more > 0 ? ` and ${more} more` : ""}${p.allow_reboot === true ? reboot : ""}`,
-          sub: `${packages.length} ${packages.length === 1 ? "package" : "packages"}`,
+          title: t("server.commands.selected", {
+            names,
+            more: more > 0 ? t("server.commands.more", { count: more }) : "",
+            reboot: p.allow_reboot === true ? reboot : "",
+          }),
+          sub: t("server.commands.packages", { count: packages.length }),
         };
       }
       return p.security_only === true
-        ? { title: `Security updates${reboot}`, sub: "every security update" }
-        : { title: `All packages${reboot}`, sub: "every upgradable package" };
+        ? { title: t("server.commands.security", { reboot }), sub: t("server.commands.securitySub") }
+        : { title: t("server.commands.all", { reboot }), sub: t("server.commands.allSub") };
     }
     case "configure_sources": {
       const repositories = Array.isArray(p.repositories) ? p.repositories.length : 0;
       return {
-        title: "Configure package sources",
-        sub: `${repositories} ${repositories === 1 ? "repository" : "repositories"}${typeof p.mode === "string" ? ` · ${p.mode.toLowerCase()}` : ""}`,
+        title: t("server.commands.configure"),
+        sub: `${t("server.commands.repositories", { count: repositories })}${typeof p.mode === "string" ? ` · ${p.mode.toLowerCase()}` : ""}`,
       };
     }
     case "revert_sources":
-      return { title: "Revert package sources", sub: "back to the distribution's own" };
+      return { title: t("server.commands.revert"), sub: t("server.commands.revertSub") };
     case "self_update": {
       const version = typeof p.version === "string" ? p.version : "?";
       const timeout = typeof p.health_timeout_seconds === "number" && p.health_timeout_seconds > 0 ? p.health_timeout_seconds : 300;
       return {
-        title: `Update agent to ${version}`,
-        sub: `${p.allow_downgrade === true ? "downgrade allowed · " : ""}rolls back unless it connects within ${timeout} s`,
+        title: t("server.commands.selfUpdate", { version }),
+        sub: `${p.allow_downgrade === true ? t("server.commands.downgrade") : ""}${t("server.commands.rollsBack", { seconds: String(timeout) })}`,
       };
     }
     case "ai_commands":
       return p.on === true
-        ? { title: "Turn AI commands on", sub: "from the web interface" }
-        : { title: "Turn AI commands off", sub: "from the web interface" };
+        ? { title: t("server.commands.aiOn"), sub: t("server.commands.fromWeb") }
+        : { title: t("server.commands.aiOff"), sub: t("server.commands.fromWeb") };
     default:
       return { title: command.kind, sub: "" };
   }
@@ -65,17 +71,17 @@ export function lastStepAt(command: Command): string | null {
 
 /** "queued 09:12:00 → sent 09:12:03 → running 09:12:04 → failed 09:12:19 (exit 100)". */
 export function commandSteps(command: Command, clock: (date: Date) => string): string {
-  const steps: [string, string | null][] = [
+  const steps: [Command["state"], string | null][] = [
     ["queued", command.issued_at],
     ["sent", command.sent_at],
     ["running", command.started_at],
   ];
   if (!isActive(command)) steps.push([command.state, command.finished_at]);
   const text = steps
-    .filter((step): step is [string, string] => step[1] !== null)
-    .map(([word, at]) => `${word} ${clock(new Date(at))}`)
+    .filter((step): step is [Command["state"], string] => step[1] !== null)
+    .map(([state, at]) => `${t(`server.commands.step.${state}`)} ${clock(new Date(at))}`)
     .join(" → ");
-  return command.exit_code === null ? text : `${text} (exit ${command.exit_code})`;
+  return command.exit_code === null ? text : t("server.commands.exit", { steps: text, code: String(command.exit_code) });
 }
 
 /** The text under a command's row: its steps, its error, then its output. */

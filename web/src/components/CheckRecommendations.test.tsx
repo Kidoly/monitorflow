@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { CheckRecommendation } from "@/lib/api";
 import { stubFetch } from "@/test/fetch";
 
@@ -71,6 +72,17 @@ describe("CheckRecommendations", () => {
       expect.objectContaining({ metric: "monitorflow_service_postgresql_16_main_active", critical: 1 }),
     ]);
     expect(await within(box).findByText("Nothing to add: what runs here is checked.")).toBeInTheDocument();
+  });
+
+  it("speaks French, leaving the agent's findings as they came", async () => {
+    setActiveLocale("fr");
+    stubFetch({ [ROUTE]: { status: 200, body: { reported_at: new Date().toISOString(), recommendations: [postgres, share] } } });
+    render(<CheckRecommendations {...props} canEdit />);
+    expect(await screen.findByRole("heading", { name: "Contrôles recommandés" })).toBeInTheDocument();
+    expect(screen.getByText("PostgreSQL is running")).toBeInTheDocument();
+    expect(screen.getByText("Ajoute : Service postgresql@16-main.service, Port 5432, chacun avec son alerte.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ajouter 2 contrôles pour PostgreSQL is running" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Afficher les écartés (1)" })).toBeInTheDocument();
   });
 
   it("dismisses, shows dismissed ones and brings them back", async () => {
