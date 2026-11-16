@@ -258,9 +258,28 @@ describe("SensorPage", () => {
       await within(configuration).findByRole("button", { name: "Edit" });
       expect(configuration).toHaveTextContent(/Timeout\s*automatic, 1 min/);
       expect(configuration).toHaveTextContent("Checked every 1 h, so this alert opens up to 2 h after the problem starts.");
-      expect(screen.getByText(/checked every 1 h · hover/)).toBeInTheDocument();
+      expect(screen.getByText(/· checked every 1 h$/)).toBeInTheDocument();
       // One point an hour, each step summarizing the hour.
       expect(rangeCalls(fetchMock)[0]).toMatchObject({ step: "3600", rollup: "max" });
+    });
+
+    it("counts the servers each choice reaches, and confirms before turning the alert off", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const servers = [editable, { ...editable, id: "s2" }, { ...editable, id: "s3", revoked_at: "2026-10-01T00:00:00Z" }];
+      const fetchMock = edit({ "GET /api/servers?site_id=site-1&limit=500": { status: 200, body: { servers, next_cursor: null } } });
+      const form = await openEditor(user);
+      expect(await within(form).findByText("· 2 servers")).toBeInTheDocument();
+      expect(within(form).getByRole("radio", { name: /^every server of paris \(site default\)/ }).closest("label")).toHaveTextContent(
+        "every server of paris (site default) · 2 servers",
+      );
+      expect(within(form).getByPlaceholderText("No warning")).toBeInTheDocument();
+      expect(within(form).queryByText("Empty: no warning.")).not.toBeInTheDocument();
+      const writes = () => fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== "GET").length;
+      await user.click(within(form).getByRole("button", { name: "Turn this alert off…" }));
+      expect(writes()).toBe(0);
+      expect(within(form).getByText("Turn this alert off?")).toBeInTheDocument();
+      await user.click(within(form).getByRole("button", { name: "Turn off" }));
+      await vi.waitFor(() => expect(writes()).toBe(1));
     });
 
     it("preselects the level in effect and saves the interval and timeout for this server", async () => {
@@ -269,13 +288,13 @@ describe("SensorPage", () => {
       const form = await openEditor(user);
       expect(within(form).getByRole("radio", { name: "every server of paris (site default)" })).toBeChecked();
       expect(within(form).getAllByRole("radio").map((r) => r.closest("label")?.textContent?.trim())).toEqual([
-        "this sensor only (/var)",
-        "every disk on web-1",
+        "this sensor only (/var) · 1 server",
+        "every disk on web-1 · 1 server",
         "every server of paris (site default)",
       ]);
       await user.selectOptions(within(form).getByRole("combobox", { name: "How often to check" }), "every 5 min");
       await user.type(within(form).getByLabelText("Timeout"), "20");
-      await user.click(within(form).getByRole("radio", { name: "every disk on web-1" }));
+      await user.click(within(form).getByRole("radio", { name: /^every disk on web-1/ }));
       await user.click(within(form).getByRole("button", { name: "Save" }));
       await vi.waitFor(() =>
         expect(sent(fetchMock, "POST", `/api/servers/${ID}/sensor_configs`)).toEqual({
@@ -296,7 +315,7 @@ describe("SensorPage", () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
       const fetchMock = edit();
       let form = await openEditor(user);
-      await user.click(within(form).getByRole("radio", { name: "this sensor only (/var)" }));
+      await user.click(within(form).getByRole("radio", { name: /^this sensor only \(\/var\)/ }));
       await user.clear(within(form).getByLabelText("Warning at"));
       await user.type(within(form).getByLabelText("Warning at"), "70");
       await user.click(within(form).getByRole("button", { name: "Save" }));
@@ -352,7 +371,7 @@ describe("SensorPage", () => {
       );
       // The editor preselects the level in effect.
       const form = await openEditor(user);
-      expect(within(form).getByRole("radio", { name: "this sensor only (/var)" })).toBeChecked();
+      expect(within(form).getByRole("radio", { name: /^this sensor only \(\/var\)/ })).toBeChecked();
     });
 
     it("opens the form from the list's Edit, and drops it from the address once closed", async () => {
