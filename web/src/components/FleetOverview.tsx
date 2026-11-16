@@ -214,11 +214,6 @@ export function FleetOverview() {
               { name: "os", label: t("fleet.filter.os"), options: families.map((f) => ({ value: f, label: formatOs(f, null) })) },
               { kind: "toggle" as const, name: "incidents", label: t("fleet.filter.incidents") },
             ]}
-            trailing={
-              <Button onClick={() => setSort(null)}>
-                {t("fleet.problemsFirst")}
-              </Button>
-            }
           />
           {!data ? (
             <DataTable label={t("fleet.table")} columns={columns} rows={[]} rowKey={(r) => r.key} loading />

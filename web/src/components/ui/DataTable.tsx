@@ -52,9 +52,13 @@ export function sortRows<T>(
   return [...rows].sort((a, b) => sign * compareValues(column.sortValue!(a), column.sortValue!(b)));
 }
 
-/** The sort after clicking `key`'s header: ascending first, then flipping. */
-export function nextSort(current: SortState | null, key: string): SortState {
-  return current?.key === key && current.direction === "asc" ? { key, direction: "desc" } : { key, direction: "asc" };
+/**
+ * The sort after clicking `key`'s header: ascending, then descending, then
+ * back to the table's own order (`defaultOrder`, e.g. problems first).
+ */
+export function nextSort(current: SortState | null, key: string): SortState | null {
+  if (current?.key !== key) return { key, direction: "asc" };
+  return current.direction === "asc" ? { key, direction: "desc" } : null;
 }
 
 /** `?sort=host` is ascending, `?sort=-host` descending. */
