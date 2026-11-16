@@ -23,7 +23,9 @@ use super::{ApiError, ApiState};
 use crate::discovery;
 use crate::recommend::{self, Covered, Recommendation};
 
-#[derive(Debug, Serialize)]
+/// A recommendation, dismissed or not.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CheckRecommendation)]
 pub struct RecommendationView {
     #[serde(flatten)]
     pub recommendation: Recommendation,
@@ -32,7 +34,9 @@ pub struct RecommendationView {
     pub dismissed_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/servers/{id}/recommendations`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CheckRecommendationList)]
 pub struct RecommendationList {
     /// When the agent last reported what runs; null before its first
     /// report, or for an agent that does not report (Windows, older).
@@ -40,9 +44,12 @@ pub struct RecommendationList {
     pub recommendations: Vec<RecommendationView>,
 }
 
-#[derive(Debug, Deserialize)]
+/// Names a recommendation of the server.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = RecommendationKey)]
 pub struct KeyRequest {
+    /// The recommendation's `key`.
     pub key: String,
 }
 

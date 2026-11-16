@@ -27,19 +27,37 @@ const WINDOW: Duration = Duration::from_secs(60);
 /// Keys tracked at once; older windows are dropped beyond it.
 const MAX_KEYS: usize = 10_000;
 
-/// First segments after `/api/` that v1 does not serve: they are for
-/// people in a browser (`me` holds the person's own preferences,
-/// ADR-0137), or would let a key make a credential that
-/// outlives it or acts beyond its reach (another key, a display link).
-const LEFT_OUT: [&str; 8] = [
-    "auth",
-    "me",
-    "setup",
-    "password-link",
-    "acknowledge-link",
-    "display",
-    "display-links",
-    "api-keys",
+/// First segments after `/api/` that v1 does not serve, each with why
+/// (ADR-0143). Everything else the web interface does is in v1 and in
+/// the OpenAPI document; a test fails otherwise. Add here only what is
+/// for a person in a browser, never to skip documenting a route.
+const LEFT_OUT: [(&str, &str); 8] = [
+    ("auth", "signing in and out: a key is already signed in"),
+    (
+        "me",
+        "the signed-in person's own preferences and password (ADR-0137, ADR-0141)",
+    ),
+    (
+        "setup",
+        "first-run setup, with the one-time link of the installer",
+    ),
+    (
+        "password-link",
+        "a link that sets a person's password and signs them in",
+    ),
+    (
+        "acknowledge-link",
+        "a link from a page that acknowledges as the person paged",
+    ),
+    (
+        "display",
+        "the screen of a display link, signed in by the link's own secret",
+    ),
+    (
+        "display-links",
+        "a link reads as its maker with all their roles and outlives the key",
+    ),
+    ("api-keys", "a key never makes, lists or turns off keys"),
 ];
 
 /// Marks a request that came through `/api/v1`.
@@ -105,20 +123,27 @@ impl Slot {
 }
 
 /// Whether v1 leaves out the web interface's route `method` `path`
-/// (`/api/…`, a request's path or a route's template). Beyond
-/// [`LEFT_OUT`], these act as a person rather than within a key's reach:
-/// the display links of a dashboard, which read as their maker
-/// (ADR-0099); the person's own on-call contact, where their pages go;
-/// and inviting a user or issuing a password link, which hand out a
-/// person's credential that would outlive the key.
+/// (`/api/…`, a request's path or a route's template), with why.
 pub fn left_out(method: &str, path: &str) -> bool {
+    why_left_out(method, path).is_some()
+}
+
+/// Why v1 leaves out `method` `path`, or `None` when it serves it. Beyond
+/// [`LEFT_OUT`], these act as a person rather than within a key's reach.
+pub fn why_left_out(method: &str, path: &str) -> Option<&'static str> {
     let segments: Vec<&str> = path.trim_start_matches("/api/").split('/').collect();
+    if let Some((_, why)) = LEFT_OUT.iter().find(|(s, _)| Some(s) == segments.first()) {
+        return Some(why);
+    }
     let post = method.eq_ignore_ascii_case("POST");
     match segments.as_slice() {
-        [first, ..] if LEFT_OUT.contains(first) => true,
-        ["dashboards", _, "display-links"] | ["on-call", "contact", ..] => true,
-        ["users"] | ["users", _, "link"] => post,
-        _ => false,
+        ["dashboards", _, "display-links"] => Some(
+            "the display links of a dashboard read as their maker (ADR-0099) and outlive the key",
+        ),
+        ["on-call", "contact", ..] => Some("where the person's own pages go"),
+        ["users"] if post => Some("inviting hands out a person's password link"),
+        ["users", _, "link"] if post => Some("a password link becomes a person's session"),
+        _ => None,
     }
 }
 

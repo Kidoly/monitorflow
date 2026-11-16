@@ -24,7 +24,7 @@ use super::{
         server_sensors, server_sensor_configs, create_server_sensor_config,
         site_sensors, site_sensor_configs, create_site_sensor_config,
         update_sensor_config, delete_sensor_config,
-        site_check_interval, server_offline_alerts, site_offline_alerts,
+        site_check_interval, server_offline_alerts, site_offline_alerts, relay_offline_alerts,
         server_thresholds_effective, server_thresholds, create_server_threshold,
         site_thresholds_effective, site_thresholds, create_site_threshold,
         update_threshold, delete_threshold,
@@ -476,6 +476,24 @@ key's areas: `api_key_scope`", body = ErrorBody),
             body = ErrorBody),
     ))]
 fn site_offline_alerts() {}
+
+#[utoipa::path(put, path = "/api/v1/relays/{id}/offline-alerts", tag = "sensors",
+    summary = "Turn a relay's offline alerts on or off",
+    description = "With `false`, the relay opens no incident when it stops reporting, and its open offline \
+incident resolves within a minute. With `true`, they are back, unless its site has them off. \
+Audited as `relay.offline_alerts`. Safe to repeat.\n\n\
+**Who**: operator or above (\"Read and change\") on the relay's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The relay")),
+    request_body(content = offline_alerts::OfflineAlerts, example = json!({"enabled": false})),
+    responses(
+        (status = 200, description = "The setting as set", body = offline_alerts::OfflineAlerts,
+            example = json!({"enabled": false})),
+        (status = 403, description = "The key may only read the relay's site: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such relay, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn relay_offline_alerts() {}
 
 /// What creating or replacing a threshold row checks and records, for
 /// `concat!` in the descriptions.
