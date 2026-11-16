@@ -4,7 +4,7 @@ export type Theme = "light" | "dark" | "system";
 /** localStorage key of the picked theme; absent means "system". */
 export const THEME_KEY = "monitorflow.theme";
 
-/** The order the theme button cycles through. */
+/** The themes, in the order Preferences lists them. */
 export const THEMES: readonly Theme[] = ["system", "light", "dark"];
 
 /**
@@ -60,9 +60,4 @@ export function applyTheme(theme: Theme) {
     root.setAttribute("data-theme", theme);
   }
   listeners.forEach((listener) => listener());
-}
-
-/** The theme after `theme` in `THEMES`. */
-export function nextTheme(theme: Theme): Theme {
-  return THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]!;
 }

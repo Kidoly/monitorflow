@@ -8,6 +8,7 @@ import { router, setUrl } from "@/test/navigation";
 import { SHELL_ROUTES } from "@/test/shell";
 
 import { AuthGuard } from "./AuthGuard";
+import { PreferencesPage } from "./settings/PreferencesPage";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
@@ -32,7 +33,7 @@ describe("AuthGuard", () => {
     render(<AuthGuard>fleet page</AuthGuard>);
     await screen.findByText("fleet page");
     expect(screen.getByRole("main")).toHaveTextContent("fleet page");
-    expect(screen.getByRole("navigation", { name: "Main" })).toHaveTextContent("alice · viewer");
+    expect(screen.getByRole("link", { name: "alice" })).toHaveAttribute("title", "alice (viewer): preferences and sign out");
   });
 
   it("shows Settings to everyone, for their own preferences", async () => {
@@ -67,13 +68,19 @@ describe("AuthGuard", () => {
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("signs out with the CSRF header", async () => {
+  it("signs out from Preferences, where the person's button leads, with the CSRF header", async () => {
     const fetchMock = stubFetch({
       ...SHELL_ROUTES,
       "GET /api/auth/me": { status: 200, body: alice },
       "POST /api/auth/logout": { status: 204 },
     });
-    render(<AuthGuard>fleet page</AuthGuard>);
+    setUrl("/settings/preferences/");
+    render(
+      <AuthGuard>
+        <PreferencesPage />
+      </AuthGuard>,
+    );
+    expect(await screen.findByRole("link", { name: "alice" })).toHaveAttribute("aria-current", "page");
     await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith(LOGIN_PATH));
     const logout = fetchMock.mock.calls.findIndex(([url]) => url === "/api/auth/logout");

@@ -12,7 +12,7 @@ import { ACME, COMPANY_ROUTES, LYON, SHELL_ROUTES, sites } from "@/test/shell";
 
 import { SettingsStatusProvider } from "../settings/SettingsStatus";
 
-import { AppShell } from "./AppShell";
+import { AppShell, initials } from "./AppShell";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
@@ -177,7 +177,7 @@ describe("AppShell", () => {
       "Approvals",
       "Audit log",
       "Settings",
-      "Personalize the sidebar",
+      "Aalice",
     ]);
     expect(within(nav()).queryByText("Administration")).not.toBeInTheDocument();
     expect(within(nav()).getByText("Remediation")).toBeInTheDocument();
@@ -194,7 +194,10 @@ describe("AppShell", () => {
     expect(within(nav()).getByText("Supervision")).toBeInTheDocument();
     expect(await within(nav()).findByLabelText("3 incidents ouverts")).toHaveTextContent("3");
     expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Langue" })).toBeInTheDocument();
+    expect(within(nav()).getByRole("link", { name: "alice" })).toHaveAttribute(
+      "title",
+      "alice (administrateur)\u00a0: préférences et déconnexion",
+    );
   });
 
   it("counts open incidents in the Incidents link, within the scope", async () => {
@@ -294,27 +297,57 @@ describe("AppShell", () => {
     });
   });
 
-  it("cycles the theme, stores it and applies it to <html>", async () => {
-    const user = userEvent.setup();
-    renderShell();
-    const root = document.documentElement;
-    await user.click(screen.getByRole("button", { name: "Theme: System" }));
-    expect(root).toHaveAttribute("data-theme", "light");
-    expect(localStorage.getItem(THEME_KEY)).toBe("light");
-    await user.click(screen.getByRole("button", { name: "Theme: Light" }));
-    expect(root).toHaveAttribute("data-theme", "dark");
-    expect(localStorage.getItem(THEME_KEY)).toBe("dark");
-    await user.click(screen.getByRole("button", { name: "Theme: Dark" }));
-    expect(root).not.toHaveAttribute("data-theme");
-    expect(localStorage.getItem(THEME_KEY)).toBeNull();
+  describe("foot", () => {
+    it("is one button with the person's name, leading to Preferences", async () => {
+      renderShell();
+      const button = within(nav()).getByRole("link", { name: "alice" });
+      expect(button).toHaveAttribute("href", expect.stringMatching(/^\/settings\/preferences\/?$/));
+      expect(button).toHaveTextContent(/^Aalice$/);
+      // The role is in the tooltip, not under the name.
+      expect(button).toHaveAttribute("title", "alice (administrator): preferences and sign out");
+      expect(within(nav()).queryByText(/administrator/)).not.toBeInTheDocument();
+    });
+
+    it("leaves theme, language and sign out to Preferences", () => {
+      renderShell();
+      expect(within(nav()).queryByRole("combobox")).not.toBeInTheDocument();
+      expect(within(nav()).queryByRole("button", { name: /theme/i })).not.toBeInTheDocument();
+      expect(within(nav()).queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+      expect(within(nav()).queryByRole("link", { name: /personalize/i })).not.toBeInTheDocument();
+      // Below the scope switcher, only the collapse toggle stays a button.
+      expect(within(nav()).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual([
+        "Scope: All customers",
+        "Collapse sidebar",
+      ]);
+    });
+
+    it("marks the button current on Preferences", () => {
+      setUrl("/settings/preferences/");
+      renderShell();
+      expect(within(nav()).getByRole("link", { name: "alice" })).toHaveAttribute("aria-current", "page");
+    });
+
+    it("draws initials from the name's first two parts", () => {
+      expect(initials("lea.martin")).toBe("LM");
+      expect(initials("tom_reyes")).toBe("TR");
+      expect(initials("admin")).toBe("A");
+      expect(initials("Jean Dupont")).toBe("JD");
+      expect(initials("élodie")).toBe("É");
+      expect(initials("ops@acme")).toBe("OA");
+    });
   });
 
   it("reads the stored theme, which the head script applies before paint", () => {
     localStorage.setItem(THEME_KEY, "dark");
     new Function(THEME_SCRIPT)();
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+  });
+
+  it("follows a theme chosen in another tab", () => {
     renderShell();
-    expect(screen.getByRole("button", { name: "Theme: Dark" })).toBeInTheDocument();
+    localStorage.setItem(THEME_KEY, "dark");
+    act(() => void window.dispatchEvent(new StorageEvent("storage", { key: THEME_KEY })));
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 
   it("opens and closes the phone menu", async () => {
@@ -382,7 +415,7 @@ describe("AppShell", () => {
         "API keys",
         "AI",
         "License",
-        "Personalize the sidebar",
+        "Aalice",
       ]);
       await user.keyboard("{Escape}");
       expect(search).toHaveValue("");

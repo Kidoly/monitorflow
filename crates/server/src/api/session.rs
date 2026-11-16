@@ -176,6 +176,21 @@ pub async fn revoke(db: impl PgExecutor<'_>, token: &SessionToken) -> Result<boo
     Ok(done.rows_affected() > 0)
 }
 
+/// Ends every session of `user_id` but `keep`, for a password change made
+/// from `keep`. Returns how many ended.
+pub async fn revoke_others(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    keep: &SessionToken,
+) -> Result<u64, sqlx::Error> {
+    let done = sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2")
+        .bind(user_id)
+        .bind(keep.hash())
+        .execute(db)
+        .await?;
+    Ok(done.rows_affected())
+}
+
 /// Deletes sessions that can no longer be used.
 pub async fn prune(db: impl PgExecutor<'_>, settings: &ApiSettings) -> Result<u64, sqlx::Error> {
     let done = sqlx::query(

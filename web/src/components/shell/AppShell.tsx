@@ -1,18 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Fragment, type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { Label } from "@/components/ui/StatusLabel";
 import { t } from "@/i18n";
-import { type Customer, LOGIN_PATH, type Me, type Site, api, describeError, isAbortError } from "@/lib/api";
-import { administersEverything, multiCustomer } from "@/lib/me";
+import { type Customer, type Me, type Site, api, isAbortError } from "@/lib/api";
+import { administersEverything, multiCustomer, roleNames } from "@/lib/me";
 import { setPreference, usePreferences } from "@/lib/preferences";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
-import { SIDEBAR_PREFERENCES_PATH } from "@/lib/routes";
+import { PREFERENCES_PATH } from "@/lib/routes";
+import { subscribeTheme } from "@/lib/theme";
 import { useMediaQuery } from "@/lib/useMediaQuery";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -25,9 +26,7 @@ import { SETTINGS_ITEM, arrangedNavigation, isCurrent } from "./navigation";
 import { SettingsSidebar } from "./SettingsSidebar";
 import styles from "./Shell.module.css";
 import { ScopeSwitcher } from "./ScopeSwitcher";
-import { LanguageSelect } from "./LanguageSelect";
 import { StatusStrip } from "./StatusStrip";
-import { ThemeToggle } from "./ThemeToggle";
 import { CertificateAuthorityBanner } from "./CertificateAuthorityBanner";
 import { LicenseBanner } from "./LicenseBanner";
 import { UpdateBanner } from "./UpdateBanner";
@@ -51,23 +50,33 @@ async function openIncidents(scope: Scope, sites: Site[], signal: AbortSignal): 
 }
 
 /**
+ * One or two letters for `username`: the initials of its first two parts
+ * (`lea.martin` gives "LM"), or its first letter.
+ */
+export function initials(username: string): string {
+  const parts = username.split(/[\s._@-]+/).filter(Boolean);
+  const letters = parts.length > 1 ? [parts[0]!, parts[1]!] : [parts[0] ?? "?"];
+  return letters.map((part) => [...part][0]!.toUpperCase()).join("");
+}
+
+/**
  * The page chrome for a signed-in user: skip link, the 240 px sidebar
  * (`<nav aria-label="Main">`, a top bar with a menu under 800 px) and
  * `<main id="main">`. The sidebar follows the person's preferences
  * (ADR-0137): icons only or with labels (by default icons only under
- * 1100 px), items hidden or reordered. Uses the URL, so it needs a
+ * 1100 px), items hidden or reordered. At its foot, the person's button
+ * leads to Preferences (language, theme, sidebar, password, sign out),
+ * next to a small collapse toggle. Uses the URL, so it needs a
  * `<Suspense>` boundary above it.
  */
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const pathname = usePathname();
   const search = useSearchParams().toString();
-  const router = useRouter();
   const scope = useScope();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [openedAt, setOpenedAt] = useState(pathname);
-  const [error, setError] = useState<string | null>(null);
   const sidebar = usePreferences().preferences.sidebar;
   // The phone menu always has labels; above it, the person's choice or the width.
   const wide = useMediaQuery("(min-width: 800px)", true);
@@ -103,6 +112,9 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
     // A second customer reloads `me`, and the lists with it (ADR-0104).
   }, [me.multi_customer]);
 
+  // Another tab's theme change applies here too.
+  useEffect(() => subscribeTheme(() => {}), []);
+
   const fetchCount = useCallback(
     (signal: AbortSignal) => openIncidents(scope, sites, signal),
     // The scope is compared by value; a new object each render must not refetch.
@@ -112,19 +124,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const count = usePolledData(fetchCount).data;
   const countLabel = count && count !== "0" ? count : null;
 
-  async function signOut() {
-    setError(null);
-    try {
-      await api.logout();
-      router.replace(LOGIN_PATH);
-    } catch (e) {
-      setError(t("shell.signOutFailed", { error: describeError(e) }));
-    }
-  }
-
-  const roles =
-    [...new Set(me.roles.map((grant) => grant.role))].map((role) => t(`common.role.${role}`)).join(", ") ||
-    t("common.role.none");
+  const roles = roleNames(me);
   // "500+" counts as many.
   const openCount = countLabel ? parseInt(countLabel, 10) : 0;
 
@@ -213,34 +213,28 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           </>
         )}
         <div className={styles.foot}>
-          <span className={styles.who}>
-            {me.username} · {roles}
-          </span>
-          <button type="button" className={styles.signOut} onClick={() => void signOut()}>
-            <Icon name="signOut" />
-            <span className={styles.signOutText}>{t("shell.signOut")}</span>
+          <Link
+            href={PREFERENCES_PATH}
+            className={styles.user}
+            title={t("shell.account.title", { name: me.username, roles })}
+            aria-current={pathname.startsWith(PREFERENCES_PATH) ? "page" : undefined}
+          >
+            <span className={styles.avatar} aria-hidden="true">
+              {initials(me.username)}
+            </span>
+            <span className={cx(styles.text, styles.userName)}>{me.username}</span>
+          </Link>
+          <button
+            type="button"
+            className={styles.toggle}
+            aria-expanded={!rail}
+            aria-label={t(rail ? "shell.sidebar.expand" : "shell.sidebar.collapse")}
+            title={t(rail ? "shell.sidebar.expand" : "shell.sidebar.collapse")}
+            onClick={() => setPreference("sidebar", { ...sidebar, collapsed: !rail })}
+          >
+            <Icon name={rail ? "expand" : "collapse"} />
           </button>
         </div>
-        {error && (
-          <p className={styles.error} role="alert">
-            {error}
-          </p>
-        )}
-        <ThemeToggle />
-        <LanguageSelect />
-        <Link href={SIDEBAR_PREFERENCES_PATH} className={cx(styles.item, styles.toggle)}>
-          <Icon name="personalize" />
-          <span className={styles.text}>{t("shell.sidebar.personalize")}</span>
-        </Link>
-        <button
-          type="button"
-          className={cx(styles.item, styles.toggle)}
-          aria-expanded={!rail}
-          onClick={() => setPreference("sidebar", { ...sidebar, collapsed: !rail })}
-        >
-          <Icon name={rail ? "expand" : "collapse"} />
-          <span className={styles.text}>{t(rail ? "shell.sidebar.expand" : "shell.sidebar.collapse")}</span>
-        </button>
       </nav>
       <main id="main" className={styles.main} tabIndex={-1}>
         <StatusStrip />

@@ -25,8 +25,7 @@
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}], "multi_customer"}`; `multi_customer` is whether the user sees more than one customer (ADR-0104) |
 //! | GET | `/api/me/preferences` | session | [`preferences::Preferences`]: the signed-in person's own `{"theme", "language", "sidebar": {"collapsed", "hidden", "order"}}`, every key optional, `{}` when never saved (ADR-0137); never through an API key |
 //! | PUT | `/api/me/preferences` | session | body [`preferences::Preferences`], replacing the stored one; 400 for an unknown key or value, a list over 64 items, an item identifier out of form or a body over 16 KiB. Not audited |
-//! | GET | `/api/me/preferences` | session | [`preferences::Preferences`]: the signed-in person's own `{"theme", "language", "sidebar": {"collapsed", "hidden", "order"}}`, every key optional, `{}` when never saved (ADR-0137); never through an API key |
-//! | PUT | `/api/me/preferences` | session | body [`preferences::Preferences`], replacing the stored one; 400 for an unknown key or value, a list over 64 items, an item identifier out of form or a body over 16 KiB. Not audited |
+//! | POST | `/api/me/password` | session | body [`own_password::ChangeRequest`] `{"current_password", "new_password"}`; 204, the person's other sessions ended and this one kept; 400 for a short or unchanged new password or a wrong current one, 429 `rate_limited` within the sign-in limits; audited; never through an API key (ADR-0141) |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
 //! | GET | `/api/servers/summary` | any role | [`servers::ServerSummary`]: how many servers are critical, warning, acknowledged, silenced, offline and ok, out of `total`; `?site_id` or `?customer_id` narrows it (ADR-0130) |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
@@ -266,7 +265,9 @@
 //! change may leave the server without an enabled global administrator who
 //! has a password. All changes are audited (`user.create`,
 //! `user.link_issued`, `user.grant`, `user.revoke`, `user.disable`,
-//! `user.enable`, `user.remove`, `user.password_set`).
+//! `user.enable`, `user.remove`, `user.password_set`). People change their
+//! own password with `POST /api/me/password` (ADR-0141), audited as
+//! `user.password_set` with `via: self`, or `user.password_change_failed`.
 //!
 //! # Relays and enrollment tokens
 //!
@@ -672,6 +673,7 @@ pub mod openapi_remediation;
 mod openapi_settings;
 mod openapi_system;
 mod openapi_users;
+pub mod own_password;
 pub mod package_sources;
 pub mod packages;
 pub mod password;
@@ -966,6 +968,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/me/password", post(own_password::change))
         .route(
             "/api/me/preferences",
             get(preferences::get)

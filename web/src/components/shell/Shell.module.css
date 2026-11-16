@@ -111,111 +111,65 @@
   margin-top: auto;
 }
 
-.pinned + .foot {
-  margin-top: 0;
-}
-
-/* Inside a settings page */
-.back {
-  color: var(--muted);
-  margin-bottom: 4px;
-}
-
-.settingsTitle {
-  padding: 6px 10px;
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--text);
-}
-
-.settingsSearch {
-  margin: 6px 0 2px;
-  width: 100%;
-  /* The sidebar is a full-height column that scrolls: nothing in it shrinks. */
+.pinned + /* The foot: the person's button, which leads to Preferences, and a small
+   collapse toggle next to it. */
+.foot {
+  margin-top: auto;
+  padding-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
 }
 
-.noMatch {
-  margin: 8px 10px;
-  color: var(--muted);
+.user {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
+  color: var(--text);
+  position: relative;
 }
 
-.ellipsis {
+.user:hover {
+  background: var(--hl);
+  text-decoration: none;
+}
+
+.user[aria-current="page"] {
+  background: var(--nav-active);
+  box-shadow: var(--shadow-nav);
+}
+
+.user:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.avatar {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.userName {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.flag {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.foot {
-  margin-top: auto;
-  padding: 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 13px;
-  gap: 8px;
-}
-
-.who {
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.signOut {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text);
-  font-size: 13px;
-  text-decoration: underline;
-  white-space: nowrap;
-  flex-shrink: 0;
-  position: relative;
-}
-
-.signOut svg {
-  display: none;
-}
-
-.error {
-  margin: 0 10px 8px;
-  color: var(--bad);
-  font-size: 12px;
-}
-
-.themeButton {
-  justify-content: center;
-  position: relative;
-}
-
-.themeButton svg {
-  display: none;
-}
-
-/* Language: a native select, under the theme button */
-.language {
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin-top: 8px;
-}
-
-.language svg {
-  display: none;
-}
-
-.languageSelect {
-  width: 100%;
+  font-weight: 500;
 }
 
 /* Scope switcher */
@@ -284,30 +238,29 @@
   color: var(--muted);
 }
 
-/* Collapses or expands the sidebar, at its bottom. */
+/* Collapses or expands the sidebar: an icon button beside the person's. */
 .toggle {
-  width: 100%;
-  margin-top: 8px;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: 0;
+  border-radius: var(--radius-control);
   background: none;
-  font: inherit;
   color: var(--muted);
   cursor: pointer;
-  text-align: left;
-}
-
-.toggle + .toggle {
-  margin-top: 0;
 }
 
 .toggle:hover {
   background: var(--hl);
-  text-decoration: none;
+  color: var(--text);
 }
 
 .toggle:focus-visible {
   outline: 2px solid var(--text);
-  outline-offset: -2px;
+  outline-offset: 2px;
 }
 
 /* Phone top bar */
@@ -351,9 +304,7 @@
 }
 
 .rail .text,
-.rail .scopeName,
-.rail .themeText,
-.rail .signOutText {
+.rail .scopeName {
   position: absolute;
   left: calc(100% + 10px);
   top: 50%;
@@ -374,12 +325,10 @@
 
 .rail .item:hover .text,
 .rail .item:focus-visible .text,
+.rail .user:hover .text,
+.rail .user:focus-visible .text,
 .rail .scopeButton:hover .scopeName,
-.rail .scopeButton:focus-visible .scopeName,
-.rail .themeButton:hover .themeText,
-.rail .themeButton:focus-visible .themeText,
-.rail .signOut:hover .signOutText,
-.rail .signOut:focus-visible .signOutText {
+.rail .scopeButton:focus-visible .scopeName {
   opacity: 1;
 }
 
@@ -420,43 +369,18 @@
 
 .rail .foot {
   flex-direction: column;
-  padding: 10px 0;
+  gap: 6px;
 }
 
-.rail .who {
-  display: none;
-}
-
-.rail .signOut svg,
-.rail .themeButton svg,
-.rail .language svg {
-  display: block;
-}
-
-/* The icon stands for the select, which stays on top of it, invisible, to open the list. */
-.rail .language {
+.rail .user {
+  flex: 0 0 auto;
   justify-content: center;
-  height: 36px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
+  padding: 6px;
 }
 
-.rail .language:has(:focus-visible) {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
+.rail .userName {
+  overflow: visible;
 }
-
-.rail .languageSelect {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.rail .themeButton {
-  padding: 0;
-}
-
 
 /* Phone: a top bar with a menu button; the sidebar opens under it. */
 @media (max-width: 799px) {
@@ -503,6 +427,10 @@
   .side .brand,
   .toggle {
     display: none;
+  }
+
+  .foot {
+    padding-top: 12px;
   }
 
   .main {
