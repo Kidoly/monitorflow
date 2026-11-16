@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { DashboardSummary, DisplayLink } from "@/lib/api";
 import { stubFetch } from "@/test/fetch";
 
@@ -40,6 +41,14 @@ describe("linkSummary", () => {
     expect(linkSummary({ ...LINK, dashboards: [...LINK.dashboards, { id: "d2", name: "Disks" }], other_dashboards: 1 })).toBe(
       "Shows NOC, then Disks, then 1 more, 30 s each",
     );
+  });
+
+  it("speaks French when that is the language", () => {
+    setActiveLocale("fr");
+    expect(linkSummary({ ...LINK, dashboards: [...LINK.dashboards, { id: "d2", name: "Disks" }], other_dashboards: 2 })).toBe(
+      "Affiche NOC, puis Disks, puis 2 de plus, 30 s chacun",
+    );
+    expect(linkSummary({ ...LINK, dashboards: [] })).toBe("Affiche rien que vous puissiez voir");
   });
 });
 

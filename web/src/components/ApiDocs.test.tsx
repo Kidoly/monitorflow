@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { OpenApiDocument } from "@/lib/api";
 import { stubFetch } from "@/test/fetch";
 
@@ -125,5 +126,16 @@ describe("ApiDocsPage", () => {
     stubFetch({ "GET /api/v1/openapi.json": { status: 200, body: DOC } });
     render(<ApiDocsPage />);
     expect(await screen.findByRole("link", { name: "Try it out" })).toHaveAttribute("href", "/api/v1/swagger/");
+  });
+
+  it("speaks French around the server's document", async () => {
+    setActiveLocale("fr");
+    stubFetch({ "GET /api/v1/openapi.json": { status: 200, body: DOC } });
+    render(<ApiDocsPage />);
+    expect(await screen.findByRole("link", { name: "Essayer" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Documentation de l’API" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Types" })).toBeInTheDocument();
+    // The document itself comes from the server, in English.
+    expect(screen.getByText("Says someone is on it.")).toBeInTheDocument();
   });
 });

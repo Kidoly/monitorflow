@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import type { Me } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { Button, fieldClass } from "@/components/ui/Button";
@@ -30,8 +31,8 @@ export function SettingsIndex() {
   const groups = me ? visibleSettings(me) : [];
   if (!me || groups.length === 0) {
     return (
-      <NoPermission title="Settings need an administrator role.">
-        Ask an administrator to grant you access, or go back to <Link href="/">Fleet</Link>.
+      <NoPermission title={t("settings.index.noPermission")}>
+        {rich("settings.index.askAccess", { fleet: <Link href="/">{t("shell.nav.fleet")}</Link> })}
       </NoPermission>
     );
   }
@@ -39,16 +40,16 @@ export function SettingsIndex() {
 
   return (
     <Page>
-      <PageHeader title="Settings" meta="How MonitorFlow runs, who uses it, and where its alerts go" />
+      <PageHeader title={t("shell.nav.settings")} meta={t("settings.index.meta")} />
       <div className={styles.search} role="search">
         <label htmlFor={searchId} className="visually-hidden">
-          Search settings
+          {t("shell.settings.search")}
         </label>
         <input
           id={searchId}
           type="search"
           className={cx(fieldClass, styles.searchField)}
-          placeholder="Search settings…"
+          placeholder={t("shell.settings.searchPlaceholder")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
@@ -62,14 +63,14 @@ export function SettingsIndex() {
         />
       </div>
       {shown.length === 0 ? (
-        <EmptyState actions={<Button onClick={() => setQuery("")}>Clear search</Button>}>
-          No settings match “{query.trim()}”.
+        <EmptyState actions={<Button onClick={() => setQuery("")}>{t("settings.index.clearSearch")}</Button>}>
+          {t("settings.index.noMatch", { query: query.trim() })}
         </EmptyState>
       ) : (
         shown.map((group) => (
           <section key={group.heading} className={styles.group} aria-labelledby={`${searchId}-${group.heading}`}>
             <h2 id={`${searchId}-${group.heading}`} className={styles.groupTitle}>
-              {group.heading}
+              {t(group.heading)}
             </h2>
             <ul className={styles.rows}>
               {group.entries.map((entry) => (
@@ -92,7 +93,7 @@ function SettingsRow({ entry, me, status }: { entry: SettingsEntry; me: Me; stat
         <Icon name={entry.icon} />
       </span>
       <span className={styles.rowText}>
-        <span className={styles.rowName}>{entry.label}</span>
+        <span className={styles.rowName}>{t(entry.label)}</span>
         <span className={styles.rowDescription}>{entry.description(me)}</span>
         {status && <StatusLine status={status} />}
       </span>
@@ -109,7 +110,7 @@ export function StatusLine({ status }: { status: SettingsStatus }) {
     return (
       <span className={styles.rowStatus}>
         <Label tone={status.tone} small>
-          {status.tone === "bad" ? "Critical" : "Warning"}
+          {status.tone === "bad" ? t("common.state.critical") : t("common.state.warning")}
         </Label>{" "}
         <span className={styles[status.tone]}>{status.text}</span>
       </span>

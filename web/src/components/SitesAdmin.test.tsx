@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { CSRF_HEADER } from "@/lib/api";
 import { RefreshMeContext } from "@/lib/me";
 import { customerAdmin, me, relay, single } from "@/test/admin";
@@ -168,6 +169,21 @@ describe("SitesAdmin", () => {
     expect(requestHeaders(fetchMock, call)[CSRF_HEADER]).toBe("1");
     expect(fetchMock.mock.calls[call]?.[1]?.body).toBe(JSON.stringify({ name: "nice" }));
     expect(await within(acme).findByRole("row", { name: /nice/ })).toBeInTheDocument();
+  });
+
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    stubFetch({
+      "GET /api/customers": { status: 200, body: { customers: [{ id: C1, name: "acme", site_count: 1 }] } },
+      "GET /api/sites": { status: 200, body: { sites: [site("s1", "paris", C1, "acme")] } },
+      "GET /api/servers": servers,
+      "GET /api/relays": relays,
+    });
+    render(<SitesAdmin me={single(customerAdmin)} />);
+    const own = await screen.findByRole("region", { name: "Vos sites" });
+    expect(own).toHaveTextContent("1 site · 3 serveurs · 1 relais");
+    expect(within(own).getByRole("row", { name: /paris/ })).toHaveTextContent(/Alertes et contrôles\s*3 · 1 en ligne/);
+    expect(screen.getByText(/Un site ne peut pas être renommé/)).toBeInTheDocument();
   });
 
   it("links each site to the fleet scoped on it", async () => {

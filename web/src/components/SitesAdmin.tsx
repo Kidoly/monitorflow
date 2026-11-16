@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, useId, useState } from "react";
 
 import { Button, fieldClass } from "@/components/ui/Button";
+import { t } from "@/i18n";
 import { cx } from "@/components/ui/cx";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Label } from "@/components/ui/StatusLabel";
@@ -46,8 +47,6 @@ interface Row extends Site {
   relayNames: string[];
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
 async function load(signal: AbortSignal): Promise<Data> {
   const [{ customers }, { sites }, { servers }, { relays }] = await Promise.all([
     api.customers(signal),
@@ -65,31 +64,28 @@ export function SitesAdmin({ me }: { me: Me }) {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Sites"
+        title={t("settings.sites.label")}
         meta={
           data || error ? (
             <>
-              {data && multi && `${plural(data.customers.length, "customer")}, `}
-              {data && `${plural(data.sites.length, "site")} · `}
+              {data && multi && `${t("sites.customers", { count: data.customers.length })}, `}
+              {data && `${t("sites.sites", { count: data.sites.length })} · `}
               <RefreshLine updatedAt={updatedAt} stale={stale} />
             </>
           ) : undefined
         }
       />
       <Banner tone="info">
-        {multi ? "Sites cannot be renamed or moved to another customer" : "Sites cannot be renamed"}, because the site name labels
-        every stored metric. Choose names that will still make sense in two years.
+        {multi ? t("sites.permanentCustomers") : t("sites.permanent")}
       </Banner>
       <Banner tone="info">
-        Agents and relays update themselves to each new release, a canary per site first. A site whose
-        servers must not change on their own sets &quot;Automatic updates&quot; to Off; &quot;Server default&quot;
-        follows the server-wide setting under Updates › Automatic updates.
+        {t("sites.autoUpdateNote")}
       </Banner>
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
-      {!data && error ? <ErrorState what="sites" error={describeError(error)} onRetry={refresh} /> : null}
-      {!data && !error && <LoadingBlock label="Loading sites" />}
+      {!data && error ? <ErrorState what={t("sites.what")} error={describeError(error)} onRetry={refresh} /> : null}
+      {!data && !error && <LoadingBlock label={t("sites.loading")} />}
       {data?.customers.map((customer) => (
         <CustomerSites
           key={customer.id}
@@ -138,27 +134,28 @@ function CustomerSites({
   const columns: Column<Row>[] = [
     {
       key: "site",
-      header: "Site",
+      header: t("sites.column.site"),
       cell: (site) => (
         <PrimaryCell
           title={site.name}
           href={scopedHref("/", { customerId: site.customer_id, siteId: site.id })}
-          sub={<Link href={siteHref(site.id)}>Alerts and checks</Link>}
+          sub={<Link href={siteHref(site.id)}>{t("sites.alertsAndChecks")}</Link>}
         />
       ),
     },
     {
       key: "servers",
-      header: "Servers",
+      header: t("sites.column.servers"),
       cell: (site) => (
         <>
-          <strong>{site.server_count}</strong> <span className={styles.dim}>· {site.online} online</span>
+          <strong>{site.server_count}</strong>{" "}
+          <span className={styles.dim}>· {t("sites.online", { count: site.online })}</span>
         </>
       ),
     },
     {
       key: "relays",
-      header: "Relays",
+      header: t("sites.column.relays"),
       cell: (site) => (
         <>
           <strong>{site.relay_count}</strong>
@@ -168,12 +165,12 @@ function CustomerSites({
     },
     {
       key: "auto-update",
-      header: "Automatic updates",
+      header: t("sites.column.autoUpdate"),
       cell: (site) => <AutoUpdate site={site} canChange={canCreate} onChanged={onChanged} />,
     },
     {
       key: "offline-alerts",
-      header: "Offline alerts",
+      header: t("sites.column.offlineAlerts"),
       cell: (site) => <OfflineAlerts kind="sites" target={{ ...site, site_id: site.id }} onChanged={onChanged} />,
     },
   ];
@@ -181,19 +178,20 @@ function CustomerSites({
     <section className={styles.section} aria-labelledby={titleId}>
       <div className={styles.sectionHead}>
         <h2 id={titleId} className={styles.sectionTitle}>
-          {multiCustomer ? customer.name : "Your sites"}
+          {multiCustomer ? customer.name : t("sites.yourSites")}
         </h2>
         <span className={styles.dim}>
-          {plural(rows.length, "site")} · {plural(servers, "server")} · {plural(relays, "relay")}
+          {t("sites.sites", { count: rows.length })} · {t("sites.servers", { count: servers })} ·{" "}
+          {t("sites.relays", { count: relays })}
         </span>
         {canRename && <RenameCustomer customer={customer} onRenamed={onChanged} />}
       </div>
       {rows.length === 0 ? (
-        <p className={styles.sectionNote}>No sites yet.</p>
+        <p className={styles.sectionNote}>{t("sites.none")}</p>
       ) : (
         <DataTable
           bare
-          label={multiCustomer ? `Sites of ${customer.name}` : "Sites"}
+          label={multiCustomer ? t("sites.sitesOf", { name: customer.name }) : t("settings.sites.label")}
           columns={columns}
           rows={rows}
           rowKey={(site) => site.id}
@@ -222,9 +220,9 @@ function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: bool
   const state = (
     <>
       <Label tone={site.agent_auto_update_effective ? "ok" : "neutral"}>
-        {site.agent_auto_update_effective ? "Automatic" : "Manual"}
+        {site.agent_auto_update_effective ? t("sites.automatic") : t("sites.manual")}
       </Label>{" "}
-      <span className={styles.dim}>{current === "inherit" ? "server default" : "set for this site"}</span>
+      <span className={styles.dim}>{current === "inherit" ? t("sites.serverDefaultLower") : t("sites.setForSite")}</span>
     </>
   );
   if (!canChange) return state;
@@ -247,13 +245,17 @@ function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: bool
         value={current}
         disabled={busy}
         onChange={(e) => void change(e.target.value as Override)}
-        aria-label={`Automatic updates for ${site.name}`}
+        aria-label={t("sites.autoUpdateFor", { name: site.name })}
       >
         <option value="inherit">
-          {current === "inherit" ? `Server default (${site.agent_auto_update_effective ? "on" : "off"})` : "Server default"}
+          {current === "inherit"
+            ? site.agent_auto_update_effective
+              ? t("sites.serverDefaultOn")
+              : t("sites.serverDefaultOff")
+            : t("sites.serverDefault")}
         </option>
-        <option value="on">On</option>
-        <option value="off">Off</option>
+        <option value="on">{t("sites.on")}</option>
+        <option value="off">{t("sites.off")}</option>
       </select>{" "}
       {state}
       {error && <span role="alert"> {error}</span>}
@@ -279,7 +281,7 @@ function CreateSite({
     event.preventDefault();
     const wanted = name.trim();
     if (!SITE_NAME.test(wanted)) {
-      setMessage({ error: true, text: "Use lowercase letters, digits and dashes only." });
+      setMessage({ error: true, text: t("sites.badName") });
       return;
     }
     setBusy(true);
@@ -287,15 +289,15 @@ function CreateSite({
     try {
       const site = await api.createSite(customer.id, wanted);
       setName("");
-      setMessage({ error: false, text: `Created site ${site.name}.` });
+      setMessage({ error: false, text: t("sites.created", { name: site.name }) });
       onCreated();
     } catch (e) {
       setMessage({
         error: true,
         text:
           e instanceof ApiError && e.status === 409
-            ? `A site named "${wanted}" already exists.`
-            : `Creating the site failed. ${describeError(e)}`,
+            ? t("sites.exists", { name: wanted })
+            : t("sites.createFailed", { error: describeError(e) }),
       });
     } finally {
       setBusy(false);
@@ -307,16 +309,16 @@ function CreateSite({
     <form
       className={styles.newSite}
       onSubmit={submit}
-      aria-label={multiCustomer ? `New site for ${customer.name}` : "New site"}
+      aria-label={multiCustomer ? t("sites.newSiteFor", { name: customer.name }) : t("sites.newSite")}
       noValidate
     >
       <label className={styles.field}>
-        New site name
+        {t("sites.newSiteName")}
         <input
           className={cx(fieldClass, styles.siteName, invalid && styles.fieldError)}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. marseille-dc2"
+          placeholder={t("sites.namePlaceholder")}
           maxLength={MAX_NAME}
           required
           spellCheck={false}
@@ -335,11 +337,11 @@ function CreateSite({
         </span>
       ) : (
         <span id={hintId} className={styles.hint}>
-          Lowercase letters, digits and dashes. Permanent.
+          {t("sites.nameHint")}
         </span>
       )}
       <Button variant="k" type="submit" disabled={busy || name.trim() === ""}>
-        Create site
+        {t("sites.create")}
       </Button>
     </form>
   );
@@ -353,8 +355,10 @@ function RenameCustomer({ customer, onRenamed }: { customer: Customer; onRenamed
 
   if (name === null) {
     return (
-      <Button size="small" className={styles.push} aria-label={`Rename ${customer.name}`} onClick={() => setName(customer.name)}>
-        Rename
+      <Button size="small" className={styles.push} aria-label={t("sites.renameName", { name: customer.name })}
+        onClick={() => setName(customer.name)}
+      >
+        {t("sites.rename")}
       </Button>
     );
   }
@@ -371,8 +375,8 @@ function RenameCustomer({ customer, onRenamed }: { customer: Customer; onRenamed
     } catch (e) {
       setError(
         e instanceof ApiError && e.status === 409
-          ? `A customer named "${wanted}" already exists.`
-          : `Renaming failed. ${describeError(e)}`,
+          ? t("sites.customerExists", { name: wanted })
+          : t("sites.renameFailed", { error: describeError(e) }),
       );
     } finally {
       setBusy(false);
@@ -380,20 +384,20 @@ function RenameCustomer({ customer, onRenamed }: { customer: Customer; onRenamed
   }
 
   return (
-    <form className={cx(styles.buttons, styles.push)} onSubmit={submit} aria-label={`Rename ${customer.name}`}>
+    <form className={cx(styles.buttons, styles.push)} onSubmit={submit} aria-label={t("sites.renameName", { name: customer.name })}>
       <input
         className={fieldClass}
         value={name}
         onChange={(e) => setName(e.target.value)}
         maxLength={MAX_NAME}
-        aria-label="New name"
+        aria-label={t("sites.newName")}
         autoFocus
       />
       <Button size="small" variant="k" type="submit" disabled={busy || name.trim() === ""}>
-        Save
+        {t("sites.save")}
       </Button>
       <Button size="small" onClick={() => setName(null)} disabled={busy}>
-        Cancel
+        {t("sites.cancel")}
       </Button>
       {error && (
         <span className={styles.hintError} role="alert">
@@ -415,16 +419,13 @@ function SeveralCustomers({ own, onCreated }: { own: Customer | undefined; onCre
     <section className={styles.section} aria-labelledby={titleId}>
       <div className={styles.sectionHead}>
         <h2 id={titleId} className={styles.sectionTitle}>
-          Several customers
+          {t("sites.severalCustomers")}
         </h2>
         <Button size="small" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? "Hide" : "Add a customer"}
+          {open ? t("sites.hide") : t("sites.addCustomer")}
         </Button>
       </div>
-      <p className={styles.sectionNote}>
-        For a service provider running servers for other organisations: each customer has its own sites, and its users see only
-        its servers.
-      </p>
+      <p className={styles.sectionNote}>{t("sites.severalCustomersNote")}</p>
       {open && <CreateCustomer own={own} onCreated={onCreated} />}
     </section>
   );
@@ -449,8 +450,8 @@ function CreateCustomer({ own, onCreated }: { own?: Customer; onCreated: () => v
       setMessage({
         error: false,
         text: own
-          ? `Created ${customer.name}. Your sites so far are under ${own.name}, which you can rename above.`
-          : `Created ${customer.name}. Add its first site above.`,
+          ? t("sites.customerCreatedOwn", { name: customer.name, own: own.name })
+          : t("sites.customerCreated", { name: customer.name }),
       });
       onCreated();
       // A second customer shows customers everywhere.
@@ -460,8 +461,8 @@ function CreateCustomer({ own, onCreated }: { own?: Customer; onCreated: () => v
         error: true,
         text:
           e instanceof ApiError && e.status === 409
-            ? `A customer named "${wanted}" already exists.`
-            : `Creating the customer failed. ${describeError(e)}`,
+            ? t("sites.customerExists", { name: wanted })
+            : t("sites.createCustomerFailed", { error: describeError(e) }),
       });
     } finally {
       setBusy(false);
@@ -469,14 +470,14 @@ function CreateCustomer({ own, onCreated }: { own?: Customer; onCreated: () => v
   }
 
   const form = (
-    <form className={styles.newSite} onSubmit={submit} aria-label="New customer" noValidate>
+    <form className={styles.newSite} onSubmit={submit} aria-label={t("sites.newCustomer")} noValidate>
       <label className={styles.field}>
-        Customer name
+        {t("sites.customerName")}
         <input
           className={cx(fieldClass, styles.siteName)}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Acme Hosting"
+          placeholder={t("sites.customerPlaceholder")}
           maxLength={MAX_NAME}
           required
         />
@@ -487,7 +488,7 @@ function CreateCustomer({ own, onCreated }: { own?: Customer; onCreated: () => v
         </span>
       )}
       <Button variant="k" type="submit" disabled={busy || name.trim() === ""}>
-        Create customer
+        {t("sites.createCustomer")}
       </Button>
     </form>
   );
@@ -496,9 +497,9 @@ function CreateCustomer({ own, onCreated }: { own?: Customer; onCreated: () => v
     <section className={styles.section} aria-labelledby={titleId}>
       <div className={styles.sectionHead}>
         <h2 id={titleId} className={styles.sectionTitle}>
-          New customer
+          {t("sites.newCustomer")}
         </h2>
-        <span className={styles.dim}>For an MSP: a customer has its own sites, and users can be limited to it.</span>
+        <span className={styles.dim}>{t("sites.newCustomerNote")}</span>
       </div>
       {form}
     </section>

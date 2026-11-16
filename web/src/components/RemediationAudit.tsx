@@ -14,16 +14,17 @@ import {
   isUnauthorized,
 } from "@/lib/api";
 import {
-  ACTOR_KINDS,
   type AuditFilters,
-  EVENT_KINDS,
+  actorKindOptions,
   actorLabel,
   auditFiltersFromQuery,
   auditQuery,
   chainSummary,
   eventKindLabel,
+  eventKindOptions,
   eventSummary,
 } from "@/lib/remediation";
+import { t } from "@/i18n";
 import { APPROVALS_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
@@ -105,18 +106,18 @@ export function RemediationAudit({ filters }: { filters: AuditFilters }) {
   const columns: Column<RemediationEvent>[] = [
     {
       key: "time",
-      header: "Time",
+      header: t("remediation.audit.time"),
       cell: (e) => (
         <time dateTime={e.created_at} title={formatExact(new Date(e.created_at))} className={styles.dim}>
           {formatDay(new Date(e.created_at), now)}
         </time>
       ),
     },
-    { key: "actor", header: "Actor", cell: (e) => <strong>{actorLabel(e)}</strong> },
-    { key: "event", header: "Event", cell: (e) => eventKindLabel(e.kind) },
+    { key: "actor", header: t("remediation.audit.actor"), cell: (e) => <strong>{actorLabel(e)}</strong> },
+    { key: "event", header: t("remediation.audit.event"), cell: (e) => eventKindLabel(e.kind) },
     {
       key: "target",
-      header: "Target",
+      header: t("remediation.audit.target"),
       cell: (e) => (
         <PrimaryCell
           title={e.hostname}
@@ -124,82 +125,88 @@ export function RemediationAudit({ filters }: { filters: AuditFilters }) {
           sub={
             <>
               {e.site_name} ·{" "}
-              <Link href={scopedHref(auditHref({ incident: e.incident_id }), scope)} title="Only this incident">
-                {seriesTitle(undefined, e.metric, e.instance)}, event {e.seq}
+              <Link href={scopedHref(auditHref({ incident: e.incident_id }), scope)} title={t("remediation.audit.onlyThis")}>
+                {t("remediation.audit.eventOf", { title: seriesTitle(undefined, e.metric, e.instance), seq: String(e.seq) })}
               </Link>
             </>
           }
         />
       ),
     },
-    { key: "details", header: "Details", cell: (e) => eventSummary(e), className: styles.wrap },
+    { key: "details", header: t("remediation.audit.details"), cell: (e) => eventSummary(e), className: styles.wrap },
   ];
 
   const incident = data?.incident;
   return (
     <Page>
       <PageHeader
-        title="Audit log"
+        title={t("remediation.audit.title")}
         meta={
           <>
-            Remediation history, append-only · <RefreshLine updatedAt={updatedAt} stale={stale} />
+            {t("remediation.audit.meta")}
+            <RefreshLine updatedAt={updatedAt} stale={stale} />
           </>
         }
-        actions={<ButtonLink href={scopedHref(APPROVALS_PATH, scope)}>Approvals</ButtonLink>}
+        actions={<ButtonLink href={scopedHref(APPROVALS_PATH, scope)}>{t("remediation.audit.approvals")}</ButtonLink>}
       />
       <FilterBar
         filters={[
-          { name: "kind", label: "Event", options: EVENT_KINDS },
-          { name: "actor", label: "Actor", options: ACTOR_KINDS },
-          { name: "server", label: "Server", options: serverChoices.map((s) => ({ value: s.id, label: s.hostname })) },
+          { name: "kind", label: t("remediation.audit.event"), options: eventKindOptions() },
+          { name: "actor", label: t("remediation.audit.actor"), options: actorKindOptions() },
+          { name: "server", label: t("remediation.audit.server"), options: serverChoices.map((s) => ({ value: s.id, label: s.hostname })) },
         ]}
       />
       {filters.incident ? (
         incident ? (
           <Banner tone={incident.chain.valid ? "ok" : "bad"}>
             <strong>
-              {seriesTitle(undefined, incident.metric, incident.instance)} on {incident.hostname}
+              {t("remediation.audit.on", {
+                title: seriesTitle(undefined, incident.metric, incident.instance),
+                hostname: incident.hostname,
+              })}
             </strong>{" "}
             · {chainSummary(incident.chain)}{" "}
-            <Link href={scopedHref(auditHref(), scope)}>Show every incident</Link>
+            <Link href={scopedHref(auditHref(), scope)}>{t("remediation.audit.showAll")}</Link>
           </Banner>
         ) : (
           data && (
             <Banner tone="warn">
-              This incident&apos;s chain could not be verified.{" "}
-              <Link href={scopedHref(auditHref(), scope)}>Show every incident</Link>
+              {t("remediation.audit.unverified")}{" "}
+              <Link href={scopedHref(auditHref(), scope)}>{t("remediation.audit.showAll")}</Link>
             </Banner>
           )
         )
       ) : (
         <Banner tone="plain">
-          Each incident&apos;s history is hash-chained. Choose an incident in the Target column to verify its chain.
+          {t("remediation.audit.chained")}
         </Banner>
       )}
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
       {!data && error !== null && !isUnauthorized(error) ? (
-        <ErrorState what="the audit log" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what={t("remediation.audit.what")} error={describeError(error)} onRetry={refresh} />
       ) : data && data.events.length === 0 ? (
         filtered ? (
-          <NoMatches names={["incident", "server", "kind", "actor"]}>No events match these filters.</NoMatches>
+          <NoMatches names={["incident", "server", "kind", "actor"]}>{t("remediation.audit.noMatch")}</NoMatches>
         ) : (
-          <EmptyState actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>Open incidents</ButtonLink>}>
-            No remediation has run yet.
+          <EmptyState
+            actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>{t("remediation.audit.openIncidents")}</ButtonLink>}
+          >
+            {t("remediation.audit.none")}
           </EmptyState>
         )
       ) : (
         <div className={styles.page}>
           <DataTable
-            label="Remediation events"
+            label={t("remediation.audit.label")}
             columns={columns}
             rows={data?.events ?? []}
             rowKey={(e) => `${e.incident_id}:${e.seq}`}
             loading={!data}
             hasMore={Boolean(data?.more) && limit < MAX_LIMIT}
             onLoadMore={() => setLimit((n) => Math.min(MAX_LIMIT, n + PAGE_SIZE))}
-            summary={(shown) => `Showing ${shown} ${shown === 1 ? "event" : "events"} · ${PAGE_SIZE} per page`}
+            summary={(shown) => t("remediation.audit.showing", { count: shown, size: PAGE_SIZE })}
           />
         </div>
       )}
