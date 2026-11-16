@@ -34,8 +34,9 @@ export const openIncident = (id: string, siteId: string) => ({ id, site_id: site
 /** Servers per state, for the status strip. */
 export const summary = { critical: 2, warning: 0, acknowledged: 1, silenced: 1, offline: 3, ok: 1980, total: 1987 };
 
-/** What the shell fetches: scope lists, the open incidents count and the status strip. */
+/** What the shell fetches: scope lists, the open incidents count, the status strip and the preferences. */
 export const SHELL_ROUTES = {
+  "GET /api/me/preferences": { status: 200, body: {} },
   "GET /api/servers/summary": { status: 200, body: summary },
   "GET /api/customers": { status: 200, body: { customers } },
   "GET /api/sites": { status: 200, body: { sites } },

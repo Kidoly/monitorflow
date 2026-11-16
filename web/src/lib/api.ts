@@ -2162,6 +2162,25 @@ interface RequestOptions {
   signal?: AbortSignal;
   /** Call the unauthorized handler on 401. Off for login, where 401 means bad credentials. */
   redirectOn401?: boolean;
+  /** Lets the request outlive the page, for a save sent as it closes. */
+  keepalive?: boolean;
+}
+
+/** The main sidebar as the person arranged it (ADR-0137); item identifiers are `NavItem.id`. */
+export interface SidebarPreferences {
+  /** Icons only, without labels. */
+  collapsed?: boolean;
+  /** Items the person does not use. */
+  hidden?: string[];
+  /** Items in the person's order, within their section. */
+  order?: string[];
+}
+
+/** `GET /api/me/preferences`: the signed-in person's own; a missing key is the default. */
+export interface Preferences {
+  theme?: "system" | "light" | "dark";
+  language?: "en" | "fr";
+  sidebar?: SidebarPreferences;
 }
 
 /** SMTP settings of an email channel; the password is never sent back (ADR-0060). */
@@ -2588,6 +2607,7 @@ async function request<T>(
       credentials: "same-origin",
       cache: "no-store",
       signal: options.signal,
+      ...(options.keepalive && { keepalive: true }),
     });
   } catch (cause) {
     if (isAbortError(cause)) {
@@ -2677,6 +2697,12 @@ export const api = {
     }),
 
   me: (signal?: AbortSignal) => request<Me>("/api/auth/me", { signal }),
+
+  preferences: (signal?: AbortSignal) => request<Preferences>("/api/me/preferences", { signal }),
+
+  /** Replaces the signed-in person's preferences with `preferences`. */
+  setPreferences: (preferences: Preferences, options: { keepalive?: boolean } = {}) =>
+    request<Preferences>("/api/me/preferences", { method: "PUT", body: preferences, ...options }),
 
   /** One page of servers, from `cursor` when given. */
   serversPage: (cursor?: string, signal?: AbortSignal) =>
