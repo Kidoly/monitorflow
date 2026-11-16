@@ -69,7 +69,7 @@ Do this before `release.yml` asks for the environment, or the next tag fails at 
 ## Publishing
 
 1. Set `version` in `[workspace.package]` of `Cargo.toml` and merge it.
-2. Tag the merge commit `v<version>` and push the tag: `git tag v0.2.0 && git push origin v0.2.0`. Only an admin can push it.
+2. Tag the merge commit `v<version>` and push the tag: `git tag v0.2.0 && git push origin v0.2.0`. Use a lightweight tag, not `git tag -a`: the release page then shows the merge commit's verified signature, which an unsigned annotated tag hides. Only an admin can push it.
 3. `release.yml` checks that the tag matches `Cargo.toml`, builds the files and the images, pushes the images to GHCR and writes `images.json`. The `release` job then waits for approval: open the run in the Actions tab, Review deployments, tick `release`, Approve. It signs `SHA256SUMS` with `RELEASE_SIGNING_KEY` and publishes the GitHub Release. It fails without the secret in the environment, or when the secret's public half is not in `deploy/release-keys.pem`.
 
 ## Images
