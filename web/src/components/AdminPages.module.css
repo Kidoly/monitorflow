@@ -20,6 +20,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   background: var(--surface);
+  box-shadow: var(--shadow-panel);
 }
 
 .sectionHead {
@@ -123,6 +124,7 @@ tr td.wrap {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  box-shadow: var(--shadow-panel);
 }
 
 .created {

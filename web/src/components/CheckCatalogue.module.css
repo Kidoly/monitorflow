@@ -80,6 +80,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   cursor: pointer;
+  box-shadow: var(--shadow-panel);
 }
 
 .card:hover {

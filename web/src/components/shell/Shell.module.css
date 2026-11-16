@@ -27,7 +27,7 @@
   flex-direction: column;
   gap: 2px;
   border-right: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--sidebar);
   position: sticky;
   top: 0;
   height: 100vh;
@@ -71,10 +71,11 @@
   text-decoration: none;
 }
 
+/* The current page: a raised surface on the sidebar's tone, not a coloured pill. */
 .item[aria-current="page"],
 .item[aria-current="page"]:hover {
-  background: var(--text);
-  color: var(--bg);
+  background: var(--nav-active);
+  box-shadow: var(--shadow-nav);
   font-weight: 500;
 }
 
@@ -95,11 +96,6 @@
   border-radius: 999px;
   background: var(--bad-bg);
   color: var(--bad);
-}
-
-.item[aria-current="page"] .count {
-  background: var(--bg);
-  color: var(--text);
 }
 
 .countWarn {
@@ -259,7 +255,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-menu);
 }
 
 .popup ul {
@@ -347,7 +343,7 @@
     font-weight: 500;
     white-space: nowrap;
     text-decoration: none;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    box-shadow: var(--shadow-menu);
     opacity: 0;
     pointer-events: none;
   }
@@ -417,8 +413,8 @@
   .language {
     justify-content: center;
     height: 36px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-control);
   }
 
   .language:has(:focus-visible) {
@@ -450,7 +446,7 @@
     gap: 10px;
     padding: 14px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    background: var(--sidebar);
   }
 
   .menuButton {

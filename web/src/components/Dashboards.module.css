@@ -64,6 +64,7 @@
   border-radius: var(--radius-panel);
   background: var(--surface);
   min-height: 120px;
+  box-shadow: var(--shadow-panel);
 }
 
 .boxTitle {
@@ -172,6 +173,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   background: var(--surface);
+  box-shadow: var(--shadow-panel);
 }
 
 .editHead {
