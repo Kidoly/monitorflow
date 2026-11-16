@@ -183,6 +183,10 @@ pub struct Me {
     /// (ADR-0104). False for a single company and for a user limited to
     /// one customer.
     pub multi_customer: bool,
+    /// Whether the user sees more than one site: the web interface names
+    /// sites only then, as a single site's name on every row says
+    /// nothing. Like `multi_customer`, it changes words, never access.
+    pub multi_site: bool,
 }
 
 impl Me {
@@ -192,8 +196,22 @@ impl Me {
             username: user.username.clone(),
             roles: user.roles.clone(),
             multi_customer: super::customers::several_visible(pool, user).await?,
+            multi_site: several_sites(pool, &user.readable_sites()).await?,
         })
     }
+}
+
+/// Whether `sites` covers more than one existing site.
+pub(super) async fn several_sites(
+    db: impl sqlx::PgExecutor<'_>,
+    sites: &super::access::Scope,
+) -> Result<bool, sqlx::Error> {
+    let (all, ids) = sites.bind();
+    sqlx::query_scalar("SELECT count(*) > 1 FROM sites WHERE $1 OR id = ANY($2)")
+        .bind(all)
+        .bind(ids)
+        .fetch_one(db)
+        .await
 }
 
 struct Account {

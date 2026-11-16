@@ -31,6 +31,8 @@ export interface Me {
   roles: RoleGrant[];
   /** Whether the user sees more than one customer (ADR-0104); read it with `useMultiCustomer`. */
   multi_customer?: boolean;
+  /** Whether the user sees more than one site; read it with `useMultiSite`. */
+  multi_site?: boolean;
 }
 
 export type ServerStatus = "online" | "offline";

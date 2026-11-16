@@ -8,7 +8,7 @@ import { type Incident, type Server, type ServerState, api, describeError, isUna
 import { certificateProblem, certificateState } from "@/lib/certificates";
 import { formatOs } from "@/lib/format";
 import { incidentTitle, isOffline } from "@/lib/incidents";
-import { administersCustomer, multiCustomer, useMe } from "@/lib/me";
+import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
@@ -134,6 +134,9 @@ export function FleetOverview() {
   const sites = [...new Map(all.map((r) => [r.server.site_id, r.server.site_name])).entries()].sort((a, b) =>
     byName.compare(a[1], b[1]),
   );
+  // One site: its name on every row says nothing.
+  const severalSites = multiSite(me);
+  const siteFilter = severalSites && !scope.siteId;
   const families = [...new Set(all.map((r) => r.server.os_family))].sort();
   const canEnroll = administersCustomer(me, scope.customerId ?? undefined);
   const enroll = canEnroll && (
@@ -169,7 +172,9 @@ export function FleetOverview() {
       sortValue: (r) => SERVER_STATES.indexOf(r.state),
     },
     { key: "problem", header: t("fleet.column.problem"), cell: (r) => <Problem row={r} now={now} scope={scope} /> },
-    { key: "site", header: t("fleet.column.site"), cell: (r) => r.server.site_name, sortValue: (r) => r.server.site_name },
+    ...(severalSites
+      ? [{ key: "site", header: t("fleet.column.site"), cell: (r: Row) => r.server.site_name, sortValue: (r: Row) => r.server.site_name }]
+      : []),
     {
       key: "seen",
       header: t("fleet.column.lastSeen"),
@@ -204,13 +209,10 @@ export function FleetOverview() {
         <>
           <FilterBar
             search={{ name: "q", label: t("fleet.search"), placeholder: t("fleet.searchPlaceholder"), width: 240 }}
+            clears={["state", "status"]}
             filters={[
-              {
-                name: "state",
-                label: t("fleet.filter.status"),
-                options: SERVER_STATES.map((value) => ({ value, label: stateWord(value) })),
-              },
-              ...(scope.siteId ? [] : [{ name: "site", label: t("fleet.filter.site"), options: sites.map(([value, label]) => ({ value, label })) }]),
+              // No state filter: the status bar's counts above set `state`.
+              ...(!siteFilter ? [] : [{ name: "site", label: t("fleet.filter.site"), options: sites.map(([value, label]) => ({ value, label })) }]),
               { name: "os", label: t("fleet.filter.os"), options: families.map((f) => ({ value: f, label: formatOs(f, null) })) },
               { kind: "toggle" as const, name: "incidents", label: t("fleet.filter.incidents") },
             ]}
@@ -218,7 +220,7 @@ export function FleetOverview() {
           {!data ? (
             <DataTable label={t("fleet.table")} columns={columns} rows={[]} rowKey={(r) => r.key} loading />
           ) : filtered.length === 0 ? (
-            <NoMatches names={["q", "state", "status", "os", "incidents", ...(scope.siteId ? [] : ["site"])]}>
+            <NoMatches names={["q", "state", "status", "os", "incidents", ...(siteFilter ? ["site"] : [])]}>
               {t("fleet.noMatch")}
             </NoMatches>
           ) : (

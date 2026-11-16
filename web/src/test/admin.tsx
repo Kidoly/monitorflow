@@ -11,6 +11,9 @@ export const viewer = me({ role: "viewer", customer_id: null, site_id: null });
 /** `user` as the server says it with one customer, or to a user limited to one (ADR-0104). */
 export const single = (user: Me): Me => ({ ...user, multi_customer: false });
 
+/** `user` seeing a single site: site names and columns stay hidden. */
+export const oneSite = (user: Me): Me => ({ ...user, multi_customer: false, multi_site: false });
+
 /** Renders `children` as signed in as `user`. */
 export function As({ user, children }: { user: Me; children: ReactNode }) {
   return <MeContext.Provider value={user}>{children}</MeContext.Provider>;

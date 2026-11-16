@@ -130,6 +130,7 @@ db_tests! {
             "username": "Admin",
             "roles": [{ "role": "administrator", "customer_id": null, "site_id": null }],
             "multi_customer": false,
+            "multi_site": false,
         });
         assert_eq!(body, expected);
         let cookie = cookie.unwrap();
@@ -203,6 +204,45 @@ db_tests! {
             .await
             .unwrap();
         assert!(multi(both).await, "a user of two customers sees both");
+    }
+
+    #[sqlx::test]
+    async fn sites_show_once_a_user_sees_a_second_one(pool: PgPool) {
+        let grant = |name: &'static str, scope: GrantScope| {
+            let pool = pool.clone();
+            async move {
+                users::create_user_with(&pool, name, &Secret::new(PASSWORD), Role::Viewer, scope, "test")
+                    .await
+                    .unwrap();
+                login(&pool, name).await
+            }
+        };
+        let multi = |cookie: String| {
+            let pool = pool.clone();
+            async move {
+                let (status, body) = call(app(pool), with_cookie("GET", "/api/auth/me", &cookie)).await;
+                assert_eq!(status, StatusCode::OK);
+                body["multi_site"].as_bool().unwrap()
+            }
+        };
+        let own: Uuid = sqlx::query_scalar("SELECT id FROM customers").fetch_one(&pool).await.unwrap();
+        sqlx::query("DELETE FROM sites").execute(&pool).await.unwrap();
+        let first: Uuid = sqlx::query_scalar("INSERT INTO sites (name, customer_id) VALUES ('paris', $1) RETURNING id")
+            .bind(own)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let admin = grant("admin", GrantScope::Global).await;
+        assert!(!multi(admin.clone()).await, "a single site");
+
+        sqlx::query("INSERT INTO sites (name, customer_id) VALUES ('lyon', $1)")
+            .bind(own)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(multi(admin).await, "the second site shows at once");
+        assert!(multi(grant("customer", GrantScope::Customer(own)).await).await, "a customer's user sees its sites");
+        assert!(!multi(grant("local", GrantScope::Site(first)).await).await, "a site's user sees one");
     }
 
     #[sqlx::test]

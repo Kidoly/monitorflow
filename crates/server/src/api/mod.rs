@@ -22,7 +22,7 @@
 //! | POST | `/api/auth/logout` | session | 204, clears the cookie |
 //! | GET | `/api/setup` | none | [`setup::Status`]: `{"pending"}`, true while no user exists (ADR-0071) |
 //! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
-//! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}], "multi_customer"}`; `multi_customer` is whether the user sees more than one customer (ADR-0104) |
+//! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}], "multi_customer", "multi_site"}`; `multi_customer` is whether the user sees more than one customer (ADR-0104), `multi_site` more than one site |
 //! | GET | `/api/me/preferences` | session | [`preferences::Preferences`]: the signed-in person's own `{"theme", "language", "sidebar": {"collapsed", "hidden", "order"}}`, every key optional, `{}` when never saved (ADR-0137); never through an API key |
 //! | PUT | `/api/me/preferences` | session | body [`preferences::Preferences`], replacing the stored one; 400 for an unknown key or value, a list over 64 items, an item identifier out of form or a body over 16 KiB. Not audited |
 //! | POST | `/api/me/password` | session | body [`own_password::ChangeRequest`] `{"current_password", "new_password"}`; 204, the person's other sessions ended and this one kept; 400 for a short or unchanged new password or a wrong current one, 429 `rate_limited` within the sign-in limits; audited; never through an API key (ADR-0141) |

@@ -267,6 +267,7 @@ function CreateSite({
   onCreated: () => void;
 }) {
   const hintId = useId();
+  const refreshMe = useRefreshMe();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
@@ -285,6 +286,8 @@ function CreateSite({
       setName("");
       setMessage({ error: false, text: t("sites.created", { name: site.name }) });
       onCreated();
+      // A second site shows site names everywhere.
+      refreshMe();
     } catch (e) {
       setMessage({
         error: true,

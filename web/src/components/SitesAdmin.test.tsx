@@ -152,7 +152,12 @@ describe("SitesAdmin", () => {
       "GET /api/relays": relays,
       "POST /api/customers/c1/sites": { status: 201, body: site("s3", "nice", "c1", "acme") },
     });
-    render(<SitesAdmin me={customerAdmin} />);
+    const refreshMe = vi.fn();
+    render(
+      <RefreshMeContext.Provider value={refreshMe}>
+        <SitesAdmin me={customerAdmin} />
+      </RefreshMeContext.Provider>,
+    );
     const acme = await screen.findByRole("region", { name: "acme" });
     expect(acme).toHaveTextContent("1 site · 3 servers · 1 relay");
     expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent(/paris\s*Alerts and checks\s*3 · 1 online\s*1 · relay-paris-1/);
@@ -164,6 +169,8 @@ describe("SitesAdmin", () => {
     await userEvent.type(within(form).getByLabelText("New site name"), " nice ");
     await userEvent.click(within(form).getByRole("button", { name: "Create site" }));
     expect(await within(form).findByRole("status")).toHaveTextContent("Created site nice.");
+    // A second site shows site names everywhere.
+    expect(refreshMe).toHaveBeenCalledOnce();
     const call = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
     expect(requestHeaders(fetchMock, call)[CSRF_HEADER]).toBe("1");
     expect(fetchMock.mock.calls[call]?.[1]?.body).toBe(JSON.stringify({ name: "nice" }));

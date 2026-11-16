@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
 import type { Server } from "@/lib/api";
-import { As, customerAdmin, single as oneCustomer, viewer } from "@/test/admin";
+import { As, customerAdmin, oneSite, single as oneCustomer, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
@@ -98,7 +98,7 @@ describe("FleetOverview", () => {
     const [web, db] = [...(await screen.findByRole("table", { name: "Serveurs", busy: false })).querySelectorAll("tbody tr[data-row]")];
     expect(web).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Critique/);
     expect(db).toHaveTextContent(/agent inconnu\s*Hors ligne\s*Dernier contact 13:51/);
-    expect(screen.getByText(/^En silence par alice jusqu’à aujourd’hui 18:00\s: migration$/)).toBeInTheDocument();
+    expect(screen.getByText(/^par alice jusqu’à aujourd’hui 18:00 · migration$/)).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Problème" })).toBeInTheDocument();
   });
 
@@ -124,12 +124,19 @@ describe("FleetOverview", () => {
     const order = (await rows()).map((r) => within(r).getAllByRole("cell")[1]!.textContent);
     expect(order).toEqual(["Critical", "Offline", "OK", "Acknowledged", "Silenced"]);
     // Who took them out of the problems, until when, and why (ADR-0130).
-    expect(screen.getByText("Silenced by alice until 18:00 today: migration")).toBeInTheDocument();
-    expect(screen.getByText("Acknowledged by bob 14:02: replacing the disk")).toBeInTheDocument();
+    // The status label already says Silenced or Acknowledged.
+    expect(screen.getByText("by alice until 18:00 today · migration")).toBeInTheDocument();
+    expect(screen.getByText("by bob 14:02 · replacing the disk")).toBeInTheDocument();
+  });
 
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Status" }), "silenced");
-    expect(window.location.search).toBe("?state=silenced");
+  it("filters by state from the status bar's link, with no second state filter", async () => {
+    setUrl("/?state=silenced");
+    const until = new Date(2026, 9, 22, 18, 0).toISOString();
+    const quiet = server({ id: "s6", hostname: "app-1", state: "silenced", silence: { by: "alice", until, reason: "migration" } });
+    stubFetch(reply([quiet, web1, db1], []));
+    render(<FleetOverview />);
     const shown = await rows();
+    expect(screen.queryByRole("combobox", { name: "Status" })).toBeNull();
     expect(shown).toHaveLength(1);
     expect(shown[0]).toHaveTextContent("app-1");
   });
@@ -141,7 +148,6 @@ describe("FleetOverview", () => {
     const shown = await rows();
     expect(shown).toHaveLength(1);
     expect(shown[0]).toHaveTextContent("db-2");
-    expect(screen.getByRole("combobox", { name: "Status" })).toHaveValue("offline");
 
     await userEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(window.location.search).toBe("?customer=0b8f3c4e-1a2b-4c3d-8e9f-000000000001");
@@ -236,6 +242,19 @@ describe("FleetOverview", () => {
     expect(screen.getByRole("columnheader", { name: "Site" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Show 1 OK server" }));
     expect(await rows()).toHaveLength(3);
+  });
+
+  it("names no site while there is only one", async () => {
+    stubFetch(reply([web1, mail]));
+    render(
+      <As user={oneSite(viewer)}>
+        <FleetOverview />
+      </As>,
+    );
+    await rows();
+    expect(screen.queryByRole("columnheader", { name: "Site" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Site" })).toBeNull();
+    expect(screen.queryByText("paris")).toBeNull();
   });
 
   it("shows a large site 50 servers at a time", async () => {

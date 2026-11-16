@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { setUrl } from "@/test/navigation";
 
 import { FilterBar, NoMatches } from "./FilterBar";
@@ -80,6 +81,19 @@ describe("FilterBar", () => {
     expect(window.location.pathname).toBe("/servers/view/");
     expect(screen.getByRole("searchbox", { name: "Search" })).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
+  });
+
+  it("also clears the keys another control sets, in the active language", async () => {
+    const user = userEvent.setup();
+    setActiveLocale("fr");
+    try {
+      setUrl("/?customer=acme&state=critical");
+      render(<FilterBar filters={[]} clears={["state"]} />);
+      await user.click(screen.getByRole("button", { name: "Effacer" }));
+      expect(query()).toEqual({ customer: "acme" });
+    } finally {
+      setActiveLocale("en");
+    }
   });
 });
 
