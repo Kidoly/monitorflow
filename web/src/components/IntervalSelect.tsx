@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { t } from "@/i18n";
 import { describeError } from "@/lib/api";
 import { INTERVAL_CHOICES, INTERVAL_UNITS, customInterval, every, splitInterval } from "@/lib/intervals";
 import { Button, fieldClass } from "@/components/ui/Button";
@@ -68,18 +69,18 @@ export function IntervalSelect({
   return (
     <span className={styles.picker}>
       <select aria-label={label} className={cx(fieldClass, styles.select)} value={selected} disabled={disabled} onChange={(e) => choose(e.target.value)}>
-        {inherit && <option value={INHERIT}>{`${every(inherit.ms)} (${inherit.label})`}</option>}
+        {inherit && <option value={INHERIT}>{t("sensors.interval.inherit", { every: every(inherit.ms), label: inherit.label })}</option>}
         {choices.map((ms) => (
           <option key={ms} value={String(ms)}>
             {every(ms)}
           </option>
         ))}
-        <option value={OTHER}>Other…</option>
+        <option value={OTHER}>{t("sensors.interval.other")}</option>
       </select>
       {custom && (
         <>
           <input
-            aria-label="Every"
+            aria-label={t("sensors.interval.every")}
             className={cx(fieldClass, styles.amount)}
             inputMode="decimal"
             value={custom.amount}
@@ -94,7 +95,7 @@ export function IntervalSelect({
             }}
           />
           <select
-            aria-label="Unit"
+            aria-label={t("sensors.interval.unit")}
             className={fieldClass}
             value={custom.unitMs}
             disabled={disabled}
@@ -107,7 +108,7 @@ export function IntervalSelect({
             ))}
           </select>
           <Button size="small" onClick={apply} disabled={disabled}>
-            Set
+            {t("sensors.interval.set")}
           </Button>
           <Button
             size="small"
@@ -117,7 +118,7 @@ export function IntervalSelect({
             }}
             disabled={disabled}
           >
-            Cancel
+            {t("sensors.interval.cancel")}
           </Button>
         </>
       )}
@@ -161,7 +162,7 @@ export function IntervalControl({
   return (
     <span className={styles.picker}>
       <IntervalSelect value={value} onChange={(ms) => void change(ms)} label={label} inherit={inherit} disabled={busy} />
-      {busy && <span className={styles.dim}>Saving…</span>}
+      {busy && <span className={styles.dim}>{t("sensors.interval.saving")}</span>}
       {error && (
         <span role="alert" className={styles.error}>
           {error}

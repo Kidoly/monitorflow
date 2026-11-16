@@ -5,6 +5,7 @@ import { type FormEvent, useEffect, useId, useState } from "react";
 
 import { Button, fieldClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
+import { rich, t } from "@/i18n";
 import { type CreatedInstallKey, type Me, type Relay, type Site, api, describeError } from "@/lib/api";
 import { placeLabel } from "@/lib/customers";
 import { administersCustomer, administersEverything, multiCustomer } from "@/lib/me";
@@ -28,7 +29,7 @@ export function AddRelay({ me, onDone }: { me: Me; onDone: () => void }) {
       .sites(controller.signal)
       .then(({ sites }) => setSites(sites.filter((site) => administersCustomer(me, site.customer_id))))
       .catch((e: unknown) => {
-        if (!controller.signal.aborted) setError(`Loading the sites failed. ${describeError(e)}`);
+        if (!controller.signal.aborted) setError(t("relays.add.loadFailed", { error: describeError(e) }));
       });
     return () => controller.abort();
   }, [me]);
@@ -41,7 +42,7 @@ export function AddRelay({ me, onDone }: { me: Me; onDone: () => void }) {
       const site = siteId || (sites?.[0]?.id ?? "");
       setCreated(await api.createInstallKey({ role: "relay", site_id: site, require_approval: false }));
     } catch (e) {
-      setError(`Creating the install command failed. ${describeError(e)}`);
+      setError(t("relays.add.createFailed", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -53,19 +54,17 @@ export function AddRelay({ me, onDone }: { me: Me; onDone: () => void }) {
   return (
     <form className={styles.panel} onSubmit={submit} aria-labelledby={titleId}>
       <h2 id={titleId} className={styles.sectionTitle}>
-        Add a relay
+        {t("relays.add.title")}
       </h2>
       {sites?.length === 0 ? (
         <p className={styles.sectionNote}>
-          A relay belongs to a site: <Link href={SITES_PATH}>create one first</Link>.
+          {rich("relays.add.noSite", { link: <Link href={SITES_PATH}>{t("relays.add.createSite")}</Link> })}
         </p>
       ) : (
         <>
-          <p className={styles.sectionNote}>
-            One command on one server of the site. The relay finds its own addresses and appears here for you to confirm them.
-          </p>
+          <p className={styles.sectionNote}>{t("relays.add.note")}</p>
           <label className={styles.field}>
-            Site
+            {t("relays.add.site")}
             <select className={fieldClass} value={siteId || sites?.[0]?.id} onChange={(e) => setSiteId(e.target.value)}>
               {sites?.map((site) => (
                 <option key={site.id} value={site.id}>
@@ -79,10 +78,10 @@ export function AddRelay({ me, onDone }: { me: Me; onDone: () => void }) {
       <div className={styles.formFoot}>
         {sites && sites.length > 0 && (
           <Button variant="k" type="submit" disabled={busy}>
-            Show the install command
+            {t("relays.add.show")}
           </Button>
         )}
-        <Button onClick={onDone}>Cancel</Button>
+        <Button onClick={onDone}>{t("relays.cancel")}</Button>
       </div>
       {error && (
         <p className={styles.formError} role="alert">
@@ -116,7 +115,7 @@ export function ConfirmRelayNames({ relay, onConfirmed }: { relay: Relay; onConf
       await api.confirmRelayNames(relay.id, names);
       onConfirmed();
     } catch (e) {
-      setError(`Confirming the addresses failed. ${describeError(e)}`);
+      setError(t("relays.confirm.failed", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -125,18 +124,19 @@ export function ConfirmRelayNames({ relay, onConfirmed }: { relay: Relay; onConf
   return (
     <form className={cx(styles.panel, styles.created)} onSubmit={submit} aria-labelledby={titleId}>
       <h2 id={titleId} className={styles.sectionTitle}>
-        Confirm {relay.peer_id}
+        {t("relays.confirm.title", { name: relay.peer_id })}
       </h2>
       <p className={styles.sectionNote}>
-        This relay joined {relay.site_name}
-        {relay.pending_source && (
-          <>
-            {" "}
-            from <code>{relay.pending_source}</code>
-          </>
-        )}
-        . If you did not install it, <Link href={relayHref(relay.id)}>remove it</Link>. Keep the addresses servers reach it
-        at: the first one goes in their install command. Until you confirm, it carries no server.
+        {relay.pending_source
+          ? rich("relays.confirm.joinedFrom", {
+              site: relay.site_name,
+              source: <code>{relay.pending_source}</code>,
+              link: <Link href={relayHref(relay.id)}>{t("relays.confirm.remove")}</Link>,
+            })
+          : rich("relays.confirm.joined", {
+              site: relay.site_name,
+              link: <Link href={relayHref(relay.id)}>{t("relays.confirm.remove")}</Link>,
+            })}
       </p>
       {reported.map((name) => (
         <label key={name} className={styles.check}>
@@ -150,8 +150,8 @@ export function ConfirmRelayNames({ relay, onConfirmed }: { relay: Relay; onConf
       ))}
       <label className={styles.field}>
         <span>
-          {reported.length === 0 ? "Addresses" : "Another address"}{" "}
-          <span className={styles.fieldNote}>— only if servers reach it some other way</span>
+          {reported.length === 0 ? t("relays.confirm.addresses") : t("relays.confirm.another")}{" "}
+          <span className={styles.fieldNote}>{t("relays.confirm.onlyIf")}</span>
         </span>
         <input
           className={cx(fieldClass, styles.mono)}
@@ -164,7 +164,7 @@ export function ConfirmRelayNames({ relay, onConfirmed }: { relay: Relay; onConf
       </label>
       <div className={styles.formFoot}>
         <Button variant="k" type="submit" disabled={busy || names.length === 0}>
-          Confirm addresses
+          {t("relays.confirm.submit")}
         </Button>
       </div>
       {error && (

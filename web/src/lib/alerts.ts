@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 import {
   type Comparison,
   type ConfigOwner,
@@ -10,7 +12,7 @@ import {
   type UsablePlugin,
   api,
 } from "./api";
-import { formatNumber, formatSeconds } from "./format";
+import { formatNumber, formatPercent, formatSeconds } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
 import { sensorOf } from "./sensors";
 import { SEVERITY_LABELS, type Severity } from "./thresholds";
@@ -24,35 +26,44 @@ export type Shape =
   | { type: "percent" | "number"; noun: string; suffix: string; unit?: string }
   | { type: "event"; noun: string; text: string; brief: string; comparison: Comparison; value: number };
 
+type EventWords = "port" | "service" | "log" | "eventlog" | "script";
+
 /**
- * The fixed trigger of an event, by sensor kind and metric suffix; `brief`
- * follows the severity in a rule summary: "critical when it fails".
+ * The fixed trigger of an event, by sensor kind and metric suffix; its
+ * words' `brief` follows the severity in a rule summary: "critical when
+ * it fails".
  */
-const EVENTS: Record<string, { suffix: string; text: string; brief: string; comparison: Comparison; value: number }> = {
-  port: { suffix: "up", text: "is closed", brief: "when it fails", comparison: "<", value: 1 },
-  systemd: { suffix: "active", text: "is not running", brief: "when it stops", comparison: "<", value: 1 },
-  windows_service: { suffix: "active", text: "is not running", brief: "when it stops", comparison: "<", value: 1 },
-  log: { suffix: "matches", text: "gets a matching line", brief: "on a matching line", comparison: ">", value: 0 },
-  eventlog: { suffix: "matches", text: "gets an error", brief: "on an error", comparison: ">", value: 0 },
-  script: { suffix: "status", text: "reports a problem", brief: "when it fails", comparison: ">=", value: 1 },
+const EVENTS: Record<string, { suffix: string; words: EventWords; comparison: Comparison; value: number }> = {
+  port: { suffix: "up", words: "port", comparison: "<", value: 1 },
+  systemd: { suffix: "active", words: "service", comparison: "<", value: 1 },
+  windows_service: { suffix: "active", words: "service", comparison: "<", value: 1 },
+  log: { suffix: "matches", words: "log", comparison: ">", value: 0 },
+  eventlog: { suffix: "matches", words: "eventlog", comparison: ">", value: 0 },
+  script: { suffix: "status", words: "script", comparison: ">=", value: 1 },
 };
+
+/** A port check's host, when it is not this server. */
+const remoteHost = (params: Record<string, string>) => (params.host && params.host !== "127.0.0.1" ? params.host : null);
 
 /** "port 443", "service nginx", "/var/log/syslog": what a check watches, in words. */
 function checkNoun(sensor: EffectiveSensor): string {
   const { params } = sensor;
   switch (sensor.kind) {
-    case "port":
-      return `port ${params.port ?? "?"}${params.host && params.host !== "127.0.0.1" ? ` on ${params.host}` : ""}`;
+    case "port": {
+      const host = remoteHost(params);
+      const port = params.port ?? "?";
+      return host ? t("checks.noun.portOn", { port, host }) : t("checks.noun.port", { port });
+    }
     case "systemd":
-      return `service ${params.units ?? sensor.name}`;
+      return t("checks.noun.service", { name: params.units ?? sensor.name });
     case "windows_service":
-      return `service ${params.services ?? sensor.name}`;
+      return t("checks.noun.service", { name: params.services ?? sensor.name });
     case "log":
       return params.path ?? sensor.name;
     case "eventlog":
-      return `the ${params.channel ?? ""} event log`;
+      return t("checks.noun.eventlog", { channel: params.channel ?? "" });
     case "script":
-      return `script ${params.script ?? sensor.name}`;
+      return t("checks.noun.script", { name: params.script ?? sensor.name });
     default:
       return sensor.name;
   }
@@ -61,21 +72,26 @@ function checkNoun(sensor: EffectiveSensor): string {
 /** The shape of the threshold on `metric` and `instance` (null: every instance). */
 export function shapeOf(sensors: EffectiveSensor[], metric: string, instance: string | null): Shape {
   const short = shortMetric(metric);
-  if (short === "cpu_usage_ratio") return { type: "percent", noun: "CPU usage", suffix: "" };
-  if (short === "memory_available_ratio") return { type: "percent", noun: "available memory", suffix: "" };
-  if (short === "disk_used_ratio") return { type: "percent", noun: instance ? `disk ${instance}` : "a disk", suffix: " full" };
+  if (short === "cpu_usage_ratio") return { type: "percent", noun: t("checks.noun.cpu"), suffix: "" };
+  if (short === "memory_available_ratio") return { type: "percent", noun: t("checks.noun.memory"), suffix: "" };
+  if (short === "disk_used_ratio") {
+    return { type: "percent", noun: instance ? t("checks.noun.disk", { instance }) : t("checks.noun.aDisk"), suffix: t("checks.suffix.full") };
+  }
   if (short === "diskio_wait_seconds") {
-    return { type: "number", noun: `the average wait of ${instance ? `disk ${instance}` : "a disk"}`, suffix: "", unit: "s" };
+    const noun = instance ? t("checks.noun.wait", { instance }) : t("checks.noun.waitAny");
+    return { type: "number", noun, suffix: "", unit: t("format.unit.second") };
   }
   const sensor = sensorOf(sensors, metric);
   const event = sensor && EVENTS[sensor.kind];
   if (sensor && event && short === `${sensor.name}_${event.suffix}`) {
-    const { text, brief, comparison, value } = event;
+    const { words, comparison, value } = event;
+    const text = t(`checks.event.${words}.text`);
+    const brief = t(`checks.event.${words}.brief`);
     return { type: "event", noun: checkNoun(sensor), text, brief, comparison, value };
   }
   const noun = `${metricTitle(metric)}${instance ? ` ${instance}` : ""}`;
   if (short.endsWith("_ratio")) return { type: "percent", noun, suffix: "" };
-  return { type: "number", noun, suffix: "", ...(short.endsWith("_seconds") && { unit: "s" }) };
+  return { type: "number", noun, suffix: "", ...(short.endsWith("_seconds") && { unit: t("format.unit.second") }) };
 }
 
 /** An event threshold whose values are not the event's own reads as a number. */
@@ -87,27 +103,27 @@ export function shapeFor(sensors: EffectiveSensor[], rule: EffectiveThreshold): 
   return own || !rule.enabled ? shape : { type: "number", noun: shape.noun, suffix: "" };
 }
 
-const WORDS: Record<Comparison, string> = { ">": "over", ">=": "at or over", "<": "under", "<=": "at or under" };
-
 const show = (shape: Shape, value: number) => {
-  if (shape.type === "percent") return `${formatNumber(value * 100, 1)}%`;
+  if (shape.type === "percent") return formatPercent(value);
   return shape.type === "number" && shape.unit ? `${formatNumber(value)} ${shape.unit}` : formatNumber(value);
 };
 
 /** "Warn when a disk is over 85% full, critical over 95%, for 5 min." */
 export function describeThreshold(shape: Shape, rule: EffectiveThreshold): string {
-  if (!rule.enabled) return `No alert on ${shape.noun}.`;
-  const duration = rule.duration_s > 0 ? ` for ${formatSeconds(rule.duration_s)}` : "";
+  const { noun } = shape;
+  if (!rule.enabled) return t("checks.describe.none", { noun });
+  const duration = rule.duration_s > 0 ? t("checks.describe.duration", { duration: formatSeconds(rule.duration_s) }) : "";
   if (shape.type === "event") {
-    const severity = rule.critical !== null ? "Critical" : "Warning";
-    return `${severity} when ${shape.noun} ${shape.text}${duration}.`;
+    const key = rule.critical !== null ? "checks.describe.event.critical" : "checks.describe.event.warning";
+    return t(key, { noun, text: shape.text, duration });
   }
-  const word = WORDS[rule.comparison];
+  const { suffix } = shape;
+  const word = t(`checks.word.${rule.comparison}`);
   const parts: string[] = [];
-  if (rule.warning !== null) parts.push(`Warn when ${shape.noun} is ${word} ${show(shape, rule.warning)}${shape.suffix}`);
+  if (rule.warning !== null) parts.push(t("checks.describe.warn", { noun, word, value: show(shape, rule.warning), suffix }));
   if (rule.critical !== null) {
-    const level = `${word} ${show(shape, rule.critical)}`;
-    parts.push(parts.length ? `critical ${level}` : `Critical when ${shape.noun} is ${level}${shape.suffix}`);
+    const value = show(shape, rule.critical);
+    parts.push(parts.length ? t("checks.describe.critAlso", { word, value }) : t("checks.describe.crit", { noun, word, value, suffix }));
   }
   return `${parts.join(", ")}${parts.length > 1 && duration ? "," : ""}${duration}.`;
 }
@@ -122,8 +138,9 @@ export interface ThresholdForm {
 
 /** The form prefilled with `rule`. */
 export function formOf(shape: Shape, rule: EffectiveThreshold): ThresholdForm {
+  // Plain digits, which `thresholdRequest` reads back in any language.
   const field = (value: number | null) =>
-    value === null ? "" : shape.type === "percent" ? formatNumber(value * 100, 1) : String(value);
+    value === null ? "" : shape.type === "percent" ? String(Math.round(value * 1000) / 10) : String(value);
   return {
     warning: field(rule.warning),
     critical: field(rule.critical),
@@ -141,9 +158,9 @@ export function thresholdRequest(
   form: ThresholdForm,
 ): { request: ThresholdRequest } | { errors: FormErrors } {
   const errors: FormErrors = {};
-  const minutes = Number(form.minutes.trim() || "0");
+  const minutes = Number(form.minutes.trim().replace(",", ".") || "0");
   if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) {
-    errors.minutes = "Enter a number of minutes from 0 to 1440.";
+    errors.minutes = t("checks.error.minutes");
   }
   const base = { metric: rule.metric, instance: rule.instance, hysteresis: rule.hysteresis, enabled: true };
   const duration_s = Math.round(minutes * 60);
@@ -155,11 +172,12 @@ export function thresholdRequest(
     };
   }
   const parse = (key: "warning" | "critical"): number | null => {
-    const text = form[key].trim().replace(/%$/, "").trim();
+    // A French decimal comma reads as a point.
+    const text = form[key].trim().replace(/%$/, "").trim().replace(",", ".");
     if (text === "") return null;
     const value = Number(text);
     if (!Number.isFinite(value) || (shape.type === "percent" && (value < 0 || value > 100))) {
-      errors[key] = shape.type === "percent" ? "Enter a percentage from 0 to 100, or leave it empty." : "Enter a number, or leave it empty.";
+      errors[key] = shape.type === "percent" ? t("checks.error.percent") : t("checks.error.number");
       return null;
     }
     return shape.type === "percent" ? value / 100 : value;
@@ -169,9 +187,9 @@ export function thresholdRequest(
   if (!errors.warning && !errors.critical) {
     const above = rule.comparison === ">" || rule.comparison === ">=";
     if (warning === null && critical === null) {
-      errors.warning = "Set a warning level, a critical level, or both.";
+      errors.warning = t("checks.error.levels");
     } else if (warning !== null && critical !== null && (above ? critical < warning : critical > warning)) {
-      errors.critical = `The critical level must be ${above ? "at or above" : "at or below"} the warning level.`;
+      errors.critical = above ? t("checks.error.criticalAbove") : t("checks.error.criticalBelow");
     }
   }
   if (Object.keys(errors).length > 0) return { errors };
@@ -224,57 +242,94 @@ export interface CheckType {
 }
 
 const portNumber = (value: string) =>
-  /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 65_535 ? null : "Enter a port from 1 to 65535.";
-const oneName = (value: string) => (/^[^,\s]+$/.test(value) ? null : "Enter one name, without spaces or commas.");
+  /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 65_535 ? null : t("checks.error.port");
+const oneName = (value: string) => (/^[^,\s]+$/.test(value) ? null : t("checks.error.oneName"));
 
+/**
+ * The kinds of check, with their words in the active language: labels,
+ * fields and per-system texts are read when shown, so the list itself is
+ * built once.
+ */
 export const CHECK_TYPES: CheckType[] = [
   {
     kind: "port",
-    label: "A port answers",
+    get label() {
+      return t("checks.type.port");
+    },
     os: null,
-    fields: [
-      { key: "port", label: "Port", placeholder: "443", check: portNumber },
-      { key: "host", label: "Address", placeholder: "127.0.0.1", initial: "127.0.0.1", hint: "Where the agent connects: this server by default." },
-    ],
+    get fields() {
+      return [
+        { key: "port", label: t("checks.field.port"), placeholder: "443", check: portNumber },
+        {
+          key: "host",
+          label: t("checks.field.address"),
+          placeholder: "127.0.0.1",
+          initial: "127.0.0.1",
+          hint: t("checks.field.addressHint"),
+        },
+      ];
+    },
     nameFrom: "port",
     severity: "critical",
     duration_s: 60,
   },
   {
     kind: "systemd",
-    label: "A service is running",
+    get label() {
+      return t("checks.type.systemd");
+    },
     os: "linux",
-    fields: [{ key: "units", label: "Service", placeholder: "nginx", hint: "The systemd unit name.", check: oneName }],
+    get fields() {
+      return [{ key: "units", label: t("checks.field.service"), placeholder: "nginx", hint: t("checks.field.unitHint"), check: oneName }];
+    },
     nameFrom: "units",
     severity: "critical",
     duration_s: 60,
   },
   {
     kind: "windows_service",
-    label: "A Windows service is running",
+    get label() {
+      return t("checks.type.windowsService");
+    },
     os: "windows",
-    fields: [{ key: "services", label: "Service", placeholder: "W32Time", hint: "The service name, not its display name.", check: oneName }],
+    get fields() {
+      return [
+        {
+          key: "services",
+          label: t("checks.field.service"),
+          placeholder: "W32Time",
+          hint: t("checks.field.windowsServiceHint"),
+          check: oneName,
+        },
+      ];
+    },
     nameFrom: "services",
     severity: "critical",
     duration_s: 60,
   },
   {
     kind: "log",
-    label: "A log file gets a line",
+    get label() {
+      return t("checks.type.log");
+    },
     os: null,
-    fields: [
-      {
-        key: "path",
-        label: "Log file",
-        placeholder: "/var/log/syslog",
-        hint: "Under /var/log on Linux unless the agent allows more. On Windows, in one of the log folders set in agent.toml (log_dirs).",
-        check: (v) => (/^(\/|[A-Za-z]:\\)/.test(v) ? null : "Enter a full path, like /var/log/syslog or C:\\Logs\\app.log."),
-      },
-      { key: "pattern", label: "Lines containing", placeholder: "error|failed", hint: "Text or a regular expression." },
-    ],
-    on: {
-      linux: { path: { hint: "Under /var/log unless the agent allows more." } },
-      windows: { path: { placeholder: "C:\\Logs\\app.log", hint: "In one of the log folders set in the agent's agent.toml (log_dirs)." } },
+    get fields() {
+      return [
+        {
+          key: "path",
+          label: t("checks.field.logFile"),
+          placeholder: "/var/log/syslog",
+          hint: t("checks.field.logFileHint"),
+          check: (v: string) => (/^(\/|[A-Za-z]:\\)/.test(v) ? null : t("checks.error.path")),
+        },
+        { key: "pattern", label: t("checks.field.lines"), placeholder: "error|failed", hint: t("checks.field.linesHint") },
+      ];
+    },
+    get on() {
+      return {
+        linux: { path: { hint: t("checks.field.logFileLinuxHint") } },
+        windows: { path: { placeholder: "C:\\Logs\\app.log", hint: t("checks.field.logFileWindowsHint") } },
+      };
     },
     nameFrom: "path",
     severity: "warning",
@@ -282,9 +337,15 @@ export const CHECK_TYPES: CheckType[] = [
   },
   {
     kind: "eventlog",
-    label: "Windows logs an error",
+    get label() {
+      return t("checks.type.eventlog");
+    },
     os: "windows",
-    fields: [{ key: "channel", label: "Event log", placeholder: "System", initial: "System", hint: "System or Application." }],
+    get fields() {
+      return [
+        { key: "channel", label: t("checks.field.eventLog"), placeholder: "System", initial: "System", hint: t("checks.field.eventLogHint") },
+      ];
+    },
     fixed: { levels: "critical,error" },
     nameFrom: "channel",
     severity: "warning",
@@ -292,17 +353,21 @@ export const CHECK_TYPES: CheckType[] = [
   },
   {
     kind: "script",
-    label: "A script reports OK",
+    get label() {
+      return t("checks.type.script");
+    },
     os: null,
-    fields: [
-      {
-        key: "script",
-        label: "Script",
-        placeholder: "check_backup.sh",
-        hint: "A file an administrator installed in the agent's scripts folder.",
-        check: (v) => (/[/\\]/.test(v) ? "Enter the file name only." : null),
-      },
-    ],
+    get fields() {
+      return [
+        {
+          key: "script",
+          label: t("checks.field.script"),
+          placeholder: "check_backup.sh",
+          hint: t("checks.field.scriptHint"),
+          check: (v: string) => (/[/\\]/.test(v) ? t("checks.error.fileName") : null),
+        },
+      ];
+    },
     nameFrom: "script",
     severity: "warning",
     duration_s: 60,
@@ -340,7 +405,7 @@ export function checkErrors(type: CheckType, values: Record<string, string>): Re
   for (const field of type.fields) {
     const value = (values[field.key] ?? "").trim();
     if (value === "" && field.optional) continue;
-    const error = value === "" ? `Enter the ${field.label.toLowerCase()}.` : (field.check?.(value) ?? null);
+    const error = value === "" ? t("checks.error.field", { field: field.label.toLowerCase() }) : (field.check?.(value) ?? null);
     if (error) errors[field.key] = error;
   }
   return errors;
@@ -377,9 +442,9 @@ export function checkRequests(
 
 /** Plain checks of the setting types a plugin's form has. */
 const SETTING_CHECKS: Partial<Record<PluginSetting["type"], (value: string) => string | null>> = {
-  url: (v) => (/^https?:\/\/[^\s/@]+/.test(v) ? null : "Enter an address starting with http:// or https://."),
-  number: (v) => (Number.isFinite(Number(v)) ? null : "Enter a number."),
-  bool: (v) => (v === "true" || v === "false" ? null : "Enter true or false."),
+  url: (v) => (/^https?:\/\/[^\s/@]+/.test(v) ? null : t("checks.error.url")),
+  number: (v) => (Number.isFinite(Number(v)) ? null : t("checks.error.numberOnly")),
+  bool: (v) => (v === "true" || v === "false" ? null : t("checks.error.bool")),
 };
 
 /**
@@ -446,25 +511,40 @@ export async function saveCheckInterval(
 
 /** "Port 443", "Service nginx", "Disk space": a check in the list. */
 export function checkTitle(sensor: EffectiveSensor): string {
+  const { params } = sensor;
   switch (sensor.kind) {
     case "cpu":
-      return "CPU usage";
+      return t("checks.title.cpu");
     case "memory":
-      return "Memory";
+      return t("checks.title.memory");
     case "disk":
-      return `Disk space${sensor.instance ? ` ${sensor.instance}` : ""}`;
+      return sensor.instance ? t("checks.title.diskOn", { instance: sensor.instance }) : t("checks.title.disk");
     case "diskio":
-      return "Disk activity";
+      return t("checks.title.diskio");
     case "log":
-      return `“${sensor.params.pattern ?? ""}” in ${sensor.params.path ?? sensor.name}`;
+      return t("checks.title.log", { pattern: params.pattern ?? "", path: params.path ?? sensor.name });
     case "eventlog":
-      return `Errors in the ${sensor.params.channel ?? ""} event log`;
-    default: {
-      const noun = checkNoun(sensor);
-      return noun.charAt(0).toUpperCase() + noun.slice(1);
+      return t("checks.title.eventlog", { channel: params.channel ?? "" });
+    case "port": {
+      const host = remoteHost(params);
+      const port = params.port ?? "?";
+      return host ? t("checks.title.portOn", { port, host }) : t("checks.title.port", { port });
     }
+    case "systemd":
+      return t("checks.title.service", { name: params.units ?? sensor.name });
+    case "windows_service":
+      return t("checks.title.service", { name: params.services ?? sensor.name });
+    case "script":
+      return t("checks.title.script", { name: params.script ?? sensor.name });
+    default:
+      return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }
 }
 
-/** "Warning" or "Critical", for the severity select. */
-export const SEVERITIES = (["warning", "critical"] as const).map((value) => ({ value, label: SEVERITY_LABELS[value] }));
+/** "Warning" or "Critical", for the severity select; the label is read when shown. */
+export const SEVERITIES = (["warning", "critical"] as const).map((value) => ({
+  value,
+  get label() {
+    return SEVERITY_LABELS[value];
+  },
+}));
