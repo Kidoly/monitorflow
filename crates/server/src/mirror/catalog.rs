@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use super::model::{Family, MirrorSpec};
@@ -21,7 +22,26 @@ struct Repository {
     url: &'static str,
     suite: &'static str,
     components: &'static [&'static str],
+    archive: Archive,
 }
+
+/// The distribution's own archive of past states, where an on-demand
+/// mirror fetches a package its upstream no longer has (ADR-0142). Each
+/// was checked to serve the same relative paths on 2026-11-16.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Archive {
+    /// `<base>/<time>/`: the archive's state at that time.
+    Dated(&'static str),
+    /// `<prefix><minor><suffix>`: one tree per minor release.
+    Vault {
+        prefix: &'static str,
+        suffix: &'static str,
+    },
+}
+
+/// Highest minor release tried in a vault when the tree does not say
+/// which one it is.
+const MAX_MINOR: u32 = 23;
 
 pub struct Distribution {
     pub id: &'static str,
@@ -31,27 +51,55 @@ pub struct Distribution {
     repositories: &'static [Repository],
 }
 
+/// An apt archive and its historical archive.
+struct Upstream {
+    url: &'static str,
+    archive: &'static str,
+}
+
 const fn apt(
     name: &'static str,
-    url: &'static str,
+    upstream: Upstream,
     suite: &'static str,
     components: &'static [&'static str],
 ) -> Repository {
     Repository {
         name,
-        url,
+        url: upstream.url,
         suite,
         components,
+        archive: Archive::Dated(upstream.archive),
     }
 }
 
-const fn dnf(name: &'static str, url: &'static str) -> Repository {
-    apt(name, url, "", &[])
+const fn dnf(
+    name: &'static str,
+    url: &'static str,
+    prefix: &'static str,
+    suffix: &'static str,
+) -> Repository {
+    Repository {
+        name,
+        url,
+        suite: "",
+        components: &[],
+        archive: Archive::Vault { prefix, suffix },
+    }
 }
 
-const DEBIAN: &str = "https://deb.debian.org/debian";
-const DEBIAN_SECURITY: &str = "https://deb.debian.org/debian-security";
-const UBUNTU: &str = "http://archive.ubuntu.com/ubuntu";
+const DEBIAN: Upstream = Upstream {
+    url: "https://deb.debian.org/debian",
+    archive: "https://snapshot.debian.org/archive/debian",
+};
+const DEBIAN_SECURITY: Upstream = Upstream {
+    url: "https://deb.debian.org/debian-security",
+    archive: "https://snapshot.debian.org/archive/debian-security",
+};
+/// Its security pockets are in the same archive, and in its history.
+const UBUNTU: Upstream = Upstream {
+    url: "http://archive.ubuntu.com/ubuntu",
+    archive: "https://snapshot.ubuntu.com/ubuntu",
+};
 /// What the Debian installer enables.
 const DEBIAN_COMPONENTS: &[&str] = &["main", "non-free-firmware"];
 /// Without `restricted`, whose kernel modules are several hundred GiB in
@@ -152,10 +200,14 @@ pub const CATALOG: &[Distribution] = &[
             dnf(
                 "rocky-10-baseos",
                 "https://dl.rockylinux.org/pub/rocky/10/BaseOS/x86_64/os/",
+                "https://dl.rockylinux.org/vault/rocky/10.",
+                "/BaseOS/x86_64/os/",
             ),
             dnf(
                 "rocky-10-appstream",
                 "https://dl.rockylinux.org/pub/rocky/10/AppStream/x86_64/os/",
+                "https://dl.rockylinux.org/vault/rocky/10.",
+                "/AppStream/x86_64/os/",
             ),
         ],
     },
@@ -168,10 +220,14 @@ pub const CATALOG: &[Distribution] = &[
             dnf(
                 "rocky-9-baseos",
                 "https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/",
+                "https://dl.rockylinux.org/vault/rocky/9.",
+                "/BaseOS/x86_64/os/",
             ),
             dnf(
                 "rocky-9-appstream",
                 "https://dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/",
+                "https://dl.rockylinux.org/vault/rocky/9.",
+                "/AppStream/x86_64/os/",
             ),
         ],
     },
@@ -184,10 +240,14 @@ pub const CATALOG: &[Distribution] = &[
             dnf(
                 "almalinux-10-baseos",
                 "https://repo.almalinux.org/almalinux/10/BaseOS/x86_64/os/",
+                "https://vault.almalinux.org/10.",
+                "/BaseOS/x86_64/os/",
             ),
             dnf(
                 "almalinux-10-appstream",
                 "https://repo.almalinux.org/almalinux/10/AppStream/x86_64/os/",
+                "https://vault.almalinux.org/10.",
+                "/AppStream/x86_64/os/",
             ),
         ],
     },
@@ -200,14 +260,43 @@ pub const CATALOG: &[Distribution] = &[
             dnf(
                 "almalinux-9-baseos",
                 "https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/",
+                "https://vault.almalinux.org/9.",
+                "/BaseOS/x86_64/os/",
             ),
             dnf(
                 "almalinux-9-appstream",
                 "https://repo.almalinux.org/almalinux/9/AppStream/x86_64/os/",
+                "https://vault.almalinux.org/9.",
+                "/AppStream/x86_64/os/",
             ),
         ],
     },
 ];
+
+/// The historical archives of the catalog mirror `name`, newest first,
+/// for a snapshot synced at `synced`: the archive's state then and a day
+/// later, or the vault of the minor release `minor` and older ones, all of
+/// them when the tree does not say. Empty for a mirror outside the
+/// catalog.
+pub fn archives(name: &str, synced: DateTime<Utc>, minor: Option<u32>) -> Vec<String> {
+    let Some(repository) = CATALOG
+        .iter()
+        .flat_map(|d| d.repositories.iter())
+        .find(|r| r.name == name)
+    else {
+        return Vec::new();
+    };
+    match repository.archive {
+        Archive::Dated(base) => [synced, synced + chrono::Days::new(1)]
+            .iter()
+            .map(|at| format!("{base}/{}/", at.format("%Y%m%dT%H%M%SZ")))
+            .collect(),
+        Archive::Vault { prefix, suffix } => (0..=minor.unwrap_or(MAX_MINOR).min(MAX_MINOR))
+            .rev()
+            .map(|m| format!("{prefix}{m}{suffix}"))
+            .collect(),
+    }
+}
 
 pub fn find(id: &str) -> Option<&'static Distribution> {
     CATALOG.iter().find(|d| d.id == id)
@@ -346,6 +435,51 @@ mod tests {
             debian.too_big(free).unwrap(),
             "Debian 12 (bookworm) needs about 125 GiB and this server has 3.3 GiB free."
         );
+    }
+
+    #[test]
+    fn every_repository_has_its_distributions_archive() {
+        let at = DateTime::parse_from_rfc3339("2026-11-16T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            archives("debian-13-security", at, None),
+            [
+                "https://snapshot.debian.org/archive/debian-security/20261116T100000Z/",
+                "https://snapshot.debian.org/archive/debian-security/20261117T100000Z/"
+            ]
+        );
+        assert_eq!(
+            archives("debian-12-updates", at, None)[0],
+            "https://snapshot.debian.org/archive/debian/20261116T100000Z/"
+        );
+        assert_eq!(
+            archives("ubuntu-22.04-security", at, None)[0],
+            "https://snapshot.ubuntu.com/ubuntu/20261116T100000Z/"
+        );
+        assert_eq!(
+            archives("rocky-9-appstream", at, Some(8)),
+            (0..=8)
+                .rev()
+                .map(|m| format!(
+                    "https://dl.rockylinux.org/vault/rocky/9.{m}/AppStream/x86_64/os/"
+                ))
+                .collect::<Vec<_>>()
+        );
+        let alma = archives("almalinux-10-baseos", at, None);
+        assert_eq!(alma.len(), 24);
+        assert_eq!(
+            alma[0],
+            "https://vault.almalinux.org/10.23/BaseOS/x86_64/os/"
+        );
+        assert!(archives("my-own-mirror", at, None).is_empty());
+        for repository in CATALOG.iter().flat_map(|d| d.repositories.iter()) {
+            assert!(
+                !archives(repository.name, at, Some(0)).is_empty(),
+                "{}",
+                repository.name
+            );
+        }
     }
 
     #[test]

@@ -103,6 +103,24 @@ pub fn client() -> Fetcher {
         .expect("the HTTP client of on-demand mirrors")
 }
 
+/// The minor release `.treeinfo` names in its `[general]` section, like
+/// `version = 9.8`; `None` when it gives the major release only.
+pub fn treeinfo_minor(text: &str) -> Option<u32> {
+    let mut general = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            general = line == "[general]";
+        } else if general {
+            if let Some(("version", value)) =
+                line.split_once('=').map(|(k, v)| (k.trim(), v.trim()))
+            {
+                return value.split_once('.')?.1.parse().ok();
+            }
+        }
+    }
+    None
+}
+
 /// What a sync did, for the run's log.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Stats {
@@ -125,6 +143,8 @@ pub struct Staging {
     /// Where it goes once complete.
     work: PathBuf,
     now: DateTime<Utc>,
+    /// dnf: the minor release the upstream's tree says it is.
+    minor: Option<u32>,
     stats: Stats,
 }
 
@@ -149,6 +169,7 @@ impl Staging {
             dir,
             work: layout.ondemand_work(mirror),
             now: Utc::now(),
+            minor: None,
             stats: Stats::default(),
         })
     }
@@ -263,6 +284,19 @@ impl Staging {
             }
         }
         let packages = packages.ok_or_else(|| SyncError::Missing("primary metadata".into()))?;
+        // Which vault holds this state once the next minor release is out;
+        // optional, as most repositories have no `.treeinfo`.
+        let treeinfo = self.dir.join(UPSTREAM).join("treeinfo");
+        if let Ok(Some(_)) = self
+            .fetcher
+            .file(".treeinfo", &treeinfo, Expect::AtMost(1024 * 1024))
+            .await
+        {
+            let text = tokio::fs::read_to_string(&treeinfo)
+                .await
+                .unwrap_or_default();
+            self.minor = treeinfo_minor(&text);
+        }
         self.package_list(packages).await
     }
 
@@ -270,7 +304,7 @@ impl Staging {
     pub async fn finish(self) -> Result<Stats, SyncError> {
         let origin = Origin {
             upstream: self.mirror.upstream_url.clone(),
-            archives: Vec::new(),
+            archives: super::catalog::archives(&self.mirror.name, self.now, self.minor),
         };
         let (dir, work) = (self.dir, self.work);
         blocking(move || {
@@ -502,6 +536,15 @@ mod tests {
             listed[0].path,
             "dists/trixie-security/main/binary-amd64/Packages.xz"
         );
+    }
+
+    #[test]
+    fn the_minor_release_comes_from_the_general_section() {
+        let rocky = "[header]\nversion = 1.2\n\n[general]\nfamily = Rocky Linux\nversion = 9.8\n";
+        assert_eq!(treeinfo_minor(rocky), Some(8));
+        assert_eq!(treeinfo_minor("[general]\nversion = 9\n"), None);
+        assert_eq!(treeinfo_minor("[header]\nversion = 1.2\n"), None);
+        assert_eq!(treeinfo_minor(""), None);
     }
 
     #[test]
