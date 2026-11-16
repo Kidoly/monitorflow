@@ -52,6 +52,7 @@ export const en = {
   upcoming: "Upcoming",
   removedUserCell: "A removed user",
   title: "Silences",
+  about: "About silences",
   add: "New silence",
   intro:
     "A silence stops notifications for a while, for planned work. Incidents still open and show as usual. When it ends, what is still open is sent, once. To silence one server or site, open its page.",
@@ -110,6 +111,7 @@ export const fr: Translation<typeof en> = {
   upcoming: "À venir",
   removedUserCell: "Un utilisateur supprimé",
   title: "Silences",
+  about: "À propos des silences",
   add: "Nouveau silence",
   intro:
     "Un silence suspend les notifications pendant un temps, pour des travaux prévus. Les incidents s’ouvrent et s’affichent comme d’habitude. À la fin, ce qui est encore ouvert est envoyé, une fois. Pour mettre en silence un serveur ou un site, ouvrez sa page.",

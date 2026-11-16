@@ -186,6 +186,32 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
 }
 
 /** When checks are slower than the alert reads: "Checked every 1 h, so…". */
+/**
+ * "Turn this alert off…", kept apart from Save at the far right of a rule
+ * form, and confirmed in place before anything is sent.
+ */
+export function TurnAlertOff({ disabled, onConfirm }: { disabled: boolean; onConfirm: () => Promise<void> }) {
+  return (
+    <span className={styles.turnOff}>
+      {disabled ? (
+        <Button variant="ghost" disabled>
+          {t("monitoring.turnAlertOff")}
+        </Button>
+      ) : (
+        <InlineConfirm
+          layout="row"
+          trigger={t("monitoring.turnAlertOff")}
+          triggerVariant="ghost"
+          title={t("monitoring.turnAlertOffTitle")}
+          consequence={t("monitoring.turnAlertOffConsequence")}
+          confirmLabel={t("monitoring.turnAlertOffConfirm")}
+          onConfirm={onConfirm}
+        />
+      )}
+    </span>
+  );
+}
+
 export function SlowNote({ durationS, intervalS }: { durationS: number; intervalS: number | undefined }) {
   const note = slowAlertNote(durationS, intervalS);
   return note && <span className={cx(admin.dim, styles.note)}>{note}</span>;
@@ -324,7 +350,7 @@ function ThresholdEditor({
               value={form.warning}
               onChange={set("warning")}
               error={errors.warning}
-              hint={t("monitoring.noWarning")}
+              placeholder={t("monitoring.noWarning")}
             />
             <Field
               label={t("monitoring.criticalAt")}
@@ -332,7 +358,7 @@ function ThresholdEditor({
               value={form.critical}
               onChange={set("critical")}
               error={errors.critical}
-              hint={t("monitoring.noCritical")}
+              placeholder={t("monitoring.noCritical")}
             />
           </>
         )}
@@ -342,7 +368,7 @@ function ThresholdEditor({
           value={form.minutes}
           onChange={set("minutes")}
           error={errors.minutes}
-          hint={t("monitoring.firstBadValue")}
+          placeholder={t("monitoring.firstBadValue")}
         />
       </div>
       <SlowNote durationS={Math.max(0, Number(form.minutes) || 0) * 60} intervalS={intervalS} />
@@ -367,11 +393,15 @@ function ThresholdEditor({
         <Button onClick={onCancel} disabled={busy}>
           {t("monitoring.cancel")}
         </Button>
-        <Button
-          variant="danger"
+        {failure && (
+          <span role="alert" className={admin.hintError}>
+            {failure}
+          </span>
+        )}
+        <TurnAlertOff
           disabled={busy}
-          onClick={() =>
-            void write({
+          onConfirm={() =>
+            write({
               metric: rule.metric,
               instance: rule.instance,
               comparison: rule.comparison,
@@ -382,14 +412,7 @@ function ThresholdEditor({
               enabled: false,
             })
           }
-        >
-          {t("monitoring.turnAlertOff")}
-        </Button>
-        {failure && (
-          <span role="alert" className={admin.hintError}>
-            {failure}
-          </span>
-        )}
+        />
       </div>
     </form>
   );
@@ -402,6 +425,7 @@ export function Field({
   onChange,
   error,
   hint,
+  placeholder,
 }: {
   label: string;
   unit?: string;
@@ -409,6 +433,8 @@ export function Field({
   onChange: (value: string) => void;
   error?: string;
   hint?: string;
+  /** What an empty field means ("No warning"), shown in the field instead of a line under it. */
+  placeholder?: string;
 }) {
   const id = useId();
   const hintId = `${id}-hint`;
@@ -422,14 +448,17 @@ export function Field({
           inputMode="decimal"
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
           aria-invalid={error ? true : undefined}
-          aria-describedby={hintId}
+          aria-describedby={error || hint ? hintId : undefined}
         />
         {unit && <span>{unit}</span>}
       </span>
-      <span id={hintId} className={error ? styles.error : admin.fieldNote} role={error ? "alert" : undefined}>
-        {error ?? hint}
-      </span>
+      {(error || hint) && (
+        <span id={hintId} className={error ? styles.error : admin.fieldNote} role={error ? "alert" : undefined}>
+          {error ?? hint}
+        </span>
+      )}
     </div>
   );
 }

@@ -234,7 +234,6 @@ export function ServerPage({ id }: { id: string | null }) {
             window={data.window}
             rules={data.rules}
             incidentsFailed={incidents === null}
-            now={updatedAt}
             onChanged={refresh}
           />
         )}
