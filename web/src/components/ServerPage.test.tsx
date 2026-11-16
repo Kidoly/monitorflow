@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
 import { type Command, type EffectiveSensors, type ServerDetail, setUnauthorizedHandler } from "@/lib/api";
-import { As, customerAdmin, me, single } from "@/test/admin";
+import { As, customerAdmin, oneSite, me, single } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
@@ -178,8 +178,39 @@ describe("ServerPage", () => {
       </As>,
     );
     await heading();
-    expect(document.querySelector("dl")!).toHaveTextContent(/Site\s*paris\s*Last seen/);
+    // The header names the site; Details adds no customer.
+    expect(screen.getByText(/^Debian 12 · agent 0\.2\.0/)).toHaveTextContent(/ · paris · /);
     expect(document.querySelector("dl")!).not.toHaveTextContent("acme");
+    expect(document.querySelector("dl")!).not.toHaveTextContent(/Site|Customer/);
+  });
+
+  it("leaves to the header what it already says: a limited rollback, the certificate ID that is the host name", async () => {
+    const limited = { available: false, reason: "disabled", detail: "/ is on plain ext4", local_reason: { code: "root_not_covered", fs_type: "ext4" } };
+    const rollback = (snapshots: object) => ok({ snapshots, not_covered: [], local_snapshots: [] });
+    stubFetch(routes({ [`GET /api/servers/${ID}`]: ok({ ...web1, peer_id: "web-1" }), [`GET /api/servers/${ID}/rollback`]: rollback(limited) }));
+    const { unmount } = render(<ServerPage id={ID} />);
+    await heading();
+    await screen.findByText("Rollback limited");
+    expect(document.querySelector("dl")!).not.toHaveTextContent(/Rollback|Certificate ID/);
+    unmount();
+
+    const lvm = { available: true, reason: "disabled", method: "lvm", detail: "LVM snapshot of /" };
+    stubFetch(routes({ [`GET /api/servers/${ID}/rollback`]: rollback(lvm) }));
+    render(<ServerPage id={ID} />);
+    await heading();
+    expect(await within(document.querySelector("dl")!).findByText("Rollback")).toBeInTheDocument();
+  });
+
+  it("names no site while there is only one", async () => {
+    stubFetch(routes());
+    render(
+      <As user={oneSite(customerAdmin)}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    await heading();
+    expect(screen.getByText(/^Debian 12 · agent 0\.2\.0/)).toHaveTextContent(/^Debian 12 · agent 0\.2\.0 · seen 12 s ago/);
+    expect(screen.queryByRole("link", { name: "paris" })).toBeNull();
   });
 
   it("shows the facts and the sensors, problems first", async () => {
@@ -190,15 +221,15 @@ describe("ServerPage", () => {
     await vi.waitFor(() => expect(document.title).toBe("web-1 · MonitorFlow"));
     expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(/^Fleet›▾$/);
     const facts = document.querySelector("dl")!;
-    expect(facts).toHaveTextContent(/Site\s*paris · acme/);
-    expect(facts).toHaveTextContent(/Last seen\s*12 s ago/);
-    expect(facts).toHaveTextContent(/OS\s*Debian 12/);
+    // Only what the header line above does not say.
+    expect(facts).toHaveTextContent(/Customer\s*acme/);
+    expect(facts).not.toHaveTextContent(/Site|Last seen|OS|0\.2\.0/);
     expect(facts).toHaveTextContent(/Connected since\s*2026-10-19 02:14/);
-    expect(facts).toHaveTextContent(/Agent\s*0\.2\.0 · via relay-paris-1/);
-    expect(facts).toHaveTextContent(/Certificate\s*Valid, renews automatically/);
+    expect(facts).toHaveTextContent(/Agent\s*via relay-paris-1/);
+    expect(facts).toHaveTextContent(/Certificate\s*Valid until 2026-12-\d\d \(renewed automatically\)/);
     expect(facts).toHaveTextContent(/Added\s*2026-05-03 09:12/);
+    // Shown as it differs from the host name.
     expect(facts).toHaveTextContent(/Certificate ID\s*agent-1/);
-    expect(facts).toHaveTextContent(/Certificate valid until\s*2026-12/);
     // One line of facts under the title, and no badge while everything is as usual.
     expect(screen.getByText(/^Debian 12 · agent 0\.2\.0/)).toHaveTextContent(/^Debian 12 · agent 0\.2\.0 · paris · seen 12 s ago/);
     expect(within(header()).queryByRole("tooltip", { hidden: true })).not.toBeInTheDocument();
@@ -232,9 +263,8 @@ describe("ServerPage", () => {
     await heading();
     expect(screen.getByRole("navigation", { name: "Fil d’Ariane" })).toHaveTextContent(/^Parc›▾$/);
     const facts = document.querySelector("dl")!;
-    expect(facts).toHaveTextContent(/Dernier contact\s*il y a 12 s/);
     expect(facts).toHaveTextContent(/Connecté depuis\s*2026-10-19 02:14/);
-    expect(facts).toHaveTextContent(/Certificat\s*Valide, se renouvelle automatiquement/);
+    expect(facts).toHaveTextContent(/Certificat\s*Valide jusqu’au 2026-12-\d\d \(renouvelé automatiquement\)/);
     expect(screen.getByRole("tab", { name: "Capteurs · 3" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Commandes · 1 en cours" })).toBeInTheDocument();
     const table = screen.getByRole("table", { name: "Capteurs" });
@@ -329,7 +359,7 @@ describe("ServerPage", () => {
     expect(screen.getByText("No package updates")).toBeInTheDocument();
     const facts = within(document.querySelector("dl")!);
     expect(facts.getByText("Package updates aren't available on this system; monitoring works normally")).toBeInTheDocument();
-    expect(facts.getByText("Alpine 3.20")).toBeInTheDocument();
+    expect(screen.getByText(/^Alpine 3\.20 · agent/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Updates" }));
     expect(await screen.findByText(/update web-1 with\s+its own tools/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open campaigns" })).not.toBeInTheDocument();
@@ -373,7 +403,9 @@ describe("ServerPage", () => {
       render(<ServerPage id={ID} />);
       await heading();
       expect(screen.getByText("AI commands on")).toBeInTheDocument();
-      expect(within(document.querySelector("dl")!).getByText(/Runs the commands AI sends/)).toHaveTextContent(/^On Runs/);
+      // The label says it; no sentence repeating it, and no AI line among the other commands.
+      expect(document.querySelector("dl")!).toHaveTextContent(/AI commands\s*On/);
+      expect(document.querySelector("dl")!).not.toHaveTextContent(/Runs the commands AI sends/);
       expect(screen.queryByRole("link", { name: "How to turn them on" })).not.toBeInTheDocument();
     });
 
@@ -507,9 +539,7 @@ describe("ServerPage", () => {
         </As>,
       );
       await heading();
-      expect(within(document.querySelector("dl")!).getByText(/Runs the commands AI sends/)).toHaveTextContent(
-        /Turned on by alice at 2026-11-16 \d\d:02\./,
-      );
+      expect(document.querySelector("dl")!).toHaveTextContent(/AI commands\s*On\s*Turned on by alice at 2026-11-16 \d\d:02\./);
       unmount();
 
       const pending = { ...change, on: false, state: "queued", finished_at: null } as const;
@@ -520,9 +550,7 @@ describe("ServerPage", () => {
         </As>,
       );
       await heading();
-      expect(within(document.querySelector("dl")!).getByText(/Runs the commands AI sends/)).toHaveTextContent(
-        /Turning off… asked by alice at .*\. It applies when the server is back\./,
-      );
+      expect(document.querySelector("dl")!).toHaveTextContent(/AI commands\s*On.*Turning off… asked by alice at .*\. It applies when the server is back\./);
       expect(screen.queryByRole("button", { name: "Turn off…" })).not.toBeInTheDocument();
     });
 
@@ -531,7 +559,7 @@ describe("ServerPage", () => {
       render(<ServerPage id={ID} />);
       await heading();
       expect(screen.getByText(/As of its last contact/)).toBeInTheDocument();
-      expect(screen.getByText("Accepts package updates, package sources, agent updates. Refuses AI commands.")).toBeInTheDocument();
+      expect(screen.getByText("Accepts package updates, package sources, agent updates.")).toBeInTheDocument();
     });
   });
 
@@ -808,7 +836,7 @@ describe("ServerPage", () => {
       </As>,
     );
     await heading();
-    expect(document.querySelector("dl")).toHaveTextContent(/Agent\s*0\.2\.0 · 0\.3\.0 available · via relay-paris-1/);
+    expect(document.querySelector("dl")).toHaveTextContent(/Agent\s*0\.3\.0 available · via relay-paris-1/);
     await user.click(screen.getByRole("button", { name: "Update agent to 0.3.0…" }));
     await user.click(screen.getByRole("button", { name: "Update web-1" }));
     await vi.waitFor(() =>
@@ -838,6 +866,6 @@ describe("ServerPage", () => {
     );
     await heading();
     expect(screen.queryByRole("button", { name: /Update agent/ })).not.toBeInTheDocument();
-    expect(document.querySelector("dl")).toHaveTextContent(/Agent\s*0\.2\.0 · via relay-paris-1/);
+    expect(document.querySelector("dl")).toHaveTextContent(/Agent\s*via relay-paris-1/);
   });
 });

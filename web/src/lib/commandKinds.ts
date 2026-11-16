@@ -5,7 +5,8 @@ import type { Server } from "./api";
 /** What an agent does with one kind of command; `unknown` is neither yes nor no (ADR-0076). */
 export type Acceptance = "accepted" | "off" | "unsupported" | "unknown";
 
-const KINDS = ["apply_updates", "configure_sources", "self_update", "shell"] as const;
+/** The kinds the summary names; AI commands (`shell`) have their own line and badge. */
+const KINDS = ["apply_updates", "configure_sources", "self_update"] as const;
 
 /** `word` as the API gave it; anything else, or nothing, is unknown. */
 export function acceptance(word: string | null | undefined): Acceptance {
