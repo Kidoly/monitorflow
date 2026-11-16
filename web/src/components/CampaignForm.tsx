@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 
+import { type PlainKey, t } from "@/i18n";
 import { type Customer, type Me, type Server, type Site, api, describeError, isAbortError } from "@/lib/api";
 import {
   type CampaignDraft,
@@ -18,6 +19,7 @@ import {
   toRequest,
   validateCampaign,
 } from "@/lib/campaigns";
+import { formatDuration } from "@/lib/format";
 import { administersCustomer, multiCustomer, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
 
@@ -27,12 +29,13 @@ import { Button, ButtonLink, fieldClass } from "./ui/Button";
 import { Banner, EmptyState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 
 /** Command validity choices; the API takes 60 s to 7 days. */
-const TTLS: [number, string][] = [
-  [900, "15 minutes"],
-  [3600, "1 hour"],
-  [4 * 3600, "4 hours"],
-  [86_400, "1 day"],
-  [604_800, "7 days"],
+const TTLS = [900, 3600, 4 * 3600, 86_400, 604_800];
+
+const UPDATE_KINDS: [UpdateKind, PlainKey][] = [
+  ["all", "campaigns.update.all"],
+  ["security", "campaigns.form.security"],
+  ["packages", "campaigns.form.packages"],
+  ["agent", "campaigns.form.agent"],
 ];
 
 /** `/campaigns/new/`. */
@@ -40,10 +43,8 @@ export function NewCampaignPage() {
   const me = useMe();
   if (!me || !administersCustomer(me)) {
     return (
-      <NoPermission title="Creating a campaign needs an administrator">
-        {multiCustomer(me)
-          ? "It needs an administrator role on a whole customer. Ask an administrator for one."
-          : "It needs an administrator role on all sites. Ask an administrator for one."}
+      <NoPermission title={t("campaigns.form.adminTitle")}>
+        {multiCustomer(me) ? t("campaigns.form.adminCustomer") : t("campaigns.form.adminSites")}
       </NoPermission>
     );
   }
@@ -92,12 +93,12 @@ export function CampaignForm({ me }: { me: Me }) {
   const set = (patch: Partial<CampaignDraft>) => setDraft((d) => ({ ...d, ...patch }));
 
   if (!inventory) {
-    return error ? <Banner tone="bad">{error}</Banner> : <LoadingBlock label="Loading servers" />;
+    return error ? <Banner tone="bad">{error}</Banner> : <LoadingBlock label={t("campaigns.form.loading")} />;
   }
   if (inventory.customers.length === 0) {
     return (
-      <EmptyState actions={<ButtonLink href={CAMPAIGNS_PATH}>Back to campaigns</ButtonLink>}>
-        {multiCustomer(me) ? "You administer no customer to update." : "You administer no sites to update."}
+      <EmptyState actions={<ButtonLink href={CAMPAIGNS_PATH}>{t("campaigns.backToCampaigns")}</ButtonLink>}>
+        {multiCustomer(me) ? t("campaigns.form.noCustomer") : t("campaigns.form.noSite")}
       </EmptyState>
     );
   }
@@ -123,24 +124,20 @@ export function CampaignForm({ me }: { me: Me }) {
       const created = await api.createCampaign(request);
       router.push(campaignHref(created.id));
     } catch (e) {
-      setError(`Creating the campaign failed. ${describeError(e)}`);
+      setError(t("campaigns.form.createFailed", { error: describeError(e) }));
       setBusy(false);
     }
   }
 
   return (
     <div className={own.page}>
-      <Breadcrumb parents={[{ label: "Campaigns", href: CAMPAIGNS_PATH }]} current="New campaign" />
-      <PageHeader
-        detail
-        title="New campaign"
-        meta="The campaign is created as a draft; nothing runs until you start it. Its servers are fixed now."
-      />
-      <form className={own.form} onSubmit={submit} aria-label="New campaign" noValidate>
+      <Breadcrumb parents={[{ label: t("campaigns.label"), href: CAMPAIGNS_PATH }]} current={t("campaigns.newCampaign")} />
+      <PageHeader detail title={t("campaigns.newCampaign")} meta={t("campaigns.form.meta")} />
+      <form className={own.form} onSubmit={submit} aria-label={t("campaigns.newCampaign")} noValidate>
         <div className={own.grid}>
           {multiCustomer(me) && (
             <label className={own.fld}>
-              Customer
+              {t("campaigns.fact.customer")}
               <select
                 className={fieldClass}
                 value={draft.customerId}
@@ -155,7 +152,7 @@ export function CampaignForm({ me }: { me: Me }) {
             </label>
           )}
           <label className={own.fld}>
-            Name
+            {t("campaigns.form.name")}
             <input
               className={fieldClass}
               value={draft.name}
@@ -166,11 +163,11 @@ export function CampaignForm({ me }: { me: Me }) {
           </label>
         </div>
 
-        <Fieldset legend="Servers">
+        <Fieldset legend={t("campaigns.form.servers")}>
           <label className={own.fld}>
-            Every server of the site
+            {t("campaigns.form.site")}
             <select className={fieldClass} value={draft.siteId} onChange={(e) => set({ siteId: e.target.value })}>
-              <option value="">No site</option>
+              <option value="">{t("campaigns.form.noSiteOption")}</option>
               {sites.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
@@ -178,8 +175,8 @@ export function CampaignForm({ me }: { me: Me }) {
               ))}
             </select>
           </label>
-          <p className={own.note}>And or instead, these servers:</p>
-          <ul className={own.servers} aria-label="Servers">
+          <p className={own.note}>{t("campaigns.form.alsoServers")}</p>
+          <ul className={own.servers} aria-label={t("campaigns.form.servers")}>
             {servers.map((s) => (
               <li key={s.id}>
                 <label>
@@ -192,19 +189,19 @@ export function CampaignForm({ me }: { me: Me }) {
                   {s.hostname}{" "}
                   <span className={own.dim}>
                     ({s.site_name}
-                    {noPackages(s) && ", no package updates"})
+                    {noPackages(s) && `, ${t("campaigns.form.noPackages")}`})
                   </span>
                 </label>
               </li>
             ))}
           </ul>
           <p className={own.note} role="status">
-            {targets.length} server{targets.length === 1 ? "" : "s"} targeted.
-            {leftOut > 0 && ` ${leftOut} left out: package updates aren't available on ${leftOut === 1 ? "it" : "them"}.`}
+            {t("campaigns.form.targeted", { count: targets.length })}
+            {leftOut > 0 && ` ${t("campaigns.form.leftOut", { count: leftOut })}`}
           </p>
         </Fieldset>
 
-        <Fieldset legend="Batches">
+        <Fieldset legend={t("campaigns.form.batches")}>
           {draft.waves.map((wave, i) => (
             <WaveRow
               key={i}
@@ -216,32 +213,26 @@ export function CampaignForm({ me }: { me: Me }) {
             />
           ))}
           <div className={own.row}>
-            <Button onClick={() => set({ waves: [...draft.waves, { kind: "size", value: "1", servers: [] }] })}>Add batch</Button>
+            <Button onClick={() => set({ waves: [...draft.waves, { kind: "size", value: "1", servers: [] }] })}>
+              {t("campaigns.form.addBatch")}
+            </Button>
           </div>
           <WavePlan draft={draft} targets={targets} />
         </Fieldset>
 
-        <Fieldset legend="Update">
-          <div className={own.row} role="radiogroup" aria-label="Update kind">
-            {(
-              [
-                ["all", "All upgrades"],
-                ["security", "Security updates only"],
-                ["packages", "These packages"],
-                ["agent", "The MonitorFlow agent"],
-              ] as [UpdateKind, string][]
-            )
-              .filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
+        <Fieldset legend={t("campaigns.form.update")}>
+          <div className={own.row} role="radiogroup" aria-label={t("campaigns.form.updateKind")}>
+            {UPDATE_KINDS.filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
               .map(([kind, label]) => (
                 <label key={kind} className={own.inline}>
                   <input type="radio" name="update" checked={draft.update === kind} onChange={() => set({ update: kind })} />
-                  {label}
+                  {t(label)}
                 </label>
               ))}
           </div>
           {draft.update === "agent" && (
             <label className={own.fld}>
-              Agent version
+              {t("campaigns.form.agentVersion")}
               <select className={fieldClass} value={draft.agentVersion} onChange={(e) => set({ agentVersion: e.target.value })}>
                 {agentVersions.map((v) => (
                   <option key={v} value={v}>
@@ -253,13 +244,13 @@ export function CampaignForm({ me }: { me: Me }) {
           )}
           {draft.update === "packages" && (
             <label className={own.fld}>
-              Packages, or KB numbers for Windows servers
+              {t("campaigns.form.packageList")}
               <textarea
                 className={own.textarea}
                 value={draft.packages}
                 onChange={(e) => set({ packages: e.target.value })}
                 rows={2}
-                placeholder="openssl libssl3 or KB5034441"
+                placeholder={t("campaigns.form.packagePlaceholder")}
               />
             </label>
           )}
@@ -267,15 +258,15 @@ export function CampaignForm({ me }: { me: Me }) {
             {draft.update !== "agent" && (
               <label className={own.inline}>
                 <input type="checkbox" checked={draft.allowReboot} onChange={(e) => set({ allowReboot: e.target.checked })} />
-                Allow reboot
+                {t("campaigns.form.reboot")}
               </label>
             )}
             <label className={own.fld}>
-              Each command may start within
+              {t("campaigns.form.ttl")}
               <select className={fieldClass} value={draft.ttl} onChange={(e) => set({ ttl: Number(e.target.value) })}>
-                {TTLS.map(([seconds, label]) => (
+                {TTLS.map((seconds) => (
                   <option key={seconds} value={seconds}>
-                    {label}
+                    {formatDuration(seconds)}
                   </option>
                 ))}
               </select>
@@ -283,8 +274,8 @@ export function CampaignForm({ me }: { me: Me }) {
           </div>
         </Fieldset>
 
-        <Fieldset legend="Maintenance windows">
-          {draft.windows.length === 0 && <p className={own.note}>No window: commands may be queued at any time.</p>}
+        <Fieldset legend={t("campaigns.form.windows")}>
+          {draft.windows.length === 0 && <p className={own.note}>{t("campaigns.form.noWindow")}</p>}
           {draft.windows.map((window, i) => (
             <WindowRow
               key={i}
@@ -295,15 +286,19 @@ export function CampaignForm({ me }: { me: Me }) {
             />
           ))}
           <div className={own.row}>
-            <Button onClick={() => set({ windows: [...draft.windows, newWindow("weekly")] })}>Add weekly window</Button>
-            <Button onClick={() => set({ windows: [...draft.windows, newWindow("once")] })}>Add one-off window</Button>
+            <Button onClick={() => set({ windows: [...draft.windows, newWindow("weekly")] })}>
+              {t("campaigns.form.addWeekly")}
+            </Button>
+            <Button onClick={() => set({ windows: [...draft.windows, newWindow("once")] })}>
+              {t("campaigns.form.addOnce")}
+            </Button>
           </div>
         </Fieldset>
 
-        <Fieldset legend="Failure threshold">
+        <Fieldset legend={t("campaigns.form.threshold")}>
           <div className={own.row}>
             <label className={own.fld}>
-              Stop when more than
+              {t("campaigns.form.stopWhen")}
               <input
                 className={fieldClass}
                 type="number"
@@ -313,14 +308,14 @@ export function CampaignForm({ me }: { me: Me }) {
               />
             </label>
             <label className={own.fld}>
-              Unit
+              {t("campaigns.form.unit")}
               <select
                 className={fieldClass}
                 value={draft.thresholdUnit}
                 onChange={(e) => set({ thresholdUnit: e.target.value as CampaignDraft["thresholdUnit"] })}
               >
-                <option value="count">servers of a batch fail</option>
-                <option value="percent">percent of a batch fail</option>
+                <option value="count">{t("campaigns.form.unitCount")}</option>
+                <option value="percent">{t("campaigns.form.unitPercent")}</option>
               </select>
             </label>
           </div>
@@ -328,7 +323,7 @@ export function CampaignForm({ me }: { me: Me }) {
 
         {submitted && errors.length > 0 && (
           <Banner tone="bad">
-            <strong>Fix these first:</strong>
+            <strong>{t("campaigns.form.fixFirst")}</strong>
             <ul className={own.errors}>
               {errors.map((e) => (
                 <li key={e}>{e}</li>
@@ -339,7 +334,7 @@ export function CampaignForm({ me }: { me: Me }) {
         {error && <Banner tone="bad">{error}</Banner>}
         <div className={own.row}>
           <Button variant="k" type="submit" disabled={busy}>
-            Create campaign
+            {t("campaigns.form.create")}
           </Button>
         </div>
       </form>
@@ -360,7 +355,8 @@ function WaveRow({
   onChange: (wave: WaveDraft) => void;
   onRemove: () => void;
 }) {
-  const label = `Batch ${index + 1}`;
+  const number = index + 1;
+  const label = t("campaigns.wave.title", { number });
   return (
     <div className={own.row} role="group" aria-label={label}>
       <label className={own.fld}>
@@ -370,14 +366,14 @@ function WaveRow({
           value={wave.kind}
           onChange={(e) => onChange({ ...wave, kind: e.target.value as WaveDraft["kind"] })}
         >
-          <option value="size">Number of servers</option>
-          <option value="percent">Percentage of servers</option>
-          <option value="servers">Chosen servers</option>
+          <option value="size">{t("campaigns.form.bySize")}</option>
+          <option value="percent">{t("campaigns.form.byPercent")}</option>
+          <option value="servers">{t("campaigns.form.byServers")}</option>
         </select>
       </label>
       {wave.kind === "servers" ? (
         <label className={own.fld}>
-          Servers
+          {t("campaigns.form.servers")}
           <select
             className={own.multiple}
             multiple
@@ -393,7 +389,7 @@ function WaveRow({
         </label>
       ) : (
         <label className={own.fld}>
-          {wave.kind === "size" ? "Servers" : "Percent"}
+          {wave.kind === "size" ? t("campaigns.form.servers") : t("campaigns.form.percent")}
           <input
             className={fieldClass}
             type="number"
@@ -404,8 +400,8 @@ function WaveRow({
           />
         </label>
       )}
-      <Button onClick={onRemove} aria-label={`Remove ${label.toLowerCase()}`}>
-        Remove
+      <Button onClick={onRemove} aria-label={t("campaigns.form.removeBatch", { number })}>
+        {t("campaigns.form.remove")}
       </Button>
     </div>
   );
@@ -418,9 +414,9 @@ function WavePlan({ draft, targets }: { draft: CampaignDraft; targets: Server[] 
     targets.map((t) => t.id),
     toRequest(draft).waves,
   );
-  if ("error" in plan) return <p className={own.note}>Waves cannot be planned: {plan.error}.</p>;
-  const sizes = plan.waves.map((w, i) => `batch ${i + 1}: ${w.length}`).join(", ");
-  return <p className={own.note}>Servers per batch: {sizes}. Servers not placed by a batch form the last one.</p>;
+  if ("error" in plan) return <p className={own.note}>{t("campaigns.form.cannotPlan", { error: plan.error })}</p>;
+  const sizes = plan.waves.map((w, i) => t("campaigns.form.planBatch", { number: i + 1, count: w.length })).join(", ");
+  return <p className={own.note}>{t("campaigns.form.plan", { sizes })}</p>;
 }
 
 function WindowRow({
@@ -434,7 +430,8 @@ function WindowRow({
   onChange: (window: WindowDraft) => void;
   onRemove: () => void;
 }) {
-  const label = `Window ${index + 1}`;
+  const number = index + 1;
+  const label = t("campaigns.check.window", { number });
   const set = (patch: Partial<WindowDraft>) => onChange({ ...window, ...patch });
   return (
     <div className={own.row} role="group" aria-label={label}>
@@ -451,22 +448,22 @@ function WindowRow({
             </label>
           ))}
           <label className={own.fld}>
-            From
+            {t("campaigns.form.from")}
             <input className={fieldClass} type="time" value={window.start} onChange={(e) => set({ start: e.target.value })} />
           </label>
           <label className={own.fld}>
-            To
+            {t("campaigns.form.to")}
             <input className={fieldClass} type="time" value={window.end} onChange={(e) => set({ end: e.target.value })} />
           </label>
           <label className={own.fld}>
-            Time zone
+            {t("campaigns.form.timezone")}
             <input className={fieldClass} value={window.timezone} onChange={(e) => set({ timezone: e.target.value })} />
           </label>
         </>
       ) : (
         <>
           <label className={own.fld}>
-            Starts (your local time)
+            {t("campaigns.form.starts")}
             <input
               className={fieldClass}
               type="datetime-local"
@@ -475,7 +472,7 @@ function WindowRow({
             />
           </label>
           <label className={own.fld}>
-            Ends
+            {t("campaigns.form.ends")}
             <input
               className={fieldClass}
               type="datetime-local"
@@ -485,8 +482,8 @@ function WindowRow({
           </label>
         </>
       )}
-      <Button onClick={onRemove} aria-label={`Remove ${label.toLowerCase()}`}>
-        Remove
+      <Button onClick={onRemove} aria-label={t("campaigns.form.removeWindow", { number })}>
+        {t("campaigns.form.remove")}
       </Button>
     </div>
   );
