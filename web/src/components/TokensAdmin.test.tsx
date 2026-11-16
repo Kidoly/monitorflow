@@ -261,6 +261,9 @@ describe("TokensAdmin", () => {
     expect(hostsWords({ host_count: 1, max_hosts: null })).toBe("1 server");
     expect(hostsWords({ host_count: 1, max_hosts: 1 })).toBe("1 of 1 server");
     expect(hostsWords({ host_count: 3, max_hosts: 10 })).toBe("3 of 10 servers");
+    setActiveLocale("fr");
+    expect(hostsWords({ host_count: 0, max_hosts: null })).toBe("0 serveur");
+    expect(hostsWords({ host_count: 3, max_hosts: 10 })).toBe("3 sur 10 serveurs");
   });
 
   it("creates a relay token and shows it once with its configuration", async () => {
@@ -652,6 +655,7 @@ describe("TokensAdmin", () => {
     expect(screen.getByRole("region", { name: "Jetons" })).toHaveTextContent("1 en attente");
     expect(screen.getByRole("button", { name: "Révoquer le jeton de web-01" })).toBeInTheDocument();
     expect(await screen.findByText("Source d’installation par défaut")).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Commande d’installation" })).toHaveTextContent("Approuver les nouveaux serveurs");
   });
 
   it("explains that site administrators cannot enroll", () => {
