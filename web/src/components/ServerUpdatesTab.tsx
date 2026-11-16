@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/PageState";
 import { Page } from "@/components/ui/Page";
 
 import { PackageSources } from "./PackageSources";
+import { PendingUpdates } from "./PendingUpdates";
 import { ServerRollback } from "./ServerRollback";
 
 /**
@@ -27,6 +28,7 @@ export function ServerUpdatesTab({ server }: { server: ServerDetail }) {
   }
   return (
     <Page>
+      <PendingUpdates server={server} />
       <PackageSources server={server} />
       <ServerRollback server={server} />
       <EmptyState
