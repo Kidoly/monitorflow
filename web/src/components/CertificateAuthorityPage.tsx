@@ -3,15 +3,16 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import { ApiError, type CaPeerState, type CaRotation, api, describeError } from "@/lib/api";
 import {
-  REINSTALL_HINT,
   authorityStatus,
   expiryWarning,
   formatDate,
   machineWord,
   nextStep,
   progressSentence,
+  reinstallHint,
   stepExplanation,
 } from "@/lib/certificateAuthority";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
@@ -30,16 +31,13 @@ import { formatDay } from "./ui/time";
 /** Polling while a change is under way. */
 const ACTIVE_MS = 10_000;
 
-const TITLE = "The certificate authority needs a global administrator";
-
 /** `/settings/certificate-authority/`: global administrators only, like the API (ADR-0088). */
 export function CertificateAuthorityPage() {
   const me = useMe();
   if (!administersEverything(me)) {
     return (
-      <NoPermission title={TITLE}>
-        It gives every server and relay{multiCustomer(me) && " of every customer"} its certificate. Ask a global administrator for a
-        role.
+      <NoPermission title={t("authority.noPermission")}>
+        {multiCustomer(me) ? t("authority.noPermissionNoteCustomers") : t("authority.noPermissionNote")}
       </NoPermission>
     );
   }
@@ -49,7 +47,7 @@ export function CertificateAuthorityPage() {
 /** What a refused start or step says. */
 function failureText(e: unknown, what: string): string {
   return e instanceof ApiError && e.status < 500 && e.status !== 0 && e.status !== 401 && e.status !== 403
-    ? `${what}: ${e.message}.`
+    ? t("authority.failure", { what, message: e.message })
     : describeError(e);
 }
 
@@ -65,10 +63,10 @@ function CertificateAuthority() {
 
   const header = (
     <PageHeader
-      title="Certificate authority"
+      title={t("authority.title")}
       meta={
         <>
-          Global administrators only
+          {t("authority.meta")}
           {(updatedAt !== null || error !== null) && (
             <>
               {" · "}
@@ -83,7 +81,7 @@ function CertificateAuthority() {
     return (
       <div className={styles.page}>
         {header}
-        <NoPermission title={TITLE} />
+        <NoPermission title={t("authority.noPermission")} />
       </div>
     );
   }
@@ -92,7 +90,7 @@ function CertificateAuthority() {
       <div className={styles.page}>
         {header}
         {error ? (
-          <ErrorState what="the certificate authority" error={describeError(error)} onRetry={refresh} />
+          <ErrorState what={t("authority.what")} error={describeError(error)} onRetry={refresh} />
         ) : (
           <LoadingBlock />
         )}
@@ -112,9 +110,7 @@ function CertificateAuthority() {
       {header}
       {data.restored_retired_at && (
         <Banner tone="bad">
-          A restore brought back a certificate authority this server retired on {formatDate(data.restored_retired_at)}.
-          Servers and relays that moved to the newer one cannot connect until they are installed again. Restore a
-          backup taken after that date if there is one, or start a change now.
+          {t("authority.restoredBanner", { date: formatDate(data.restored_retired_at) })}
         </Banner>
       )}
       {warning && <Banner tone="warn">{warning}</Banner>}
@@ -122,25 +118,20 @@ function CertificateAuthority() {
         <h2 id="status-title" className={styles.title}>
           <Label tone={tone}>{status}</Label>
         </h2>
-        <p className={styles.note}>
-          The certificate authority of this server gives every server and relay the certificate it uses to connect
-          securely.
-        </p>
+        <p className={styles.note}>{t("authority.about")}</p>
         <FactsBox
           columns={2}
           facts={[
-            { label: "Created", value: formatDate(data.created_at) },
-            { label: "Expires", value: formatDate(data.expires_at) },
+            { label: t("authority.facts.created"), value: formatDate(data.created_at) },
+            { label: t("authority.facts.expires"), value: formatDate(data.expires_at) },
           ]}
           details={[
-            { label: "Fingerprint (SHA-256)", value: data.fingerprint, mono: true },
+            { label: t("authority.facts.fingerprint"), value: data.fingerprint, mono: true },
             ...(data.rotation?.other_fingerprint
               ? [
                   {
                     label:
-                      data.rotation.stage === "introduced"
-                        ? "New certificate authority"
-                        : "Old certificate authority",
+                      data.rotation.stage === "introduced" ? t("authority.facts.new") : t("authority.facts.old"),
                     value: data.rotation.other_fingerprint,
                     mono: true,
                   },
@@ -164,44 +155,30 @@ function StartChange({ onChanged }: { onChanged: () => void }) {
   };
   return (
     <div className={styles.start}>
-      <h3 className={styles.subtitle}>Change the certificate authority</h3>
-      <p className={styles.note}>
-        A planned change takes two steps. First every server and relay learns the new certificate authority over its
-        secure connection, within about an hour. Then the new one gives every machine a new certificate, within about
-        an hour, and the old one is retired. Each step goes on by itself once every machine is done; a machine that is
-        offline is waited for until its certificate expires, at most 7 days. The whole change takes from a couple of
-        hours to about two weeks, with nothing to do on each machine. Install commands made before the switch stop
-        working after it: copy a new one from the Add servers page.
-      </p>
+      <h3 className={styles.subtitle}>{t("authority.start.title")}</h3>
+      <p className={styles.note}>{t("authority.start.note")}</p>
       <div className={styles.actions}>
         <InlineConfirm
-          trigger="Change the certificate authority…"
+          trigger={t("authority.start.trigger")}
           triggerVariant="k"
           confirmVariant="k"
-          title="Change the certificate authority?"
-          consequence="Servers and relays follow by themselves; nothing to do on each machine."
-          confirmLabel="Start the change"
-          pendingLabel="Starting…"
+          title={t("authority.start.confirmTitle")}
+          consequence={t("authority.start.consequence")}
+          confirmLabel={t("authority.start.confirm")}
+          pendingLabel={t("authority.starting")}
           onConfirm={start(false)}
-          describeError={(e) => failureText(e, "Cannot start the change")}
+          describeError={(e) => failureText(e, t("authority.start.failed"))}
         />
         <InlineConfirm
-          trigger="Emergency change…"
+          trigger={t("authority.emergency.trigger")}
           triggerVariant="default"
-          title="Start an emergency change?"
-          consequence={
-            <>
-              Only if the key of the certificate authority may have leaked. The new one gives every server and relay a
-              new certificate within the hour, and the old one stops being trusted 24 hours later, or as soon as every
-              machine moved. Machines offline until then cannot connect: each must be installed again. Every install
-              command made before stops working.
-            </>
-          }
-          acknowledge="I understand that machines that miss it must be installed again."
-          confirmLabel="Start the emergency change"
-          pendingLabel="Starting…"
+          title={t("authority.emergency.title")}
+          consequence={t("authority.emergency.consequence")}
+          acknowledge={t("authority.emergency.acknowledge")}
+          confirmLabel={t("authority.emergency.confirm")}
+          pendingLabel={t("authority.starting")}
           onConfirm={start(true)}
-          describeError={(e) => failureText(e, "Cannot start the change")}
+          describeError={(e) => failureText(e, t("authority.start.failed"))}
         />
       </div>
     </div>
@@ -215,23 +192,23 @@ function Change({ rotation, now, onChanged }: { rotation: CaRotation; now: Date;
   return (
     <section className={styles.box} aria-labelledby="change-title">
       <h2 id="change-title" className={styles.title}>
-        {rotation.emergency ? "Emergency change" : "Change"} of the certificate authority
+        {rotation.emergency ? t("authority.change.emergencyTitle") : t("authority.change.title")}
       </h2>
       <p className={styles.note}>{stepExplanation(rotation, now)}</p>
       <div className={styles.progress}>
-        <progress max={Math.max(rotation.total, 1)} value={rotation.total > 0 ? rotation.done : 1} aria-label="Progress" />
-        <span>{percent} %</span>
+        <progress max={Math.max(rotation.total, 1)} value={rotation.total > 0 ? rotation.done : 1} aria-label={t("authority.change.progress")} />
+        <span>{percent}&nbsp;%</span>
       </div>
       <p className={styles.sentence}>{progressSentence(rotation)}</p>
       <FactsBox
         columns={2}
         facts={[
-          { label: "Started", value: formatDay(new Date(rotation.started_at), now) },
+          { label: t("authority.change.started"), value: formatDay(new Date(rotation.started_at), now) },
           ...(rotation.switched_at
-            ? [{ label: "Switched", value: formatDay(new Date(rotation.switched_at), now) }]
+            ? [{ label: t("authority.change.switched"), value: formatDay(new Date(rotation.switched_at), now) }]
             : []),
           ...(rotation.distrust_at
-            ? [{ label: "Old one stops being trusted", value: formatDay(new Date(rotation.distrust_at), now) }]
+            ? [{ label: t("authority.change.distrust"), value: formatDay(new Date(rotation.distrust_at), now) }]
             : []),
         ]}
       />
@@ -243,12 +220,12 @@ function Change({ rotation, now, onChanged }: { rotation: CaRotation; now: Date;
           title={step.title}
           consequence={step.consequence}
           confirmLabel={step.confirm}
-          pendingLabel="Working…"
+          pendingLabel={t("authority.change.working")}
           onConfirm={async () => {
             await api.nextCertificateAuthorityStep();
             onChanged();
           }}
-          describeError={(e) => failureText(e, "Cannot take the next step")}
+          describeError={(e) => failureText(e, t("authority.change.failed"))}
         />
       </div>
     </section>
@@ -256,50 +233,51 @@ function Change({ rotation, now, onChanged }: { rotation: CaRotation; now: Date;
 }
 
 function lastContact(peer: CaPeerState, now: Date) {
-  return peer.last_seen_at ? <RelativeTime value={peer.last_seen_at} now={now} /> : "never";
+  return peer.last_seen_at ? <RelativeTime value={peer.last_seen_at} now={now} /> : t("authority.never");
 }
 
 function Waiting({ peers, now }: { peers: CaPeerState[]; now: Date }) {
   const columns: Column<CaPeerState>[] = [
     {
       key: "name",
-      header: "Name",
+      header: t("authority.column.name"),
       cell: (p) => (
         <span className={styles.name}>
           {p.name}
           {p.too_old && (
             <Label tone="warn" small>
-              Too old to follow: updates itself
+              {t("authority.tooOld")}
             </Label>
           )}
         </span>
       ),
     },
-    { key: "kind", header: "Kind", cell: (p) => machineWord(p.role) },
-    { key: "seen", header: "Last contact", cell: (p) => lastContact(p, now) },
-    { key: "until", header: "Stops being waited for", cell: (p) => formatDate(p.not_after) },
+    { key: "kind", header: t("authority.column.kind"), cell: (p) => machineWord(p.role) },
+    { key: "seen", header: t("authority.column.seen"), cell: (p) => lastContact(p, now) },
+    { key: "until", header: t("authority.column.until"), cell: (p) => formatDate(p.not_after) },
   ];
-  return <DataTable label="Waited for" columns={columns} rows={peers} rowKey={(p) => `${p.role}:${p.peer_id}`} />;
+  return <DataTable label={t("authority.waitedFor")} columns={columns} rows={peers} rowKey={(p) => `${p.role}:${p.peer_id}`} />;
 }
 
 /** Machines that missed an emergency change. */
 function CutOff({ peers, now }: { peers: CaPeerState[]; now: Date }) {
   const columns: Column<CaPeerState>[] = [
-    { key: "name", header: "Name", cell: (p) => p.name },
-    { key: "kind", header: "Kind", cell: (p) => machineWord(p.role) },
-    { key: "seen", header: "Last contact", cell: (p) => lastContact(p, now) },
+    { key: "name", header: t("authority.column.name"), cell: (p) => p.name },
+    { key: "kind", header: t("authority.column.kind"), cell: (p) => machineWord(p.role) },
+    { key: "seen", header: t("authority.column.seen"), cell: (p) => lastContact(p, now) },
   ];
   return (
     <section className={styles.box} aria-labelledby="cutoff-title">
       <h2 id="cutoff-title" className={styles.title}>
-        <Label tone="bad">Needs a new install</Label>
+        <Label tone="bad">{t("authority.needsInstall")}</Label>
       </h2>
       <p className={styles.note}>
-        These servers and relays missed an emergency change: their certificate comes from a certificate authority this
-        server no longer trusts, so they cannot connect. {REINSTALL_HINT}{" "}
-        <Link href={TOKENS_PATH}>Add servers</Link>
+        {rich("authority.cutOffNote", {
+          hint: reinstallHint(),
+          link: <Link href={TOKENS_PATH}>{t("authority.addServers")}</Link>,
+        })}
       </p>
-      <DataTable label="Needs a new install" columns={columns} rows={peers} rowKey={(p) => `${p.role}:${p.peer_id}`} />
+      <DataTable label={t("authority.needsInstall")} columns={columns} rows={peers} rowKey={(p) => `${p.role}:${p.peer_id}`} />
     </section>
   );
 }

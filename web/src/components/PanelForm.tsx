@@ -2,20 +2,22 @@
 
 import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 
-import { type Combine, type Panel, type PanelKind, type PanelServers, type Server, type Within, api, describeError, isAbortError } from "@/lib/api";
+import { type Combine, type Panel, type PanelServers, type Server, type Within, api, describeError, isAbortError } from "@/lib/api";
 import {
   CHART_COMBINES,
-  COMBINE_LABELS,
   FIGURE_COMBINES,
-  KIND_LABELS,
   MAX_NAME,
   MAX_NAMED_SERVERS,
-  WIDTH_LABELS,
+  PANEL_KINDS,
+  combineLabel,
   defaultInstance,
+  kindLabel,
   placesOf,
   suggestedTitle,
+  widthLabel,
   withKind,
 } from "@/lib/dashboards";
+import { t } from "@/i18n";
 import { useMultiCustomer } from "@/lib/me";
 import { metricTitle, shortMetric } from "@/lib/metrics";
 import { Button, fieldClass } from "@/components/ui/Button";
@@ -116,11 +118,15 @@ export function PanelForm({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (panel.servers.kind === "list" && panel.servers.ids.length === 0) return setError("Choose at least one server.");
+    if (panel.servers.kind === "list" && panel.servers.ids.length === 0) return setError(t("dashboards.form.chooseOne"));
     if (panel.servers.kind === "list" && panel.servers.ids.length > MAX_NAMED_SERVERS) {
-      return setError(`Choose at most ${MAX_NAMED_SERVERS} servers, or ${multiCustomer ? "a site or customer" : "a site"}.`);
+      return setError(
+        multiCustomer
+          ? t("dashboards.form.atMostPlaces", { max: MAX_NAMED_SERVERS })
+          : t("dashboards.form.atMostSite", { max: MAX_NAMED_SERVERS }),
+      );
     }
-    if (!panel.title.trim()) return setError("Give the panel a title.");
+    if (!panel.title.trim()) return setError(t("dashboards.form.titleRequired"));
     onDone({ ...panel, title: panel.title.trim() });
   }
 
@@ -129,21 +135,24 @@ export function PanelForm({
   );
   const combines = panel.kind === "chart" ? CHART_COMBINES : FIGURE_COMBINES;
   const serverChoices: [ServersChoice, string][] = [
-    ["all", within.kind === "all" ? "Every server" : "Every server of this dashboard"],
-    ...(within.kind !== "site" && places.sites.length > 1 ? [["site", "One site"] as [ServersChoice, string]] : []),
-    ...(multiCustomer && within.kind === "all" && places.customers.length > 1 ? [["customer", "One customer"] as [ServersChoice, string]] : []),
-    ["list", "Chosen servers"],
+    ["all", within.kind === "all" ? t("dashboards.form.every") : t("dashboards.form.everyHere")],
+    ...(within.kind !== "site" && places.sites.length > 1 ? [["site", t("dashboards.form.oneSite")] as [ServersChoice, string]] : []),
+    ...(multiCustomer && within.kind === "all" && places.customers.length > 1
+      ? [["customer", t("dashboards.form.oneCustomer")] as [ServersChoice, string]]
+      : []),
+    ["list", t("dashboards.form.chosen")],
   ];
 
   return (
-    <form className={styles.form} onSubmit={submit} aria-label={isNew ? "New panel" : `Edit ${initial.title}`}>
+    <form className={styles.form} onSubmit={submit} aria-label={isNew ? t("dashboards.form.new") : t("dashboards.form.edit", { title: initial.title })}
+    >
       <fieldset className={admin.fieldset}>
-        <legend className={admin.legend}>Shows</legend>
+        <legend className={admin.legend}>{t("dashboards.form.shows")}</legend>
         <div className={styles.choices}>
-          {(Object.keys(KIND_LABELS) as PanelKind[]).map((kind) => (
+          {PANEL_KINDS.map((kind) => (
             <label key={kind}>
               <input type="radio" name={`${id}-kind`} checked={panel.kind === kind} onChange={() => change(withKind(panel, kind))} />
-              {KIND_LABELS[kind]}
+              {kindLabel(kind)}
             </label>
           ))}
         </div>
@@ -151,7 +160,7 @@ export function PanelForm({
 
       <div className={admin.formGrid}>
         <label className={admin.field}>
-          Servers
+          {t("dashboards.form.servers")}
           <select className={fieldClass} value={panel.servers.kind} onChange={(e) => setServersKind(e.target.value as ServersChoice)}>
             {serverChoices.map(([value, label]) => (
               <option key={value} value={value}>
@@ -162,7 +171,7 @@ export function PanelForm({
         </label>
         {panel.servers.kind === "site" && (
           <label className={admin.field}>
-            Site
+            {t("dashboards.form.site")}
             <select
               className={fieldClass}
               value={panel.servers.id}
@@ -178,7 +187,7 @@ export function PanelForm({
         )}
         {panel.servers.kind === "customer" && (
           <label className={admin.field}>
-            Customer
+            {t("dashboards.form.customer")}
             <select
               className={fieldClass}
               value={panel.servers.id}
@@ -197,13 +206,16 @@ export function PanelForm({
       {panel.servers.kind === "list" && (
         <fieldset className={admin.fieldset}>
           <legend className={admin.legend}>
-            Chosen servers <span className={admin.fieldNote}>{chosen.length} of at most {MAX_NAMED_SERVERS}</span>
+            {t("dashboards.form.chosen")}{" "}
+            <span className={admin.fieldNote}>
+              {t("dashboards.form.chosenCount", { count: chosen.length, max: MAX_NAMED_SERVERS })}
+            </span>
           </legend>
           <input
             className={fieldClass}
             type="search"
-            placeholder="Find a server"
-            aria-label="Find a server"
+            placeholder={t("dashboards.form.find")}
+            aria-label={t("dashboards.form.find")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -215,9 +227,11 @@ export function PanelForm({
               </label>
             ))}
             {matches.length > SHOWN_SERVERS && (
-              <span className={admin.fieldNote}>{matches.length - SHOWN_SERVERS} more: type part of a name to find them.</span>
+              <span className={admin.fieldNote}>
+                {t("dashboards.form.more", { count: matches.length - SHOWN_SERVERS })}
+              </span>
             )}
-            {matches.length === 0 && <span className={admin.fieldNote}>No server matches.</span>}
+            {matches.length === 0 && <span className={admin.fieldNote}>{t("dashboards.form.noMatch")}</span>}
           </div>
         </fieldset>
       )}
@@ -225,7 +239,7 @@ export function PanelForm({
       {panel.kind !== "alerts" && (
         <div className={admin.formGrid}>
           <label className={admin.field}>
-            Metric
+            {t("dashboards.form.metric")}
             <select
               className={fieldClass}
               value={panel.metric}
@@ -242,11 +256,11 @@ export function PanelForm({
                 </option>
               ))}
             </select>
-            {catalogError && <span className={admin.fieldNote}>Could not list the metrics: {catalogError}</span>}
-            {metrics && metrics.length === 0 && <span className={admin.fieldNote}>These servers reported no metric in the last day.</span>}
+            {catalogError && <span className={admin.fieldNote}>{t("dashboards.form.metricsFailed", { error: catalogError })}</span>}
+            {metrics && metrics.length === 0 && <span className={admin.fieldNote}>{t("dashboards.form.noMetrics")}</span>}
           </label>
           <label className={admin.field}>
-            Watches
+            {t("dashboards.form.watches")}
             <select
               className={fieldClass}
               value={panel.instance ?? ""}
@@ -257,7 +271,7 @@ export function PanelForm({
                 change(e.target.value ? { ...rest, instance: e.target.value } : rest);
               }}
             >
-              <option value="">All</option>
+              <option value="">{t("dashboards.form.all")}</option>
               {[...new Set([...(instances ?? []), ...(panel.instance ? [panel.instance] : [])])].map((i) => (
                 <option key={i} value={i}>
                   {i}
@@ -267,7 +281,7 @@ export function PanelForm({
           </label>
           {(panel.kind === "chart" || panel.kind === "figure") && (
             <label className={admin.field}>
-              Servers combine as
+              {t("dashboards.form.combine")}
               <select
                 className={fieldClass}
                 value={panel.combine}
@@ -275,7 +289,7 @@ export function PanelForm({
               >
                 {combines.map((c) => (
                   <option key={c} value={c}>
-                    {COMBINE_LABELS[c]}
+                    {combineLabel(c)}
                   </option>
                 ))}
               </select>
@@ -283,14 +297,14 @@ export function PanelForm({
           )}
           {panel.kind === "top" && (
             <label className={admin.field}>
-              Order
+              {t("dashboards.form.order")}
               <select
                 className={fieldClass}
                 value={panel.order}
                 onChange={(e) => change({ ...panel, order: e.target.value as "highest" | "lowest" })}
               >
-                <option value="highest">Highest first</option>
-                <option value="lowest">Lowest first</option>
+                <option value="highest">{t("dashboards.form.highestFirst")}</option>
+                <option value="lowest">{t("dashboards.form.lowestFirst")}</option>
               </select>
             </label>
           )}
@@ -300,7 +314,7 @@ export function PanelForm({
       <div className={admin.formGrid}>
         {(panel.kind === "top" || panel.kind === "alerts") && (
           <label className={admin.field}>
-            How many
+            {t("dashboards.form.howMany")}
             <input
               className={fieldClass}
               type="number"
@@ -312,7 +326,7 @@ export function PanelForm({
           </label>
         )}
         <label className={admin.field}>
-          Width
+          {t("dashboards.form.width")}
           <select
             className={fieldClass}
             value={panel.width}
@@ -320,13 +334,13 @@ export function PanelForm({
           >
             {([1, 2, 3] as const).map((w) => (
               <option key={w} value={w}>
-                {WIDTH_LABELS[w]}
+                {widthLabel(w)}
               </option>
             ))}
           </select>
         </label>
         <label className={admin.field}>
-          Title
+          {t("dashboards.form.title")}
           <input
             className={fieldClass}
             required
@@ -342,9 +356,9 @@ export function PanelForm({
 
       <div className={admin.formFoot}>
         <Button type="submit" variant="k">
-          {isNew ? "Add panel" : "Done"}
+          {isNew ? t("dashboards.form.add") : t("dashboards.form.done")}
         </Button>
-        <Button onClick={onCancel}>Cancel</Button>
+        <Button onClick={onCancel}>{t("dashboards.form.cancel")}</Button>
         {error && (
           <p className={admin.formError} role="alert">
             {error}
