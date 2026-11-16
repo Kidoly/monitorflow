@@ -14,6 +14,12 @@ const config: NextConfig = {
   trailingSlash: true,
   reactStrictMode: true,
   poweredByHeader: false,
+  // Inlined at build time even when unset, so a normal build compiles the
+  // static demo's branch away with its made-up data (docs/demo.md).
+  env: {
+    NEXT_PUBLIC_MONITORFLOW_DEMO: process.env.NEXT_PUBLIC_MONITORFLOW_DEMO ?? "",
+    NEXT_PUBLIC_MONITORFLOW_SITE_URL: process.env.NEXT_PUBLIC_MONITORFLOW_SITE_URL ?? "",
+  },
   ...(isDev && {
     // The API has no trailing slashes; without this, /api/x would be
     // redirected to /api/x/ before the rewrite applies.
