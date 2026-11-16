@@ -28,7 +28,7 @@ use super::{ApiError, ApiState};
 use crate::campaign::query::{self, ListFilter, Listed, WaveCounts};
 use crate::campaign::{
     Action, CampaignError, CampaignState, CampaignStore, FailureThreshold, NewCampaign, SourcesPin,
-    UpdateSpec, WaveSpec, Window,
+    ThirdPartySpec, UpdateSpec, WaveSpec, Window,
 };
 use crate::commands::sources::{self, KeyLookupError};
 
@@ -60,6 +60,15 @@ pub struct CreateRequest {
     /// Whether the agent may reboot the server when an update needs it.
     #[serde(default)]
     pub allow_reboot: bool,
+    /// Whether OS updates are included; true by default. Without them,
+    /// only servers of a platform a selected manager is for are targets
+    /// (ADR-0138).
+    pub include_os: Option<bool>,
+    /// Third-party managers to update after the OS, each once:
+    /// `[{"manager": "winget" | "flatpak" | "snap", "packages": [id]}]`,
+    /// empty `packages` for every pending app (ADR-0138).
+    #[serde(default)]
+    pub third_party: Vec<ThirdPartySpec>,
     /// Seconds a command may wait for its agent before it expires, 60 to
     /// 604800, default 3600; never past the end of the open window.
     pub command_ttl_s: Option<u64>,
@@ -420,6 +429,8 @@ pub async fn create(
             packages: request.packages,
             security_only: request.security_only,
             allow_reboot: request.allow_reboot,
+            include_os: request.include_os.unwrap_or(true),
+            third_party: request.third_party,
         },
         command_ttl: Duration::from_secs(ttl),
         failure_threshold: request.failure_threshold,

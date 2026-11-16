@@ -21,7 +21,8 @@ pub mod wua;
 
 use base64::Engine;
 use monitorflow_common::command::{valid_windows_update_name, APPLY_UPDATES, SELF_UPDATE};
-use monitorflow_common::proto::v1::{ApplyUpdates, Command, Package, SelfUpdate};
+use monitorflow_common::proto::v1::{ApplyUpdates, Command, Package, PackageManager, SelfUpdate};
+use monitorflow_common::third_party;
 use prost::Message;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -92,6 +93,8 @@ pub enum Step {
     Reboot,
     /// Install the staged release of a `self_update`.
     SelfUpdate,
+    /// Update the winget apps of an `apply_updates` (ADR-0139).
+    Winget,
 }
 
 impl Step {
@@ -100,6 +103,7 @@ impl Step {
             Self::Install => "install",
             Self::Reboot => "reboot",
             Self::SelfUpdate => "self_update",
+            Self::Winget => "winget",
         }
     }
 }
@@ -127,6 +131,14 @@ pub enum Request {
     /// Install the agent release staged in the agent's data directory and
     /// restart the agent into it (ADR-0053).
     SelfUpdate(crate::self_update::swap::Request),
+    /// winget's apps (ADR-0139). Changes nothing.
+    WingetScan,
+    /// Update these winget apps, every pending one when empty. Built by
+    /// [`authorized`] from a signed command, refused from the pipe.
+    WingetUpgrade {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        ids: Vec<String>,
+    },
     /// One step of a command the central server signed.
     Signed {
         /// The [`HelperRequest`] holding the command, in base64.
@@ -153,6 +165,8 @@ pub enum RequestError {
     TooManyNames,
     #[error("`{0}` is not a KB number or update ID")]
     InvalidName(String),
+    #[error("`{0}` is not a winget package ID")]
+    InvalidWingetId(String),
     #[error("{0}")]
     SelfUpdate(String),
 }
@@ -190,6 +204,20 @@ impl Request {
         if let Self::SelfUpdate(request) = self {
             return request.validate().map_err(RequestError::SelfUpdate);
         }
+        if let Self::WingetUpgrade { ids } = self {
+            if ids.len() > MAX_NAMES {
+                return Err(RequestError::TooManyNames);
+            }
+            return match ids
+                .iter()
+                .find(|id| !third_party::valid_id(PackageManager::Winget, id))
+            {
+                Some(bad) => Err(RequestError::InvalidWingetId(
+                    bad.escape_debug().to_string(),
+                )),
+                None => Ok(()),
+            };
+        }
         let Self::Install { kind, updates } = self else {
             return Ok(());
         };
@@ -224,9 +252,12 @@ pub fn authorized(
     now_unix_ms: i64,
 ) -> Result<Request, String> {
     let (command, step) = match request {
-        Request::Scan | Request::Status => return Ok(request.clone()),
+        Request::Scan | Request::Status | Request::WingetScan => return Ok(request.clone()),
         Request::Signed { command, step, .. } => (command, *step),
-        Request::Install { .. } | Request::Reboot | Request::SelfUpdate(_) => {
+        Request::Install { .. }
+        | Request::Reboot
+        | Request::SelfUpdate(_)
+        | Request::WingetUpgrade { .. } => {
             return Err("this needs the command the central server signed for it".into())
         }
     };
@@ -236,13 +267,26 @@ pub fn authorized(
         .and_then(|bytes| HelperRequest::decode(bytes.as_slice()).ok())
         .ok_or("the signed command does not decode")?;
     let kind = match step {
-        Step::Install | Step::Reboot => APPLY_UPDATES,
+        Step::Install | Step::Reboot | Step::Winget => APPLY_UPDATES,
         Step::SelfUpdate => SELF_UPDATE,
     };
     let command = helper_trust::authorize_step(place, &signed, kind, step.as_str(), now_unix_ms)
         .map_err(|e| e.to_string())?;
     let payload = command.payload.as_slice();
     let run = match step {
+        Step::Winget => {
+            let apply =
+                ApplyUpdates::decode(payload).map_err(|_| "invalid ApplyUpdates payload")?;
+            third_party::check(&apply, Some("windows")).map_err(|e| e.to_string())?;
+            let selection = apply
+                .third_party
+                .iter()
+                .find(|s| s.manager == i32::from(PackageManager::Winget))
+                .ok_or("the command selects no winget apps")?;
+            Request::WingetUpgrade {
+                ids: selection.packages.clone(),
+            }
+        }
         Step::Install | Step::Reboot => {
             let apply =
                 ApplyUpdates::decode(payload).map_err(|_| "invalid ApplyUpdates payload")?;
@@ -251,6 +295,8 @@ pub fn authorized(
                     return Err("the command does not allow a restart".into())
                 }
                 Step::Reboot => Request::Reboot,
+                // A command that skips the OS must not read as "all".
+                _ if apply.skip_os => return Err("the command skips Windows updates".into()),
                 _ => Request::install(&apply),
             }
         }
@@ -368,6 +414,8 @@ pub enum Reply {
     Rebooting(()),
     /// What the self-update did, for the command's output.
     SelfUpdate(SelfUpdated),
+    /// winget's apps (ADR-0139).
+    Apps(crate::packages::winget::Apps),
     Error(String),
 }
 

@@ -140,6 +140,7 @@
 //! | POST | `/api/display/data` | screen session | body `{"dashboard_id"}`; [`dashboard_data::DataResponse`] of one of the link's dashboards, read as its maker with their roles of now |
 //! | GET | `/api/servers/{id}/logs` | read | [`logs::LogList`]: the server's system logs, newest first, see below |
 //! | GET | `/api/servers/{id}/packages` | read | [`packages::PackageList`], see below |
+//! | GET | `/api/servers/{id}/third-party` | read | [`third_party::List`]: third-party package managers and their apps (ADR-0138); `manager`, `pending`, paginated |
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
 //! | POST | `/api/servers/{id}/ai-commands` | site administrator | body `{"on": bool}`; 201 [`commands::CommandDetail`] of the `ai_commands` command; 409 saying why the agent would refuse; audited and notified (ADR-0098) |
@@ -698,6 +699,7 @@ pub mod setup;
 pub mod silences;
 pub mod sites;
 pub mod sources;
+pub mod third_party;
 pub mod thresholds;
 pub mod tokens;
 pub mod user_admin;
@@ -1174,6 +1176,7 @@ pub fn router(state: ApiState) -> Router {
             put(thresholds::update).delete(thresholds::delete),
         )
         .route("/api/servers/{id}/packages", get(packages::list))
+        .route("/api/servers/{id}/third-party", get(third_party::list))
         .route("/api/servers/{id}/rollback", get(rollback::get))
         .route(
             "/api/servers/{id}/commands",

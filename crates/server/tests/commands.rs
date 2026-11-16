@@ -538,6 +538,8 @@ db_tests! {
             collected_at_unix_ms: at,
             windows_update_source: None,
             storage: None,
+            third_party: Vec::new(),
+            managers: Vec::new(),
         };
         let stored = || async {
             sqlx::query_as::<_, (String, Option<String>)>(
@@ -603,6 +605,8 @@ db_tests! {
             collected_at_unix_ms: 1_800_000_000_000,
             windows_update_source: None,
             storage: None,
+            third_party: Vec::new(),
+            managers: Vec::new(),
         };
         assert!(store.replace("win-01", &report).await.unwrap());
         type Row = (String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>, bool);

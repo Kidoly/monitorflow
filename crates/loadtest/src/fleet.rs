@@ -458,6 +458,8 @@ fn package_report(index: usize) -> PackageReport {
         collected_at_unix_ms: unix_ms(),
         windows_update_source: None,
         storage: None,
+        third_party: Vec::new(),
+        managers: Vec::new(),
     }
 }
 

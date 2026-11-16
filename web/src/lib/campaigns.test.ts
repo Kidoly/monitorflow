@@ -143,6 +143,53 @@ describe("toRequest", () => {
   });
 });
 
+describe("third-party apps (ADR-0138)", () => {
+  it("adds the chosen managers, and drops OS options without the OS", () => {
+    const both = toRequest({ ...emptyDraft("c1"), sources: "both", managers: ["flatpak"], update: "security" });
+    expect(both).toMatchObject({ security_only: true, third_party: [{ manager: "flatpak", packages: [] }] });
+    expect("include_os" in both).toBe(false);
+    const apps = toRequest({ ...emptyDraft("c1"), sources: "apps", update: "packages", packages: "openssl" });
+    expect(apps).toMatchObject({
+      packages: [],
+      security_only: false,
+      include_os: false,
+      third_party: [
+        { manager: "winget", packages: [] },
+        { manager: "flatpak", packages: [] },
+        { manager: "snap", packages: [] },
+      ],
+    });
+    const os = toRequest(emptyDraft("c1"));
+    expect("third_party" in os || "include_os" in os).toBe(false);
+    const agent = toRequest({ ...emptyDraft("c1"), sources: "apps", update: "agent", agentVersion: "0.5.0" });
+    expect("third_party" in agent || "include_os" in agent).toBe(false);
+    expect(validateCampaign(valid({ third_party: [] }), ["s1"])).toEqual(["Choose at least one app manager."]);
+  });
+
+  it("targets, without the OS, the servers a chosen manager runs on", () => {
+    const servers = [
+      server({ id: "w", hostname: "win-1", os_family: "windows" }),
+      server({ id: "l", hostname: "web-1", package_updates: false }),
+    ];
+    expect(campaignTargets(servers, "c1", "site-1", [], false, ["flatpak"]).map((s) => s.id)).toEqual(["l"]);
+    expect(campaignTargets(servers, "c1", "site-1", [], false, ["winget"]).map((s) => s.id)).toEqual(["w"]);
+    expect(campaignTargets(servers, "c1", "site-1", []).map((s) => s.id)).toEqual(["w"]);
+  });
+
+  it("names the sources of a campaign", () => {
+    const spec = { packages: [], security_only: false, allow_reboot: false };
+    expect(describeUpdate({ ...spec, include_os: false, third_party: [{ manager: "winget", packages: [] }] })).toBe(
+      "Third-party apps: winget",
+    );
+    expect(describeUpdate({ ...spec, security_only: true, third_party: [{ manager: "snap", packages: [] }] })).toBe(
+      "Security updates, and third-party apps: Snap",
+    );
+    expect(campaignSubline(campaign({ spec: { ...spec, include_os: false, third_party: [{ manager: "flatpak", packages: [] }] } }))).toBe(
+      "2 batches · apps: Flatpak",
+    );
+  });
+});
+
 describe("campaign states and labels", () => {
   it("follows the API's state machine", () => {
     expect(canAct("start", "draft")).toBe(true);

@@ -77,6 +77,8 @@ pub(super) struct Pending {
     pub snapshot_error: Option<String>,
     pub proxmox_mapped: bool,
     pub storage: Option<sqlx::types::Json<local::Storage>>,
+    /// Its latest report has third-party managers (ADR-0138).
+    pub reports_third_party: bool,
 }
 
 /// What a [`Pending`] server of a pinned campaign needs next.
@@ -351,6 +353,7 @@ mod tests {
             snapshot_error: None,
             proxmox_mapped: false,
             storage: None,
+            reports_third_party: false,
         }
     }
 

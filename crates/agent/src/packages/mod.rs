@@ -10,6 +10,8 @@
 //! helpers, which are Unix only (ADR-0047, ADR-0049).
 
 #[cfg(unix)]
+pub mod app_update;
+#[cfg(unix)]
 pub mod apply;
 #[cfg(unix)]
 pub mod apt;
@@ -19,16 +21,26 @@ pub mod configure;
 pub mod dnf;
 pub mod exec;
 #[cfg(unix)]
+pub mod flatpak;
+#[cfg(unix)]
+pub mod snap;
+#[cfg(unix)]
 pub mod sources;
+#[cfg(unix)]
+pub mod third_party;
 #[cfg(unix)]
 pub mod update;
 pub mod windows_update;
+pub mod winget;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use monitorflow_common::command;
-use monitorflow_common::proto::v1::{Package, PackageReport, StorageReport, WindowsUpdateSource};
+use monitorflow_common::proto::v1::{
+    Package, PackageManagerStatus, PackageReport, StorageReport, ThirdPartyPackage,
+    WindowsUpdateSource,
+};
 use tokio::sync::watch;
 
 #[cfg(unix)]
@@ -113,6 +125,18 @@ pub trait PackageManager: Send + Sync + 'static {
     async fn storage(&self) -> Option<StorageReport> {
         None
     }
+    /// Third-party apps and the status of every third-party manager of the
+    /// platform (ADR-0138); empty when not collected.
+    async fn third_party(&self) -> ThirdParty {
+        ThirdParty::default()
+    }
+}
+
+/// The third-party part of a [`PackageReport`] (ADR-0138).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ThirdParty {
+    pub packages: Vec<ThirdPartyPackage>,
+    pub managers: Vec<PackageManagerStatus>,
 }
 
 /// apt on the Debian family, dnf on the RHEL family, none elsewhere.
@@ -176,12 +200,15 @@ impl Reports {
         );
         let windows_update_source = self.manager.windows_update_source().await;
         let storage = self.manager.storage().await.map(Box::new);
+        let third_party = self.manager.third_party().await;
         self.latest.send_replace(Some(PackageReport {
             packages,
             reboot_required,
             collected_at_unix_ms: unix_ms(),
             windows_update_source,
             storage,
+            third_party: third_party.packages,
+            managers: third_party.managers,
         }));
         true
     }

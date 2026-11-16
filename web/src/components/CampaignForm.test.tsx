@@ -159,6 +159,31 @@ describe("CampaignForm", () => {
     });
   });
 
+  it("updates third-party apps alone when asked, with the managers chosen", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({ ...inventory, "POST /api/campaigns": { status: 201, body: detail() } });
+    render(<CampaignForm me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "New campaign" });
+    await user.type(within(form).getByLabelText("Name"), "Apps");
+    await user.selectOptions(within(form).getByLabelText("Every server of the site"), "site-1");
+    expect(screen.getByRole("radio", { name: "Operating system" })).toBeChecked();
+    expect(screen.queryByRole("group", { name: "App managers" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Third-party apps" }));
+    expect(screen.queryByRole("radio", { name: "Security updates only" })).not.toBeInTheDocument();
+    expect(screen.getByText(/no security classification/)).toBeInTheDocument();
+    const managers = screen.getByRole("group", { name: "App managers" });
+    await user.click(within(managers).getByRole("checkbox", { name: "winget" }));
+    await user.click(within(managers).getByRole("checkbox", { name: "Snap" }));
+    await user.click(screen.getByRole("button", { name: "Create campaign" }));
+    const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(call?.[1]?.body as string)).toMatchObject({
+      packages: [],
+      security_only: false,
+      include_os: false,
+      third_party: [{ manager: "flatpak", packages: [] }],
+    });
+  });
+
   it("offers no agent update without releases", async () => {
     stubFetch({ ...inventory, "GET /api/agent-releases": { status: 200, body: { versions: [], latest: null } } });
     render(<CampaignForm me={customerAdmin} />);

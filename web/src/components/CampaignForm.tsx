@@ -8,10 +8,14 @@ import { type Customer, type Me, type Server, type Site, api, describeError, isA
 import {
   type CampaignDraft,
   type UpdateKind,
+  type UpdateSources,
   type WaveDraft,
   type WindowDraft,
+  MANAGER_NAMES,
+  THIRD_PARTY_MANAGERS,
   WEEKDAYS,
   campaignTargets,
+  managerFits,
   weekdayName,
   emptyDraft,
   newWindow,
@@ -30,6 +34,12 @@ import { Banner, EmptyState, LoadingBlock, NoPermission, PageHeader } from "./ui
 
 /** Command validity choices; the API takes 60 s to 7 days. */
 const TTLS = [900, 3600, 4 * 3600, 86_400, 604_800];
+
+const SOURCES: [UpdateSources, PlainKey][] = [
+  ["os", "campaigns.form.sources.os"],
+  ["apps", "campaigns.form.sources.apps"],
+  ["both", "campaigns.form.sources.both"],
+];
 
 const UPDATE_KINDS: [UpdateKind, PlainKey][] = [
   ["all", "campaigns.update.all"],
@@ -108,8 +118,10 @@ export function CampaignForm({ me }: { me: Me }) {
     .filter((s) => s.customer_id === draft.customerId && s.revoked_at === null)
     .sort((a, b) => a.site_name.localeCompare(b.site_name) || a.hostname.localeCompare(b.hostname));
   const agentUpdate = draft.update === "agent";
-  const targets = campaignTargets(inventory.servers, draft.customerId, draft.siteId, draft.serverIds, agentUpdate);
-  const noPackages = (s: Server) => !agentUpdate && s.package_updates === false;
+  const appsOnly = !agentUpdate && draft.sources === "apps" ? draft.managers : null;
+  const targets = campaignTargets(inventory.servers, draft.customerId, draft.siteId, draft.serverIds, agentUpdate, appsOnly);
+  const noPackages = (s: Server) =>
+    appsOnly ? !appsOnly.some((m) => managerFits(m, s.os_family)) : !agentUpdate && s.package_updates === false;
   const leftOut = servers.filter((s) => noPackages(s) && (s.site_id === draft.siteId || draft.serverIds.includes(s.id))).length;
   const request = toRequest(draft);
   const errors = validateCampaign(request, targets.map((t) => t.id));
@@ -197,7 +209,7 @@ export function CampaignForm({ me }: { me: Me }) {
           </ul>
           <p className={own.note} role="status">
             {t("campaigns.form.targeted", { count: targets.length })}
-            {leftOut > 0 && ` ${t("campaigns.form.leftOut", { count: leftOut })}`}
+            {leftOut > 0 && ` ${t(appsOnly ? "campaigns.form.leftOutApps" : "campaigns.form.leftOut", { count: leftOut })}`}
           </p>
         </Fieldset>
 
@@ -221,8 +233,47 @@ export function CampaignForm({ me }: { me: Me }) {
         </Fieldset>
 
         <Fieldset legend={t("campaigns.form.update")}>
+          {!agentUpdate && (
+            <div className={own.row} role="radiogroup" aria-label={t("campaigns.form.sources")}>
+              {SOURCES.map(([sources, label]) => (
+                <label key={sources} className={own.inline}>
+                  <input type="radio" name="sources" checked={draft.sources === sources} onChange={() =>
+                      set({ sources, ...(sources === "apps" && draft.update !== "agent" && { update: "all" as const }) })
+                    }
+                  />
+                  {t(label)}
+                </label>
+              ))}
+            </div>
+          )}
+          {!agentUpdate && draft.sources !== "os" && (
+            <>
+              <div className={own.row} role="group" aria-label={t("campaigns.form.managers")}>
+                {THIRD_PARTY_MANAGERS.map((manager) => (
+                  <label key={manager} className={own.inline}>
+                    <input
+                      type="checkbox"
+                      checked={draft.managers.includes(manager)}
+                      onChange={(e) =>
+                        set({
+                          managers: e.target.checked
+                            ? THIRD_PARTY_MANAGERS.filter((m) => m === manager || draft.managers.includes(m))
+                            : draft.managers.filter((m) => m !== manager),
+                        })
+                      }
+                    />
+                    {MANAGER_NAMES[manager]}
+                  </label>
+                ))}
+              </div>
+              <p className={own.note}>
+                {t("campaigns.form.appsNote")} {draft.sources === "apps" && t("campaigns.form.appsOnlyNote")}
+              </p>
+            </>
+          )}
           <div className={own.row} role="radiogroup" aria-label={t("campaigns.form.updateKind")}>
             {UPDATE_KINDS.filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
+              .filter(([kind]) => draft.sources !== "apps" || kind === "all" || kind === "agent")
               .map(([kind, label]) => (
                 <label key={kind} className={own.inline}>
                   <input type="radio" name="update" checked={draft.update === kind} onChange={() => set({ update: kind })} />

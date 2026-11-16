@@ -1,0 +1,9 @@
+# Captured on almalinux10, Flatpak 1.16.0, as an unprivileged user with LC_ALL=C.
+# A fake runtime and application in a local repository; version 2 exported after installing version 1.
+## flatpak list --system --app --columns=application,arch,branch,name,version,active,origin
+org.example.App	x86_64	stable	Example	1.0.0	f7bd63381419	example
+## flatpak list --system --runtime --columns=application,arch,branch,name,version,active,origin
+org.example.Platform	x86_64	1	example platform		8726f3e9f52c	example
+## flatpak remote-ls --updates --system --columns=application,arch,branch,version,commit
+org.example.App	x86_64	stable		654ce85080ed
+org.example.Platform	x86_64	1		30ba20978f2a

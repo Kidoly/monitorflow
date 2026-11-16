@@ -749,10 +749,17 @@ async fn packages_update(config: PathBuf) -> anyhow::Result<()> {
         .os_family;
     let outcome = update::run(&spec, family, &Tools::default()).await;
     let (mut stdout, mut stderr) = (std::io::stdout().lock(), std::io::stderr().lock());
-    for run in &outcome.runs {
+    let notes = |at: usize| outcome.notes.iter().filter(move |(i, _)| *i == at);
+    for (i, run) in outcome.runs.iter().enumerate() {
+        for (_, note) in notes(i) {
+            writeln!(stdout, "{note}")?;
+        }
         writeln!(stdout, "$ {}", run.line)?;
         stdout.write_all(&run.stdout)?;
         stderr.write_all(&run.stderr)?;
+    }
+    for (_, note) in notes(outcome.runs.len()) {
+        writeln!(stdout, "{note}")?;
     }
     if !outcome.upgraded && outcome.error.is_none() {
         writeln!(stdout, "nothing to upgrade")?;
@@ -1063,6 +1070,7 @@ mod update_service {
         authorized, pipe, pipe_sddl, service_sid, wua, Reply, Request, SelfUpdated, AGENT_SERVICE,
         PIPE_NAME, SERVICE_NAME,
     };
+    use monitorflow_agent::packages::winget;
     use monitorflow_agent::self_update::swap::{self, Scm, Swapped, Watched};
     use monitorflow_common::config::{self, LogConfig};
     use monitorflow_common::logging;
@@ -1190,7 +1198,10 @@ mod update_service {
                     let handle = |request: &Request| match checked(request) {
                         Err(error) => Reply::Error(error),
                         Ok(Request::SelfUpdate(request)) => self_update(&request),
-                        Ok(other) => wua::handle(&other),
+                        // winget requests first (ADR-0139), then Windows Update.
+                        Ok(other) => {
+                            winget::run::handle(&other).unwrap_or_else(|| wua::handle(&other))
+                        }
                     };
                     pipe::serve(PIPE_NAME, &sddl, handle, stop).await?;
                     Ok(())

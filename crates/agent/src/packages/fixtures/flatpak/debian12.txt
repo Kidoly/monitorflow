@@ -1,0 +1,9 @@
+# Captured on debian12, Flatpak 1.14.10, as an unprivileged user with LC_ALL=C.
+# A fake runtime and application in a local repository; version 2 exported after installing version 1.
+## flatpak list --system --app --columns=application,arch,branch,name,version,active,origin
+org.example.App	x86_64	stable	Example	1.0.0	c2e90f1658b5	example
+## flatpak list --system --runtime --columns=application,arch,branch,name,version,active,origin
+org.example.Platform	x86_64	1	example platform		b4e611c90f36	example
+## flatpak remote-ls --updates --system --columns=application,arch,branch,version,commit
+org.example.App	x86_64	stable		41d05e695160
+org.example.Platform	x86_64	1		c663e3e7fdbb

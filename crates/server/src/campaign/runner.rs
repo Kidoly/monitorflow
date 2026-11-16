@@ -345,7 +345,9 @@ async fn queue(
              t.snapshot_command_id, sn.state AS snapshot_state, sn.error AS snapshot_error,
              $3 AND EXISTS (SELECT 1 FROM server_proxmox_vms v WHERE v.server_id = t.server_id)
                  AS proxmox_mapped,
-             st.report AS storage
+             st.report AS storage,
+             EXISTS (SELECT 1 FROM server_package_managers m WHERE m.server_id = t.server_id)
+                 AS reports_third_party
          FROM campaign_targets t JOIN servers s ON s.id = t.server_id
          LEFT JOIN commands cfg ON cfg.id = t.sources_command_id
          LEFT JOIN commands r ON r.id = t.restore_command_id
@@ -367,7 +369,7 @@ async fn queue(
     };
     // An agent update campaign sends self_update instead (ADR-0053).
     let agent_version = row.agent_version.as_deref().map(str::parse::<Version>);
-    let packages = row.spec().payload();
+    let spec = row.spec();
     let mut configurer = None;
     let mut peers = Vec::new();
     let (mut skipped, mut configured, mut snapshots) = (0, 0, 0);
@@ -375,6 +377,7 @@ async fn queue(
         let next = match row.sources_mode {
             _ if target.revoked => Next::Fail("server revoked".into()),
             _ if !target.package_updates
+                && spec.include_os
                 && agent_version.is_none()
                 && target.configure_state.is_none() =>
             {
@@ -409,7 +412,9 @@ async fn queue(
                 Ok((TAKE_SNAPSHOT, TakeSnapshot { name }.encode_to_vec()))
             }
             Next::Update => match &agent_version {
-                None => Ok((APPLY_UPDATES, packages.clone())),
+                None => spec
+                    .for_server(&target.os_family, target.reports_third_party)
+                    .map(|apply| (APPLY_UPDATES, apply.encode_to_vec())),
                 Some(Ok(version)) => {
                     let relay = relays::url_for_server(&mut *conn, target.server_id).await?;
                     Ok((

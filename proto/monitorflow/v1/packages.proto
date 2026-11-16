@@ -1,4 +1,5 @@
-// MonitorFlow package payloads, version 1. See ADR-0031, ADR-0049 and ADR-0086.
+// MonitorFlow package payloads, version 1. See ADR-0031, ADR-0049, ADR-0086
+// and ADR-0138.
 //
 // Rules: changes are additive only. Never renumber or reuse a field number.
 
@@ -16,6 +17,34 @@ message ApplyUpdates {
   bool security_only = 2;
   // Reboot one minute after the upgrade when the host then needs it.
   bool allow_reboot = 3;
+  // Leave the OS package manager out: only `third_party` runs (ADR-0138).
+  // False keeps every older command's meaning; `packages` and
+  // `security_only` apply to OS packages only. Agents before ADR-0138
+  // ignore it, so the server sends it only to agents that report
+  // `PackageReport.managers`.
+  bool skip_os = 4;
+  // Third-party managers to update, each at most once, after the OS. A
+  // manager not listed is left alone.
+  repeated ThirdPartySelection third_party = 5;
+}
+
+// The third-party package managers (ADR-0138). A later one is a new value.
+enum PackageManager {
+  PACKAGE_MANAGER_UNSPECIFIED = 0;
+  // Windows.
+  PACKAGE_MANAGER_WINGET = 1;
+  // Linux.
+  PACKAGE_MANAGER_FLATPAK = 2;
+  PACKAGE_MANAGER_SNAP = 3;
+}
+
+// What an ApplyUpdates asks of one third-party manager.
+message ThirdPartySelection {
+  PackageManager manager = 1;
+  // Package IDs to update, in the manager's grammar
+  // (`common::third_party::valid_id`); empty updates every
+  // pending one.
+  repeated string packages = 2;
 }
 
 // The packages installed on an agent's host, sent after every apply_updates
@@ -31,6 +60,58 @@ message PackageReport {
   // Linux only (ADR-0094): the system volumes and MonitorFlow's snapshots
   // of them. Absent from agents before ADR-0094.
   StorageReport storage = 5;
+  // Third-party apps the usable managers list as installed (ADR-0138).
+  // Empty along with `managers`: not reported, from agents before ADR-0138
+  // or through a relay before it, which drops both.
+  repeated ThirdPartyPackage third_party = 6;
+  // Every third-party manager of the host's platform, present or not.
+  repeated PackageManagerStatus managers = 7;
+}
+
+// An app a third-party manager installed, identified by manager, id and
+// scope (ADR-0138).
+message ThirdPartyPackage {
+  PackageManager manager = 1;
+  // What the manager's update command takes: winget package identifier,
+  // Flatpak ref, snap name.
+  string id = 2;
+  // Display name; empty when the manager gives none.
+  string name = 3;
+  // Installed version, as the manager writes it.
+  string version = 4;
+  // The version an update would install; empty when none.
+  string available_version = 5;
+  PackageScope scope = 6;
+  // Where updates come from: winget source, Flatpak remote, snap channel;
+  // empty when unknown.
+  string origin = 7;
+}
+
+enum PackageScope {
+  PACKAGE_SCOPE_UNSPECIFIED = 0;
+  // Machine-wide: winget machine scope, Flatpak system installation, any
+  // snap. The only scope updates touch.
+  PACKAGE_SCOPE_MACHINE = 1;
+  // Installed for the account the collector runs as; listed only.
+  PACKAGE_SCOPE_USER = 2;
+}
+
+message PackageManagerStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    // Installed, and its apps are in the report.
+    STATE_AVAILABLE = 1;
+    // Not installed on the host.
+    STATE_ABSENT = 2;
+    // Installed, but the agent could not list its apps; see `error`.
+    STATE_UNUSABLE = 3;
+  }
+  PackageManager manager = 1;
+  State state = 2;
+  // The manager's version, when known.
+  string version = 3;
+  // Why it is unusable, one line.
+  string error = 4;
 }
 
 // The update source of a Windows host, read from the Windows Update

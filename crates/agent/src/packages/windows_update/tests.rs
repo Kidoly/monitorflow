@@ -22,6 +22,17 @@ fn requests_round_trip_as_json() {
             install(Kind::Named, &["KB5034441"]),
             r#"{"op":"install","kind":"named","updates":["KB5034441"]}"#,
         ),
+        (Request::WingetScan, r#"{"op":"winget_scan"}"#),
+        (
+            Request::WingetUpgrade {
+                ids: names(&["Example.App"]),
+            },
+            r#"{"op":"winget_upgrade","ids":["Example.App"]}"#,
+        ),
+        (
+            Request::signed(&Command::default(), Step::Winget, None),
+            r#"{"op":"signed","command":"CgA=","step":"winget"}"#,
+        ),
     ] {
         assert_eq!(serde_json::to_string(&request).unwrap(), json);
         assert_eq!(serde_json::from_str::<Request>(json).unwrap(), request);
@@ -32,6 +43,7 @@ fn requests_round_trip_as_json() {
         r#"{"op":"install","kind":"all","source":"http://evil"}"#,
         r#"{"kind":"all"}"#,
         r#"{"op":"install","kind":"named","updates":"KB1"}"#,
+        r#"{"op":"winget_upgrade","ids":["Example.App"],"force":true}"#,
     ] {
         assert!(serde_json::from_str::<Request>(bad).is_err(), "{bad}");
     }
@@ -42,6 +54,34 @@ fn requests_round_trip_as_json() {
     );
     let reply: Reply = serde_json::from_str(r#"{"error":"no"}"#).unwrap();
     assert_eq!(reply, Reply::Error("no".into()));
+    let reply = Reply::Apps(crate::packages::winget::Apps::absent("none"));
+    assert_eq!(
+        serde_json::to_string(&reply).unwrap(),
+        r#"{"apps":{"state":"absent","version":"","error":"none","apps":[]}}"#
+    );
+}
+
+#[test]
+fn winget_ids_are_checked() {
+    let upgrade = |ids: &[&str]| Request::WingetUpgrade { ids: names(ids) };
+    assert_eq!(upgrade(&[]).validate(), Ok(()));
+    assert_eq!(
+        upgrade(&["Example.App", "Example.Other"]).validate(),
+        Ok(())
+    );
+    for bad in ["KB5034441", "Example.App'", "-x.y", "Example App"] {
+        assert_eq!(
+            upgrade(&[bad]).validate(),
+            Err(RequestError::InvalidWingetId(
+                bad.escape_debug().to_string()
+            ))
+        );
+    }
+    let many: Vec<String> = (0..=MAX_NAMES).map(|i| format!("Example.App{i}")).collect();
+    assert_eq!(
+        Request::WingetUpgrade { ids: many }.validate(),
+        Err(RequestError::TooManyNames)
+    );
 }
 
 #[test]
@@ -122,6 +162,7 @@ fn apply_updates_maps_to_installs() {
         packages: names(packages),
         security_only,
         allow_reboot: false,
+        ..ApplyUpdates::default()
     };
     assert_eq!(
         Request::install(&apply(&[], false)),
@@ -356,7 +397,7 @@ fn a_taken_pipe_name_is_explained() {
 /// The service's side of ADR-0108: what its pipe received against its own
 /// trust anchor.
 mod signed {
-    use monitorflow_common::proto::v1::SelfUpdate;
+    use monitorflow_common::proto::v1::{SelfUpdate, ThirdPartySelection};
 
     use super::*;
     use crate::helper_trust::tests::{unsigned, Ca, Host};
@@ -367,6 +408,7 @@ mod signed {
             packages: names(packages),
             security_only: false,
             allow_reboot,
+            ..ApplyUpdates::default()
         }
         .encode_to_vec()
     }
@@ -450,6 +492,73 @@ mod signed {
         let named = command(&ca, "c-3", APPLY_UPDATES, &apply(&["openssl"], false));
         let bad_name = Request::signed(&named, Step::Install, None);
         assert!(check(&bad_name).unwrap_err().contains("not a KB number"));
+    }
+
+    fn winget(ids: &[&str], skip_os: bool) -> Vec<u8> {
+        ApplyUpdates {
+            skip_os,
+            allow_reboot: true,
+            third_party: vec![ThirdPartySelection {
+                manager: PackageManager::Winget.into(),
+                packages: names(ids),
+            }],
+            ..ApplyUpdates::default()
+        }
+        .encode_to_vec()
+    }
+
+    #[test]
+    fn winget_updates_take_their_apps_from_the_signed_command_once() {
+        let ca = Ca::new();
+        let host = Host::pinned(&ca);
+        let check = |request: &Request| authorized(request, &host.place, &configured(), unix_ms());
+        assert_eq!(check(&Request::WingetScan), Ok(Request::WingetScan));
+        let bare = Request::WingetUpgrade {
+            ids: names(&["Example.App"]),
+        };
+        assert!(check(&bare).unwrap_err().contains("signed"));
+
+        let both = command(&ca, "w-1", APPLY_UPDATES, &winget(&["Example.App"], false));
+        let step = |step| Request::signed(&both, step, None);
+        assert_eq!(check(&step(Step::Install)), Ok(install(Kind::All, &[])));
+        assert_eq!(
+            check(&step(Step::Winget)),
+            Ok(Request::WingetUpgrade {
+                ids: names(&["Example.App"])
+            })
+        );
+        assert!(check(&step(Step::Winget))
+            .unwrap_err()
+            .contains("already run"));
+        assert_eq!(check(&step(Step::Reboot)), Ok(Request::Reboot));
+
+        // A command that skips the OS installs no Windows update, and
+        // every pending app when it names none.
+        let only = command(&ca, "w-2", APPLY_UPDATES, &winget(&[], true));
+        let error = check(&Request::signed(&only, Step::Install, None)).unwrap_err();
+        assert!(error.contains("skips Windows updates"), "{error}");
+        assert_eq!(
+            check(&Request::signed(&only, Step::Winget, None)),
+            Ok(Request::WingetUpgrade { ids: vec![] })
+        );
+
+        // An OS-only command selects no app; a bad ID or another
+        // platform's manager is refused.
+        let os = command(&ca, "w-3", APPLY_UPDATES, &apply(&[], false));
+        let error = check(&Request::signed(&os, Step::Winget, None)).unwrap_err();
+        assert!(error.contains("no winget apps"), "{error}");
+        let hostile = command(&ca, "w-4", APPLY_UPDATES, &winget(&["a.b'; x"], true));
+        assert!(check(&Request::signed(&hostile, Step::Winget, None)).is_err());
+        let linux = ApplyUpdates {
+            skip_os: true,
+            third_party: vec![ThirdPartySelection {
+                manager: PackageManager::Snap.into(),
+                packages: vec![],
+            }],
+            ..ApplyUpdates::default()
+        };
+        let linux = command(&ca, "w-5", APPLY_UPDATES, &linux.encode_to_vec());
+        assert!(check(&Request::signed(&linux, Step::Winget, None)).is_err());
     }
 
     #[test]
