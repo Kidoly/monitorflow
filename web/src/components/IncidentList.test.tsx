@@ -50,8 +50,6 @@ const resolved = incident({
   peak_value: 2_147_483_648,
 });
 
-const OPEN = "GET /api/incidents?state=open&limit=500";
-const openReply = { status: 200, body: { incidents: [open], next_cursor: null } };
 const table = () => screen.findByRole("table", { name: "Incidents" });
 
 describe("IncidentList", () => {
@@ -65,14 +63,13 @@ describe("IncidentList", () => {
   it("lists incidents with readable metrics, values and durations", async () => {
     stubFetch({
       ...options,
-      [OPEN]: openReply,
       [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
     });
     render(<IncidentList filters={NO_FILTERS} />);
     const rows = within(await table()).getAllByRole("row");
     expect(rows).toHaveLength(3);
-    expect(rows[1]).toHaveTextContent(/^Critical\s*web-1paris · Acme Hosting\s*Disk used \/var\s*09:40 today\s*Open\s*4 h 20 min\s*96\.2%\s*97\.1%$/);
-    expect(rows[2]).toHaveTextContent(/^Resolved was Warning\s*db-1berlin · Northwind\s*Memory used\s*Yesterday 23:10\s*Resolved 01:42\s*2 h 32 min\s*1\.5 GiB\s*2 GiB$/);
+    expect(rows[1]).toHaveTextContent(/^Critical\s*Disk used \/varweb-1 · paris · Acme Hosting\s*09:40 today\s*Open · 4 h 20 min\s*96\.2%\s*peak 97\.1%$/);
+    expect(rows[2]).toHaveTextContent(/^Resolved was Warning\s*Memory useddb-1 · berlin · Northwind\s*Yesterday 23:10\s*Resolved 01:42 · 2 h 32 min\s*1\.5 GiB\s*peak 2 GiB$/);
     expect(within(rows[1]!).getByRole("link", { name: "web-1" })).toHaveAttribute(
       "href",
       expect.stringMatching(new RegExp(`^/servers/view/?\\?id=${SERVER_ID}$`)),
@@ -81,33 +78,27 @@ describe("IncidentList", () => {
       "href",
       expect.stringMatching(new RegExp(`^/incidents/view/?\\?id=${open.id}$`)),
     );
-    expect(screen.getByText(/1 open, 1 critical · Updated 14:00:00/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
-    expect(screen.getByText("Showing 2 incidents · 50 per page")).toBeInTheDocument();
   });
 
   it("speaks French", async () => {
     setActiveLocale("fr");
     stubFetch({
       ...options,
-      [OPEN]: openReply,
       [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
     });
     render(<IncidentList filters={NO_FILTERS} />);
     const rows = within(await screen.findByRole("table", { name: "Incidents" })).getAllByRole("row");
-    expect(rows[0]).toHaveTextContent(/Gravité\s*Serveur\s*Métrique\s*Ouvert\s*État\s*Durée\s*Dernière valeur\s*Pic/);
-    expect(rows[1]).toHaveTextContent(/aujourd’hui 09:40\s*Ouvert\s*4 h 20 min\s*96,2 %/);
+    expect(rows[0]).toHaveTextContent(/Gravité\s*Incident\s*Ouvert\s*État\s*Dernière valeur/);
+    expect(rows[1]).toHaveTextContent(/aujourd’hui 09:40\s*Ouvert · 4 h 20 min\s*96,2 %\s*pic 97,1 %/);
     expect(rows[2]).toHaveTextContent(/était Avertissement/);
     expect(rows[2]).toHaveTextContent(/Résolu 01:42/);
-    expect(screen.getByText(/1 ouvert, 1 critique · /)).toBeInTheDocument();
-    expect(screen.getByText("2 incidents affichés · 50 par page")).toBeInTheDocument();
   });
 
   it("loads 50 more and keeps every loaded incident on refresh", async () => {
     const page = (n: number) => Array.from({ length: n }, (_, i) => incident({ id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }));
     const fetchMock = stubFetch({
       ...options,
-      [OPEN]: openReply,
       [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: page(PAGE_SIZE), next_cursor: "c1" } },
       [`GET /api/incidents?limit=${2 * PAGE_SIZE}`]: { status: 200, body: { incidents: page(PAGE_SIZE + 10), next_cursor: null } },
     });
@@ -125,7 +116,6 @@ describe("IncidentList", () => {
     setUrl(`/incidents/?state=open&server=${SERVER_ID}`);
     stubFetch({
       ...options,
-      [OPEN]: openReply,
       [`GET /api/incidents?state=open&server_id=${SERVER_ID}&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [], next_cursor: null } },
     });
     const filters = { ...NO_FILTERS, state: "open", serverId: SERVER_ID } as const;
@@ -147,7 +137,6 @@ describe("IncidentList", () => {
     setUrl(`/incidents/?group=${GROUP}`);
     stubFetch({
       ...options,
-      [OPEN]: openReply,
       [`GET /api/incidents?group=${GROUP}&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
     });
     render(<IncidentList filters={{ ...NO_FILTERS, groupId: GROUP }} />);
@@ -170,7 +159,6 @@ describe("IncidentList", () => {
     });
     const fetchMock = stubFetch({
       ...options,
-      [OPEN]: openReply,
       [`GET /api/incidents?group=${GROUP}&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [mine, other, done], next_cursor: null } },
       "POST /api/incidents/acknowledge": { status: 200, body: { acknowledged: [] } },
     });
@@ -200,17 +188,15 @@ describe("IncidentList", () => {
     setUrl(`/incidents/?customer=${ACME}`);
     stubFetch({
       ...options,
-      [OPEN]: { status: 200, body: { incidents: [open, { ...resolved, state: "open" }], next_cursor: null } },
       [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
     });
     render(<IncidentList filters={NO_FILTERS} />);
     await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(2));
-    expect(screen.getByText(/1 open, 1 critical/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "web-1" })).toHaveAttribute("href", expect.stringContaining(`customer=${ACME}`));
   });
 
   it("says when there are no incidents at all", async () => {
-    stubFetch({ ...options, [OPEN]: openReply, [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [], next_cursor: null } } });
+    stubFetch({ ...options, [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [], next_cursor: null } } });
     render(<IncidentList filters={NO_FILTERS} />);
     expect(await screen.findByText(/No incidents\. No threshold has fired/)).toBeInTheDocument();
   });
@@ -218,7 +204,6 @@ describe("IncidentList", () => {
   it("shows errors and keeps the last list when a refresh fails", async () => {
     stubFetch({
       ...options,
-      [OPEN]: openReply,
       [`GET /api/incidents?limit=${PAGE_SIZE}`]: [
         { status: 500, body: { error: "internal error" } },
         { status: 200, body: { incidents: [open], next_cursor: null } },
@@ -240,7 +225,6 @@ describe("IncidentsView", () => {
     setUrl("/incidents/?state=resolved&severity=warning&bogus=1");
     stubFetch({
       ...options,
-      [OPEN]: openReply,
       [`GET /api/incidents?state=resolved&severity=warning&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [resolved], next_cursor: null } },
     });
     render(<IncidentsView />);

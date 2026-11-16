@@ -82,7 +82,18 @@
   gap: 4px 8px;
 }
 
-/* "Add a check" and how often the built-in checks run, under the list. */
+/* Why a sensor is not OK, under its name: one line, the full sentence in its title. */
+.why {
+  display: block;
+  max-width: 340px;
+  color: var(--text);
+}
+
+.value {
+  font-weight: 600;
+}
+
+/* "Add a check", under the list. */
 .addLine {
   display: flex;
   flex-wrap: wrap;
@@ -123,4 +134,17 @@
   margin: 0 0 8px;
   font-size: 14px;
   font-weight: 600;
+}
+
+/* "Debian 13 · agent 0.4.0 · main · seen 28 s ago" under the title. */
+.line {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.line a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 2px;
 }

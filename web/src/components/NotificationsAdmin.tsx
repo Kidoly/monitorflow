@@ -147,7 +147,7 @@ function Notifications() {
   }
 
   const header = (
-    <PageHeader title={t("notifications.title")} meta={t("notifications.meta")} />
+    <PageHeader title={t("notifications.title")} />
   );
   if (error instanceof ApiError && error.status === 403) {
     return (

@@ -90,10 +90,9 @@ export function authorityLine(view: CertificateAuthorityView): SettingsStatus {
 export function notificationsStatus(channels: NotificationChannel[]): SettingsStatus {
   const failing = channels.filter((c) => c.last_error).length;
   if (failing > 0) return { text: t("settings.status.channelsFailing", { count: failing }), tone: "warn" };
-  return {
-    text: channels.length === 0 ? t("settings.status.noChannel") : t("settings.status.channels", { count: channels.length }),
-    tone: "neutral",
-  };
+  // Nobody hears about incidents without a channel: a problem, not a count.
+  if (channels.length === 0) return { text: t("settings.status.noChannel"), tone: "bad" };
+  return { text: t("settings.status.channels", { count: channels.length }), tone: "neutral" };
 }
 
 /** Turned-off integrations, then failing ones, else how many there are. */

@@ -75,7 +75,7 @@ describe("IncidentPage", () => {
       "href",
       expect.stringMatching(/^\/servers\/view\/?\?id=/),
     );
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Incidents/#1d6a9a3e");
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Incidents›#1d6a9a3e");
     expect(screen.getByText(/was Warning · paris/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open sensor" })).toHaveAttribute(
       "href",

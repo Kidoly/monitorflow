@@ -4,7 +4,6 @@ import type { Catalog, Translation } from "../catalog";
 export const en = {
   title: "Fleet",
   servers: "servers",
-  count: { one: "{count} server, {online} online · ", other: "{count} servers, {online} online · " },
   refresh: "Refresh now",
   addServers: "Add servers",
   "column.server": "Server",
@@ -78,7 +77,6 @@ export const en = {
 export const fr: Translation<typeof en> = {
   title: "Parc",
   servers: "les serveurs",
-  count: { one: "{count} serveur, {online} en ligne · ", other: "{count} serveurs, {online} en ligne · " },
   refresh: "Actualiser",
   addServers: "Ajouter des serveurs",
   "column.server": "Serveur",

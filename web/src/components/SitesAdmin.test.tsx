@@ -158,7 +158,6 @@ describe("SitesAdmin", () => {
     expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent(/paris\s*Alerts and checks\s*3 · 1 online\s*1 · relay-paris-1/);
     const globex = screen.getByRole("region", { name: "globex" });
     expect(within(globex).queryByRole("form")).not.toBeInTheDocument();
-    expect(screen.getByText(/2 customers, 2 sites/)).toBeInTheDocument();
     expect(screen.getByText(/cannot be renamed or moved to another customer/)).toBeInTheDocument();
 
     const form = within(acme).getByRole("form", { name: "New site for acme" });

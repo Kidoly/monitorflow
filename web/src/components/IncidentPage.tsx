@@ -186,7 +186,7 @@ export function IncidentPage({ id }: { id: string | null }) {
             )}
           </>
         }
-        meta={open ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : t("incidents.resolvedMeta")}
+        meta={open ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : undefined}
         actions={
           <>
             {incident.server_id && !offline && (

@@ -95,19 +95,13 @@ export function RelayList({ me }: { me: Me }) {
     },
   ];
 
-  const online = relays?.filter((relay) => relayStatus(relay) === "online").length ?? 0;
   const canEnroll = administersCustomer(me);
   return (
     <div className={styles.page}>
       <PageHeader
         title={t("relays.title")}
         meta={
-          relays || error ? (
-            <>
-              {relays && t("relays.count", { count: relays.length, online })}
-              <RefreshLine updatedAt={updatedAt} stale={stale} />
-            </>
-          ) : undefined
+          relays || error ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : undefined
         }
         actions={
           canEnroll &&
