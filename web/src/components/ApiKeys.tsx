@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
+import { t } from "@/i18n";
 import {
   type ApiKey,
   type ApiKeyArea,
@@ -27,43 +28,28 @@ import { formatDay } from "./ui/time";
 
 const MAX_NAME = 80;
 
+const ROLES: Role[] = ["viewer", "operator", "approver", "administrator"];
+
 /** What a key may do, in the words of the glossary. */
-export const ACCESS_WORDS: Record<Role, string> = {
-  viewer: "Read only",
-  operator: "Read and change",
-  approver: "Approve commands",
-  administrator: "Administer",
-};
+export const accessWord = (role: Role) => t(`apiKeys.access.${role}`);
 
-export const AREA_WORDS: Record<ApiKeyArea, string> = {
-  servers: "Servers",
-  alerts: "Alerts and checks",
-  updates: "Updates and commands",
-  remediation: "AI remediation",
-  dashboards: "Dashboards",
-  administration: "Administration",
-};
+export const areaWord = (area: ApiKeyArea) => t(`apiKeys.area.${area}`);
 
-const AREAS = Object.keys(AREA_WORDS) as ApiKeyArea[];
+const AREAS: ApiKeyArea[] = ["servers", "alerts", "updates", "remediation", "dashboards", "administration"];
 
-const EXPIRIES: { value: ApiKeyExpiry; label: string }[] = [
-  { value: "1y", label: "In a year" },
-  { value: "90d", label: "In 90 days" },
-  { value: "30d", label: "In 30 days" },
-  { value: "never", label: "Never" },
-];
+const EXPIRIES: ApiKeyExpiry[] = ["1y", "90d", "30d", "never"];
 
 /** Where a key reaches, in plain words; customers only for `multiCustomer` (ADR-0104). */
 export function reachWords(key: ApiKey, multiCustomer: boolean): string {
   if (key.site_id) return multiCustomer ? `${key.customer_name} › ${key.site_name}` : `${key.site_name}`;
   if (key.customer_id) return `${key.customer_name}`;
-  return "Everything";
+  return t("apiKeys.everything");
 }
 
 /** "Read and change · Alerts and checks, Servers" */
 export function accessWords(key: ApiKey): string {
-  const areas = key.areas ? key.areas.map((a) => AREA_WORDS[a]).join(", ") : "every area";
-  return `${ACCESS_WORDS[key.role]} · ${areas}`;
+  const areas = key.areas ? key.areas.map(areaWord).join(", ") : t("apiKeys.everyArea");
+  return `${accessWord(key.role)} · ${areas}`;
 }
 
 /**
@@ -104,10 +90,10 @@ function ApiKeys() {
 
   const header = (
     <PageHeader
-      title="API keys"
+      title={t("apiKeys.title")}
       meta={
         <>
-          For scripts and other tools, like a PSA or Ansible · <Link href={API_DOCS_PATH}>API documentation</Link>
+          {t("apiKeys.meta")} · <Link href={API_DOCS_PATH}>{t("apiKeys.docsLink")}</Link>
         </>
       }
     />
@@ -116,7 +102,7 @@ function ApiKeys() {
     return (
       <div className={admin.page}>
         {header}
-        {error ? <ErrorState what="the API keys" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
+        {error ? <ErrorState what={t("apiKeys.what")} error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
       </div>
     );
   }
@@ -127,36 +113,40 @@ function ApiKeys() {
       {created && (
         <>
           <Banner tone="warn">
-            Copy the key for “{created.name}” now: it is shown only once. Whoever has it can do what it allows until it
-            expires or you turn it off.
+            {t("apiKeys.copyNow", { name: created.name })}
           </Banner>
-          <SecretField label="API key" value={created.secret} copyName="Copy the key" />
+          <SecretField label={t("apiKeys.keyLabel")} value={created.secret} copyName={t("apiKeys.copyKey")} />
         </>
       )}
       {data.keys.length === 0 ? (
-        <EmptyState title="No API keys yet">
-          A key lets a script or another tool use MonitorFlow as you would, within what you choose.
+        <EmptyState title={t("apiKeys.emptyTitle")}>
+          {t("apiKeys.emptyBody")}
         </EmptyState>
       ) : (
-        <section className={admin.section} aria-label="API keys">
+        <section className={admin.section} aria-label={t("apiKeys.title")}>
           <ul className={admin.linkList}>
             {data.keys.map((key) => (
               <li key={key.id}>
                 <b>{key.name}</b> <span className={admin.mono}>mfk_{key.prefix}…</span>{" "}
                 <span className={admin.dim}>
-                  {accessWords(key)} · {reachWords(key, multiCustomer)}. Made by {key.created_by_username}.{" "}
-                  {key.expires_at ? `Expires ${formatDay(new Date(key.expires_at), now)}.` : "Never expires."}{" "}
-                  {key.last_used_at ? `Last used ${formatDay(new Date(key.last_used_at), now)}.` : "Not used yet."}
+                  {accessWords(key)} · {reachWords(key, multiCustomer)}.{" "}
+                  {t("apiKeys.madeBy", { name: key.created_by_username })}{" "}
+                  {key.expires_at
+                    ? t("apiKeys.expires", { day: formatDay(new Date(key.expires_at), now) })
+                    : t("apiKeys.neverExpires")}{" "}
+                  {key.last_used_at
+                    ? t("apiKeys.lastUsed", { day: formatDay(new Date(key.last_used_at), now) })
+                    : t("apiKeys.notUsed")}
                 </span>{" "}
                 <InlineConfirm
                   layout="row"
-                  trigger="Turn off"
+                  trigger={t("apiKeys.turnOff")}
                   triggerVariant="default"
-                  triggerName={`Turn off ${key.name}`}
-                  title={`Turn off ${key.name}?`}
-                  consequence="Scripts and tools using it are refused from their next request."
-                  confirmLabel="Turn off"
-                  pendingLabel="Turning off…"
+                  triggerName={t("apiKeys.turnOffName", { name: key.name })}
+                  title={t("apiKeys.turnOffTitle", { name: key.name })}
+                  consequence={t("apiKeys.turnOffConsequence")}
+                  confirmLabel={t("apiKeys.turnOff")}
+                  pendingLabel={t("apiKeys.turningOff")}
                   describeError={describeError}
                   onConfirm={async () => {
                     await api.revokeApiKey(key.id);
@@ -182,7 +172,7 @@ function ApiKeys() {
       ) : (
         <div>
           <Button variant="k" onClick={() => setCreating(true)}>
-            New API key
+            {t("apiKeys.newKey")}
           </Button>
         </div>
       )}
@@ -201,7 +191,7 @@ export function reachOptions(
   sites: Site[],
 ): { value: string; label: string }[] {
   const options: { value: string; label: string }[] = [];
-  if (administersEverything(me)) options.push({ value: "everything", label: "Everything" });
+  if (administersEverything(me)) options.push({ value: "everything", label: t("apiKeys.everything") });
   if (multiCustomer) {
     for (const c of customers) {
       if (administersCustomer(me, c.id)) options.push({ value: `c:${c.id}`, label: c.name });
@@ -243,8 +233,8 @@ function NewKey({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!name.trim()) return setFailure("Say what the key is for, like “HaloPSA”.");
-    if (limited && areas.length === 0) return setFailure("Choose at least one area.");
+    if (!name.trim()) return setFailure(t("apiKeys.nameMissing"));
+    if (limited && areas.length === 0) return setFailure(t("apiKeys.areaMissing"));
     setBusy(true);
     setFailure(null);
     try {
@@ -265,9 +255,9 @@ function NewKey({
   }
 
   return (
-    <form className={`${admin.panel} ${admin.stack}`} onSubmit={(e) => void submit(e)} aria-label="New API key">
+    <form className={`${admin.panel} ${admin.stack}`} onSubmit={(e) => void submit(e)} aria-label={t("apiKeys.newKey")}>
       <label className={admin.field}>
-        What is it for?
+        {t("apiKeys.purpose")}
         <input
           className={fieldClass}
           required
@@ -278,19 +268,19 @@ function NewKey({
         />
       </label>
       <label className={admin.field}>
-        Access
+        {t("apiKeys.access")}
         <select className={fieldClass} value={role} onChange={(e) => setRole(e.target.value as Role)}>
-          {(Object.keys(ACCESS_WORDS) as Role[]).map((r) => (
+          {ROLES.map((r) => (
             <option key={r} value={r}>
-              {ACCESS_WORDS[r]}
+              {accessWord(r)}
             </option>
           ))}
         </select>
-        <span className={admin.fieldNote}>Never more than you may do yourself, and less if you lose a role.</span>
+        <span className={admin.fieldNote}>{t("apiKeys.accessNote")}</span>
       </label>
       {reaches.length > 1 && (
         <label className={admin.field}>
-          Reaches
+          {t("apiKeys.reaches")}
           <select className={fieldClass} value={reach} onChange={(e) => setReach(e.target.value)}>
             {reaches.map((r) => (
               <option key={r.value} value={r.value}>
@@ -301,9 +291,9 @@ function NewKey({
         </label>
       )}
       <fieldset className={admin.fieldset}>
-        <legend className={admin.legend}>Areas</legend>
+        <legend className={admin.legend}>{t("apiKeys.areas")}</legend>
         <label>
-          <input type="checkbox" checked={limited} onChange={(e) => setLimited(e.target.checked)} /> Only some areas
+          <input type="checkbox" checked={limited} onChange={(e) => setLimited(e.target.checked)} /> {t("apiKeys.someAreas")}
         </label>
         {limited &&
           AREAS.map((area) => (
@@ -313,21 +303,21 @@ function NewKey({
                 checked={areas.includes(area)}
                 onChange={(e) => setAreas(e.target.checked ? [...areas, area] : areas.filter((a) => a !== area))}
               />{" "}
-              {AREA_WORDS[area]}
+              {areaWord(area)}
             </label>
           ))}
         <span className={admin.fieldNote}>
           {multiCustomer
-            ? "Any key may list servers, sites and customers within its reach."
-            : "Any key may list servers and sites within its reach."}
+            ? t("apiKeys.listNoteCustomers")
+            : t("apiKeys.listNote")}
         </span>
       </fieldset>
       <label className={admin.field}>
-        The key stops working
+        {t("apiKeys.expiresField")}
         <select className={fieldClass} value={expires} onChange={(e) => setExpires(e.target.value as ApiKeyExpiry)}>
           {EXPIRIES.map((x) => (
-            <option key={x.value} value={x.value}>
-              {x.label}
+            <option key={x} value={x}>
+              {t(`apiKeys.expiry.${x}`)}
             </option>
           ))}
         </select>
@@ -335,10 +325,10 @@ function NewKey({
       {failure && <Banner tone="bad">{failure}</Banner>}
       <div className={admin.formFoot}>
         <Button type="submit" variant="k" disabled={busy}>
-          {busy ? "Making…" : "Make the key"}
+          {busy ? t("apiKeys.making") : t("apiKeys.make")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("apiKeys.cancel")}
         </Button>
       </div>
     </form>

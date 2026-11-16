@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 
+import { rich, t } from "@/i18n";
 import {
   ApiError,
   type Customer,
@@ -23,9 +24,11 @@ import {
   EVENT_GROUPS,
   INTEGRATIONS_GUIDE,
   deliveryResult,
+  eventLabel,
   eventName,
   eventsSummary,
   localToIso,
+  groupTitle,
   stateLabel,
 } from "@/lib/integrations";
 import {
@@ -64,9 +67,7 @@ export function IntegrationsPage() {
   const me = useMe();
   if (!isAdministrator(me)) {
     return (
-      <NoPermission title="Integrations need an administrator">
-        Ask one to send MonitorFlow&apos;s events to your other tools.
-      </NoPermission>
+      <NoPermission title={t("integrations.needAdmin")}>{t("integrations.needAdminBody")}</NoPermission>
     );
   }
   return <Integrations />;
@@ -77,16 +78,19 @@ export function IntegrationsPage() {
  * alerts and the central server. Customers are named only to someone who
  * sees several (ADR-0104); otherwise the customer as a whole is all sites.
  */
-function integrationNote(scope: ChannelScope, several: boolean): string {
-  if (scope.site_id) return `Events of ${scope.label.split(" / ").pop()} only.`;
-  if (!several) {
-    return scope.customer_id
-      ? "Events of all your sites."
-      : "Events of every site.";
+function integrationNote(scope: ChannelScope, several: boolean, customers: Customer[], sites: Site[]): string {
+  if (scope.site_id) {
+    const site = sites.find((s) => s.id === scope.site_id)?.name ?? scope.label.split(" / ").pop() ?? "";
+    return t("integrations.note.site", { site });
   }
-  if (scope.customer_id)
-    return `Events of ${scope.label.replace(/^All of /, "")} and all its sites. Nothing from other customers.`;
-  return "Events of every customer and site.";
+  if (!several) {
+    return scope.customer_id ? t("integrations.note.allYourSites") : t("integrations.note.everySite");
+  }
+  if (scope.customer_id) {
+    const customer = customers.find((c) => c.id === scope.customer_id)?.name ?? scope.label;
+    return t("integrations.note.customer", { customer });
+  }
+  return t("integrations.note.everything");
 }
 
 type Editing = { endpoint?: IntegrationEndpoint };
@@ -128,16 +132,13 @@ function Integrations() {
   }
 
   const header = (
-    <PageHeader
-      title="Integrations"
-      meta="Signed events for your other tools"
-    />
+    <PageHeader title={t("integrations.title")} meta={t("integrations.meta")} />
   );
   if (error instanceof ApiError && error.status === 403) {
     return (
       <div className={styles.page}>
         {header}
-        <NoPermission title="Integrations need an administrator" />
+        <NoPermission title={t("integrations.needAdmin")} />
       </div>
     );
   }
@@ -147,7 +148,7 @@ function Integrations() {
         {header}
         {error ? (
           <ErrorState
-            what="integrations"
+            what={t("integrations.what")}
             error={describeError(error)}
             onRetry={refresh}
           />
@@ -163,7 +164,7 @@ function Integrations() {
   const global = administersEverything(me);
   const add = (
     <Button variant="k" onClick={() => setEditing({})}>
-      Add integration
+      {t("integrations.add")}
     </Button>
   );
   return (
@@ -171,29 +172,21 @@ function Integrations() {
       {header}
       {actionError && <Banner tone="bad">{actionError}</Banner>}
       <p className={styles.footnote}>
-        MonitorFlow posts a signed JSON request to each integration when
-        incidents, servers, updates, campaigns or approvals change, for a PSA or
-        your own automation. Each event comes at least once, so receivers keep
-        its ID to ignore repeats.{" "}
-        <a href={INTEGRATIONS_GUIDE}>How to receive them</a>. To tell people,
-        use Notifications.
+        {rich("integrations.intro", {
+          guide: <a href={INTEGRATIONS_GUIDE}>{t("integrations.guide")}</a>,
+        })}
       </p>
       {secret && (
-        <section className={styles.panel} aria-label="Signing secret">
-          <Banner tone="warn">
-            Copy the signing secret of {secret.endpoint.name} into the receiver
-            now: it is not shown again.
-          </Banner>
+        <section className={styles.panel} aria-label={t("integrations.secret")}>
+          <Banner tone="warn">{t("integrations.copySecretNow", { name: secret.endpoint.name })}</Banner>
           <SecretField
-            label="Signing secret"
+            label={t("integrations.secret")}
             value={secret.secret}
-            copyName="Copy the signing secret"
+            copyName={t("integrations.copySecret")}
           />
           <div className={styles.formFoot}>
-            <Button onClick={() => void test(secret.endpoint.id)}>
-              Send test event
-            </Button>
-            <Button onClick={() => setSecret(null)}>Done</Button>
+            <Button onClick={() => void test(secret.endpoint.id)}>{t("integrations.sendTest")}</Button>
+            <Button onClick={() => setSecret(null)}>{t("integrations.done")}</Button>
             <TestStatus test={tests[secret.endpoint.id]} />
           </div>
         </section>
@@ -213,15 +206,14 @@ function Integrations() {
           }}
         />
       ) : data.endpoints.length === 0 ? (
-        <EmptyState title="No integrations yet" actions={add}>
-          Send incidents, servers, updates and approvals to a PSA such as
-          HaloPSA, or to your own automation.
+        <EmptyState title={t("integrations.emptyTitle")} actions={add}>
+          {t("integrations.emptyBody")}
         </EmptyState>
       ) : (
         <div className={styles.buttonRow}>{add}</div>
       )}
       {data.endpoints.length > 0 && (
-        <section className={styles.section} aria-label="Integrations">
+        <section className={styles.section} aria-label={t("integrations.title")}>
           <Endpoints
             endpoints={data.endpoints}
             events={data.events}
@@ -260,18 +252,18 @@ function Integrations() {
 function TestStatus({ test }: { test?: IntegrationTestResult | "sending" }) {
   if (!test) return null;
   if (test === "sending")
-    return <span className={styles.dim}>Sending a test event…</span>;
+    return <span className={styles.dim}>{t("integrations.sendingTest")}</span>;
   if (test.ok) {
     return (
       <span role="status">
-        <Label tone="ok">Test accepted</Label>{" "}
-        <span className={styles.dim}>The receiver answered {test.status}.</span>
+        <Label tone="ok">{t("integrations.testAccepted")}</Label>{" "}
+        <span className={styles.dim}>{t("integrations.receiverAnswered", { status: String(test.status) })}</span>
       </span>
     );
   }
   return (
     <span role="alert">
-      <Label tone="bad">Test failed</Label> {test.error}
+      <Label tone="bad">{t("integrations.testFailed")}</Label> {test.error}
     </span>
   );
 }
@@ -290,22 +282,20 @@ function Status({
     <>
       <Label tone={tone}>{text}</Label>{" "}
       {endpoint.state === "disabled" ? (
-        <span>
-          Nothing reached it for a day. Turn it on, then send again what it
-          missed.
-        </span>
+        <span>{t("integrations.disabledNote")}</span>
       ) : endpoint.failing_since && endpoint.last_error ? (
         <span>{endpoint.last_error}</span>
       ) : endpoint.last_success_at ? (
         <span className={styles.dim}>
-          last delivered{" "}
-          <RelativeTime value={endpoint.last_success_at} now={now} />
+          {rich("integrations.lastDelivered", {
+            when: <RelativeTime value={endpoint.last_success_at} now={now} />,
+          })}
         </span>
       ) : (
-        <span className={styles.dim}>Nothing sent yet</span>
+        <span className={styles.dim}>{t("integrations.nothingSent")}</span>
       )}
       {endpoint.pending > 0 && (
-        <span className={styles.dim}> · {endpoint.pending} waiting</span>
+        <span className={styles.dim}> · {t("integrations.waiting", { count: endpoint.pending })}</span>
       )}
     </>
   );
@@ -347,7 +337,7 @@ function Endpoints({
   const columns: Column<IntegrationEndpoint>[] = [
     {
       key: "name",
-      header: "Sends to",
+      header: t("integrations.column.sendsTo"),
       className: styles.wrap,
       cell: (e) => (
         <>
@@ -362,7 +352,7 @@ function Endpoints({
       ? [
           {
             key: "scope",
-            header: "About",
+            header: t("integrations.column.about"),
             cell: (e: IntegrationEndpoint) =>
               e.customer_id ? (
                 scopeName(e, severalCustomers)
@@ -374,7 +364,7 @@ function Endpoints({
       : []),
     {
       key: "status",
-      header: "Status",
+      header: t("integrations.column.status"),
       className: styles.wrap,
       cell: (e) => <Status endpoint={e} test={tests[e.id]} />,
     },
@@ -388,40 +378,40 @@ function Endpoints({
             disabled={tests[e.id] === "sending"}
             onClick={() => onTest(e.id)}
           >
-            Send test event
+            {t("integrations.sendTest")}
           </Button>
           <Button size="small" onClick={() => onLog(e)}>
-            Deliveries
+            {t("integrations.deliveries")}
           </Button>
           <Button size="small" onClick={() => onEdit(e)}>
-            Edit
+            {t("integrations.edit")}
           </Button>
           {e.state === "on" ? (
             <Button size="small" onClick={() => void onState(e.id, "paused")}>
-              Pause
+              {t("integrations.pause")}
             </Button>
           ) : (
             <Button size="small" onClick={() => void onState(e.id, "on")}>
-              Turn on
+              {t("integrations.turnOn")}
             </Button>
           )}
           <InlineConfirm
             layout="row"
-            trigger="New secret"
-            triggerName={`New secret for ${e.name}`}
-            title="Replace the signing secret?"
-            consequence="The old one stops working at once: the receiver rejects requests until it has the new one."
-            confirmLabel="Replace"
+            trigger={t("integrations.newSecret")}
+            triggerName={t("integrations.newSecretFor", { name: e.name })}
+            title={t("integrations.replaceTitle")}
+            consequence={t("integrations.replaceConsequence")}
+            confirmLabel={t("integrations.replace")}
             onConfirm={() => onNewSecret(e.id)}
             describeError={describeError}
           />
           <InlineConfirm
             layout="row"
-            trigger="Delete"
-            triggerName={`Delete ${e.name}`}
-            title="Delete this integration?"
-            consequence="Nothing more is sent to it, including what is waiting."
-            confirmLabel="Delete"
+            trigger={t("integrations.delete")}
+            triggerName={t("integrations.deleteName", { name: e.name })}
+            title={t("integrations.deleteTitle")}
+            consequence={t("integrations.deleteConsequence")}
+            confirmLabel={t("integrations.delete")}
             onConfirm={() => onDelete(e.id)}
             describeError={describeError}
           />
@@ -432,7 +422,7 @@ function Endpoints({
   return (
     <DataTable
       bare
-      label="Integrations"
+      label={t("integrations.title")}
       columns={columns}
       rows={endpoints}
       rowKey={(e) => e.id}
@@ -486,7 +476,7 @@ function IntegrationForm({
     e.preventDefault();
     if (!scope) return;
     if (events.length === 0) {
-      setError("Choose at least one event.");
+      setError(t("integrations.chooseEvent"));
       return;
     }
     setBusy(true);
@@ -535,10 +525,10 @@ function IntegrationForm({
       aria-labelledby={`${id}-title`}
     >
       <h2 id={`${id}-title`} className={styles.sectionTitle}>
-        {endpoint ? `Edit ${endpoint.name}` : "Add integration"}
+        {endpoint ? t("integrations.editName", { name: endpoint.name }) : t("integrations.add")}
       </h2>
       {field(
-        "Name",
+        t("integrations.name"),
         <input
           className={fieldClass}
           required
@@ -549,7 +539,7 @@ function IntegrationForm({
         />,
       )}
       {field(
-        "URL",
+        t("integrations.url"),
         <input
           className={fieldClass}
           type="url"
@@ -559,17 +549,17 @@ function IntegrationForm({
           onChange={(e) => setUrl(e.target.value)}
           placeholder={
             endpoint
-              ? `${endpoint.origin}/…, saved; leave empty to keep it`
+              ? t("integrations.urlKeep", { origin: endpoint.origin })
               : "https://psa.example.com/webhooks/monitorflow"
           }
         />,
         endpoint && url.trim() !== ""
-          ? "Receives a signed JSON POST per event. A new URL gets a new signing secret; the current one stops working."
-          : "Receives a signed JSON POST per event. Its path is not shown again: it often holds a token.",
+          ? t("integrations.urlNoteNew")
+          : t("integrations.urlNote"),
       )}
       {scopes.length > 1
         ? field(
-            "Send events about",
+            t("integrations.about"),
             <select
               className={fieldClass}
               value={wanted}
@@ -581,28 +571,28 @@ function IntegrationForm({
                 </option>
               ))}
             </select>,
-            scope && integrationNote(scope, several),
+            scope && integrationNote(scope, several, customers, sites),
           )
         : scope?.value !== "everything" &&
           scope && (
             <p className={styles.fieldNote}>
-              {integrationNote(scope, several)}
+              {integrationNote(scope, several, customers, sites)}
             </p>
           )}
       <fieldset className={styles.fieldset}>
-        <legend className={styles.legend}>Events</legend>
+        <legend className={styles.legend}>{t("integrations.events")}</legend>
         <label>
           <input
             type="checkbox"
             checked={allEvents.every((e) => events.includes(e))}
             onChange={(e) => setEvents(e.target.checked ? allEvents : [])}
           />{" "}
-          All events
+          {t("integrations.allEvents")}
         </label>
         <div className={own.events}>
           {EVENT_GROUPS.map((group) => (
-            <fieldset key={group.title} className={styles.fieldset}>
-              <legend className={styles.legend}>{group.title}</legend>
+            <fieldset key={group.group} className={styles.fieldset}>
+              <legend className={styles.legend}>{groupTitle(group.group)}</legend>
               {group.events
                 .filter((e) => allEvents.includes(e.event))
                 .map((e) => (
@@ -614,7 +604,7 @@ function IntegrationForm({
                         toggle(e.event, change.target.checked)
                       }
                     />{" "}
-                    {e.label}
+                    {eventLabel(e.event)}
                   </label>
                 ))}
             </fieldset>
@@ -628,24 +618,21 @@ function IntegrationForm({
             checked={allowPrivate}
             onChange={(e) => setAllowPrivate(e.target.checked)}
           />{" "}
-          Allow private addresses, like 10.0.0.5 or a name on your network. Only
-          for a receiver you trust: this server can then reach anything on its
-          network.
+          {t("integrations.allowPrivate")}
         </label>
       ) : (
         keepsPrivate && (
           <p className={styles.fieldNote}>
-            A global administrator allowed a private address for this URL.
-            Changing the URL needs them again.
+            {t("integrations.keepsPrivate")}
           </p>
         )
       )}
       <div className={styles.formFoot}>
         <Button type="submit" variant="k" disabled={busy || !scope}>
-          {busy ? "Saving…" : "Save"}
+          {busy ? t("integrations.saving") : t("integrations.save")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("integrations.cancel")}
         </Button>
         {error && (
           <p className={styles.formError} role="alert">
@@ -682,7 +669,7 @@ function DeliveryLog({
   const id = useId();
   const now = new Date();
   const waits =
-    endpoint.state === "on" ? "" : " It waits until the integration is on.";
+    endpoint.state === "on" ? "" : ` ${t("integrations.waitsUntilOn")}`;
 
   async function sendAgain(body: Parameters<typeof api.replayIntegration>[1]) {
     setNotice(null);
@@ -690,7 +677,7 @@ function DeliveryLog({
       const { queued } = await api.replayIntegration(endpoint.id, body);
       setNotice({
         tone: "ok",
-        text: `${queued === 1 ? "1 event" : `${queued} events`} will be sent again, with the same IDs.${waits}`,
+        text: `${t("integrations.sentAgain", { count: queued })}${waits}`,
       });
       refresh();
     } catch (e) {
@@ -717,22 +704,22 @@ function DeliveryLog({
   const columns: Column<IntegrationDelivery>[] = [
     {
       key: "when",
-      header: "When",
+      header: t("integrations.column.when"),
       cell: (d) => <RelativeTime value={d.occurred_at} now={now} />,
     },
     {
       key: "event",
-      header: "Event",
+      header: t("integrations.column.event"),
       cell: (d) => (
         <>
           {eventName(d.event)}
-          {d.replay && <span className={styles.dim}> · sent again</span>}
+          {d.replay && <span className={styles.dim}> · {t("integrations.sentAgainMark")}</span>}
         </>
       ),
     },
     {
       key: "result",
-      header: "Result",
+      header: t("integrations.column.result"),
       className: styles.wrap,
       cell: (d) => (
         <>
@@ -757,10 +744,10 @@ function DeliveryLog({
       cell: (d) => (
         <Button
           size="small"
-          aria-label={`Send ${eventName(d.event)} again`}
+          aria-label={t("integrations.sendNameAgain", { event: eventName(d.event) })}
           onClick={() => void sendAgain({ event_id: d.event_id })}
         >
-          Send again
+          {t("integrations.sendAgain")}
         </Button>
       ),
     },
@@ -769,10 +756,10 @@ function DeliveryLog({
     <section className={styles.section} aria-labelledby={`${id}-title`}>
       <div className={styles.sectionHead}>
         <h2 id={`${id}-title`} className={styles.sectionTitle}>
-          Deliveries to {endpoint.name}
+          {t("integrations.deliveriesTo", { name: endpoint.name })}
         </h2>
         <Button size="small" onClick={onClose}>
-          Close
+          {t("integrations.close")}
         </Button>
       </div>
       <div className={styles.sectionBody}>
@@ -790,7 +777,7 @@ function DeliveryLog({
           }}
         >
           <label className={styles.field}>
-            From
+            {t("integrations.from")}
             <input
               className={fieldClass}
               type="datetime-local"
@@ -800,7 +787,7 @@ function DeliveryLog({
             />
           </label>
           <label className={styles.field}>
-            To
+            {t("integrations.to")}
             <input
               className={fieldClass}
               type="datetime-local"
@@ -808,16 +795,16 @@ function DeliveryLog({
               onChange={(e) => setTo(e.target.value)}
             />
           </label>
-          <Button type="submit">Send this time range again</Button>
+          <Button type="submit">{t("integrations.sendRange")}</Button>
         </form>
         <p className={styles.fieldNote}>
-          To empty means now. Events are kept 30 days.
+          {t("integrations.rangeNote")}
         </p>
       </div>
       {!data ? (
         error ? (
           <ErrorState
-            what="deliveries"
+            what={t("integrations.deliveriesWhat")}
             error={describeError(error)}
             onRetry={refresh}
           />
@@ -826,19 +813,19 @@ function DeliveryLog({
         )
       ) : rows.length === 0 ? (
         <p className={styles.dim}>
-          Nothing sent to it yet. Events it asks for show here as they happen.
+          {t("integrations.nothingYet")}
         </p>
       ) : (
         <>
           <DataTable
             bare
-            label={`Deliveries to ${endpoint.name}`}
+            label={t("integrations.deliveriesTo", { name: endpoint.name })}
             columns={columns}
             rows={rows}
             rowKey={(d) => String(d.id)}
           />
           {more != null && (
-            <Button onClick={() => void loadOlder()}>Older deliveries</Button>
+            <Button onClick={() => void loadOlder()}>{t("integrations.older")}</Button>
           )}
         </>
       )}

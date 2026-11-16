@@ -12,8 +12,9 @@ import {
   describeError,
   isUnauthorized,
 } from "@/lib/api";
+import { t } from "@/i18n";
 import { acceptance } from "@/lib/commandKinds";
-import { riskWord, rollbackText, timeLeft } from "@/lib/remediation";
+import { riskWord, rollbackText, tierName, timeLeft } from "@/lib/remediation";
 import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
 import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -66,30 +67,30 @@ export function ApprovalQueue() {
   const columns: Column<PendingApproval>[] = [
     {
       key: "incident",
-      header: "Incident",
+      header: t("remediation.queue.incident"),
       cell: (p) => (
         <PrimaryCell
-          title={`${seriesTitle(undefined, p.metric, p.instance)} on ${p.hostname}`}
+          title={t("remediation.queue.on", { title: seriesTitle(undefined, p.metric, p.instance), hostname: p.hostname })}
           href={scopedHref(serverHref(p.server_id), scope)}
-          sub={[`Step ${p.commands_run + 1} of ${p.max_commands}`, p.site_name, multiCustomer && p.customer_name].filter(Boolean).join(" · ")}
+          sub={[t("remediation.queue.step", { step: p.commands_run + 1, max: p.max_commands }), p.site_name, multiCustomer && p.customer_name].filter(Boolean).join(" · ")}
         />
       ),
     },
-    { key: "tier", header: "Tier", cell: (p) => <StatusLabel kind="risk" value={riskWord(p.tier)} /> },
+    { key: "tier", header: t("remediation.queue.tier"), cell: (p) => <StatusLabel kind="risk" value={riskWord(p.tier)} /> },
     {
       key: "command",
-      header: "Command",
+      header: t("remediation.queue.command"),
       cell: (p) => <code className={styles.command}>{p.command}</code>,
       className: styles.wrap,
     },
     {
       key: "deadline",
-      header: "Deadline",
+      header: t("remediation.queue.deadline"),
       cell: (p) => {
         const left = timeLeft(p.deadline, now);
         return (
           <time dateTime={p.deadline} title={formatExact(new Date(p.deadline))} className={cx(!left && styles.expired)}>
-            {left ?? "Passed"}
+            {left ?? t("remediation.queue.passed")}
           </time>
         );
       },
@@ -105,24 +106,21 @@ export function ApprovalQueue() {
   return (
     <Page>
       <PageHeader
-        title="Approvals"
+        title={t("remediation.queue.title")}
         meta={
           <>
-            {data && `${all.length} waiting · `}
+            {data && t("remediation.queue.waiting", { count: all.length })}
             <RefreshLine updatedAt={updatedAt} stale={stale} />
           </>
         }
-        actions={<ButtonLink href={scopedHref(AUDIT_PATH, scope)}>Audit log</ButtonLink>}
+        actions={<ButtonLink href={scopedHref(AUDIT_PATH, scope)}>{t("remediation.queue.auditLog")}</ButtonLink>}
       />
       <FilterBar
         filters={[
           {
             name: "tier",
-            label: "Tier",
-            options: [
-              { value: "low_impact", label: "Low-impact" },
-              { value: "high_impact", label: "High-impact" },
-            ],
+            label: t("remediation.queue.tier"),
+            options: TIERS.map((value) => ({ value, label: tierName(value) })),
           },
         ]}
       />
@@ -136,24 +134,24 @@ export function ApprovalQueue() {
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
       {!data && error !== null && !isUnauthorized(error) ? (
-        <ErrorState what="the approval queue" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what={t("remediation.queue.what")} error={describeError(error)} onRetry={refresh} />
       ) : data && shown.length === 0 ? (
         tier ? (
-          <NoMatches names={["tier"]} title="Nothing waiting for approval">
-            No command of this tier is waiting.
+          <NoMatches names={["tier"]} title={t("remediation.queue.nothing")}>
+            {t("remediation.queue.noneOfTier")}
           </NoMatches>
         ) : (
           <EmptyState
-            title="Nothing waiting for approval"
-            actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>Open incidents</ButtonLink>}
+            title={t("remediation.queue.nothing")}
+            actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>{t("remediation.queue.openIncidents")}</ButtonLink>}
           >
-            Commands the risk rules hold for a person appear here.
+            {t("remediation.queue.empty")}
           </EmptyState>
         )
       ) : (
         <div className={styles.page}>
           <DataTable
-            label="Commands waiting for approval"
+            label={t("remediation.queue.label")}
             columns={columns}
             rows={shown}
             rowKey={(p) => p.id}
@@ -162,10 +160,14 @@ export function ApprovalQueue() {
               <Button
                 size="small"
                 aria-expanded={open === p.id}
-                aria-label={`${open === p.id ? "Close" : "Review"} the command for ${p.hostname}`}
+                aria-label={
+                  open === p.id
+                    ? t("remediation.queue.closeFor", { hostname: p.hostname })
+                    : t("remediation.queue.reviewFor", { hostname: p.hostname })
+                }
                 onClick={() => setOpen(open === p.id ? null : p.id)}
               >
-                {open === p.id ? "Close" : "Review"}
+                {open === p.id ? t("remediation.queue.close") : t("remediation.queue.review")}
               </Button>
             )}
             rowDetail={(p) =>
@@ -175,7 +177,7 @@ export function ApprovalQueue() {
         </div>
       )}
       <p className={styles.note}>
-        Approved commands run once on the agent, as its user. Every decision is recorded in the incident&apos;s audit log.
+        {t("remediation.queue.note")}
       </p>
     </Page>
   );
@@ -186,11 +188,11 @@ function AiOff() {
   const me = useMe();
   return (
     <Banner tone="warn">
-      <strong>AI is off.</strong> No new commands are proposed, and any waiting here stay on hold until it is back on.{" "}
+      <strong>{t("remediation.aiOff.title")}</strong> {t("remediation.aiOff.body")}{" "}
       {administersEverything(me) ? (
-        <Link href={AI_SETTINGS_PATH}>Turn on AI</Link>
+        <Link href={AI_SETTINGS_PATH}>{t("remediation.aiOff.turnOn")}</Link>
       ) : (
-        "A global administrator can turn it on under Settings › AI."
+        t("remediation.aiOff.askAdmin")
       )}
     </Banner>
   );
@@ -237,7 +239,7 @@ function ApprovalDetail({
       onDone({ text: message(decision), tone: "ok" });
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        onDone({ text: `Not recorded for ${item.hostname}: ${e.message}. The queue has been refreshed.`, tone: "warn" });
+        onDone({ text: t("remediation.detail.notRecorded", { hostname: item.hostname, message: e.message }), tone: "warn" });
       } else {
         setError(describeError(e));
         setBusy(false);
@@ -246,37 +248,39 @@ function ApprovalDetail({
   }
 
   const approved = (d: ApprovalDecision) =>
-    `Approved ${d.edited ? "the edited command " : ""}${d.command} on ${item.hostname}. The incident resumes within a few seconds.`;
+    d.edited
+      ? t("remediation.detail.approvedEdited", { command: d.command, hostname: item.hostname })
+      : t("remediation.detail.approved", { command: d.command, hostname: item.hostname });
 
   return (
     <div className={styles.detail}>
       <dl className={styles.facts}>
-        <dt>Diagnosis</dt>
+        <dt>{t("remediation.detail.diagnosis")}</dt>
         <dd className={styles.untrusted}>{item.diagnosis}</dd>
-        <dt>AI reasoning</dt>
+        <dt>{t("remediation.detail.reasoning")}</dt>
         <dd>
           <span className={styles.untrusted}>{item.reasoning}</span>{" "}
-          <span className={styles.dim}>Generated text, untrusted, never executed as-is.</span>
+          <span className={styles.dim}>{t("remediation.detail.untrusted")}</span>
         </dd>
-        <dt>Command</dt>
+        <dt>{t("remediation.detail.command")}</dt>
         <dd>
           <code className={styles.command}>{item.command}</code>{" "}
           <span className={styles.dim}>
             {item.shell === "powershell"
-              ? "Runs in Windows PowerShell, as the agent's account."
-              : "Runs with /bin/sh, as the agent's user."}
+              ? t("remediation.detail.powershell")
+              : t("remediation.detail.sh")}
           </span>
         </dd>
-        <dt>Rule</dt>
+        <dt>{t("remediation.detail.rule")}</dt>
         <dd>
-          {item.rule.id} · {item.reason} <span className={styles.dim}>Tier decided by the rules, not by the AI.</span>
+          {item.rule.id} · {item.reason} <span className={styles.dim}>{t("remediation.detail.byRules")}</span>
         </dd>
-        <dt>Rollback</dt>
+        <dt>{t("remediation.detail.rollback")}</dt>
         <dd>
           {rollbackLimited ? (
             <>
               <Label tone="warn" small>
-                Rollback limited
+                {t("remediation.detail.rollbackLimited")}
               </Label>{" "}
               {rollback.text}
               {rollback.note && <span className={styles.dim}> {rollback.note}</span>}
@@ -288,13 +292,15 @@ function ApprovalDetail({
             </>
           )}
         </dd>
-        <dt>Deadline</dt>
+        <dt>{t("remediation.detail.deadline")}</dt>
         <dd>
-          {left ? `${left}, at ${formatExact(new Date(item.deadline))}` : "Passed: the incident escalates to a human."}
+          {left
+            ? t("remediation.detail.leftAt", { left, at: formatExact(new Date(item.deadline)) })
+            : t("remediation.detail.passed")}
         </dd>
-        <dt>History</dt>
+        <dt>{t("remediation.detail.history")}</dt>
         <dd>
-          <Link href={auditHref({ incident: item.incident_id })}>Audit log of this incident</Link>
+          <Link href={auditHref({ incident: item.incident_id })}>{t("remediation.detail.incidentAudit")}</Link>
         </dd>
       </dl>
 
@@ -306,7 +312,7 @@ function ApprovalDetail({
             void decide(() => api.approve(item.id, command), approved);
           }}
         >
-          <label htmlFor={commandId}>Edited command</label>
+          <label htmlFor={commandId}>{t("remediation.detail.editedCommand")}</label>
           <textarea
             id={commandId}
             className={cx(styles.textarea, styles.mono)}
@@ -316,15 +322,14 @@ function ApprovalDetail({
             spellCheck={false}
           />
           <p className={styles.note}>
-            The rules classify the edited command again: a forbidden command is refused, and a higher tier may need an
-            administrator.
+            {t("remediation.detail.editNote")}
           </p>
           <div className={styles.actions}>
             <Button type="submit" variant="k" disabled={busy || command.trim() === ""}>
-              {busy ? "Approving…" : "Approve edited command"}
+              {busy ? t("remediation.detail.approving") : t("remediation.detail.approveEdited")}
             </Button>
             <Button onClick={() => setMode("view")} disabled={busy}>
-              Cancel
+              {t("remediation.detail.cancel")}
             </Button>
           </div>
         </form>
@@ -335,11 +340,11 @@ function ApprovalDetail({
             e.preventDefault();
             void decide(
               () => api.reject(item.id, reason.trim()),
-              () => `Rejected ${item.command} on ${item.hostname}. The AI gets the reason and may propose another step.`,
+              () => t("remediation.detail.rejected", { command: item.command, hostname: item.hostname }),
             );
           }}
         >
-          <label htmlFor={reasonId}>Reason</label>
+          <label htmlFor={reasonId}>{t("remediation.detail.reason")}</label>
           <textarea
             id={reasonId}
             className={styles.textarea}
@@ -348,13 +353,13 @@ function ApprovalDetail({
             onChange={(e) => setReason(e.target.value)}
             disabled={busy}
           />
-          <p className={styles.note}>The reason is recorded and sent to the AI provider. Do not include secrets.</p>
+          <p className={styles.note}>{t("remediation.detail.reasonNote")}</p>
           <div className={styles.actions}>
             <Button type="submit" variant="danger" disabled={busy || reason.trim() === ""}>
-              {busy ? "Rejecting…" : "Reject command"}
+              {busy ? t("remediation.detail.rejecting") : t("remediation.detail.reject")}
             </Button>
             <Button onClick={() => setMode("view")} disabled={busy}>
-              Cancel
+              {t("remediation.detail.cancel")}
             </Button>
           </div>
         </form>
@@ -364,15 +369,15 @@ function ApprovalDetail({
             <p className={styles.note}>
               {shell === "off" ? (
                 <>
-                  AI commands are off on {item.hostname}, so it would refuse this.{" "}
-                  <Link href={scopedHref(serverHref(item.server_id, "commands"), scope)}>How to turn them on</Link>
+                  {t("remediation.detail.commandsOff", { hostname: item.hostname })}{" "}
+                  <Link href={scopedHref(serverHref(item.server_id, "commands"), scope)}>
+                    {t("remediation.detail.howToTurnOn")}
+                  </Link>
                 </>
+              ) : item.shell === "powershell" ? (
+                t("remediation.detail.refusesWindows", { hostname: item.hostname })
               ) : (
-                `${item.hostname} would refuse this: ${
-                  item.shell === "powershell"
-                    ? "its agent is too old for AI commands on Windows, and updates by itself."
-                    : "its system does not run AI commands yet."
-                }`
+                t("remediation.detail.refusesSystem", { hostname: item.hostname })
               )}
             </p>
           )}
@@ -383,23 +388,23 @@ function ApprovalDetail({
                 disabled={busy}
                 onClick={() => void decide(() => api.approve(item.id), approved)}
               >
-                {busy ? "Approving…" : "Approve"}
+                {busy ? t("remediation.detail.approving") : t("remediation.detail.approve")}
               </Button>
               <Button disabled={busy} onClick={() => setMode("edit")}>
-                Edit
+                {t("remediation.detail.edit")}
               </Button>
             </>
           )}
           {item.can_reject && (
             <Button variant="danger" disabled={busy} onClick={() => setMode("reject")}>
-              Reject…
+              {t("remediation.detail.rejectOpen")}
             </Button>
           )}
           {!item.can_approve && (
             <p className={styles.note}>
               {item.can_reject
-                ? "Only an administrator can approve a high-impact command."
-                : "Your role can read this command but not decide on it."}
+                ? t("remediation.detail.adminOnly")
+                : t("remediation.detail.readOnly")}
             </p>
           )}
         </div>

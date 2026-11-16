@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import type { IntegrationDelivery } from "./api";
 import {
   EVENT_GROUPS,
@@ -113,6 +115,18 @@ describe("integrations", () => {
         delivery({ state: "failed", attempts: 30, last_status: 503 }),
       ),
     ).toBe("Gave up after 30 tries (503)");
+  });
+
+  it("speaks French", () => {
+    setActiveLocale("fr");
+    expect(eventName("server.offline")).toBe("Serveurs\u00a0: Ne répond plus");
+    expect(eventsSummary(ALL, ALL)).toBe("Tous les événements");
+    expect(eventsSummary(ALL.filter((e) => e !== "incident.acknowledged"), ALL)).toBe(
+      "Tous les événements sauf Incidents\u00a0: Pris en charge",
+    );
+    expect(stateLabel({ state: "disabled", failing_since: null }).text).toBe("Désactivée");
+    expect(deliveryResult(delivery({ attempts: 1, last_status: 500 }))).toBe("1 essai (500), nouvel essai à venir");
+    expect(deliveryResult(delivery({ state: "failed", attempts: 30 }))).toBe("Abandonné après 30 essais");
   });
 
   it("reads a local date and time", () => {
