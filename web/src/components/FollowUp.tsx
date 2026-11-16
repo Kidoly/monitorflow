@@ -2,6 +2,7 @@
 
 import { type FormEvent, useCallback, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import {
   ApiError,
   type FollowUpChoice,
@@ -93,9 +94,9 @@ function FollowUpForm({
   const siteCustomer = new Map((places?.sites ?? []).map((s) => [s.id, s.customer_id]));
   const fits = (c: FollowUpChoice) => (chosen ? covers(c, chosen, siteCustomer) : false);
   // People already named stay choices, though they could not be added now.
-  const named = (policy?.steps ?? []).flatMap((s) => s.users).map((u) => ({ id: u.id, name: u.name ?? "a removed user" }));
+  const named = (policy?.steps ?? []).flatMap((s) => s.users).map((u) => ({ id: u.id, name: u.name ?? t("onCall.removedUser") }));
   const people = [
-    ...(candidates?.people ?? []).map((p) => ({ id: p.id, name: p.has_contact ? p.username : `${p.username} (no email or chat yet)` })),
+    ...(candidates?.people ?? []).map((p) => ({ id: p.id, name: p.has_contact ? p.username : t("onCall.noContactYet", { name: p.username }) })),
     ...named.filter((n) => !(candidates?.people ?? []).some((p) => p.id === n.id)),
   ].filter((p, i, all) => all.findIndex((q) => q.id === p.id) === i);
 
@@ -104,7 +105,7 @@ function FollowUpForm({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!chosen) return setError("Choose what this follow-up is for.");
+    if (!chosen) return setError(t("followUp.missingPlace"));
     setBusy(true);
     setError(null);
     try {
@@ -117,13 +118,13 @@ function FollowUpForm({
   }
 
   return (
-    <form className={styles.form} onSubmit={(e) => void submit(e)} aria-label={policy ? "Edit follow-up" : "New follow-up"}>
+    <form className={styles.form} onSubmit={(e) => void submit(e)} aria-label={policy ? t("followUp.edit") : t("followUp.new")}>
       {scopes.length > 1 && (
         <label className={admin.field}>
-          Follow-up for
+          {t("followUp.for")}
           <select className={fieldClass} required value={chosen?.value ?? ""} disabled={Boolean(policy)} onChange={(e) => setScope(e.target.value)}>
             <option value="" disabled>
-              Choose…
+              {t("onCall.choose")}
             </option>
             {scopes.map((s) => (
               <option key={s.value} value={s.value}>
@@ -131,65 +132,72 @@ function FollowUpForm({
               </option>
             ))}
           </select>
-          <span className={admin.fieldNote}>Replaces any follow-up already set for this place.</span>
+          <span className={admin.fieldNote}>{t("followUp.forNote")}</span>
         </label>
       )}
-      {steps.length === 0 && <p className={admin.dim}>No steps: nobody is told after the first message.</p>}
+      {steps.length === 0 && <p className={admin.dim}>{t("followUp.noSteps")}</p>}
       <ol className={styles.steps}>
         {steps.map((step, i) => (
-          <li key={i} aria-label={`Step ${i + 1}`}>
+          <li key={i} aria-label={t("followUp.stepName", { number: i + 1 })}>
             <div className={styles.stepHead}>
-              <strong>Step {i + 1}</strong>
+              <strong>{t("followUp.stepName", { number: i + 1 })}</strong>
               <label className={styles.inline}>
-                after{" "}
-                <input
-                  className={fieldClass}
-                  type="number"
-                  min={1}
-                  max={1440}
-                  required
-                  aria-label={`Minutes before step ${i + 1}`}
-                  value={step.after_minutes}
-                  onChange={(e) => change(i, { after_minutes: Number(e.target.value) })}
-                />{" "}
-                minutes without acknowledgement{i > 0 ? " since the step before" : ""}, tell:
+                {rich(i > 0 ? "followUp.afterPrevious" : "followUp.after", {
+                  minutes: (
+                    <input
+                      className={fieldClass}
+                      type="number"
+                      min={1}
+                      max={1440}
+                      required
+                      aria-label={t("followUp.minutesBefore", { number: i + 1 })}
+                      value={step.after_minutes}
+                      onChange={(e) => change(i, { after_minutes: Number(e.target.value) })}
+                    />
+                  ),
+                })}
               </label>
-              <Button size="small" disabled={i === 0} aria-label={`Move step ${i + 1} up`} onClick={() => setSteps(move(steps, i, -1))}>
+              <Button size="small" disabled={i === 0} aria-label={t("followUp.up", { number: i + 1 })} onClick={() => setSteps(move(steps, i, -1))}>
                 ↑
               </Button>
-              <Button size="small" disabled={i === steps.length - 1} aria-label={`Move step ${i + 1} down`} onClick={() => setSteps(move(steps, i, 1))}>
+              <Button
+                size="small"
+                disabled={i === steps.length - 1}
+                aria-label={t("followUp.down", { number: i + 1 })}
+                onClick={() => setSteps(move(steps, i, 1))}
+              >
                 ↓
               </Button>
-              <Button size="small" aria-label={`Remove step ${i + 1}`} onClick={() => setSteps(steps.filter((_, j) => j !== i))}>
-                Remove
+              <Button size="small" aria-label={t("followUp.removeStep", { number: i + 1 })} onClick={() => setSteps(steps.filter((_, j) => j !== i))}>
+                {t("followUp.remove")}
               </Button>
             </div>
             <label>
-              <input type="checkbox" checked={step.administrators} onChange={(e) => change(i, { administrators: e.target.checked })} /> The
-              administrators of the place
+              <input type="checkbox" checked={step.administrators} onChange={(e) => change(i, { administrators: e.target.checked })} />{" "}
+              {t("followUp.administratorsLabel")}
             </label>
             <Checks
-              legend="The person on call of"
+              legend={t("followUp.personOnCallOf")}
               options={list.schedules.filter(fits)}
               chosen={step.on_call}
               onChange={(on_call) => change(i, { on_call })}
             />
-            <Checks legend="People" options={chosen ? people : []} chosen={step.users} onChange={(users) => change(i, { users })} />
-            <Checks legend="Channels" options={list.channels.filter(fits)} chosen={step.channels} onChange={(channels) => change(i, { channels })} />
+            <Checks legend={t("followUp.people")} options={chosen ? people : []} chosen={step.users} onChange={(users) => change(i, { users })} />
+            <Checks legend={t("followUp.channels")} options={list.channels.filter(fits)} chosen={step.channels} onChange={(channels) => change(i, { channels })} />
           </li>
         ))}
       </ol>
       <div>
         <Button size="small" disabled={steps.length >= 10} onClick={() => setSteps([...steps, { ...NEW_STEP, administrators: false }])}>
-          Add a step
+          {t("followUp.addStep")}
         </Button>
       </div>
       <div className={admin.formFoot}>
         <Button type="submit" variant="k" disabled={busy}>
-          {busy ? "Saving…" : "Save"}
+          {busy ? t("onCall.saving") : t("onCall.save")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("onCall.cancel")}
         </Button>
         {error && (
           <p className={admin.formError} role="alert">
@@ -202,7 +210,7 @@ function FollowUpForm({
 }
 
 function Steps({ policy }: { policy: Pick<FollowUpPolicy, "steps"> }) {
-  if (policy.steps.length === 0) return <p className={admin.dim}>Nobody is told after the first message.</p>;
+  if (policy.steps.length === 0) return <p className={admin.dim}>{t("followUp.nobodyAfter")}</p>;
   return (
     <ol className={styles.stepList}>
       {policy.steps.map((s, i) => (
@@ -227,9 +235,9 @@ export function FollowUpSection({ enabled }: { enabled: boolean }) {
     <section className={admin.section} aria-labelledby="follow-up-title">
       <div className={admin.sectionHead}>
         <span id="follow-up-title" className={admin.sectionTitle}>
-          If nobody acknowledges
+          {t("followUp.title")}
         </span>
-        <span className={admin.dim}>Acknowledging an alert says someone is on it. Until then, the follow-up tells more people, step by step.</span>
+        <span className={admin.dim}>{t("followUp.intro")}</span>
       </div>
       <div className={styles.body}>
         {!data && error !== null ? (
@@ -237,11 +245,8 @@ export function FollowUpSection({ enabled }: { enabled: boolean }) {
         ) : data ? (
           <>
             <div>
-              <strong>Default</strong>
-              <p className={styles.stepText}>
-                Critical alerts not acknowledged within {minutesText(wait)} go to the nearest administrators of the place, in person.
-                Warnings are not followed up.
-              </p>
+              <strong>{t("followUp.default")}</strong>
+              <p className={styles.stepText}>{t("followUp.defaultText", { minutes: minutesText(wait) })}</p>
             </div>
             {data.policies.map((p) =>
               editing?.id === p.id ? (
@@ -256,19 +261,19 @@ export function FollowUpSection({ enabled }: { enabled: boolean }) {
                   }}
                 />
               ) : (
-                <div key={p.id} aria-label={`Follow-up for ${placeName(p, several, multi)}`} role="group">
+                <div key={p.id} aria-label={t("followUp.forPlace", { place: placeName(p, several, multi) })} role="group">
                   <strong>{placeName(p, several, multi)}</strong>
                   <Steps policy={p} />
                   <div className={styles.actions}>
                     <Button size="small" onClick={() => setEditing(p)}>
-                      Edit
+                      {t("onCall.edit")}
                     </Button>
                     <InlineConfirm
-                      trigger="Back to the default…"
+                      trigger={t("followUp.backToDefault")}
                       triggerVariant="default"
-                      title={`Use the default for ${placeName(p, several, multi)}?`}
-                      consequence={`Critical alerts nobody acknowledges go to the nearest administrators after ${minutesText(wait)}.`}
-                      confirmLabel="Use the default"
+                      title={t("followUp.useDefault.title", { place: placeName(p, several, multi) })}
+                      consequence={t("followUp.useDefault.consequence", { minutes: minutesText(wait) })}
+                      confirmLabel={t("followUp.useDefault.confirm")}
                       onConfirm={async () => {
                         await api.deleteFollowUpPolicy(p.id);
                         refresh();
@@ -290,7 +295,7 @@ export function FollowUpSection({ enabled }: { enabled: boolean }) {
               />
             ) : (
               <div>
-                <Button onClick={() => setEditing(null)}>Set a follow-up…</Button>
+                <Button onClick={() => setEditing(null)}>{t("followUp.set")}</Button>
               </div>
             )}
           </>

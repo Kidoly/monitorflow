@@ -15,6 +15,7 @@ import {
   api,
   describeError,
 } from "@/lib/api";
+import { rich, t } from "@/i18n";
 import { administersEverything, isAdministrator, multiCustomer, useMe } from "@/lib/me";
 import { channelScopes, scopeName, scopeValue } from "@/lib/notifications";
 import { usePolledData } from "@/lib/usePolledData";
@@ -39,9 +40,7 @@ export function NotificationsPage() {
   const me = useMe();
   if (!isAdministrator(me)) {
     return (
-      <NoPermission title="Notifications need an administrator">
-        Ask one to send incidents to your email or chat.
-      </NoPermission>
+      <NoPermission title={t("notifications.noPermission.title")}>{t("notifications.noPermission.body")}</NoPermission>
     );
   }
   return <Notifications />;
@@ -49,27 +48,17 @@ export function NotificationsPage() {
 
 type Kind = NotificationChannel["kind"];
 
-/** What each chat service needs on screen: the URL lives in that service, so the form says where. */
-export const CHAT: Record<
-  ChatKind,
-  { name: string; placeholder: string; help: string }
-> = {
-  slack: {
-    name: "Slack",
-    placeholder: "https://hooks.slack.com/services/…",
-    help: "In Slack, create an app at api.slack.com/apps, turn on Incoming Webhooks, and add a webhook to your channel.",
-  },
-  teams: {
-    name: "Teams",
-    placeholder: "https://….api.powerplatform.com/…",
-    help: "In Teams, open the channel's Workflows, pick “Send webhook alerts to a channel”, and copy the URL it gives you. Old connector URLs no longer work.",
-  },
-  discord: {
-    name: "Discord",
-    placeholder: "https://discord.com/api/webhooks/…",
-    help: "In Discord, open the channel's settings, then Integrations, Webhooks, New Webhook, and Copy Webhook URL.",
-  },
+/** What each chat service needs on screen; `chatHelp` says where its URL is. */
+export const CHAT: Record<ChatKind, { name: string; placeholder: string }> = {
+  slack: { name: "Slack", placeholder: "https://hooks.slack.com/services/…" },
+  teams: { name: "Teams", placeholder: "https://….api.powerplatform.com/…" },
+  discord: { name: "Discord", placeholder: "https://discord.com/api/webhooks/…" },
 };
+
+/** Where a chat service gives its webhook URL, in the active language: the URL lives in that service. */
+export function chatHelp(kind: ChatKind): string {
+  return t(`notifications.chat.${kind}.help`);
+}
 
 function isChat(kind: Kind): kind is ChatKind {
   return kind in CHAT;
@@ -97,20 +86,20 @@ export function pluginAllows(
 export function destination(channel: NotificationChannel): string {
   if (channel.kind === "plugin") {
     const { plugin, name } = channel.settings;
-    return name ? `${plugin}: ${name}` : plugin;
+    return name ? t("notifications.named", { service: plugin, name }) : plugin;
   }
   if (channel.kind === "email") {
     const { to, host, port } = channel.settings;
-    return `Email to ${to.join(", ")} through ${host}:${port}`;
+    return t("notifications.emailTo", { to: to.join(", "), host, port: String(port) });
   }
   if (channel.kind !== "webhook") {
     const { name, host } = channel.settings;
-    return `${CHAT[channel.kind].name}: ${name || host}`;
+    return t("notifications.named", { service: CHAT[channel.kind].name, name: name || host });
   }
   try {
-    return `Webhook to ${new URL(channel.settings.origin).host}`;
+    return t("notifications.webhookTo", { host: new URL(channel.settings.origin).host });
   } catch {
-    return `Webhook to ${channel.settings.origin}`;
+    return t("notifications.webhookTo", { host: channel.settings.origin });
   }
 }
 
@@ -158,13 +147,13 @@ function Notifications() {
   }
 
   const header = (
-    <PageHeader title="Notifications" meta="Email, chat and webhooks" />
+    <PageHeader title={t("notifications.title")} meta={t("notifications.meta")} />
   );
   if (error instanceof ApiError && error.status === 403) {
     return (
       <div className={styles.page}>
         {header}
-        <NoPermission title="Notifications need an administrator" />
+        <NoPermission title={t("notifications.noPermission.title")} />
       </div>
     );
   }
@@ -174,7 +163,7 @@ function Notifications() {
         {header}
         {error ? (
           <ErrorState
-            what="notifications"
+            what={t("notifications.what")}
             error={describeError(error)}
             onRetry={refresh}
           />
@@ -191,7 +180,7 @@ function Notifications() {
       variant={kind === "email" ? "k" : undefined}
       onClick={() => setEditing({ kind })}
     >
-      Add {kindName(kind)}
+      {t("notifications.add", { kind: kindName(kind) })}
     </Button>
   );
   const channelPlugins = (usable.data?.plugins ?? []).filter((p) => p.kind === "channel");
@@ -199,7 +188,7 @@ function Notifications() {
     ...(["email", "slack", "teams", "discord", "webhook"] as const).map(add),
     ...channelPlugins.map((plugin) => (
       <Button key={`plugin:${plugin.name}`} onClick={() => setEditing({ kind: "plugin", plugin })}>
-        Add {plugin.title}
+        {t("notifications.add", { kind: plugin.title })}
       </Button>
     )),
   ];
@@ -212,8 +201,8 @@ function Notifications() {
       {actionError && <Banner tone="bad">{actionError}</Banner>}
       <p className={styles.footnote}>
         {global
-          ? "MonitorFlow sends a message when an incident opens, becomes critical or resolves, when a command waits for approval, when an update or a backup fails, and when a new version is out."
-          : "MonitorFlow sends a message when an incident opens, becomes critical or resolves, when a command waits for approval, and when an update fails. This page shows the channels of what you administer."}
+          ? t("notifications.intro.global")
+          : t("notifications.intro.scoped")}
       </p>
       {editing ? (
         <ChannelForm
@@ -229,18 +218,16 @@ function Notifications() {
           }}
         />
       ) : data.channels.length === 0 ? (
-        <EmptyState title="No one is notified yet" actions={<>{addButtons}</>}>
-          Incidents only show while someone has this page open. Add an email
-          address, a Slack, Teams or Discord channel, or a webhook for
-          Mattermost or your own tools.
+        <EmptyState title={t("notifications.empty.title")} actions={<>{addButtons}</>}>
+          {t("notifications.empty.body")}
         </EmptyState>
       ) : (
         <div className={styles.buttonRow}>{addButtons}</div>
       )}
       {data.channels.length > 0 && (
-        <section className={styles.section} aria-label="Channels">
+        <section className={styles.section} aria-label={t("notifications.channels")}>
           <div className={styles.sectionHead}>
-            <h2 className={styles.sectionTitle}>Channels</h2>
+            <h2 className={styles.sectionTitle}>{t("notifications.channels")}</h2>
           </div>
           <Channels
             channels={data.channels}
@@ -272,8 +259,8 @@ function Notifications() {
 }
 
 function kindName(kind: Kind, plugin?: UsablePlugin): string {
-  if (kind === "plugin") return plugin?.title ?? "plugin channel";
-  return isChat(kind) ? CHAT[kind].name : kind;
+  if (kind === "plugin") return plugin?.title ?? t("notifications.kind.plugin");
+  return isChat(kind) ? CHAT[kind].name : t(`notifications.kind.${kind}`);
 }
 
 function Status({
@@ -285,15 +272,13 @@ function Status({
 }) {
   const now = new Date();
   if (test === "sending")
-    return <span className={styles.dim}>Sending a test…</span>;
+    return <span className={styles.dim}>{t("notifications.sending")}</span>;
   if (test?.ok) {
     return (
       <>
-        <Label tone="ok">Test sent</Label>{" "}
+        <Label tone="ok">{t("notifications.testSent")}</Label>{" "}
         <span className={styles.dim}>
-          {channel.kind === "email"
-            ? "Check that it arrived, and the spam folder."
-            : "Check that it arrived."}
+          {channel.kind === "email" ? t("notifications.checkEmail") : t("notifications.check")}
         </span>
       </>
     );
@@ -302,7 +287,7 @@ function Status({
   if (error) {
     return (
       <>
-        <Label tone="bad">Failing</Label>{" "}
+        <Label tone="bad">{t("notifications.failing")}</Label>{" "}
         <span role={test ? "alert" : undefined}>{error}</span>
       </>
     );
@@ -310,14 +295,14 @@ function Status({
   if (channel.last_sent_at) {
     return (
       <>
-        <Label tone="ok">Working</Label>{" "}
+        <Label tone="ok">{t("notifications.working")}</Label>{" "}
         <span className={styles.dim}>
-          last sent <RelativeTime value={channel.last_sent_at} now={now} />
+          {rich("notifications.lastSent", { time: <RelativeTime value={channel.last_sent_at} now={now} /> })}
         </span>
       </>
     );
   }
-  return <span className={styles.dim}>Nothing sent yet</span>;
+  return <span className={styles.dim}>{t("notifications.nothingSent")}</span>;
 }
 
 function Channels({
@@ -340,12 +325,12 @@ function Channels({
   const columns: Column<NotificationChannel>[] = [
     {
       key: "destination",
-      header: "Sends to",
+      header: t("notifications.column.sendsTo"),
       className: styles.wrap,
       cell: (c) => (
         <>
           <strong>{destination(c)}</strong>
-          {c.follow_up_only && <span className={styles.dim}> · only for follow-ups</span>}
+          {c.follow_up_only && <span className={styles.dim}> · {t("notifications.followUpOnly")}</span>}
         </>
       ),
     },
@@ -353,7 +338,7 @@ function Channels({
       ? [
           {
             key: "scope",
-            header: "About",
+            header: t("notifications.column.about"),
             cell: (c: NotificationChannel) =>
               c.customer_id ? (
                 scopeName(c, severalCustomers)
@@ -365,7 +350,7 @@ function Channels({
       : []),
     {
       key: "status",
-      header: "Status",
+      header: t("notifications.column.status"),
       className: styles.wrap,
       cell: (c) => <Status channel={c} test={tests[c.id]} />,
     },
@@ -379,18 +364,18 @@ function Channels({
             disabled={tests[c.id] === "sending"}
             onClick={() => onTest(c.id)}
           >
-            Send test
+            {t("notifications.sendTest")}
           </Button>
           <Button size="small" onClick={() => onEdit(c)}>
-            Edit
+            {t("notifications.editButton")}
           </Button>
           <InlineConfirm
             layout="row"
-            trigger="Delete"
-            triggerName={`Delete ${destination(c)}`}
-            title="Delete this channel?"
-            consequence="Nothing more is sent to it."
-            confirmLabel="Delete"
+            trigger={t("notifications.delete")}
+            triggerName={t("notifications.deleteName", { name: destination(c) })}
+            title={t("notifications.delete.title")}
+            consequence={t("notifications.delete.consequence")}
+            confirmLabel={t("notifications.delete")}
             onConfirm={() => onDelete(c.id)}
             describeError={describeError}
           />
@@ -401,7 +386,7 @@ function Channels({
   return (
     <DataTable
       bare
-      label="Notification channels"
+      label={t("notifications.table")}
       columns={columns}
       rows={channels}
       rowKey={(c) => c.id}
@@ -448,9 +433,7 @@ function ChannelForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const id = useId();
-  const kept = channel?.has_secret
-    ? "Saved; leave empty to keep it"
-    : undefined;
+  const kept = channel?.has_secret ? t("notifications.kept") : undefined;
   const scopes = channelScopes(useMe(), customers, sites, channel).filter(
     (s) => !plugin || pluginAllows(plugin, s, sites),
   );
@@ -526,7 +509,7 @@ function ChannelForm({
       aria-labelledby={`${id}-title`}
     >
       <h2 id={`${id}-title`} className={styles.sectionTitle}>
-        {channel ? "Edit" : "Add"} {kindName(kind, plugin)}
+        {t(channel ? "notifications.edit" : "notifications.add", { kind: kindName(kind, plugin) })}
       </h2>
       {kind === "plugin" ? (
         plugin ? (
@@ -534,7 +517,7 @@ function ChannelForm({
             {plugin.description && <p className={styles.fieldNote}>{plugin.description}</p>}
             {plugin.settings.map((setting) =>
               field(
-                setting.label + (setting.required ? "" : " (optional)"),
+                setting.required ? setting.label : t("notifications.optional", { label: setting.label }),
                 setting.type === "secret" ? (
                   <input
                     className={fieldClass}
@@ -556,12 +539,12 @@ function ChannelForm({
                   />
                 ),
                 setting.type === "secret"
-                  ? `${setting.help ? `${setting.help} ` : ""}Stored on the server, never shown again.`
+                  ? `${setting.help ? `${setting.help} ` : ""}${t("notifications.stored")}`
                   : setting.help,
               ),
             )}
             {field(
-              "Name (optional)",
+              t("notifications.nameOptional"),
               <input
                 className={fieldClass}
                 autoComplete="off"
@@ -569,18 +552,18 @@ function ChannelForm({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />,
-              "Tells this channel from others in the list here.",
+              t("notifications.nameNote"),
             )}
           </>
         ) : (
           <p className={styles.formError} role="alert">
-            Its plugin is turned off or removed. A global administrator can turn it on under Plugins.
+            {t("notifications.pluginGone")}
           </p>
         )
       ) : kind === "email" ? (
         <>
           {field(
-            "Send to",
+            t("notifications.sendTo"),
             <input
               className={fieldClass}
               required
@@ -591,7 +574,7 @@ function ChannelForm({
           )}
           <div className={styles.formGrid}>
             {field(
-              "Mail server",
+              t("notifications.mailServer"),
               <input
                 className={fieldClass}
                 required
@@ -601,7 +584,7 @@ function ChannelForm({
               />,
             )}
             {field(
-              "Port",
+              t("notifications.port"),
               <input
                 className={fieldClass}
                 type="number"
@@ -611,22 +594,22 @@ function ChannelForm({
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
               />,
-              "587 or 465 for TLS, 25 for a local relay",
+              t("notifications.portNote"),
             )}
           </div>
           <div className={styles.formGrid}>
             {field(
-              "Username",
+              t("notifications.username"),
               <input
                 className={fieldClass}
                 autoComplete="off"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Empty when the server needs none"
+                placeholder={t("notifications.usernamePlaceholder")}
               />,
             )}
             {field(
-              "Password",
+              t("notifications.password"),
               <input
                 className={fieldClass}
                 type="password"
@@ -635,15 +618,15 @@ function ChannelForm({
                 onChange={(e) => setSecret(e.target.value)}
                 placeholder={kept}
               />,
-              "Stored on the server, never shown again",
+              t("notifications.storedShort"),
             )}
             {field(
-              "Sender address",
+              t("notifications.sender"),
               <input
                 className={fieldClass}
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
-                placeholder="The username, when it is an address"
+                placeholder={t("notifications.senderPlaceholder")}
               />,
             )}
           </div>
@@ -651,7 +634,7 @@ function ChannelForm({
       ) : service ? (
         <>
           {field(
-            "Webhook URL",
+            t("notifications.webhookUrl"),
             <input
               className={fieldClass}
               required={!channel}
@@ -661,10 +644,10 @@ function ChannelForm({
               onChange={(e) => setSecret(e.target.value)}
               placeholder={kept ?? service.placeholder}
             />,
-            `${service.help} Stored on the server, never shown again.`,
+            `${chatHelp(kind as ChatKind)} ${t("notifications.stored")}`,
           )}
           {field(
-            "Name (optional)",
+            t("notifications.nameOptional"),
             <input
               className={fieldClass}
               autoComplete="off"
@@ -673,13 +656,13 @@ function ChannelForm({
               onChange={(e) => setName(e.target.value)}
               placeholder="#ops-alerts"
             />,
-            "Tells this channel from others in the list here.",
+            t("notifications.nameNote"),
           )}
         </>
       ) : (
         <>
           {field(
-            "URL",
+            t("notifications.url"),
             <input
               className={fieldClass}
               type="url"
@@ -689,14 +672,14 @@ function ChannelForm({
               onChange={(e) => setUrl(e.target.value)}
               placeholder={
                 hook
-                  ? `${hook.origin}/…, saved; leave empty to keep it`
+                  ? t("notifications.urlKept", { origin: hook.origin })
                   : "https://hooks.example.com/monitorflow"
               }
             />,
-            "Receives a JSON POST per event. Mattermost shows its text as is. Its path is not shown again: it often holds a token.",
+            t("notifications.urlNote"),
           )}
           {field(
-            "Signing secret (optional)",
+            t("notifications.signingSecret"),
             <span className={styles.buttons}>
               <input
                 className={fieldClass}
@@ -706,15 +689,15 @@ function ChannelForm({
                 onChange={(e) => setSecret(e.target.value)}
                 placeholder={kept}
               />
-              <Button onClick={() => setSecret(newSecret())}>Generate</Button>
+              <Button onClick={() => setSecret(newSecret())}>{t("notifications.generate")}</Button>
             </span>,
-            "Each request then carries X-MonitorFlow-Signature, so your receiver can check it came from here. Copy it into the receiver before saving: it is not shown again.",
+            t("notifications.signingNote"),
           )}
         </>
       )}
       {scopes.length > 1
         ? field(
-            "Notify about",
+            t("notifications.notifyAbout"),
             <select
               className={fieldClass}
               value={wanted}
@@ -732,15 +715,15 @@ function ChannelForm({
             <p className={styles.fieldNote}>{scope?.note}</p>
           )}
       <label>
-        <input type="checkbox" checked={followUpOnly} onChange={(e) => setFollowUpOnly(e.target.checked)} /> Only for follow-ups:
-        hears only the alerts nobody acknowledged, when a follow-up step names it
+        <input type="checkbox" checked={followUpOnly} onChange={(e) => setFollowUpOnly(e.target.checked)} />{" "}
+        {t("notifications.followUpOnlyLabel")}
       </label>
       <div className={styles.formFoot}>
         <Button type="submit" variant="k" disabled={busy || !scope}>
-          {busy ? "Saving…" : "Save and send test"}
+          {busy ? t("notifications.saving") : t("notifications.saveAndTest")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("notifications.cancel")}
         </Button>
         {error && (
           <p className={styles.formError} role="alert">

@@ -2,6 +2,7 @@
 
 import { type FormEvent, useId, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import {
   ApiError,
   type Customer,
@@ -30,18 +31,13 @@ export function PluginsPage() {
   const me = useMe();
   if (!administersEverything(me)) {
     return (
-      <NoPermission title="Plugins need a global administrator">
-        A plugin runs on the central server or on your servers, so only a global administrator installs one.
-      </NoPermission>
+      <NoPermission title={t("plugins.needAdmin")}>{t("plugins.needAdminBody")}</NoPermission>
     );
   }
   return <Plugins />;
 }
 
-const KIND_WORDS: Record<InstalledPlugin["kind"], string> = {
-  check: "Check",
-  channel: "Notification channel",
-};
+const kindWord = (kind: InstalledPlugin["kind"]) => t(`plugins.kind.${kind}`);
 
 /** A place as the editor keys it: `everything`, `customer:ID` or `site:ID`. */
 type PlaceKey = string;
@@ -58,9 +54,9 @@ interface PlaceChoice {
  * several; with neither the choice is just on or off.
  */
 export function placeChoices(customers: Customer[], sites: Site[], multiCustomer: boolean): PlaceChoice[] {
-  const choices: PlaceChoice[] = [{ key: "everything", label: multiCustomer ? "Every customer" : "Every server" }];
+  const choices: PlaceChoice[] = [{ key: "everything", label: multiCustomer ? t("plugins.everyCustomer") : t("plugins.everyServer") }];
   if (multiCustomer) {
-    for (const c of customers) choices.push({ key: `customer:${c.id}`, label: `All of ${c.name}` });
+    for (const c of customers) choices.push({ key: `customer:${c.id}`, label: t("plugins.allOf", { name: c.name }) });
   }
   if (multiCustomer || sites.length > 1) {
     for (const s of sites) {
@@ -77,13 +73,13 @@ function placeKey(place: InstalledPlugin["places"][number]): PlaceKey {
 
 /** Where a plugin may be used, in a few words. */
 export function placesSummary(plugin: InstalledPlugin, multiCustomer: boolean): string {
-  if (plugin.places.length === 0) return "Nowhere yet";
-  if (plugin.places.some((p) => !p.customer_id && !p.site_id)) return "Everywhere";
+  if (plugin.places.length === 0) return t("plugins.nowhere");
+  if (plugin.places.some((p) => !p.customer_id && !p.site_id)) return t("plugins.everywhere");
   return plugin.places
     .map((p) =>
       p.site_id
         ? placeLabel(p.customer_name, p.site_name ?? "", multiCustomer, " / ")
-        : customerWide(`All of ${p.customer_name}`, multiCustomer),
+        : customerWide(t("plugins.allOf", { name: p.customer_name ?? "" }), multiCustomer),
     )
     .join(", ");
 }
@@ -100,12 +96,12 @@ function Plugins() {
   const [placing, setPlacing] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const header = <PageHeader title="Plugins" meta="Global administrators only" />;
+  const header = <PageHeader title={t("plugins.title")} meta={t("plugins.meta")} />;
   if (error instanceof ApiError && error.status === 403) {
     return (
       <div className={styles.page}>
         {header}
-        <NoPermission title="Plugins need a global administrator" />
+        <NoPermission title={t("plugins.needAdmin")} />
       </div>
     );
   }
@@ -113,7 +109,7 @@ function Plugins() {
     return (
       <div className={styles.page}>
         {header}
-        {error ? <ErrorState what="the plugins" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
+        {error ? <ErrorState what={t("plugins.what")} error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
       </div>
     );
   }
@@ -136,42 +132,45 @@ function Plugins() {
   const columns: Column<InstalledPlugin>[] = [
     {
       key: "plugin",
-      header: "Plugin",
+      header: t("plugins.column.plugin"),
       className: styles.wrap,
       cell: (p) => (
         <>
           <strong>{p.title}</strong> {p.version}
           <div className={styles.dim}>
-            {KIND_WORDS[p.kind]} · signed by {p.publisher ?? `a key no longer trusted (${p.fingerprint})`}
+            {t("plugins.signedBy", {
+              kind: kindWord(p.kind),
+              publisher: p.publisher ?? t("plugins.untrustedKey", { fingerprint: p.fingerprint }),
+            })}
           </div>
         </>
       ),
     },
     {
       key: "asks",
-      header: "Asks for",
+      header: t("plugins.column.asks"),
       className: styles.wrap,
       cell: (p) => p.capabilities.slice(1).join(". "),
     },
     {
       key: "where",
-      header: "Used where",
+      header: t("plugins.column.where"),
       className: styles.wrap,
       cell: (p) => placesSummary(p, multi),
     },
     {
       key: "status",
-      header: "Status",
+      header: t("plugins.column.status"),
       cell: (p) =>
         p.enabled ? (
           <>
-            <Label tone="ok">On</Label>{" "}
+            <Label tone="ok">{t("plugins.on")}</Label>{" "}
             <span className={styles.dim}>
-              {p.kind === "check" ? `${p.checks} check(s)` : `${p.channels} channel(s)`}
+              {p.kind === "check" ? t("plugins.checks", { count: p.checks }) : t("plugins.channels", { count: p.channels })}
             </span>
           </>
         ) : (
-          <Label tone="neutral">Off</Label>
+          <Label tone="neutral">{t("plugins.off")}</Label>
         ),
     },
     {
@@ -180,18 +179,18 @@ function Plugins() {
       cell: (p) => (
         <span className={styles.buttons}>
           <Button size="small" onClick={() => setPlacing(p.id)}>
-            Where
+            {t("plugins.where")}
           </Button>
           <Button size="small" onClick={() => void act(() => api.setPluginEnabled(p.id, !p.enabled))}>
-            {p.enabled ? "Turn off" : "Turn on"}
+            {p.enabled ? t("plugins.turnOff") : t("plugins.turnOn")}
           </Button>
           <InlineConfirm
             layout="row"
-            trigger="Remove"
-            triggerName={`Remove ${p.title}`}
-            title={`Remove ${p.title}?`}
-            consequence="It is deleted from the central server. Remove its checks and channels first."
-            confirmLabel="Remove"
+            trigger={t("plugins.remove")}
+            triggerName={t("plugins.removeName", { name: p.title })}
+            title={t("plugins.removeTitle", { name: p.title })}
+            consequence={t("plugins.removeConsequence")}
+            confirmLabel={t("plugins.remove")}
             onConfirm={async () => {
               await api.removePlugin(p.id);
               refresh();
@@ -207,9 +206,7 @@ function Plugins() {
     <div className={styles.page}>
       {header}
       <p className={styles.footnote}>
-        Plugins add checks and notification channels. Each is signed by its publisher and runs in a sandbox: it reads
-        no files and runs no programs, and reaches only the addresses it shows here. To make your own, see{" "}
-        <a href={GUIDE}>Write a plugin</a>.
+        {rich("plugins.intro", { guide: <a href={GUIDE}>{t("plugins.guide")}</a> })}
       </p>
       {actionError && <Banner tone="bad">{actionError}</Banner>}
       <Upload
@@ -231,12 +228,10 @@ function Plugins() {
         />
       )}
       {data.plugins.length === 0 ? (
-        <EmptyState title="No plugin installed">
-          Upload a .mfplugin file above. Plugins from your own publishers need their key under Publishers first.
-        </EmptyState>
+        <EmptyState title={t("plugins.emptyTitle")}>{t("plugins.emptyBody")}</EmptyState>
       ) : (
-        <section className={styles.section} aria-label="Installed plugins">
-          <DataTable bare label="Installed plugins" columns={columns} rows={data.plugins} rowKey={(p) => p.id} />
+        <section className={styles.section} aria-label={t("plugins.installed")}>
+          <DataTable bare label={t("plugins.installed")} columns={columns} rows={data.plugins} rowKey={(p) => p.id} />
         </section>
       )}
       <Publishers />
@@ -286,10 +281,10 @@ function Upload({ onInstalled }: { onInstalled: (plugin: InstalledPlugin, isNew:
   return (
     <section className={styles.panel} aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`} className={styles.sectionTitle}>
-        Install a plugin
+        {t("plugins.install")}
       </h2>
       <label className={styles.field}>
-        Plugin file
+        {t("plugins.file")}
         <input
           key={file ? "chosen" : "empty"}
           type="file"
@@ -297,9 +292,9 @@ function Upload({ onInstalled }: { onInstalled: (plugin: InstalledPlugin, isNew:
           disabled={busy}
           onChange={(e) => void choose(e.target.files?.[0] ?? null)}
         />
-        <span className={styles.fieldNote}>Nothing is installed before you read what it asks for.</span>
+        <span className={styles.fieldNote}>{t("plugins.fileNote")}</span>
       </label>
-      {busy && !shown && <p className={styles.dim}>Checking its signature…</p>}
+      {busy && !shown && <p className={styles.dim}>{t("plugins.checking")}</p>}
       {error && (
         <p className={styles.formError} role="alert">
           {error}
@@ -309,29 +304,36 @@ function Upload({ onInstalled }: { onInstalled: (plugin: InstalledPlugin, isNew:
         <>
           <h3 className={styles.sectionTitle}>
             {shown.title} {shown.version}
-            {shown.update && <span className={styles.dim}> (installed: {shown.update.from_version})</span>}
+            {shown.update && <span className={styles.dim}> {t("plugins.installedVersion", { version: shown.update.from_version })}</span>}
           </h3>
           {shown.description && <p>{shown.description}</p>}
           <p className={styles.dim}>
-            Signed by {shown.official ? "MonitorFlow" : shown.publisher}, key {shown.fingerprint}
+            {t("plugins.signedByKey", {
+              publisher: shown.official ? "MonitorFlow" : shown.publisher,
+              fingerprint: shown.fingerprint,
+            })}
           </p>
-          <ul aria-label="What it asks for">
+          <ul aria-label={t("plugins.asks")}>
             {(shown.update ? shown.update.adds : shown.capabilities).map((c) => (
               <li key={c}>{c}</li>
             ))}
           </ul>
           {shown.update && shown.update.adds.length === 0 && (
-            <p className={styles.dim}>This version asks for nothing new.</p>
+            <p className={styles.dim}>{t("plugins.nothingNew")}</p>
           )}
           {shown.update && shown.update.drops.length > 0 && (
-            <p className={styles.dim}>It no longer asks to: {shown.update.drops.join(", ")}.</p>
+            <p className={styles.dim}>{t("plugins.drops", { drops: shown.update.drops.join(", ") })}</p>
           )}
           <div className={styles.formFoot}>
             <Button variant="k" disabled={busy} onClick={() => void install()}>
-              {busy ? "Installing…" : shown.update ? `Update to ${shown.version}` : "Install"}
+              {busy
+                ? t("plugins.installing")
+                : shown.update
+                  ? t("plugins.updateTo", { version: shown.version })
+                  : t("plugins.installButton")}
             </Button>
             <Button disabled={busy} onClick={() => void choose(null)}>
-              Cancel
+              {t("plugins.cancel")}
             </Button>
           </div>
         </>
@@ -385,15 +387,13 @@ function PlacesForm({
     }
   }
 
-  const use = plugin.kind === "check" ? "as a check" : "as a notification channel";
+  const use = plugin.kind === "check" ? t("plugins.asCheck") : t("plugins.asChannel");
   return (
     <form className={styles.panel} onSubmit={(e) => void submit(e)} aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`} className={styles.sectionTitle}>
-        Where {plugin.title} may be used
+        {t("plugins.whereTitle", { name: plugin.title })}
       </h2>
-      <p className={styles.dim}>
-        Where it is allowed, administrators can add it {use}. Nothing runs until they do.
-      </p>
+      <p className={styles.dim}>{t("plugins.whereNote", { use })}</p>
       {choices.map((choice) => (
         <label key={choice.key}>
           <input
@@ -407,10 +407,10 @@ function PlacesForm({
       ))}
       <div className={styles.formFoot}>
         <Button type="submit" variant="k" disabled={busy}>
-          {busy ? "Saving…" : "Save"}
+          {busy ? t("plugins.saving") : t("plugins.save")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("plugins.cancel")}
         </Button>
         {error && (
           <p className={styles.formError} role="alert">
@@ -447,13 +447,13 @@ function Publishers() {
   }
 
   const columns: Column<PluginPublisher>[] = [
-    { key: "name", header: "Publisher", cell: (p) => <strong>{p.name}</strong> },
-    { key: "key", header: "Key", cell: (p) => <span className={styles.mono}>{p.fingerprint}</span> },
+    { key: "name", header: t("plugins.column.publisher"), cell: (p) => <strong>{p.name}</strong> },
+    { key: "key", header: t("plugins.column.key"), cell: (p) => <span className={styles.mono}>{p.fingerprint}</span> },
     {
       key: "plugins",
-      header: "Installed plugins",
+      header: t("plugins.column.installed"),
       className: styles.wrap,
-      cell: (p) => (p.plugins.length ? p.plugins.join(", ") : <span className={styles.dim}>none</span>),
+      cell: (p) => (p.plugins.length ? p.plugins.join(", ") : <span className={styles.dim}>{t("plugins.none")}</span>),
     },
     {
       key: "actions",
@@ -461,11 +461,11 @@ function Publishers() {
       cell: (p) => (
         <InlineConfirm
           layout="row"
-          trigger="Remove"
-          triggerName={`Remove ${p.name}`}
-          title={`Stop trusting ${p.name}?`}
-          consequence="Their plugins can no longer be installed or updated. Remove their installed plugins first."
-          confirmLabel="Remove"
+          trigger={t("plugins.remove")}
+          triggerName={t("plugins.removeName", { name: p.name })}
+          title={t("plugins.stopTrusting", { name: p.name })}
+          consequence={t("plugins.stopConsequence")}
+          confirmLabel={t("plugins.remove")}
           onConfirm={async () => {
             await api.removePluginPublisher(p.id);
             refresh();
@@ -480,21 +480,20 @@ function Publishers() {
     <section className={styles.section} aria-labelledby={`${id}-title`}>
       <div className={styles.sectionHead}>
         <h2 id={`${id}-title`} className={styles.sectionTitle}>
-          Publishers
+          {t("plugins.publishers")}
         </h2>
       </div>
       <p className={styles.sectionNote}>
-        Plugins signed by MonitorFlow install as they are. Add the key of anyone else whose plugins you trust,
-        your own team included: they print it with <code>monitorflow-plugin keygen</code>.
+        {rich("plugins.publishersNote", { command: <code>monitorflow-plugin keygen</code> })}
       </p>
-      {error !== null && !data && <ErrorState what="the publishers" error={describeError(error)} onRetry={refresh} />}
+      {error !== null && !data && <ErrorState what={t("plugins.publishersWhat")} error={describeError(error)} onRetry={refresh} />}
       {data && data.publishers.length > 0 && (
-        <DataTable bare label="Publishers" columns={columns} rows={data.publishers} rowKey={(p) => p.id} />
+        <DataTable bare label={t("plugins.publishers")} columns={columns} rows={data.publishers} rowKey={(p) => p.id} />
       )}
-      <form className={styles.panel} onSubmit={(e) => void add(e)} aria-label="Add a publisher">
+      <form className={styles.panel} onSubmit={(e) => void add(e)} aria-label={t("plugins.addPublisher")}>
         <div className={styles.formGrid}>
           <label className={styles.field}>
-            Name
+            {t("plugins.name")}
             <input
               className={fieldClass}
               required
@@ -505,7 +504,7 @@ function Publishers() {
             />
           </label>
           <label className={styles.field}>
-            Public key
+            {t("plugins.publicKey")}
             <input
               className={fieldClass}
               required
@@ -513,13 +512,13 @@ function Publishers() {
               autoComplete="off"
               value={key}
               onChange={(e) => setKey(e.target.value)}
-              placeholder="The line monitorflow-plugin keygen printed"
+              placeholder={t("plugins.keyPlaceholder")}
             />
           </label>
         </div>
         <div className={styles.formFoot}>
           <Button type="submit" disabled={busy}>
-            {busy ? "Adding…" : "Trust this publisher"}
+            {busy ? t("plugins.adding") : t("plugins.trust")}
           </Button>
           {formError && (
             <p className={styles.formError} role="alert">
