@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import type { LocalSnapshotVolume } from "./api";
 import { type SnapshotSet, covers, formatBytes, listWords, rollbackSteps, snapshotSpace } from "./rollback";
 
@@ -56,5 +58,15 @@ describe("rollback", () => {
     const zfs = rollbackSteps(set("zfs", [{ source: "rpool/ROOT/debian@monitorflow-x" }]));
     expect(zfs.commands).toEqual(["zfs rollback rpool/ROOT/debian@monitorflow-x"]);
     expect(zfs.intro).toMatch(/rescue system/);
+  });
+});
+
+describe("rollback in French", () => {
+  it("speaks the active language", () => {
+    setActiveLocale("fr");
+    expect(listWords(["/", "/usr", "/var"])).toBe("/, /usr et /var");
+    expect(formatBytes(2 * GIB)).toBe("2,0 Gio");
+    expect(snapshotSpace(set("lvm", [{ size_bytes: 8 * GIB, used_percent: 12.34 }]))).toBe("8,0 Gio, 12\u00a0% utilisés");
+    expect(snapshotSpace(set("lvm_thin", [{}]))).toBe("Partage le pool thin");
   });
 });

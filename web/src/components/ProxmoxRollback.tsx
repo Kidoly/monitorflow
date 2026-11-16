@@ -11,6 +11,7 @@ import {
   api,
   describeError,
 } from "@/lib/api";
+import { t } from "@/i18n";
 import { snapshotReason } from "@/lib/remediation";
 import { usePolledData } from "@/lib/usePolledData";
 import { Button, fieldClass } from "@/components/ui/Button";
@@ -21,21 +22,19 @@ import styles from "./DetailPages.module.css";
 
 /** "VM 101" or "container 104". */
 export function guestName(kind: GuestKind, vmid: number): string {
-  return `${kind === "lxc" ? "container" : "VM"} ${vmid}`;
+  return t(kind === "lxc" ? "rollback.container" : "rollback.vm", { id: String(vmid) });
 }
 
 /** "VM 104 on pve2", with its name when it says more: "VM 104 web-1 on pve2". */
 function guestLabel(guest: { kind: GuestKind; vmid: number; node: string; name?: string | null }): string {
-  const name = guest.name ? ` ${guest.name}` : "";
-  return `${guestName(guest.kind, guest.vmid)}${name} on ${guest.node}`;
+  const name = guestName(guest.kind, guest.vmid);
+  return guest.name
+    ? t("rollback.namedGuestOn", { guest: name, name: guest.name, node: guest.node })
+    : t("rollback.guestOn", { guest: name, node: guest.node });
 }
 
 /** How discovery found the guest, ending a sentence. */
-const SIGNALS: Record<ProxmoxSignal, string> = {
-  uuid: "by its hardware ID",
-  mac: "by its network card",
-  hostname: "by its name only; check it is the right one",
-};
+const signalText = (signal: ProxmoxSignal) => t(`rollback.signal.${signal}`);
 
 /**
  * Whether AI's changes on the server are preceded by a Proxmox snapshot of
@@ -69,7 +68,7 @@ export function ProxmoxRollback({
   }
   const change = (
     <Button size="small" onClick={() => setEditing(true)}>
-      {mapping ? "Change" : (view.candidates ?? []).length > 0 ? "Another one" : "Map to a VM or container"}
+      {mapping ? t("rollback.change") : (view.candidates ?? []).length > 0 ? t("rollback.another") : t("rollback.map")}
     </Button>
   );
   const candidates = view.candidates ?? [];
@@ -86,23 +85,21 @@ export function ProxmoxRollback({
   if (!mapping) {
     return (
       <>
-        <Label tone="warn">Limited</Label>{" "}
-        <span className={styles.muted}>
-          Not mapped to a Proxmox VM or container, so AI&apos;s changes run without a snapshot.
-        </span>{" "}
+        <Label tone="warn">{t("rollback.limited")}</Label> <span className={styles.muted}>{t("rollback.notMapped")}</span>{" "}
         {change}
       </>
     );
   }
-  const guest = `${guestName(mapping.kind, mapping.vmid)} on ${mapping.node}`;
+  const guest = t("rollback.guestOn", { guest: guestName(mapping.kind, mapping.vmid), node: mapping.node });
   if (!snapshots.available) {
     return (
       <>
-        <Label tone="warn">Rollback limited</Label>{" "}
+        <Label tone="warn">{t("rollback.rollbackLimited")}</Label>{" "}
         {capitalize(snapshotReason(snapshots.reason, snapshots.kind ?? mapping.kind))}{" "}
         <span className={styles.muted}>
-          {capitalize(guest)}, cluster {mapping.cluster}
-          {snapshots.detail ? `: ${snapshots.detail}.` : "."}
+          {snapshots.detail
+            ? t("rollback.clusterDetail", { guest: capitalize(guest), cluster: mapping.cluster, detail: snapshots.detail })
+            : t("rollback.cluster", { guest: capitalize(guest), cluster: mapping.cluster })}
         </span>{" "}
         {change}
       </>
@@ -112,14 +109,14 @@ export function ProxmoxRollback({
   const notThis = matched && <NotThisOne serverId={view.server_id} onChanged={onChanged} />;
   return (
     <>
-      <Label tone="ok">Snapshot first</Label>{" "}
+      <Label tone="ok">{t("rollback.snapshotFirst")}</Label>{" "}
       {matched
-        ? `Matched automatically to ${guestLabel(mapping)} ${SIGNALS[matched]}. Proxmox snapshots it before each AI change.`
-        : `Proxmox snapshots ${guest} before each AI change.`}{" "}
+        ? t("rollback.matched", { guest: guestLabel(mapping), signal: signalText(matched) })
+        : t("rollback.snapshots", { guest })}{" "}
       <span className={styles.muted}>
-        {mapping.checked_at === null && "Proxmox is asked within a minute whether it can. "}
-        {snapshots.left_out && `Snapshots leave out ${snapshots.left_out}: a rollback does not restore it. `}
-        Cluster {mapping.cluster}.
+        {mapping.checked_at === null && `${t("rollback.asking")} `}
+        {snapshots.left_out && `${t("rollback.leftOut", { left: snapshots.left_out })} `}
+        {t("rollback.clusterName", { cluster: mapping.cluster })}
       </span>{" "}
       {change} {notThis}
     </>
@@ -144,7 +141,7 @@ function NotThisOne({ serverId, onChanged }: { serverId: string; onChanged: () =
           });
         }}
       >
-        Not this one
+        {t("rollback.notThisOne")}
       </Button>
       {error && <span role="alert"> {error}</span>}
     </>
@@ -183,8 +180,7 @@ function Candidates({
   }
   return (
     <>
-      <Label tone="warn">Choose</Label> Several Proxmox VMs or containers match this server, so none is used yet. Which
-      one is it?{" "}
+      <Label tone="warn">{t("rollback.choose")}</Label> {t("rollback.several")}{" "}
       {candidates.map((g) => (
         <Fragment key={`${g.cluster}/${g.vmid}`}>
           <Button size="small" disabled={busy} onClick={() => void pick(g)}>
@@ -238,7 +234,7 @@ function MapForm({ view, onDone, onCancel }: { view: ProxmoxView; onDone: () => 
     } catch (e) {
       setError(
         e instanceof ApiError && e.status === 409
-          ? "Another server is already mapped to this VM or container."
+          ? t("rollback.taken")
           : describeError(e),
       );
     } finally {
@@ -251,7 +247,7 @@ function MapForm({ view, onDone, onCancel }: { view: ProxmoxView; onDone: () => 
     if (picking) {
       const g = guests.find((g) => key(g) === picked);
       if (!g) {
-        setError("Choose the VM or container this server runs in.");
+        setError(t("rollback.pick"));
         return;
       }
       void run(() =>
@@ -266,7 +262,7 @@ function MapForm({ view, onDone, onCancel }: { view: ProxmoxView; onDone: () => 
     }
     const id = Number(vmid);
     if (!Number.isInteger(id) || id < 100) {
-      setError("The ID is a number from 100, as Proxmox shows it.");
+      setError(t("rollback.badId"));
       return;
     }
     void run(() =>
@@ -280,17 +276,17 @@ function MapForm({ view, onDone, onCancel }: { view: ProxmoxView; onDone: () => 
   }
 
   return (
-    <form onSubmit={submit} aria-label="Proxmox VM or container" noValidate>
+    <form onSubmit={submit} aria-label={t("rollback.form")} noValidate>
       {picking ? (
         <div className={admin.formGrid}>
           <label className={admin.field}>
-            VM or container
+            {t("rollback.guest")}
             <select className={fieldClass} value={picked} onChange={(e) => setPicked(e.target.value)}>
-              <option value="">Choose…</option>
+              <option value="">{t("rollback.chooseOption")}</option>
               {guests.map((g) => (
                 <option key={key(g)} value={key(g)}>
                   {capitalize(guestLabel(g))}
-                  {clusters.length > 1 ? `, cluster ${g.cluster}` : ""}
+                  {clusters.length > 1 ? t("rollback.inCluster", { cluster: g.cluster }) : ""}
                 </option>
               ))}
             </select>
@@ -300,7 +296,7 @@ function MapForm({ view, onDone, onCancel }: { view: ProxmoxView; onDone: () => 
         <div className={admin.formGrid}>
           {clusters.length > 1 && (
             <label className={admin.field}>
-              Cluster
+              {t("rollback.clusterLabel")}
               <select className={fieldClass} value={cluster} onChange={(e) => setCluster(e.target.value)}>
                 {clusters.map((c) => (
                   <option key={c}>{c}</option>
@@ -309,18 +305,18 @@ function MapForm({ view, onDone, onCancel }: { view: ProxmoxView; onDone: () => 
             </label>
           )}
           <label className={admin.field}>
-            Type
+            {t("rollback.type")}
             <select className={fieldClass} value={kind} onChange={(e) => setKind(e.target.value as GuestKind)}>
-              <option value="qemu">VM</option>
-              <option value="lxc">Container (LXC)</option>
+              <option value="qemu">{t("rollback.vmOption")}</option>
+              <option value="lxc">{t("rollback.containerOption")}</option>
             </select>
           </label>
           <label className={admin.field}>
-            Node
+            {t("rollback.node")}
             <input className={fieldClass} value={node} onChange={(e) => setNode(e.target.value)} placeholder="pve1" />
           </label>
           <label className={admin.field}>
-            ID
+            {t("rollback.id")}
             <input
               className={fieldClass}
               inputMode="numeric"
@@ -333,19 +329,19 @@ function MapForm({ view, onDone, onCancel }: { view: ProxmoxView; onDone: () => 
       )}
       <div className={admin.formFoot}>
         <Button type="submit" variant="k" size="small" disabled={busy || !cluster}>
-          Save
+          {t("rollback.save")}
         </Button>
         {mapping && (
           <Button size="small" disabled={busy} onClick={() => void run(() => api.clearServerProxmox(view.server_id))}>
-            Unmap
+            {t("rollback.unmap")}
           </Button>
         )}
         <Button size="small" disabled={busy} onClick={onCancel}>
-          Cancel
+          {t("rollback.cancel")}
         </Button>
         {picking && (
           <Button size="small" disabled={busy} onClick={() => setByHand(true)}>
-            Not in the list
+            {t("rollback.notListed")}
           </Button>
         )}
         {error && (

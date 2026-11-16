@@ -2,6 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { CSRF_HEADER, type Incident, type RelayDetail, type Server } from "@/lib/api";
 import { As, customerAdmin, relay, single, siteAdmin } from "@/test/admin";
 import { requestHeaders, stubFetch } from "@/test/fetch";
@@ -118,6 +119,16 @@ const publicAddress = {
 };
 
 describe("RelayPage", () => {
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    stubFetch({ [`GET /api/relays/${ID}`]: { status: 200, body: detail() }, ...lists });
+    render(<RelayPage id={ID} me={single(siteAdmin)} />);
+    expect(await screen.findByRole("heading", { level: 1, name: "relay-1" })).toBeInTheDocument();
+    expect(screen.getByText("Numéro de série du certificat").nextElementSibling).toHaveTextContent("0a1b2c");
+    const attached = screen.getByRole("region", { name: "Serveurs connectés par relay-1" });
+    expect(attached).toHaveTextContent("2 serveurs, 1 en ligne maintenant");
+  });
+
   it("shows the facts and the servers connecting through the relay", async () => {
     stubFetch({ [`GET /api/relays/${ID}`]: { status: 200, body: detail() }, ...lists });
     render(<RelayPage id={ID} me={siteAdmin} />);
