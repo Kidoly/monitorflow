@@ -31,7 +31,7 @@ describe("Breadcrumb", () => {
     const nav = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(within(nav).getByRole("link", { name: "Fleet" })).toHaveAttribute("href", "/");
     expect(within(nav).getByText("web-01")).toHaveAttribute("aria-current", "page");
-    expect(nav).toHaveTextContent("Fleet/web-01");
+    expect(nav).toHaveTextContent("Fleet›web-01");
   });
 });
 

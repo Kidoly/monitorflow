@@ -41,7 +41,8 @@ export interface SettingsEntry {
   id: SettingsId;
   label: PlainKey;
   /** One line under the name; `me` changes it where the words depend on what they see. */
-  description: (me: Me) => string;
+  /** Six words at most; none where the name says it all. */
+  description?: (me: Me) => string;
   href: string;
   icon: IconName;
   /** More words the search finds it by, not shown. */
@@ -124,7 +125,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       {
         id: "users",
         label: "settings.users.label",
-        description: text("settings.users.description"),
         href: USERS_PATH,
         icon: "users",
         keywords: "settings.users.keywords",
@@ -177,7 +177,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       {
         id: "server-update",
         label: "settings.serverUpdate.label",
-        description: text("settings.serverUpdate.description"),
         href: SERVER_UPDATE_PATH,
         icon: "update",
         keywords: "settings.serverUpdate.keywords",
@@ -186,7 +185,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       {
         id: "backups",
         label: "settings.backups.label",
-        description: text("settings.backups.description"),
         href: BACKUPS_PATH,
         icon: "backups",
         keywords: "settings.backups.keywords",
@@ -195,7 +193,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       {
         id: "license",
         label: "settings.license.label",
-        description: text("settings.license.description"),
+        keywords: "settings.license.keywords",
         href: LICENSE_PATH,
         icon: "license",
         visible: administersEverything,
@@ -229,7 +227,7 @@ export function filterSettings(groups: SettingsGroup[], query: string, me: Me): 
       if (words.every((w) => t(group.heading).toLowerCase().includes(w))) return group;
       const entries = group.entries.filter((entry) => {
         const keywords = entry.keywords ? t(entry.keywords) : "";
-        const haystack = `${t(entry.label)} ${entry.description(me)} ${keywords}`.toLowerCase();
+        const haystack = `${t(entry.label)} ${entry.description?.(me) ?? ""} ${keywords}`.toLowerCase();
         return words.every((w) => haystack.includes(w));
       });
       return { ...group, entries };

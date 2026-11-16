@@ -41,6 +41,12 @@ const bodyOf = (call: Parameters<typeof fetch> | undefined) => JSON.parse(String
 
 afterEach(() => vi.useRealTimers());
 
+/** Opens the "Silence ▾" menu and picks one of its choices. */
+async function choose(menu: string, item: string) {
+  await userEvent.click(await screen.findByRole("button", { name: menu }));
+  await userEvent.click(screen.getByRole("menuitem", { name: item }));
+}
+
 describe("SilenceBar", () => {
   it("silences for an hour in one click, then says so", async () => {
     const fetchMock = stubFetch({
@@ -53,7 +59,7 @@ describe("SilenceBar", () => {
       </As>,
     );
     const before = Date.now();
-    await userEvent.click(await screen.findByRole("button", { name: "1 hour" }));
+    await choose("Silence notifications about web-1", "1 hour");
     expect(await screen.findByText(/Silenced until/)).toBeInTheDocument();
     const post = fetchMock.mock.calls.find((c) => c[1]?.method === "POST");
     const body = bodyOf(post);
@@ -74,11 +80,10 @@ describe("SilenceBar", () => {
         <SilenceBar target={target} />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "1 heure" }));
+    await choose("Mettre en silence les notifications de web-1", "1 heure");
     expect(await screen.findByText(/En silence jusqu’à/)).toBeInTheDocument();
     expect(screen.getByText(/Kernel update, par alice, jusqu’à/)).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Mettre en silence les notifications de web-1" })).toBeInTheDocument();
-    expect(bodyOf(fetchMock.mock.calls.find((c) => c[1]?.method === "POST"))).toMatchObject({ reason: "Maintenance planifiée" });
+        expect(bodyOf(fetchMock.mock.calls.find((c) => c[1]?.method === "POST"))).toMatchObject({ reason: "Maintenance planifiée" });
   });
 
   it("silences until tomorrow morning", async () => {
@@ -88,7 +93,7 @@ describe("SilenceBar", () => {
         <SilenceBar target={target} />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Until tomorrow, 8:00" }));
+    await choose("Silence notifications about web-1", "Until tomorrow, 8:00");
     const body = bodyOf(fetchMock.mock.calls.find((c) => c[1]?.method === "POST"));
     expect(body.ends_at).toBe(tomorrowMorning(new Date()).toISOString());
   });
@@ -100,7 +105,7 @@ describe("SilenceBar", () => {
         <SilenceBar target={target} />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Custom…" }));
+    await choose("Silence notifications about web-1", "Custom…");
     const reason = screen.getByLabelText("Why");
     await userEvent.clear(reason);
     await userEvent.type(reason, "Moving racks");
@@ -126,7 +131,7 @@ describe("SilenceBar", () => {
         <SilenceBar target={target} />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Custom…" }));
+    await choose("Silence notifications about web-1", "Custom…");
     await userEvent.type(screen.getByLabelText(/^Until/), "2031-01-02T12:00");
     await userEvent.click(screen.getByRole("button", { name: "Silence web-1" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("at most 30 days");
@@ -147,10 +152,10 @@ describe("SilenceBar", () => {
     expect(banner).toHaveTextContent(/Silenced until .*Nobody is told about web-1/);
     expect(banner).toHaveTextContent("Kernel update, by alice");
     expect(banner).toHaveTextContent("what is still open at the end is sent then");
-    expect(screen.getByText("Silence longer")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Silence notifications about web-1" })).toHaveTextContent("Silence longer");
     await userEvent.click(within(banner).getByRole("button", { name: /End the silence/ }));
     expect(fetchMock.mock.calls.some((c) => c[1]?.method === "POST" && String(c[0]).endsWith("/x1/end"))).toBe(true);
-    expect(await screen.findByText("Silence for")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Silence notifications about web-1" })).toHaveTextContent(/^Silence ▾$/);
     expect(screen.queryByText(/Silenced until/)).not.toBeInTheDocument();
   });
 

@@ -62,17 +62,7 @@ function ServerUpdate() {
   const header = (
     <PageHeader
       title={t("serverUpdate.title")}
-      meta={
-        <>
-          {t("serverUpdate.meta")}
-          {(updatedAt !== null || error !== null) && (
-            <>
-              {" · "}
-              <RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={intervalMs} />
-            </>
-          )}
-        </>
-      }
+      meta={updatedAt !== null || error !== null ? <RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={intervalMs} /> : undefined}
     />
   );
   if (error instanceof ApiError && error.status === 403) {

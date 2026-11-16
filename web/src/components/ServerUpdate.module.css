@@ -96,3 +96,16 @@
   cursor: pointer;
   font: inherit;
 }
+
+/* Download, confirmed under the row: the warning about what a backup holds, then the file. */
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.confirmActions {
+  display: flex;
+  gap: 8px;
+}

@@ -2,7 +2,6 @@ import type { Catalog, Translation } from "../catalog";
 
 /** The Sites settings page: sites, customers and their automatic updates. */
 export const en = {
-  customers: { one: "{count} customer", other: "{count} customers" },
   sites: { one: "{count} site", other: "{count} sites" },
   servers: { one: "{count} server", other: "{count} servers" },
   relays: { one: "{count} relay", other: "{count} relays" },
@@ -67,7 +66,6 @@ export const en = {
 } as const satisfies Catalog;
 
 export const fr: Translation<typeof en> = {
-  customers: { one: "{count} client", other: "{count} clients" },
   sites: { one: "{count} site", other: "{count} sites" },
   servers: { one: "{count} serveur", other: "{count} serveurs" },
   relays: { one: "{count} relais", other: "{count} relais" },

@@ -66,13 +66,7 @@ export function SitesAdmin({ me }: { me: Me }) {
       <PageHeader
         title={t("settings.sites.label")}
         meta={
-          data || error ? (
-            <>
-              {data && multi && `${t("sites.customers", { count: data.customers.length })}, `}
-              {data && `${t("sites.sites", { count: data.sites.length })} · `}
-              <RefreshLine updatedAt={updatedAt} stale={stale} />
-            </>
-          ) : undefined
+          data || error ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : undefined
         }
       />
       <Banner tone="info">
