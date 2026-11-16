@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { ServerDetail, Site, SourcesStatus, WindowsUpdateSource } from "@/lib/api";
 import { As, me, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -60,6 +61,15 @@ function show(user = globalAdmin) {
 }
 
 describe("PackageSources", () => {
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch({ [`GET ${PATH}`]: ok(onMirror) });
+    show();
+    expect(await screen.findByText(/reçoit ses paquets de debian-12, debian-12-security à l’instantané s1\./)).toBeInTheDocument();
+    expect(screen.getByText("Utilise un miroir")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revenir à ses propres sources…" })).toBeInTheDocument();
+  });
+
   it("offers the mirror of the server's distribution, says what it does and shows the change", async () => {
     const fetchMock = stubFetch({
       [`GET ${PATH}`]: [ok(own), ok({ ...own, changing_to: "mirror" })],

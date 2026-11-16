@@ -11,6 +11,7 @@ import { Banner, EmptyState, ErrorState, NoPermission, PageHeader, StaleBanner }
 import { CopyButton, SecretField } from "@/components/ui/SecretField";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatAgo } from "@/components/ui/time";
+import { rich, t } from "@/i18n";
 import {
   type AgentInstall,
   type CreatedInstallKey,
@@ -28,9 +29,10 @@ import { formatWhen } from "@/lib/clock";
 import {
   type Command,
   type InstallTarget,
-  SOURCE_WORDS,
+  SOURCES,
   isSafeUrl,
   isServerAddress,
+  sourceWord,
   linuxInstallCommand,
   relayInstallCommand,
   windowsInstallCommand,
@@ -45,14 +47,14 @@ import styles from "./AdminPages.module.css";
 import { CreateInstallKey, InstallKeyTable, PendingHosts } from "./InstallKeys";
 
 /** Validity choices; the API takes 60 s to 7 days. */
-const TTLS: [number, string][] = [
-  [900, "15 minutes"],
-  [3600, "1 hour"],
-  [86_400, "1 day"],
-  [604_800, "7 days"],
-];
+const TTLS = [
+  [900, "install.ttl.15m"],
+  [3600, "install.ttl.1h"],
+  [86_400, "install.ttl.1d"],
+  [604_800, "install.ttl.7d"],
+] as const;
 
-const ROLE_WORDS: Record<TokenRole, string> = { agent: "Agent", relay: "Relay" };
+const roleWord = (role: TokenRole) => t(`install.role.${role}`);
 
 /**
  * `/settings/add-servers/`: the site's reusable install command first, with hosts
@@ -81,13 +83,9 @@ export function TokensAdmin({ me }: { me: Me }) {
   if (!allowed) {
     return (
       multiCustomer(me) ? (
-        <NoPermission title="Adding servers needs a customer administrator role.">
-          An administrator role on a whole customer is needed; a site administrator role is not enough.
-        </NoPermission>
+        <NoPermission title={t("install.noPermission.customer")}>{t("install.noPermission.customerNote")}</NoPermission>
       ) : (
-        <NoPermission title="Adding servers needs an administrator role on all sites.">
-          A site administrator role is not enough.
-        </NoPermission>
+        <NoPermission title={t("install.noPermission.allSites")}>{t("install.noPermission.allSitesNote")}</NoPermission>
       )
     );
   }
@@ -95,19 +93,26 @@ export function TokensAdmin({ me }: { me: Me }) {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Add servers"
-        meta="Paste one command on each server: the agent installs, connects and appears under the server's name."
+        title={t("install.title")}
+        meta={t("install.meta")}
       />
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
       {!data && error ? (
-        <ErrorState what="install commands" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what={t("install.what")} error={describeError(error)} onRetry={refresh} />
       ) : (
         <>
           {data && administered.length === 0 ? (
-            <EmptyState title="No site to add servers to yet" actions={<ButtonLink variant="k" href={SITES_PATH}>Create a site</ButtonLink>}>
-              Servers belong to a site. Create one, then come back here.
+            <EmptyState
+              title={t("install.noSite.title")}
+              actions={
+                <ButtonLink variant="k" href={SITES_PATH}>
+                  {t("install.noSite.create")}
+                </ButtonLink>
+              }
+            >
+              {t("install.noSite.note")}
             </EmptyState>
           ) : createdKey ? (
             <NewInstallKey
@@ -130,15 +135,13 @@ export function TokensAdmin({ me }: { me: Me }) {
           <section className={styles.section} aria-labelledby={advancedId}>
             <div className={styles.sectionHead}>
               <h2 id={advancedId} className={styles.sectionTitle}>
-                Advanced
+                {t("install.advanced")}
               </h2>
               <Button size="small" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>
-                {advanced ? "Hide single-use tokens" : "Show single-use tokens"}
+                {advanced ? t("install.tokens.hide") : t("install.tokens.show")}
               </Button>
             </div>
-            <p className={styles.sectionNote}>
-              A token enrolls one agent or relay once, under the name you choose. Relays › Add relay needs none.
-            </p>
+            <p className={styles.sectionNote}>{t("install.tokens.note")}</p>
           </section>
           {advanced && (
             <>
@@ -215,7 +218,7 @@ function CreateToken({
       setNames("");
       onCreated(token);
     } catch (e) {
-      setError(`Creating the token failed. ${describeError(e)}`);
+      setError(t("install.token.createFailed", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -224,37 +227,37 @@ function CreateToken({
   return (
     <form className={styles.panel} onSubmit={submit} aria-labelledby={titleId}>
       <h2 id={titleId} className={styles.sectionTitle}>
-        New token
+        {t("install.token.new")}
       </h2>
       <div className={styles.formGrid}>
         <fieldset className={styles.fieldset}>
-          <legend className={styles.legend}>Role</legend>
+          <legend className={styles.legend}>{t("install.token.role")}</legend>
           <div className={styles.radios}>
             {(["agent", "relay"] as const).map((value) => (
               <label key={value}>
                 <input type="radio" name="role" checked={role === value} onChange={() => setRole(value)} />{" "}
-                {ROLE_WORDS[value]}
+                {roleWord(value)}
               </label>
             ))}
           </div>
         </fieldset>
         <label className={styles.field}>
-          Name
+          {t("install.token.name")}
           <input
             ref={peerRef}
             className={cx(fieldClass, styles.mono)}
             value={peerId}
             onChange={(e) => setPeerId(e.target.value)}
-            placeholder="server name"
+            placeholder={t("install.token.namePlaceholder")}
             required
             pattern="[A-Za-z0-9._\-]{1,64}"
-            title="1 to 64 letters, digits, dots, dashes or underscores"
+            title={t("install.token.nameRule")}
             spellCheck={false}
             autoCapitalize="none"
           />
         </label>
         <label className={styles.field}>
-          Site
+          {t("install.token.site")}
           <select className={fieldClass} value={siteId || sites[0]?.id} onChange={(e) => setSiteId(e.target.value)}>
             {sites.map((site) => (
               <option key={site.id} value={site.id}>
@@ -264,11 +267,11 @@ function CreateToken({
           </select>
         </label>
         <label className={styles.field}>
-          Expires in
+          {t("install.token.expiresIn")}
           <select className={fieldClass} value={ttl} onChange={(e) => setTtl(Number(e.target.value))}>
             {TTLS.map(([seconds, label]) => (
               <option key={seconds} value={seconds}>
-                {label}
+                {t(label)}
               </option>
             ))}
           </select>
@@ -276,8 +279,7 @@ function CreateToken({
       </div>
       <label className={styles.field}>
         <span>
-          Addresses{" "}
-          <span className={styles.fieldNote}>— relays only; the DNS names or IPs agents use to reach it</span>
+          {t("install.token.addresses")} <span className={styles.fieldNote}>{t("install.token.addressesNote")}</span>
         </span>
         <input
           className={cx(fieldClass, styles.mono)}
@@ -292,9 +294,9 @@ function CreateToken({
       </label>
       <div className={styles.formFoot}>
         <Button variant="k" type="submit" disabled={busy || sites.length === 0}>
-          Create token
+          {t("install.token.create")}
         </Button>
-        <span className={styles.footnote}>Recorded in the audit log as {me.username}.</span>
+        <span className={styles.footnote}>{t("install.token.audit", { name: me.username })}</span>
       </div>
       {error && (
         <p className={styles.formError} role="alert">
@@ -335,40 +337,42 @@ function NewToken({
   return (
     <section className={cx(styles.panel, styles.created)} aria-labelledby={titleId} aria-live="polite">
       <div className={styles.panelTitle}>
-        <Label tone="ok">Created</Label>
+        <Label tone="ok">{t("install.created")}</Label>
         <h2 id={titleId} className={styles.sectionTitle}>
-          Token for {token.peer_id} · expires {formatWhen(new Date(token.expires_at), new Date())}
+          {t("install.newToken.title", { name: token.peer_id, when: formatWhen(new Date(token.expires_at), new Date()) })}
         </h2>
       </div>
       <Banner tone="warn" role="alert">
-        <strong>This token will not be shown again.</strong> Copy it now and paste it into the {token.role}&apos;s
-        configuration. If you lose it, revoke it and create a new one.
+        <strong>{t("install.newToken.once")}</strong>{" "}
+        {token.role === "relay" ? t("install.newToken.onceRelay") : t("install.newToken.onceAgent")}
       </Banner>
       <ServerAddress value={address} editable={editable} onChange={setAddress} />
       <div className={styles.createdGrid}>
         <div className={styles.stack}>
-          <SecretField label="Token" value={token.token} copyName="Copy token" />
+          <SecretField label={t("install.newToken.token")} value={token.token} copyName={t("install.newToken.copy")} />
           <div className={styles.buttons}>
             <Button variant="k" onClick={onDone}>
-              Done
+              {t("install.done")}
             </Button>
-            <Button onClick={onAnother}>Create another</Button>
+            <Button onClick={onAnother}>{t("install.newToken.another")}</Button>
           </div>
         </div>
         <div className={styles.field}>
           <span id={snippetId}>
-            Configuration snippet <span className={styles.fieldNote}>— {file}</span>
+            {t("install.newToken.snippet")} <span className={styles.fieldNote}>({file})</span>
           </span>
           <div className={styles.snippet}>
             <pre className={styles.code} aria-labelledby={snippetId}>
               {snippet}
             </pre>
-            <CopyButton text={snippet} name="Copy configuration snippet" size="small" className={styles.snippetCopy} />
+            <CopyButton text={snippet} name={t("install.newToken.copySnippet")} size="small" className={styles.snippetCopy} />
           </div>
           {token.role === "agent" && (
             <span className={styles.fieldNote}>
-              Or pass the token in <code>MONITORFLOW_ENROLLMENT_TOKEN</code>. For an agent behind a relay, set{" "}
-              <code>upstream_url</code> to the relay&apos;s address.
+              {rich("install.newToken.env", {
+                variable: <code>MONITORFLOW_ENROLLMENT_TOKEN</code>,
+                key: <code>upstream_url</code>,
+              })}
             </span>
           )}
         </div>
@@ -396,21 +400,26 @@ export function NewInstallKey({
   return (
     <section className={cx(styles.panel, styles.created)} aria-labelledby={titleId} aria-live="polite">
       <div className={styles.panelTitle}>
-        <Label tone="ok">Created</Label>
+        <Label tone="ok">{t("install.created")}</Label>
         <h2 id={titleId} className={styles.sectionTitle}>
-          Install command for {key.site_name} · works until {formatWhen(new Date(key.expires_at), new Date())}
+          {t("install.newKey.title", { site: key.site_name, when: formatWhen(new Date(key.expires_at), new Date()) })}
         </h2>
       </div>
       <Banner tone="warn" role="alert">
-        <strong>This command will not be shown again.</strong> Copy it now and keep it with your notes or deployment
-        scripts. It works on {key.max_hosts === null ? "any number of servers" : `up to ${key.max_hosts} servers`}
-        {key.require_approval ? ", which wait for your approval below" : ""}. If you lose it, create a new one.
+        <strong>{t("install.newKey.once")}</strong>{" "}
+        {key.max_hosts === null
+          ? key.require_approval
+            ? t("install.newKey.anyApproval")
+            : t("install.newKey.any")
+          : key.require_approval
+            ? t("install.newKey.upToApproval", { count: key.max_hosts })
+            : t("install.newKey.upTo", { count: key.max_hosts })}
       </Banner>
       <ServerAddress value={address} editable={editable} onChange={setAddress} />
       <InstallCommands token={key} relay={relay} />
       <div className={styles.buttons}>
         <Button variant="k" onClick={onDone}>
-          Done
+          {t("install.done")}
         </Button>
       </div>
     </section>
@@ -433,20 +442,19 @@ export function NewRelayKey({
   return (
     <section className={cx(styles.panel, styles.created)} aria-labelledby={titleId} aria-live="polite">
       <div className={styles.panelTitle}>
-        <Label tone="ok">Created</Label>
+        <Label tone="ok">{t("install.created")}</Label>
         <h2 id={titleId} className={styles.sectionTitle}>
-          Add a relay to {key.site_name} · works until {formatWhen(new Date(key.expires_at), new Date())}
+          {t("install.newRelay.title", { site: key.site_name, when: formatWhen(new Date(key.expires_at), new Date()) })}
         </h2>
       </div>
       <Banner tone="warn" role="alert">
-        <strong>This command will not be shown again and works on one server.</strong> Paste it on the relay&apos;s server;
-        the relay then appears on this page, and you confirm its addresses.
+        <strong>{t("install.newRelay.once")}</strong> {t("install.newRelay.note")}
       </Banner>
       <ServerAddress value={address} editable={editable} onChange={setAddress} />
       <RelayInstallCommand target={key} />
       <div className={styles.buttons}>
         <Button variant="k" onClick={onDone}>
-          Done
+          {t("install.done")}
         </Button>
       </div>
     </section>
@@ -470,7 +478,7 @@ export function ServerAddress({
   value,
   editable,
   onChange,
-  note = "— used by the configuration snippet and every command below",
+  note = t("install.address.note"),
 }: {
   value: PublicAddress;
   editable: boolean;
@@ -495,7 +503,7 @@ export function ServerAddress({
       setTyping(false);
       setDraft("");
     } catch (e) {
-      setError(`Changing the address failed. ${describeError(e)}`);
+      setError(t("install.address.failed", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -504,8 +512,7 @@ export function ServerAddress({
   return (
     <div className={styles.field}>
       <span id={labelId}>
-        Agents reach this server at{" "}
-        <span className={styles.fieldNote}>{note}</span>
+        {t("install.address.label")} <span className={styles.fieldNote}>{note}</span>
       </span>
       {editable ? (
         <div className={styles.buttons}>
@@ -522,10 +529,14 @@ export function ServerAddress({
             {choices.map((name) => (
               <option key={name} value={name}>
                 {name}
-                {name === value.default ? " (default)" : certified(name) ? "" : " (not in the certificate)"}
+                {name === value.default
+                  ? t("install.address.default")
+                  : certified(name)
+                    ? ""
+                    : t("install.address.notCertified")}
               </option>
             ))}
-            <option value={OTHER_ADDRESS}>Other address…</option>
+            <option value={OTHER_ADDRESS}>{t("install.address.other")}</option>
           </select>
           {typing && (
             <form
@@ -537,7 +548,7 @@ export function ServerAddress({
             >
               <input
                 className={cx(fieldClass, styles.mono)}
-                aria-label="Other address"
+                aria-label={t("install.address.otherLabel")}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="monitor.example.com or 10.0.0.2"
@@ -546,14 +557,14 @@ export function ServerAddress({
                 autoFocus
               />
               <Button variant="k" type="submit" disabled={busy || draft.trim() === ""}>
-                Use this address
+                {t("install.address.use")}
               </Button>
             </form>
           )}
         </div>
       ) : (
         <span className={styles.fieldNote}>
-          <code>{value.address}</code>. A global administrator changes it.
+          {rich("install.address.readOnly", { address: <code>{value.address}</code> })}
         </span>
       )}
       {error && (
@@ -563,11 +574,15 @@ export function ServerAddress({
       )}
       {!value.certified && (
         <Banner tone="warn">
-          <strong>Agents will refuse to connect to {value.address}:</strong> the server&apos;s certificate is not issued
-          for it{value.names.length > 0 && <> (its names: {value.names.join(", ")})</>}. Pick one of its names, or add{" "}
-          {value.address} to <code>SERVER_NAMES</code> in the server&apos;s <code>.env</code> (
-          <code>server_names</code> in <code>server.toml</code>) and restart the server, which then issues itself a new
-          certificate.
+          <strong>{t("install.address.refused", { address: value.address })}</strong>{" "}
+          {rich(value.names.length > 0 ? "install.address.refusedWhyNames" : "install.address.refusedWhy", {
+            list: value.names.join(", "),
+            address: value.address,
+            names: <code>SERVER_NAMES</code>,
+            env: <code>.env</code>,
+            key: <code>server_names</code>,
+            file: <code>server.toml</code>,
+          })}
         </Banner>
       )}
     </div>
@@ -592,7 +607,7 @@ function SourceRadios({
 }) {
   return (
     <div className={styles.radios}>
-      {(Object.keys(SOURCE_WORDS) as InstallSource[]).map((source) => (
+      {SOURCES.map((source) => (
         <label key={source}>
           <input
             type="radio"
@@ -601,7 +616,7 @@ function SourceRadios({
             disabled={disabled}
             onChange={() => onChange(source)}
           />{" "}
-          {SOURCE_WORDS[source]}
+          {sourceWord(source)}
         </label>
       ))}
     </div>
@@ -624,12 +639,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   const commands: { name: string; note: string; command: Command }[] = [
     {
       name: "Linux",
-      note: "as root, on any Linux with systemd",
+      note: t("install.linux.note"),
       command: linuxInstallCommand(token, source, origin, through, aiFromWeb),
     },
     {
       name: "Windows",
-      note: "in an elevated PowerShell",
+      note: t("install.windows.note"),
       command: windowsInstallCommand(token, source, origin, through, aiFromWeb),
     },
   ];
@@ -640,21 +655,20 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   return (
     <div className={styles.stack} role="group" aria-labelledby={titleId}>
       <h3 id={titleId} className={styles.sectionTitle}>
-        Install the agent
+        {t("install.agent.title")}
       </h3>
       <fieldset className={styles.fieldset}>
-        <legend className={styles.legend}>Download from</legend>
+        <legend className={styles.legend}>{t("install.downloadFrom")}</legend>
         <SourceRadios name={sourceName} value={source} onChange={setSource} />
       </fieldset>
       {source === "central" && central && !shared && (
         <p className={styles.fieldNote}>
-          Release {central.version} from this server. The commands check its checksums, so servers need not trust this
-          site&apos;s certificate.
+          {t("install.agent.central", { version: central.version })}
         </p>
       )}
       <label className={styles.field}>
         <span>
-          Connect through a relay <span className={styles.fieldNote}>— optional; host:port agents use to reach it</span>
+          {t("install.agent.relay")} <span className={styles.fieldNote}>{t("install.agent.relayNote")}</span>
         </span>
         <input
           className={cx(fieldClass, styles.mono)}
@@ -668,16 +682,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
       </label>
       {!valid && (
         <p className={styles.formError} role="alert">
-          Enter a name or IP address, with an optional port; IPv6 addresses in brackets.
+          {t("install.agent.relayInvalid")}
         </p>
       )}
       <label className={styles.check}>
-        <input type="checkbox" checked={aiFromWeb} onChange={(e) => setAiFromWeb(e.target.checked)} /> Allow AI commands
-        to be turned on from the web interface{" "}
-        <span className={styles.fieldNote}>
-          — administrators can then turn AI commands on and off from the server&apos;s page; without it, they can only
-          turn them off
-        </span>
+        <input type="checkbox" checked={aiFromWeb} onChange={(e) => setAiFromWeb(e.target.checked)} />{" "}
+        {t("install.agent.aiFromWeb")} <span className={styles.fieldNote}>{t("install.agent.aiFromWebNote")}</span>
       </label>
       {shared ? (
         <Banner tone="warn">{shared}</Banner>
@@ -687,7 +697,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
             <InstallCommand key={name} name={name} note={note} text={command.text} />
           ) : (
             <Banner key={name} tone="warn">
-              {name}: {command.unavailable}
+              {t("install.command.unavailable", { name, reason: command.unavailable })}
             </Banner>
           ),
         )
@@ -710,34 +720,27 @@ function RelayInstallCommand({ target }: { target: InstallTarget }) {
   return (
     <div className={styles.stack} role="group" aria-labelledby={titleId}>
       <h3 id={titleId} className={styles.sectionTitle}>
-        Install the relay
+        {t("install.relay.title")}
       </h3>
       <fieldset className={styles.fieldset}>
-        <legend className={styles.legend}>Download from</legend>
+        <legend className={styles.legend}>{t("install.downloadFrom")}</legend>
         <SourceRadios name={sourceName} value={source} onChange={setSource} />
       </fieldset>
       {source === "central" && central && "text" in command && (
         <p className={styles.fieldNote}>
-          Release {central.version} from this server. The command checks its checksums, so the relay need not trust this
-          site&apos;s certificate.
+          {t("install.relay.central", { version: central.version })}
         </p>
       )}
       <label className={styles.check}>
-        <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} /> Serve the package
-        mirrors and agent releases to this site&apos;s servers{" "}
-        <span className={styles.fieldNote}>
-          — the relay copies every mirror added under Mirrors, 50 to 400 GiB per distribution
-        </span>
+        <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />{" "}
+        {t("install.relay.mirror")} <span className={styles.fieldNote}>{t("install.relay.mirrorNote")}</span>
       </label>
       {"text" in command ? (
-        <InstallCommand name="Linux" note="as root, on any Linux with systemd" text={command.text} />
+        <InstallCommand name="Linux" note={t("install.linux.note")} text={command.text} />
       ) : (
         <Banner tone="warn">{command.unavailable}</Banner>
       )}
-      <p className={styles.fieldNote}>
-        Once the relay is online, its page gives the command for the servers behind it. It updates itself with the agents
-        (Updates › Automatic updates).
-      </p>
+      <p className={styles.fieldNote}>{t("install.relay.after")}</p>
     </div>
   );
 }
@@ -765,7 +768,7 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
       .agentInstall(controller.signal)
       .then(show)
       .catch((e: unknown) => {
-        if (!controller.signal.aborted) setError(`Loading the install source failed. ${describeError(e)}`);
+        if (!controller.signal.aborted) setError(t("install.source.loadFailed", { error: describeError(e) }));
       });
     return () => controller.abort();
   }, []);
@@ -779,7 +782,7 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
       show(await api.setAgentInstall({ source, custom_url: customUrl.trim() || null }));
       setSaved(true);
     } catch (e) {
-      setError(`Saving the install source failed. ${describeError(e)}`);
+      setError(t("install.source.saveFailed", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -791,41 +794,35 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
     <form className={styles.section} onSubmit={submit} aria-labelledby={titleId}>
       <div className={styles.sectionHead}>
         <h2 id={titleId} className={styles.sectionTitle}>
-          Default install source
+          {t("install.source.title")}
         </h2>
       </div>
       <p className={styles.sectionNote}>
-        Where the install commands of new tokens download the agent or relay from; each command can use another.
-        {!editable && " A global administrator changes it."}
+        {t("install.source.note")}
+        {!editable && t("install.source.readOnly")}
       </p>
       <div className={styles.sectionBody}>
         {current && (
           <>
             <fieldset className={styles.fieldset} disabled={!editable || current.source_from_config}>
               <legend className={styles.legend}>
-                Source{" "}
-                {current.source_from_config && (
-                  <span className={styles.fieldNote}>— set in the server configuration (agent_install_source)</span>
-                )}
+                {t("install.source.label")}{" "}
+                {current.source_from_config && <span className={styles.fieldNote}>{t("install.source.fromConfig")}</span>}
               </legend>
               <SourceRadios name={sourceName} value={source} onChange={setSource} />
             </fieldset>
             <p className={styles.fieldNote}>
-              {current.central ? (
-                `This server holds release ${current.central.version}.`
-              ) : (
-                <>
-                  This server holds no agent release yet: <Link href={SERVER_UPDATE_PATH}>import one</Link>.
-                </>
-              )}
+              {current.central
+                ? t("install.source.holds", { version: current.central.version })
+                : rich("install.source.holdsNone", {
+                    link: <Link href={SERVER_UPDATE_PATH}>{t("install.source.importOne")}</Link>,
+                  })}
             </p>
             <label className={styles.field}>
               <span>
-                Custom URL{" "}
+                {t("install.source.custom.label")}{" "}
                 <span className={styles.fieldNote}>
-                  {current.custom_url_from_config
-                    ? "— set in the server configuration (agent_download_url)"
-                    : "— https directory holding the release files; agents also update from it"}
+                  {current.custom_url_from_config ? t("install.source.custom.fromConfig") : t("install.source.custom.note")}
                 </span>
               </span>
               <input
@@ -846,9 +843,9 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
                   type="submit"
                   disabled={busy || !urlValid || (source === "custom" && url === "")}
                 >
-                  Save
+                  {t("install.save")}
                 </Button>
-                {saved && <span className={styles.footnote}>Saved.</span>}
+                {saved && <span className={styles.footnote}>{t("install.saved")}</span>}
               </div>
             )}
           </>
@@ -868,13 +865,13 @@ function InstallCommand({ name, note, text }: { name: string; note: string; text
   return (
     <div className={styles.field}>
       <span id={labelId}>
-        {name} <span className={styles.fieldNote}>— {note}</span>
+        {name} <span className={styles.fieldNote}>({note})</span>
       </span>
       <div className={styles.snippet}>
         <pre className={styles.code} aria-labelledby={labelId}>
           {text}
         </pre>
-        <CopyButton text={text} name={`Copy the ${name} command`} size="small" className={styles.snippetCopy} />
+        <CopyButton text={text} name={t("install.command.copy", { name })} size="small" className={styles.snippetCopy} />
       </div>
     </div>
   );
@@ -899,27 +896,29 @@ function TokenTable({
   const columns: Column<EnrollmentToken>[] = [
     {
       key: "peer",
-      header: "Name",
+      header: t("install.tokens.column.name"),
       cell: (token) => <span className={token.state === "pending" ? styles.peer : styles.mono}>{token.peer_id}</span>,
     },
-    { key: "role", header: "Role", cell: (token) => ROLE_WORDS[token.role] },
-    { key: "site", header: "Site", cell: (token) => token.site_name },
-    { key: "state", header: "State", cell: (token) => <StatusLabel kind="token" value={token.state} /> },
+    { key: "role", header: t("install.tokens.column.role"), cell: (token) => roleWord(token.role) },
+    { key: "site", header: t("install.tokens.column.site"), cell: (token) => token.site_name },
+    { key: "state", header: t("install.tokens.column.state"), cell: (token) => <StatusLabel kind="token" value={token.state} /> },
     {
       key: "created",
-      header: "Created",
+      header: t("install.tokens.column.created"),
       cell: (token) => (
         <>
           {formatWhen(new Date(token.created_at), now)}{" "}
-          <span className={styles.dim}>by {token.created_by_username ?? "the server CLI or a removed user"}</span>
+          <span className={styles.dim}>
+            {t("install.tokens.by", { name: token.created_by_username ?? t("install.tokens.byUnknown") })}
+          </span>
         </>
       ),
     },
     {
       key: "expires",
-      header: "Expires",
+      header: t("install.tokens.column.expires"),
       cell: (token) => {
-        if (token.state === "used" && token.used_at) return `used ${formatWhen(new Date(token.used_at), now)}`;
+        if (token.state === "used" && token.used_at) return t("install.tokens.used", { when: formatWhen(new Date(token.used_at), now) });
         const expires = new Date(token.expires_at);
         return token.state === "pending" ? (
           <>
@@ -936,20 +935,20 @@ function TokenTable({
     <section className={styles.section} aria-labelledby={titleId}>
       <div className={styles.sectionHead}>
         <h2 id={titleId} className={styles.sectionTitle}>
-          Tokens
+          {t("install.tokens.title")}
         </h2>
-        <span className={styles.dim}>{pending} pending</span>
+        <span className={styles.dim}>{t("install.tokens.pending", { count: pending })}</span>
         <label className={styles.check}>
-          <input type="checkbox" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} /> Hide used and
-          expired
+          <input type="checkbox" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} />{" "}
+          {t("install.tokens.hideDone")}
         </label>
       </div>
       {tokens && rows.length === 0 ? (
-        <p className={styles.sectionNote}>{tokens.length === 0 ? "No tokens yet." : "No pending tokens."}</p>
+        <p className={styles.sectionNote}>{tokens.length === 0 ? t("install.tokens.none") : t("install.tokens.nonePending")}</p>
       ) : (
         <DataTable
           bare
-          label="Single-use tokens"
+          label={t("install.tokens.label")}
           columns={columns}
           rows={rows}
           rowKey={(token) => token.id}
@@ -959,26 +958,24 @@ function TokenTable({
             token.state === "pending" ? (
               <InlineConfirm
                 layout="row"
-                trigger="Revoke"
+                trigger={t("install.tokens.revoke")}
                 triggerVariant="default"
-                triggerName={`Revoke the token for ${token.peer_id}`}
-                title="Revoke this token?"
-                consequence={`${token.peer_id} will not be able to connect with it.`}
-                confirmLabel="Revoke token"
-                pendingLabel="Revoking…"
+                triggerName={t("install.tokens.revokeName", { name: token.peer_id })}
+                title={t("install.tokens.revokeTitle")}
+                consequence={t("install.tokens.revokeConsequence", { name: token.peer_id })}
+                confirmLabel={t("install.tokens.revokeConfirm")}
+                pendingLabel={t("install.revoking")}
                 onConfirm={async () => {
                   await api.revokeToken(token.id);
                   onChange();
                 }}
-                describeError={(e) => `Revoking the token failed. ${describeError(e)}`}
+                describeError={(e) => t("install.tokens.revokeFailed", { error: describeError(e) })}
               />
-            ) : (
-              <span className={styles.dim}>—</span>
-            )
+            ) : null
           }
         />
       )}
-      {more && <p className={styles.sectionNote}>Showing the newest {tokens?.length} tokens.</p>}
+      {more && <p className={styles.sectionNote}>{t("install.tokens.newest", { count: tokens?.length ?? 0 })}</p>}
     </section>
   );
 }

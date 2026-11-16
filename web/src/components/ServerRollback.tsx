@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 
+import { t } from "@/i18n";
 import { type Rollback, type ServerDetail, api, describeError } from "@/lib/api";
 import { snapshotReason } from "@/lib/remediation";
 import { type SnapshotSet, covers, listWords, rollbackSteps, snapshotSpace } from "@/lib/rollback";
@@ -35,7 +36,7 @@ export function RollbackFact({ server, canMap }: { server: ServerDetail; canMap:
   const proxmox = useProxmox(server.id, canMap);
   const proxmoxView = proxmox.data && proxmox.data.clusters.length > 0 ? proxmox.data : null;
   const data = rollback.data;
-  if (!data) return <>{rollback.error ? "unknown" : "…"}</>;
+  if (!data) return <>{rollback.error ? t("serverUpdate.rollback.unknown") : "…"}</>;
   const local = data.snapshots.method !== "proxmox" && !proxmoxGuest(data) ? <LocalLine data={data} /> : null;
   if (proxmoxView) {
     const refresh = () => {
@@ -56,17 +57,17 @@ function proxmoxGuest(data: Rollback): boolean {
 /** A Proxmox guest, for those who cannot change its mapping. */
 function GuestLine({ data }: { data: Rollback }) {
   const { snapshots } = data;
-  const guest = snapshots.kind === "lxc" ? "container" : "VM";
   if (snapshots.available) {
     return (
       <>
-        <Label tone="ok">Snapshot first</Label> Proxmox snapshots the {guest} before each AI change.
+        <Label tone="ok">{t("serverUpdate.rollback.snapshotFirst")}</Label>{" "}
+        {snapshots.kind === "lxc" ? t("serverUpdate.rollback.guestContainer") : t("serverUpdate.rollback.guestVm")}
       </>
     );
   }
   return (
     <>
-      <Label tone="warn">Rollback limited</Label> {capitalize(snapshotReason(snapshots.reason, snapshots.kind))}
+      <Label tone="warn">{t("serverUpdate.rollback.limited")}</Label> {capitalize(snapshotReason(snapshots.reason, snapshots.kind))}
       {snapshots.detail && <span className={styles.note}> {capitalize(snapshots.detail)}.</span>}
     </>
   );
@@ -78,21 +79,24 @@ function LocalLine({ data }: { data: Rollback }) {
   if (!snapshots.available) {
     return (
       <>
-        <Label tone="warn">Rollback limited</Label>{" "}
-        {`${capitalize(snapshots.detail ?? "no snapshot support on this server")}, so changes run without a snapshot.`}
+        <Label tone="warn">{t("serverUpdate.rollback.limited")}</Label>{" "}
+        {t("serverUpdate.rollback.withoutSnapshot", {
+          reason: capitalize(snapshots.detail ?? t("serverUpdate.rollback.noSupport")),
+        })}
       </>
     );
   }
   return (
     <>
-      <Label tone="ok">Snapshot first</Label> {snapshots.detail}, taken by the agent before each AI change and update.
+      <Label tone="ok">{t("serverUpdate.rollback.snapshotFirst")}</Label>{" "}
+      {t("serverUpdate.rollback.taken", { detail: snapshots.detail ?? "" })}
       {notCovered.length > 0 && (
         <span className={styles.note}>
           {" "}
-          {listWords(notCovered)} {notCovered.length === 1 ? "is" : "are"} not covered
-          {notCovered.includes("/boot")
-            ? ": after rolling back a kernel update, pick the previous kernel in the boot menu."
-            : "."}
+          {t(notCovered.includes("/boot") ? "serverUpdate.rollback.notCoveredBoot" : "serverUpdate.rollback.notCovered", {
+            count: notCovered.length,
+            list: listWords(notCovered),
+          })}
         </span>
       )}
     </>
@@ -109,26 +113,26 @@ export function ServerRollback({ server }: { server: ServerDetail }) {
 
   if (!data) {
     return error ? (
-      <ErrorState what="the snapshots" error={describeError(error)} onRetry={refresh} />
+      <ErrorState what={t("serverUpdate.snapshots.what")} error={describeError(error)} onRetry={refresh} />
     ) : (
-      <LoadingBlock label="Loading the snapshots" />
+      <LoadingBlock label={t("serverUpdate.snapshots.loading")} />
     );
   }
   if (data.local_snapshots.length === 0) return null;
   const now = updatedAt ?? new Date();
   const columns: Column<SnapshotSet>[] = [
-    { key: "name", header: "Snapshot", cell: (s) => <code>{s.name}</code> },
+    { key: "name", header: t("serverUpdate.snapshots.column.name"), cell: (s) => <code>{s.name}</code> },
     {
       key: "taken",
-      header: "Taken",
+      header: t("serverUpdate.snapshots.column.taken"),
       cell: (s) => <RelativeTime value={s.created_at} now={now} />,
       sortValue: (s) => s.created_at,
     },
-    { key: "covers", header: "Covers", cell: covers },
-    { key: "space", header: "Space", cell: snapshotSpace },
+    { key: "covers", header: t("serverUpdate.snapshots.column.covers"), cell: covers },
+    { key: "space", header: t("serverUpdate.snapshots.column.space"), cell: snapshotSpace },
     {
       key: "deleted",
-      header: "Deleted by",
+      header: t("serverUpdate.snapshots.column.deleted"),
       cell: (s) => formatExact(new Date(s.delete_after)),
       sortValue: (s) => s.delete_after,
     },
@@ -137,17 +141,13 @@ export function ServerRollback({ server }: { server: ServerDetail }) {
     <section className={admin.section} aria-labelledby="snapshots-title">
       <div className={admin.sectionHead}>
         <h2 id="snapshots-title" className={admin.sectionTitle}>
-          Snapshots
+          {t("serverUpdate.snapshots.title")}
         </h2>
       </div>
       <div className={styles.body}>
-        <p className={styles.note}>
-          Local snapshots the agent took before changes. Classic LVM snapshots are deleted after a day, as they slow every
-          write; others after 7 days, and only the 3 newest stay. Rolling back is done by hand, as it needs a reboot: open a
-          snapshot for the commands.
-        </p>
+        <p className={styles.note}>{t("serverUpdate.snapshots.note")}</p>
         <DataTable
-          label={`Snapshots of ${server.hostname}`}
+          label={t("serverUpdate.snapshots.of", { name: server.hostname })}
           columns={columns}
           rows={data.local_snapshots}
           rowKey={(s) => s.name}
@@ -163,12 +163,12 @@ export function ServerRollback({ server }: { server: ServerDetail }) {
 /** The rollback commands of one snapshot, behind a disclosure. */
 function Steps({ set }: { set: SnapshotSet }) {
   if (set.volumes.some((v) => v.invalid)) {
-    return <p className={styles.note}>This snapshot filled up and can&apos;t be rolled back to. It is deleted within the hour.</p>;
+    return <p className={styles.note}>{t("serverUpdate.snapshots.full")}</p>;
   }
   const steps = rollbackSteps(set);
   return (
     <details className={styles.steps}>
-      <summary>How to roll back to {set.name}</summary>
+      <summary>{t("serverUpdate.snapshots.how", { name: set.name })}</summary>
       <p className={styles.note}>{steps.intro}</p>
       <pre className={styles.commands}>{steps.commands.join("\n")}</pre>
     </details>
