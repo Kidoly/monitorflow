@@ -33015,6 +33015,74 @@
           }
         }
       },
+      "LocalReason": {
+        "type": "object",
+        "description": "Why a server cannot get a local snapshot (ADR-0094), as data.",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "`windows`, `not_reported`, `sudo_rules`, `inspect`, `no_root`,\n`root_not_covered`, `no_space` or `pool_full`."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `inspect`: the agent's own error, as it gave it."
+          },
+          "free_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "With `no_space` and `pool_full`: bytes free.",
+            "minimum": 0
+          },
+          "fs_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `root_not_covered`: the file system of `/`, like `ext4`."
+          },
+          "group": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `no_space`: the LVM volume group."
+          },
+          "mount_point": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `no_space` and `pool_full`: the mount point that lacks space."
+          },
+          "needed_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "With `no_space`: bytes the snapshot needs.",
+            "minimum": 0
+          },
+          "pool_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "With `pool_full`: the size of the pool.",
+            "minimum": 0
+          }
+        }
+      },
       "LogLevel": {
         "type": "string",
         "description": "Which priorities to show.",
@@ -38285,6 +38353,17 @@
               "null"
             ],
             "description": "What a snapshot does not hold, though Proxmox takes one."
+          },
+          "local_reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LocalReason",
+                "description": "Why no local snapshot, as a code and its values, for a client to\nword in its own language; `detail` says it in English. Absent\nunless a local snapshot was looked for and is not possible."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "method": {
             "type": [

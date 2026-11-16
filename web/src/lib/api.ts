@@ -1421,6 +1421,20 @@ export interface SnapshotSupport {
   left_out?: string | null;
   /** Which snapshot a change gets when available: `proxmox`, or a local `lvm` or `zfs` one; absent from servers before ADR-0094. */
   method?: "proxmox" | "lvm" | "zfs" | null;
+  /** Why no local snapshot, as data to word in the active language; `detail` says it in English. */
+  local_reason?: LocalReason;
+}
+
+/** Why a server cannot get a local snapshot (ADR-0094), with the values of its sentence. */
+export interface LocalReason {
+  code: "windows" | "not_reported" | "sudo_rules" | "inspect" | "no_root" | "root_not_covered" | "no_space" | "pool_full";
+  fs_type?: string;
+  mount_point?: string;
+  group?: string;
+  free_bytes?: number;
+  needed_bytes?: number;
+  pool_bytes?: number;
+  error?: string;
 }
 
 /** `GET /api/servers/{id}/proxmox`: the server's Proxmox guest; customer administrators. */

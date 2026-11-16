@@ -4,7 +4,7 @@ import { useCallback } from "react";
 
 import { t } from "@/i18n";
 import { type Rollback, type ServerDetail, api, describeError } from "@/lib/api";
-import { snapshotReason } from "@/lib/remediation";
+import { localReasonText, snapshotReason } from "@/lib/remediation";
 import { type SnapshotSet, covers, listWords, rollbackSteps, snapshotSpace } from "@/lib/rollback";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -56,7 +56,7 @@ export function RollbackBadge({ serverId }: { serverId: string }) {
   const { snapshots } = data;
   const why =
     snapshots.method !== "proxmox" && !proxmoxGuest(data)
-      ? t("serverUpdate.rollback.withoutSnapshot", { reason: capitalize(snapshots.detail ?? t("serverUpdate.rollback.noSupport")) })
+      ? t("serverUpdate.rollback.withoutSnapshot", { reason: capitalize(localReasonText(snapshots) ?? t("serverUpdate.rollback.noSupport")) })
       : capitalize(snapshotReason(snapshots.reason, snapshots.kind));
   return (
     <Hint tone="warn" label={t("serverUpdate.rollback.limited")}>
@@ -98,7 +98,7 @@ function LocalLine({ data }: { data: Rollback }) {
       <>
         <Label tone="warn">{t("serverUpdate.rollback.limited")}</Label>{" "}
         {t("serverUpdate.rollback.withoutSnapshot", {
-          reason: capitalize(snapshots.detail ?? t("serverUpdate.rollback.noSupport")),
+          reason: capitalize(localReasonText(snapshots) ?? t("serverUpdate.rollback.noSupport")),
         })}
       </>
     );

@@ -146,6 +146,70 @@ pub struct SnapshotSupport {
     /// Which snapshot a change gets when available: `proxmox`, or a local
     /// `lvm` or `zfs` snapshot (ADR-0094).
     pub method: Option<&'static str>,
+    /// Why no local snapshot, as a code and its values, for a client to
+    /// word in its own language; `detail` says it in English. Absent
+    /// unless a local snapshot was looked for and is not possible.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_reason: Option<LocalReason>,
+}
+
+/// Why a server cannot get a local snapshot (ADR-0094), as data.
+#[derive(Debug, Default, PartialEq, Serialize, utoipa::ToSchema)]
+pub struct LocalReason {
+    /// `windows`, `not_reported`, `sudo_rules`, `inspect`, `no_root`,
+    /// `root_not_covered`, `no_space` or `pool_full`.
+    pub code: &'static str,
+    /// With `root_not_covered`: the file system of `/`, like `ext4`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fs_type: Option<String>,
+    /// With `no_space` and `pool_full`: the mount point that lacks space.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mount_point: Option<String>,
+    /// With `no_space`: the LVM volume group.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// With `no_space` and `pool_full`: bytes free.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub free_bytes: Option<u64>,
+    /// With `no_space`: bytes the snapshot needs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needed_bytes: Option<u64>,
+    /// With `pool_full`: the size of the pool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pool_bytes: Option<u64>,
+    /// With `inspect`: the agent's own error, as it gave it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl From<&local::LocalUnavailable> for LocalReason {
+    fn from(why: &local::LocalUnavailable) -> Self {
+        use local::LocalUnavailable as L;
+        use monitorflow_common::snapshot::Refusal as R;
+        let code = why.code();
+        match why {
+            L::Inspect { error } => Self { code, error: Some(error.clone()), ..Self::default() },
+            L::Refused(R::RootNotCovered { fs_type }) => {
+                Self { code, fs_type: Some(fs_type.clone()), ..Self::default() }
+            }
+            L::Refused(R::NoSpace { mount_point, group, free_bytes, needed_bytes }) => Self {
+                code,
+                mount_point: Some(mount_point.clone()),
+                group: Some(group.clone()),
+                free_bytes: Some(*free_bytes),
+                needed_bytes: Some(*needed_bytes),
+                ..Self::default()
+            },
+            L::Refused(R::PoolFull { mount_point, free_bytes, pool_bytes }) => Self {
+                code,
+                mount_point: Some(mount_point.clone()),
+                free_bytes: Some(*free_bytes),
+                pool_bytes: Some(*pool_bytes),
+                ..Self::default()
+            },
+            _ => Self { code, ..Self::default() },
+        }
+    }
 }
 
 impl SnapshotSupport {
@@ -168,6 +232,7 @@ impl SnapshotSupport {
             detail: detail.filter(|_| matches!(unsupported, Some(Unsupported::CannotSnapshot(_)))),
             left_out: left_out.filter(|_| support.is_available()),
             method: support.is_available().then_some("proxmox"),
+            local_reason: None,
         }
     }
 
@@ -184,7 +249,10 @@ impl SnapshotSupport {
                 self.method = Some(plan.method);
                 self.detail = Some(plan.summary);
             }
-            Err(why) => self.detail = Some(why.to_string()),
+            Err(why) => {
+                self.detail = Some(why.to_string());
+                self.local_reason = Some(LocalReason::from(&why));
+            }
         }
         self.reason = Some(reason);
         self
@@ -528,5 +596,24 @@ mod tests {
         // administrators map as before.
         assert!(!by_candidate_only(Owner::Customer(customer), false));
         assert!(!by_candidate_only(Owner::Site(site), false));
+    }
+
+    #[test]
+    fn a_local_reason_carries_its_values() {
+        use monitorflow_common::snapshot::Refusal;
+        let full = local::LocalUnavailable::Refused(Refusal::NoSpace {
+            mount_point: "/var".into(),
+            group: "vg0".into(),
+            free_bytes: 1,
+            needed_bytes: 2,
+        });
+        assert_eq!(
+            serde_json::to_value(LocalReason::from(&full)).unwrap(),
+            json!({ "code": "no_space", "mount_point": "/var", "group": "vg0", "free_bytes": 1, "needed_bytes": 2 })
+        );
+        assert_eq!(
+            serde_json::to_value(LocalReason::from(&local::LocalUnavailable::Windows)).unwrap(),
+            json!({ "code": "windows" })
+        );
     }
 }

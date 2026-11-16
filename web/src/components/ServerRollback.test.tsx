@@ -3,9 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Rollback, ServerDetail } from "@/lib/api";
+import { setActiveLocale } from "@/i18n/locale";
 import { stubFetch } from "@/test/fetch";
 
-import { RollbackFact, ServerRollback } from "./ServerRollback";
+import { RollbackBadge, RollbackFact, ServerRollback } from "./ServerRollback";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
@@ -65,6 +66,28 @@ describe("RollbackFact", () => {
 
     expect(await screen.findByText("Rollback limited")).toBeInTheDocument();
     expect(screen.getByText("/ is on plain ext4, so changes run without a snapshot.", { exact: false })).toBeInTheDocument();
+  });
+
+  it("explains the header's badge all in French, from the API's code", async () => {
+    setActiveLocale("fr");
+    try {
+      const sudo = {
+        ...thin,
+        snapshots: {
+          available: false,
+          reason: "disabled" as const,
+          detail: "the sudo rules on this server predate snapshots; run the install command again",
+          local_reason: { code: "sudo_rules" as const },
+        },
+      };
+      stubFetch({ [PATH]: { status: 200, body: { ...sudo, not_covered: [], local_snapshots: [] } } });
+      render(<RollbackBadge serverId={ID} />);
+      expect(await screen.findByText("Retour arrière limité")).toBeInTheDocument();
+      expect(document.body).toHaveTextContent(/Les règles sudo de ce serveur datent d’avant les instantanés\s; relancez la commande d’installation, les modifications se font donc sans instantané\./);
+      expect(document.body).not.toHaveTextContent(/predate/);
+    } finally {
+      setActiveLocale("en");
+    }
   });
 
   it("leaves a Proxmox guest to Proxmox, without a local snapshot", async () => {

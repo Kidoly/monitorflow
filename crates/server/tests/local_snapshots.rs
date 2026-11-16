@@ -264,12 +264,16 @@ db_tests! {
         let (_, body) = h.call(&uri, &viewer).await;
         assert_eq!(rollback(&body)["available"], false);
         assert_eq!(rollback(&body)["detail"], "/ is on plain ext4");
+        // The same as data, for the web interface to word in its language.
+        assert_eq!(rollback(&body)["local_reason"], json!({ "code": "root_not_covered", "fs_type": "ext4" }));
         let sudo = StorageReport { error: "sudo: a password is required".into(), ..StorageReport::default() };
         h.report(3_000, Some(sudo)).await;
+        let (_, body) = h.call(&uri, &viewer).await;
         assert_eq!(
-            rollback(&h.call(&uri, &viewer).await.1)["detail"],
+            rollback(&body)["detail"],
             "the sudo rules on this server predate snapshots; run the install command again"
         );
+        assert_eq!(rollback(&body)["local_reason"], json!({ "code": "sudo_rules" }));
 
         // A report without storage forgets the previous one.
         h.report(4_000, None).await;
@@ -287,6 +291,7 @@ db_tests! {
         let (_, body) = h.call(&uri, &viewer).await;
         assert_eq!(rollback(&body)["method"], "proxmox");
         assert_eq!(body["not_covered"], json!([]));
+        assert!(rollback(&body).get("local_reason").is_none());
         sqlx::query("UPDATE server_proxmox_vms SET cannot_snapshot = 'rootfs is on storage local (dir), which cannot take snapshots'")
             .execute(&pool)
             .await
