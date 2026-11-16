@@ -177,6 +177,7 @@ describe("AppShell", () => {
       "Approvals",
       "Audit log",
       "Settings",
+      "Personalize the sidebar",
     ]);
     expect(within(nav()).queryByText("Administration")).not.toBeInTheDocument();
     expect(within(nav()).getByText("Remediation")).toBeInTheDocument();
@@ -374,7 +375,15 @@ describe("AppShell", () => {
       const search = within(nav()).getByRole("searchbox", { name: "Search settings" });
       await user.type(search, "key");
       const names = () => within(nav()).getAllByRole("link").map((a) => a.textContent);
-      expect(names()).toEqual(["MonitorFlowMF", "Back", "Settings", "API keys", "AI", "License"]);
+      expect(names()).toEqual([
+        "MonitorFlowMF",
+        "Back",
+        "Settings",
+        "API keys",
+        "AI",
+        "License",
+        "Personalize the sidebar",
+      ]);
       await user.keyboard("{Escape}");
       expect(search).toHaveValue("");
       expect(names()).toContain("General");
