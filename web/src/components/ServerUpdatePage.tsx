@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import {
   ApiError,
   type ServerUpdateCheck,
@@ -13,7 +14,7 @@ import {
 } from "@/lib/api";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { BACKUPS_PATH } from "@/lib/routes";
-import { changeLines, imageText, inProgress, isFinal, restoreCommand, STATE_WORDS } from "@/lib/serverUpdate";
+import { changeLines, imageText, inProgress, isFinal, restoreCommand, STATE_TONES, stateWord } from "@/lib/serverUpdate";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { ReleaseImport } from "./ReleaseImport";
@@ -24,6 +25,7 @@ import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader, RefreshLine } from "./ui/PageState";
 import { RelativeTime } from "./ui/RelativeTime";
 import { Label } from "./ui/StatusLabel";
+import { formatClock } from "./ui/time";
 
 /** Polling while an update runs: the restart is short, the page follows it closely. */
 const ACTIVE_MS = 3_000;
@@ -34,8 +36,8 @@ export function ServerUpdatePage() {
   const me = useMe();
   if (!administersEverything(me)) {
     return (
-      <NoPermission title="Server updates need a global administrator">
-        The server is shared by {multiCustomer(me) ? "every customer" : "all sites"}. Ask a global administrator for a role.
+      <NoPermission title={t("serverUpdate.noPermission")}>
+        {multiCustomer(me) ? t("serverUpdate.noPermissionCustomers") : t("serverUpdate.noPermissionSites")}
       </NoPermission>
     );
   }
@@ -59,10 +61,10 @@ function ServerUpdate() {
 
   const header = (
     <PageHeader
-      title="Server update"
+      title={t("serverUpdate.title")}
       meta={
         <>
-          Global administrators only
+          {t("serverUpdate.meta")}
           {(updatedAt !== null || error !== null) && (
             <>
               {" · "}
@@ -77,7 +79,7 @@ function ServerUpdate() {
     return (
       <div className={styles.page}>
         {header}
-        <NoPermission title="Server updates need a global administrator" />
+        <NoPermission title={t("serverUpdate.noPermission")} />
       </div>
     );
   }
@@ -85,7 +87,7 @@ function ServerUpdate() {
     return (
       <div className={styles.page}>
         {header}
-        {error ? <ErrorState what="the update status" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
+        {error ? <ErrorState what={t("serverUpdate.what")} error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
       </div>
     );
   }
@@ -96,25 +98,21 @@ function ServerUpdate() {
       {header}
       {stale &&
         (busy ? (
-          <Banner tone="warn">
-            Reconnecting… The server and the web interface restart during an update. This page keeps asking and shows the
-            result once they are back.
-          </Banner>
+          <Banner tone="warn">{t("serverUpdate.reconnecting")}</Banner>
         ) : (
-          <Banner tone="warn">Cannot reach the server: {describeError(error)} This page keeps trying.</Banner>
+          <Banner tone="warn">{t("serverUpdate.unreachable", { error: describeError(error) })}</Banner>
         ))}
       <Summary view={data} />
       {!data.enabled ? (
         <Banner tone="info">
-          {data.available && <strong>MonitorFlow {data.available.version} is available. </strong>}
-          This server is not set up for updates from the web interface: it needs the updater service of the production
-          compose file. See <code>{GUIDE}</code>, Updating.
+          {data.available && <strong>{t("serverUpdate.available", { version: data.available.version })} </strong>}
+          {rich("serverUpdate.notSetUp", { guide: <code>{GUIDE}</code> })}
         </Banner>
       ) : (
         <Check view={data} busy={busy} onStarted={refresh} />
       )}
       {data.update && <LastUpdate run={data.update} requested={data.requested} loadedAt={loadedAt} />}
-      {!data.update && data.requested && <Banner tone="info">Waiting for the updater to start the update…</Banner>}
+      {!data.update && data.requested && <Banner tone="info">{t("serverUpdate.waiting")}</Banner>}
       <ReleaseImport source={data.source} />
     </div>
   );
@@ -127,24 +125,25 @@ function Summary({ view }: { view: ServerUpdateView }) {
     <FactsBox
       columns={2}
       facts={[
-        { label: "Running version", value: view.running_version },
+        { label: t("serverUpdate.facts.running"), value: view.running_version },
         {
-          label: "Updater",
+          label: t("serverUpdate.facts.updater"),
           value: !view.enabled ? (
-            "not configured"
+            t("serverUpdate.facts.notConfigured")
           ) : updater === null ? (
-            <Label tone="bad">not running</Label>
+            <Label tone="bad">{t("serverUpdate.facts.notRunning")}</Label>
           ) : updater.alive ? (
-            <Label tone="ok">ready</Label>
+            <Label tone="ok">{t("serverUpdate.facts.ready")}</Label>
           ) : (
             <>
-              <Label tone="bad">not responding</Label> last seen <RelativeTime value={updater.heartbeat_at} now={new Date()} />
+              <Label tone="bad">{t("serverUpdate.facts.notResponding")}</Label>{" "}
+              {rich("serverUpdate.facts.lastSeen", { when: <RelativeTime value={updater.heartbeat_at} now={new Date()} /> })}
             </>
           ),
         },
-        { label: "Server image", value: imageText(running?.server_image ?? null), mono: true },
-        { label: "Web image", value: imageText(running?.web_image ?? null), mono: true },
-        { label: "Releases from", value: view.source, mono: true },
+        { label: t("serverUpdate.facts.serverImage"), value: imageText(running?.server_image ?? null), mono: true },
+        { label: t("serverUpdate.facts.webImage"), value: imageText(running?.web_image ?? null), mono: true },
+        { label: t("serverUpdate.facts.source"), value: view.source, mono: true },
       ]}
     />
   );
@@ -163,7 +162,7 @@ function Check({ view, busy, onStarted }: { view: ServerUpdateView; busy: boolea
       setResult(await api.checkServerUpdate());
     } catch (e) {
       setResult(null);
-      setFailure(`Cannot check for updates. ${describeError(e)}`);
+      setFailure(t("serverUpdate.cannotCheck", { error: describeError(e) }));
     } finally {
       setChecking(false);
     }
@@ -198,58 +197,49 @@ function Check({ view, busy, onStarted }: { view: ServerUpdateView; busy: boolea
     <section className={styles.box} aria-labelledby="check-title">
       <div className={styles.boxHeader}>
         <h2 id="check-title" className={styles.title}>
-          Updates
+          {t("serverUpdate.updates")}
         </h2>
         <Button onClick={() => void check()} disabled={checking}>
-          {checking ? "Checking…" : "Check for updates"}
+          {checking ? t("serverUpdate.checking") : t("serverUpdate.check")}
         </Button>
       </div>
       {failure && <Banner tone="bad">{failure}</Banner>}
       {result && !result.reachable && (
-        <p className={styles.note}>
-          This server cannot reach the release source, as is usual without Internet access. Agents and relays update from a
-          release imported below; the server itself is updated by hand (<code>{GUIDE}</code>, Offline servers).
-        </p>
+        <p className={styles.note}>{rich("serverUpdate.offline", { guide: <code>{GUIDE}</code> })}</p>
       )}
       {result?.reachable && !latest && (
-        <Banner tone="bad">The latest release cannot be used: {result.error}</Banner>
+        <Banner tone="bad">{t("serverUpdate.unusable", { error: result.error ?? "" })}</Banner>
       )}
-      {latest && !latest.newer && <p className={styles.note}>MonitorFlow {view.running_version} is up to date.</p>}
+      {latest && !latest.newer && <p className={styles.note}>{t("serverUpdate.upToDate", { version: view.running_version })}</p>}
       {latest?.newer && (
         <div className={styles.release}>
           <p>
-            <strong>MonitorFlow {latest.version} is available.</strong>{" "}
+            <strong>{t("serverUpdate.available", { version: latest.version })}</strong>{" "}
             {latest.release_notes_url && (
               <a href={latest.release_notes_url} target="_blank" rel="noreferrer">
-                Release notes
+                {t("serverUpdate.releaseNotes")}
               </a>
             )}
           </p>
-          <ul className={styles.changes} aria-label="What changes">
+          <ul className={styles.changes} aria-label={t("serverUpdate.whatChanges")}>
             {changeLines(result!).map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ul>
           {ready ? (
             <InlineConfirm
-              trigger={`Update to ${latest.version}…`}
+              trigger={t("serverUpdate.update.trigger", { version: latest.version })}
               triggerVariant="k"
-              title={`Update the server to ${latest.version}?`}
-              consequence={
-                <>
-                  The database and the server data are backed up first. The server and the web interface then restart, for a few minutes:
-                  agents reconnect by themselves and this page follows the update. If the new version does not become
-                  healthy, the previous one is restored.
-                </>
-              }
-              confirmLabel={`Update to ${latest.version}`}
-              pendingLabel="Starting…"
+              title={t("serverUpdate.update.title", { version: latest.version })}
+              consequence={t("serverUpdate.update.consequence")}
+              confirmLabel={t("serverUpdate.update.confirm", { version: latest.version })}
+              pendingLabel={t("serverUpdate.starting")}
               onConfirm={() => start(latest.version)}
               describeError={(e) => (e instanceof ApiError && e.status < 500 ? `${e.message}.` : describeError(e))}
             />
           ) : (
             <p className={styles.note}>
-              {busy ? "An update is in progress." : "The updater is not running, so the update cannot start."}
+              {busy ? t("serverUpdate.inProgressNote") : t("serverUpdate.updaterDown")}
             </p>
           )}
         </div>
@@ -259,64 +249,73 @@ function Check({ view, busy, onStarted }: { view: ServerUpdateView; busy: boolea
 }
 
 function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; requested: boolean; loadedAt: Date }) {
-  const [word, tone] = STATE_WORDS[run.state];
+  const word = stateWord(run.state);
+  const tone = STATE_TONES[run.state];
   const now = new Date();
   const reload = run.state === "succeeded" && run.finished_at !== null && new Date(run.finished_at) > loadedAt;
   return (
     <section className={styles.box} aria-labelledby="last-title">
       <div className={styles.boxHeader}>
         <h2 id="last-title" className={styles.title}>
-          {isFinal(run.state) ? "Last update" : "Update in progress"}
+          {isFinal(run.state) ? t("serverUpdate.last.title") : t("serverUpdate.last.inProgress")}
         </h2>
         <Label tone={tone}>{word}</Label>
       </div>
       <p className={styles.note}>
-        {run.from ?? "?"} → {run.to}, asked by {run.requested_by || "the updater"}{" "}
-        <RelativeTime value={run.started_at} now={now} />
+        {rich("serverUpdate.last.askedBy", {
+          from: run.from ?? "?",
+          to: run.to,
+          who: run.requested_by || t("serverUpdate.last.theUpdater"),
+          when: <RelativeTime value={run.started_at} now={now} />,
+        })}
         {run.backup && (
           <>
-            {" "}
-            · backup <code>{run.backup}</code>
+            {" · "}
+            {rich("serverUpdate.last.backup", { file: <code>{run.backup}</code> })}
           </>
         )}
       </p>
       {run.state === "succeeded" && (
         <Banner tone="ok">
-          The server runs {run.to}.
+          {t("serverUpdate.last.runs", { version: run.to })}
           {reload && (
             <>
               {" "}
-              <button type="button" className={styles.link} onClick={() => window.location.reload()}>
-                Reload the page
-              </button>{" "}
-              to use the new web interface.
+              {rich("serverUpdate.last.reload", {
+                button: (
+                  <button type="button" className={styles.link} onClick={() => window.location.reload()}>
+                    {t("serverUpdate.last.reloadButton")}
+                  </button>
+                ),
+              })}
             </>
           )}
         </Banner>
       )}
-      {run.state === "failed" && <Banner tone="bad">Nothing was changed: {run.error}</Banner>}
+      {run.state === "failed" && <Banner tone="bad">{t("serverUpdate.last.nothingChanged", { error: run.error ?? "" })}</Banner>}
       {run.state === "rolled_back" && !run.migrated && (
         <Banner tone="bad">
-          {run.from ?? "The previous version"} runs again with the same data: {run.error}
+          {t("serverUpdate.last.runsAgain", { version: run.from ?? t("serverUpdate.last.previous"), error: run.error ?? "" })}
         </Banner>
       )}
       {run.state === "rolled_back" && run.migrated && (
         <Banner tone="bad">
           <p>
-            {run.error}. The new version had already migrated the database, and migrations are forward-only: the previous
-            version cannot use it. Restore the backup taken before the update: download it from{" "}
-            <Link href={BACKUPS_PATH}>Backups</Link>, then run on the central server:
+            {rich("serverUpdate.last.migrated", {
+              error: run.error,
+              link: <Link href={BACKUPS_PATH}>{t("serverUpdate.last.backups")}</Link>,
+            })}
           </p>
-          <pre className={styles.commands}>{restoreCommand(run.backup ?? "<backup>")}</pre>
-          <p>Data written since the backup is lost.</p>
+          <pre className={styles.commands}>{restoreCommand(run.backup ?? t("serverUpdate.last.backupFile"))}</pre>
+          <p>{t("serverUpdate.last.lost")}</p>
         </Banner>
       )}
-      {requested && <p className={styles.note}>Another update is waiting for the updater.</p>}
-      <ol className={styles.steps} aria-label="Steps">
+      {requested && <p className={styles.note}>{t("serverUpdate.last.another")}</p>}
+      <ol className={styles.steps} aria-label={t("serverUpdate.last.steps")}>
         {run.steps.map((step, i) => (
           <li key={i}>
             <time dateTime={step.at} className={styles.dim}>
-              {new Date(step.at).toLocaleTimeString()}
+              {formatClock(new Date(step.at))}
             </time>{" "}
             {step.message}
           </li>

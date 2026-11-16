@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { type FormEvent, Fragment, useCallback, useEffect, useId, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import {
   type AiForm as AiFormBody,
   type AiProvider,
@@ -30,9 +31,7 @@ export function AiSettingsPage() {
   const me = useMe();
   if (!administersEverything(me)) {
     return (
-      <NoPermission title="AI setup needs a global administrator">
-        Ask one to turn on AI for this server.
-      </NoPermission>
+      <NoPermission title={t("ai.needAdmin")}>{t("ai.needAdminBody")}</NoPermission>
     );
   }
   return <Ai />;
@@ -42,22 +41,11 @@ function modelName(settings: AiSettings, id: string): string {
   return settings.models.find((m) => m.id === id)?.name ?? id;
 }
 
-/** The choices of AI, in plain words (ADR-0096). */
-const PROVIDERS: Record<AiProvider, { name: string; note: string }> = {
-  anthropic: {
-    name: "Anthropic (Claude)",
-    note: "Claude models, run by Anthropic. Incident data, with secrets removed, is sent to Anthropic.",
-  },
-  openai: {
-    name: "OpenAI",
-    note: "GPT models, run by OpenAI. Incident data, with secrets removed, is sent to OpenAI.",
-  },
-  openai_compatible: {
-    name: "Another or a local model",
-    note:
-      "A model on your own network with Ollama, llama.cpp, vLLM or LM Studio, so nothing leaves it; or any service that speaks OpenAI's API, like Mistral, LiteLLM or Azure OpenAI.",
-  },
-};
+/** The choices of AI, in their order on the page; their words are `ai.provider.*` (ADR-0096). */
+const PROVIDERS: AiProvider[] = ["anthropic", "openai", "openai_compatible"];
+
+/** Who makes the key of a hosted provider: "Anthropic API key". */
+const VENDORS: Record<Exclude<AiProvider, "openai_compatible">, string> = { anthropic: "Anthropic", openai: "OpenAI" };
 
 const OPENAI_MODEL = "gpt-5.1";
 
@@ -76,9 +64,9 @@ function describeAi(settings: AiSettings): string {
     case "anthropic":
       return modelName(settings, settings.model);
     case "openai":
-      return `${settings.model} from OpenAI`;
+      return t("ai.fromOpenAi", { model: settings.model });
     case "openai_compatible":
-      return `${settings.model} on ${host(settings.base_url)}`;
+      return t("ai.onHost", { model: settings.model, host: host(settings.base_url) });
   }
 }
 
@@ -88,12 +76,12 @@ function Ai() {
   const [saved, setSaved] = useState<AiSettings | null>(null);
   const settings = saved ?? data;
 
-  const header = <PageHeader title="AI" meta="Diagnoses incidents and proposes commands to fix them" />;
+  const header = <PageHeader title={t("ai.title")} meta={t("ai.meta")} />;
   if (!settings) {
     return (
       <div className={styles.page}>
         {header}
-        {error ? <ErrorState what="the AI settings" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
+        {error ? <ErrorState what={t("ai.what")} error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
       </div>
     );
   }
@@ -102,14 +90,10 @@ function Ai() {
       {header}
       {settings.enabled ? (
         <Banner tone="ok">
-          <strong>AI is on</strong> with {describeAi(settings)}. It looks at each new incident and proposes
-          commands; risky ones wait in Approvals, and every step is in the audit log.
+          {rich("ai.onBanner", { on: <strong>{t("ai.on")}</strong>, ai: describeAi(settings) })}
         </Banner>
       ) : (
-        <Banner tone="plain">
-          <strong>AI is off.</strong> Pick which AI to use, enter what it needs, press Test, then Enable AI. There is
-          nothing to restart.
-        </Banner>
+        <Banner tone="plain">{rich("ai.offBanner", { off: <strong>{t("ai.off")}</strong> })}</Banner>
       )}
       {settings.from_config ? <FromConfig /> : <AiForm settings={settings} onSaved={setSaved} />}
       {settings.enabled && <AllowCommands />}
@@ -121,12 +105,8 @@ function Ai() {
 function FromConfig() {
   const [test, setTest] = useState<TestState>(null);
   return (
-    <section className={styles.panel} aria-label="Set by the configuration">
-      <p>
-        These settings come from <code>[ai]</code> in the server&apos;s configuration, which takes precedence over this
-        page. To change them, edit that file and restart the server; to manage AI here instead, remove{" "}
-        <code>enabled = true</code> from it.
-      </p>
+    <section className={styles.panel} aria-label={t("ai.fromConfigLabel")}>
+      <p>{rich("ai.fromConfig", { section: <code>[ai]</code>, line: <code>enabled = true</code> })}</p>
       <div className={styles.formFoot}>
         <TestButton onResult={setTest} body={{ api_key: null, model: "" }} />
         <TestLine test={test} />
@@ -156,21 +136,21 @@ function TestButton({
   }
   return (
     <Button disabled={disabled} onClick={() => void run()}>
-      Test
+      {t("ai.test")}
     </Button>
   );
 }
 
 function TestLine({ test }: { test: TestState }) {
   if (test === null) return null;
-  if (test === "testing") return <span className={styles.dim}>Testing…</span>;
+  if (test === "testing") return <span className={styles.dim}>{t("ai.testing")}</span>;
   return test.ok ? (
     <span role="status">
-      <Label tone="ok">Working</Label> <span className={styles.dim}>The model answered.</span>
+      <Label tone="ok">{t("ai.working")}</Label> <span className={styles.dim}>{t("ai.answered")}</span>
     </span>
   ) : (
     <span role="alert">
-      <Label tone="bad">Failing</Label> {test.error}
+      <Label tone="bad">{t("ai.failing")}</Label> {test.error}
     </span>
   );
 }
@@ -279,36 +259,32 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
     void save(true);
   }
 
-  const keyLabel = local ? "API key, only if the server asks for one" : `${PROVIDERS[provider].name.split(" ")[0]} API key`;
+  const keyLabel = provider === "openai_compatible" ? t("ai.keyLocal") : t("ai.key", { vendor: VENDORS[provider] });
   const keyPlaceholder = hasKey
-    ? "Saved; leave empty to keep it"
+    ? t("ai.keySaved")
     : moved
-      ? "Enter it again for the new address"
-      : { anthropic: "sk-ant-…", openai: "sk-…", openai_compatible: "Usually none for a local model" }[provider];
-  const keyNote = {
-    anthropic: "Create one at console.anthropic.com. Stored on this server, never shown again.",
-    openai: "Create one at platform.openai.com. Stored on this server, never shown again.",
-    openai_compatible: "Stored on this server, never shown again.",
-  }[provider];
+      ? t("ai.keyAgain")
+      : { anthropic: "sk-ant-…", openai: "sk-…", openai_compatible: t("ai.keyNoneLocal") }[provider];
+  const keyNote = t(`ai.keyNote.${provider}`);
 
   return (
     <>
-      <form className={styles.panel} onSubmit={submit} aria-label="AI settings">
+      <form className={styles.panel} onSubmit={submit} aria-label={t("ai.formLabel")}>
         <fieldset className={styles.fieldset}>
-          <legend className={styles.legend}>Which AI</legend>
+          <legend className={styles.legend}>{t("ai.which")}</legend>
           <div className={cx(styles.radios, styles.radiosWrap)}>
-            {(Object.keys(PROVIDERS) as AiProvider[]).map((p) => (
+            {PROVIDERS.map((p) => (
               <label key={p}>
                 <input type="radio" name="provider" checked={provider === p} onChange={() => choose(p)} />{" "}
-                {PROVIDERS[p].name}
+                {t(`ai.provider.${p}`)}
               </label>
             ))}
           </div>
-          <span className={styles.fieldNote}>{PROVIDERS[provider].note}</span>
+          <span className={styles.fieldNote}>{t(`ai.providerNote.${provider}`)}</span>
         </fieldset>
         {local && (
           <label className={styles.field}>
-            Address
+            {t("ai.address")}
             <input
               className={fieldClass}
               type="url"
@@ -323,8 +299,8 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
             />
             <span className={styles.fieldNote}>
               {baseUrl.trim().toLowerCase().startsWith("http://")
-                ? "Sent unencrypted over your network. Plain http:// works only to a private address; anywhere else, use https://."
-                : "Where the model server's API is, ending in /v1."}
+                ? t("ai.httpNote")
+                : t("ai.addressNote")}
             </span>
           </label>
         )}
@@ -345,7 +321,7 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
           <span className={styles.fieldNote}>{keyNote}</span>
         </label>
         <label className={styles.field}>
-          Model
+          {t("ai.model")}
           {provider === "anthropic" ? (
             <select
               className={fieldClass}
@@ -384,9 +360,7 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
         </label>
         {local && (
           <p className={styles.footnote}>
-            Small local models diagnose less well than large ones. Every command they propose goes through the same
-            rules and approvals, so at worst an incident reaches a person sooner. Give the model a context of 32,000
-            tokens or more (for Ollama, <code>OLLAMA_CONTEXT_LENGTH=32768</code>).
+            {rich("ai.localNote", { tokens: 32_000, setting: <code>OLLAMA_CONTEXT_LENGTH=32768</code> })}
           </p>
         )}
         {error && (
@@ -396,12 +370,12 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
         )}
         <div className={styles.formFoot}>
           <Button type="submit" variant="k" disabled={busy || !canUse}>
-            {settings.enabled ? "Save" : "Enable AI"}
+            {settings.enabled ? t("ai.save") : t("ai.enable")}
           </Button>
           <TestButton disabled={!canUse} body={form} onResult={setTest} />
           {settings.enabled && (
             <Button disabled={busy} onClick={() => void save(false)}>
-              Turn off AI
+              {t("ai.turnOff")}
             </Button>
           )}
           <TestLine test={test} />
@@ -411,10 +385,10 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
       {settings.has_key && (
         <div className={styles.buttons}>
           <InlineConfirm
-            trigger="Remove key"
-            title="Remove the API key?"
-            consequence="AI turns off until a new key is entered."
-            confirmLabel="Remove"
+            trigger={t("ai.removeKey")}
+            title={t("ai.removeTitle")}
+            consequence={t("ai.removeConsequence")}
+            confirmLabel={t("ai.remove")}
             onConfirm={async () => onSaved(await api.removeAiKey())}
             describeError={describeError}
           />
@@ -427,16 +401,12 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
 /** Whether the models the server offers could be read. */
 function ModelsLine({ query, listed }: { query: ModelQuery | null; listed: ModelList | null }) {
   if (!query) return null;
-  if (!listed) return <span className={styles.fieldNote}>Reading the models this server offers…</span>;
+  if (!listed) return <span className={styles.fieldNote}>{t("ai.readingModels")}</span>;
   if (listed.error) {
-    return <span className={styles.fieldNote}>Could not list the models, type the name instead: {listed.error}</span>;
+    return <span className={styles.fieldNote}>{t("ai.modelsError", { error: listed.error })}</span>;
   }
-  if (listed.models.length === 0) return <span className={styles.fieldNote}>The server lists no models; type the name.</span>;
-  return (
-    <span className={styles.fieldNote}>
-      {listed.models.length} {listed.models.length === 1 ? "model" : "models"} on this server: pick one or type its name.
-    </span>
-  );
+  if (listed.models.length === 0) return <span className={styles.fieldNote}>{t("ai.noModels")}</span>;
+  return <span className={styles.fieldNote}>{t("ai.models", { count: listed.models.length })}</span>;
 }
 
 /** Where each server stands; AI commands are turned on per server, from its page (ADR-0098). */
@@ -444,14 +414,9 @@ function AllowCommands() {
   const fetcher = useCallback((signal: AbortSignal) => api.servers(signal), []);
   const { data } = usePolledData(fetcher);
   return (
-    <section className={styles.panel} aria-label="Let AI run commands">
-      <h2 className={styles.sectionTitle}>Let AI run commands on a server</h2>
-      <p className={styles.footnote}>
-        Turn AI commands on or off from each server&apos;s page, or for a whole site from the site&apos;s page. Where they
-        are off, AI&apos;s commands are refused and the incident is handed to a person. A server lets them be turned on
-        there only if it was installed with &ldquo;Allow AI commands to be turned on from the web interface&rdquo;; its
-        page gives the line to run on the others.
-      </p>
+    <section className={styles.panel} aria-label={t("ai.allowLabel")}>
+      <h2 className={styles.sectionTitle}>{t("ai.allowTitle")}</h2>
+      <p className={styles.footnote}>{t("ai.allowBody")}</p>
       {data && data.servers.length > 0 && <ServersAccepting servers={data.servers} />}
     </section>
   );
@@ -461,15 +426,15 @@ function AllowCommands() {
 function ServersAccepting({ servers }: { servers: Server[] }) {
   const named = (state: Acceptance) => servers.filter((s) => aiCommands(s) === state);
   const groups: [string, Server[]][] = [
-    ["Off, turn them on from their page:", named("off")],
-    ["Not known yet, they say once updated, which happens by itself:", named("unknown")],
-    ["Their agent is too old for AI commands, it updates by itself:", named("unsupported")],
+    [t("ai.group.off"), named("off")],
+    [t("ai.group.unknown"), named("unknown")],
+    [t("ai.group.unsupported"), named("unsupported")],
   ];
   return (
     <>
       <p className={styles.footnote}>
         <strong>
-          {named("accepted").length} of {servers.length} {servers.length === 1 ? "server accepts" : "servers accept"} AI commands.
+          {t("ai.accepting", { accepted: named("accepted").length, count: servers.length })}
         </strong>
       </p>
       {groups

@@ -3,6 +3,7 @@
 import { useCallback, useId, useState } from "react";
 
 import { ApiError, type CheckRecommendation, type ProposedCheck, api, describeError } from "@/lib/api";
+import { rich, t } from "@/i18n";
 import { CHECK_TYPES, checkRequests, checkTitle, saveThreshold } from "@/lib/alerts";
 import { usePolledData } from "@/lib/usePolledData";
 import { Button } from "@/components/ui/Button";
@@ -24,7 +25,7 @@ export function proposedTitle(check: ProposedCheck): string {
 export async function addRecommended(serverId: string, recommendation: CheckRecommendation, intervalMs: number): Promise<void> {
   const owner = { kind: "servers" as const, id: serverId };
   for (const check of recommendation.checks) {
-    const type = CHECK_TYPES.find((t) => t.kind === check.kind);
+    const type = CHECK_TYPES.find((k) => k.kind === check.kind);
     if (!type) continue;
     const { sensor, threshold } = checkRequests(type, check.params, intervalMs);
     try {
@@ -75,7 +76,7 @@ export function CheckRecommendations({
       after();
       data.refresh();
     } catch (e) {
-      setFailure({ key, text: `It was not changed. ${describeError(e)}` });
+      setFailure({ key, text: t("checks.rec.failed", { error: describeError(e) }) });
     } finally {
       setBusy(null);
     }
@@ -84,26 +85,24 @@ export function CheckRecommendations({
   const source =
     reported_at === null ? (
       osFamily === "windows" ? (
-        "Windows agents do not report what runs on their server yet."
+        t("checks.rec.windows")
       ) : (
-        "The agent has not reported what runs on this server yet."
+        t("checks.rec.notYet")
       )
     ) : (
-      <>
-        From what the agent saw, <RelativeTime value={reported_at} now={data.updatedAt ?? new Date()} />. It looks again every 5 minutes.
-      </>
+      rich("checks.rec.source", { when: <RelativeTime value={reported_at} now={data.updatedAt ?? new Date()} /> })
     );
 
   return (
     <section className={styles.box} aria-labelledby={titleId}>
       <div className={styles.head}>
         <h3 id={titleId} className={styles.title}>
-          Recommended checks
+          {t("checks.rec.title")}
         </h3>
         <span className={admin.dim}>{source}</span>
       </div>
       {reported_at !== null && open.length === 0 && (
-        <p className={styles.none}>Nothing to add: what runs here is checked.</p>
+        <p className={styles.none}>{t("checks.rec.none")}</p>
       )}
       <ul className={styles.list}>
         {(showDismissed ? recommendations : open).map((r) => {
@@ -116,8 +115,10 @@ export function CheckRecommendations({
                 <span className={admin.dim}>{r.evidence.join(", ")}.</span>
                 <span className={styles.adds}>
                   {isDismissed
-                    ? `Dismissed${r.dismissed_by ? ` by ${r.dismissed_by}` : ""}.`
-                    : `Adds: ${r.checks.map(proposedTitle).join(", ")}, ${count === 1 ? "with its alert" : "each with its alert"}.`}
+                    ? r.dismissed_by
+                      ? t("checks.rec.dismissedBy", { name: r.dismissed_by })
+                      : t("checks.rec.dismissed")
+                    : t("checks.rec.adds", { count, checks: r.checks.map(proposedTitle).join(", ") })}
                 </span>
                 {failure?.key === r.key && (
                   <span role="alert" className={admin.hintError}>
@@ -133,7 +134,7 @@ export function CheckRecommendations({
                       disabled={busy !== null}
                       onClick={() => void act(r.key, () => api.restoreRecommendation(serverId, r.key), () => undefined)}
                     >
-                      Bring back
+                      {t("checks.rec.bringBack")}
                     </Button>
                   ) : (
                     <>
@@ -141,18 +142,18 @@ export function CheckRecommendations({
                         variant="k"
                         size="small"
                         disabled={busy !== null}
-                        aria-label={`Add ${count === 1 ? "the check" : `${count} checks`} for ${r.title}`}
+                        aria-label={t("checks.rec.addLabel", { count, title: r.title })}
                         onClick={() => void act(r.key, () => addRecommended(serverId, r, intervalMs), onAdded)}
                       >
-                        {busy === r.key ? "Adding…" : count === 1 ? "Add check" : `Add ${count} checks`}
+                        {busy === r.key ? t("checks.rec.adding") : t("checks.rec.add", { count })}
                       </Button>
                       <Button
                         size="small"
                         disabled={busy !== null}
-                        aria-label={`Dismiss ${r.title}`}
+                        aria-label={t("checks.rec.dismissLabel", { title: r.title })}
                         onClick={() => void act(r.key, () => api.dismissRecommendation(serverId, r.key), () => undefined)}
                       >
-                        Dismiss
+                        {t("checks.rec.dismiss")}
                       </Button>
                     </>
                   )}
@@ -164,7 +165,7 @@ export function CheckRecommendations({
       </ul>
       {dismissed.length > 0 && (
         <Button size="small" className={styles.toggle} onClick={() => setShowDismissed((v) => !v)}>
-          {showDismissed ? "Hide dismissed" : `Show dismissed (${dismissed.length})`}
+          {showDismissed ? t("checks.rec.hide") : t("checks.rec.show", { count: dismissed.length })}
         </Button>
       )}
     </section>

@@ -63,5 +63,10 @@ describe("license", () => {
     expect(licenseNotice(view("none", { added }))).toBe(
       "There is no Enterprise license key. The central server already added keeps running, but no other can be added.",
     );
+    setActiveLocale("fr");
+    expect(licenseNotice(view("none", { added: [...added, ...added] }))).toBe(
+      "Il n’y a pas de clé de licence Enterprise. Les 2 serveurs centraux déjà ajoutés continuent de fonctionner, mais aucun autre ne peut être ajouté.",
+    );
+    expect(licenseSummary(view("valid"))[0]).toBe("Valide jusqu’au 30 novembre 2027, pour 3 serveurs centraux.");
   });
 });

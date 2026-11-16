@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { EffectiveSensor, EffectiveThreshold } from "@/lib/api";
 import { stubFetch } from "@/test/fetch";
 
@@ -76,6 +77,19 @@ describe("MonitoringSettings", () => {
     expect(screen.getByText(/Changing them needs an operator role/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add a check" })).not.toBeInTheDocument();
+  });
+
+  it("speaks French around the alerts and checks", async () => {
+    setActiveLocale("fr");
+    stubFetch(serverRoutes([disk({ instance: "/data", origin: "site", threshold_id: "t1" })], [sensor({}), port]));
+    render(<MonitoringSettings target={SERVER} canEdit />);
+    const alerts = await screen.findByRole("region", { name: "Quand alerter" });
+    expect(within(alerts).getByText("Valeur du site")).toBeInTheDocument();
+    expect(within(alerts).getByRole("button", { name: "Modifier" })).toBeInTheDocument();
+    const checks = screen.getByRole("region", { name: "Ce qui est contrôlé" });
+    expect(within(checks).getByRole("button", { name: "Ajouter un contrôle" })).toBeInTheDocument();
+    expect(within(checks).getAllByText("Ce serveur seulement").length).toBeGreaterThan(0);
+    expect(checks).toHaveTextContent(/Les contrôles intégrés tournent .* sur chaque serveur de paris\./);
   });
 
   it("edits a built-in alert for this server with inline validation", async () => {

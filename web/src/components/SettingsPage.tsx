@@ -2,6 +2,7 @@
 
 import { type FormEvent, type ReactNode, useCallback, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import { type RetentionSettings, type ServerSettings, api, describeError } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
 import { administersEverything, useMe } from "@/lib/me";
@@ -22,9 +23,7 @@ export function SettingsPage() {
   const me = useMe();
   if (!administersEverything(me)) {
     return (
-      <NoPermission title="Settings need a global administrator">
-        Ask one to change how this server runs.
-      </NoPermission>
+      <NoPermission title={t("settings.page.noPermission")}>{t("settings.page.askOne")}</NoPermission>
     );
   }
   return <Settings />;
@@ -42,7 +41,7 @@ function Settings() {
 
   return (
     <div className={styles.page}>
-      <PageHeader title="General" meta="How this server runs; changes apply without a restart" />
+      <PageHeader title={t("settings.general.label")} meta={t("settings.page.meta")} />
       <AddressSection />
       <DefaultInstallSource editable />
       {settings ? (
@@ -52,7 +51,7 @@ function Settings() {
           <RetentionSection retention={settings.retention} onSaved={refresh} />
         </>
       ) : error ? (
-        <ErrorState what="the settings" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what={t("settings.page.theSettings")} error={describeError(error)} onRetry={refresh} />
       ) : (
         <LoadingBlock />
       )}
@@ -64,8 +63,7 @@ function Settings() {
 function Locked({ name }: { name: string }) {
   return (
     <span className={styles.fieldNote}>
-      Locked by <code>{name}</code> in the server&apos;s <code>.env</code>, which takes precedence. To change it here,
-      remove that line and run the installer again.
+      {rich("settings.page.locked", { name: <code>{name}</code>, file: <code>.env</code> })}
     </span>
   );
 }
@@ -86,12 +84,12 @@ function AddressSection() {
   const fetcher = useCallback((signal: AbortSignal) => api.publicAddress(signal), []);
   const { data: address, error, refresh } = usePolledData(fetcher);
   return (
-    <Section title="Server address" note="The name or address servers and relays use to reach this server.">
+    <Section title={t("settings.page.address")} note={t("settings.page.addressFieldNote")}>
       <div className={styles.sectionBody}>
         {address ? (
-          <ServerAddress value={address} editable onChange={refresh} note="— used in every install command" />
+          <ServerAddress value={address} editable onChange={refresh} note={t("settings.page.addressFieldNote")} />
         ) : error ? (
-          <ErrorState what="the address" error={describeError(error)} onRetry={refresh} />
+          <ErrorState what={t("settings.page.theAddress")} error={describeError(error)} onRetry={refresh} />
         ) : (
           <LoadingBlock />
         )}
@@ -114,9 +112,9 @@ function SaveLine({ busy, disabled, saved }: { busy: boolean; disabled: boolean;
   return (
     <div className={styles.formFoot}>
       <Button variant="k" type="submit" disabled={busy || disabled}>
-        Save
+        {t("settings.page.save")}
       </Button>
-      {saved && <span className={styles.footnote}>Saved.</span>}
+      {saved && <span className={styles.footnote}>{t("settings.page.saved")}</span>}
     </div>
   );
 }
@@ -134,7 +132,7 @@ function useSave(what: string, onSaved: () => void) {
       onSaved();
       setSaved(true);
     } catch (e) {
-      setError(`Saving ${what} failed. ${describeError(e)}`);
+      setError(t("settings.page.saveFailed", { what, error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -146,7 +144,7 @@ function SessionsSection({ settings, onSaved }: { settings: ServerSettings; onSa
   const { session_lifetime: lifetime, session_idle_timeout: idle } = settings;
   const [hours, setHours] = useState(String(lifetime.value / 3600));
   const [minutes, setMinutes] = useState(String(idle.value / 60));
-  const { busy, error, saved, save } = useSave("the sign-in settings", onSaved);
+  const { busy, error, saved, save } = useSave(t("settings.page.theSignIn"), onSaved);
   const hoursValue = Number(hours);
   const minutesValue = Number(minutes);
   const valid =
@@ -164,15 +162,17 @@ function SessionsSection({ settings, onSaved }: { settings: ServerSettings; onSa
 
   return (
     <Section
-      title="Sign-in"
-      note="How long people stay signed in. A shorter limit applies to everyone at once, and may sign you out; a longer one applies from the next sign-in."
+      title={t("settings.page.signIn")}
+      note={t("settings.page.signInNote")}
     >
       <form className={styles.sectionBody} onSubmit={submit}>
         <div className={styles.formGrid}>
           <label className={styles.field}>
             <span>
-              Sign out after, in hours{" "}
-              <span className={styles.fieldNote}>— however active; default {formatDuration(lifetime.default)}</span>
+              {t("settings.page.lifetime")}{" "}
+              <span className={styles.fieldNote}>
+                {t("settings.page.lifetimeNote", { duration: formatDuration(lifetime.default) })}
+              </span>
             </span>
             {lifetime.locked ? (
               <>
@@ -192,8 +192,8 @@ function SessionsSection({ settings, onSaved }: { settings: ServerSettings; onSa
           </label>
           <label className={styles.field}>
             <span>
-              Sign out when idle, in minutes{" "}
-              <span className={styles.fieldNote}>— default {formatDuration(idle.default)}</span>
+              {t("settings.page.idle")}{" "}
+              <span className={styles.fieldNote}>{t("settings.page.default", { value: formatDuration(idle.default) })}</span>
             </span>
             {idle.locked ? (
               <>
@@ -226,7 +226,7 @@ function SessionsSection({ settings, onSaved }: { settings: ServerSettings; onSa
 function MirrorSection({ settings, onSaved }: { settings: ServerSettings; onSaved: () => void }) {
   const mirror = settings.mirror_public_url;
   const [url, setUrl] = useState(mirror.value ?? "");
-  const { busy, error, saved, save } = useSave("the mirror address", onSaved);
+  const { busy, error, saved, save } = useSave(t("settings.page.theMirror"), onSaved);
   const trimmed = url.trim();
   const valid = trimmed === "" || /^https?:\/\/[^\s/?#@]+(\/[^\s?#]*)?$/.test(trimmed);
 
@@ -237,15 +237,15 @@ function MirrorSection({ settings, onSaved }: { settings: ServerSettings; onSave
 
   return (
     <Section
-      title="Package address"
-      note="Where servers download packages and agent updates from this server. Change it when they reach it through another name or port."
+      title={t("settings.page.packages")}
+      note={t("settings.page.packagesNote")}
     >
       <form className={styles.sectionBody} onSubmit={submit}>
         <label className={styles.field}>
           <span>
-            Address{" "}
+            {t("settings.page.packagesField")}{" "}
             <span className={styles.fieldNote}>
-              {mirror.default ? `— default ${mirror.default}; leave empty to use it` : "— http or https URL"}
+              {mirror.default ? t("settings.page.packagesDefault", { url: mirror.default }) : t("settings.page.packagesUrl")}
             </span>
           </span>
           {mirror.locked ? (
@@ -304,7 +304,10 @@ function DaysField({
   return (
     <label className={styles.field}>
       <span>
-        {label} <span className={styles.fieldNote}>— default {retentionDays(fallback)} days</span>
+        {label}{" "}
+        <span className={styles.fieldNote}>
+          {t("settings.page.default", { value: t("format.days", { count: retentionDays(fallback) ?? 0 }) })}
+        </span>
       </span>
       {locked ? (
         <>
@@ -333,18 +336,16 @@ function RetentionSection({
   retention: RetentionSettings | null;
   onSaved: () => void;
 }) {
-  const note = "How long metrics and logs stay on disk. Longer needs more disk.";
+  const note = t("settings.page.retentionNote");
   if (!retention) {
     return (
-      <Section title="Data retention" note={note}>
-        <p className={styles.sectionNote}>
-          This server has no updater to apply it, so the metrics and log stores keep their own settings.
-        </p>
+      <Section title={t("settings.page.retention")} note={note}>
+        <p className={styles.sectionNote}>{t("settings.page.noUpdater")}</p>
       </Section>
     );
   }
   return (
-    <Section title="Data retention" note={note}>
+    <Section title={t("settings.page.retention")} note={note}>
       <RetentionForm retention={retention} onSaved={onSaved} />
     </Section>
   );
@@ -392,7 +393,7 @@ function RetentionForm({
     try {
       await apply();
     } catch (e) {
-      setError(`Changing retention failed. ${describeError(e)}`);
+      setError(t("settings.page.retentionFailed", { error: describeError(e) }));
     }
   }
 
@@ -400,7 +401,7 @@ function RetentionForm({
     <div className={styles.sectionBody}>
       <div className={styles.formGrid}>
         <DaysField
-          label="Keep metrics, in days"
+          label={t("settings.page.keepMetrics")}
           value={metricsDays}
           fallback={retention.default_metrics}
           locked={metrics.locked ? metrics : null}
@@ -410,7 +411,7 @@ function RetentionForm({
           onChange={setMetricsDays}
         />
         <DaysField
-          label="Keep logs, in days"
+          label={t("settings.page.keepLogs")}
           value={logsDays}
           fallback={retention.default_logs}
           locked={logs.locked ? logs : null}
@@ -422,35 +423,37 @@ function RetentionForm({
       </div>
       {applying && (
         <Banner tone="plain" role="status">
-          Applying: the metrics and log stores restart for a few seconds.
+          {t("settings.page.applying")}
         </Banner>
       )}
       {!alive && (
         <Banner tone="warn">
-          <strong>The updater is not running,</strong> so retention cannot change now. Run the installer again to bring
-          it back.
+          {rich("settings.page.updaterDown", { strong: <strong>{t("settings.page.updaterDownStrong")}</strong> })}
         </Banner>
       )}
       {retention.error && (
         <Banner tone="bad">
-          <strong>The last change failed</strong> and the previous values still apply: {retention.error}
+          {rich("settings.page.lastFailed", {
+            strong: <strong>{t("settings.page.lastFailedStrong")}</strong>,
+            error: retention.error,
+          })}
         </Banner>
       )}
       {!(metrics.locked && logs.locked) &&
         (shorter && canSave ? (
           <InlineConfirm
-            trigger="Save…"
+            trigger={t("settings.page.saveConfirm")}
             triggerVariant="k"
-            title="Delete older data?"
-            consequence="Metrics and logs older than the new limits are deleted and cannot be recovered. The stores restart for a few seconds."
-            confirmLabel="Save and delete older data"
+            title={t("settings.page.deleteTitle")}
+            consequence={t("settings.page.deleteConsequence")}
+            confirmLabel={t("settings.page.deleteConfirm")}
             onConfirm={apply}
             describeError={describeError}
           />
         ) : (
           <div className={styles.formFoot}>
             <Button variant="k" disabled={!canSave} onClick={() => void save()}>
-              Save
+              {t("settings.page.save")}
             </Button>
           </div>
         ))}

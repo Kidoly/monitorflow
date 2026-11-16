@@ -3,6 +3,7 @@
 import { type FormEvent, type RefObject, useId, useRef, useState } from "react";
 
 import { Button, fieldClass } from "@/components/ui/Button";
+import { type PlainKey, t } from "@/i18n";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, EmptyState, ErrorState, LoadingBlock, PageHeader, StaleBanner } from "@/components/ui/PageState";
@@ -22,7 +23,7 @@ import {
   describeError,
   passwordLinkUrl,
 } from "@/lib/api";
-import { ALL_SITES, placeLabel } from "@/lib/customers";
+import { placeLabel } from "@/lib/customers";
 import { administersEverything, multiCustomer, useMultiCustomer } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -65,7 +66,7 @@ async function load(signal: AbortSignal): Promise<Data> {
  * "viewer · lyon-office".
  */
 export function describeGrant(grant: RoleGrant, names: Names | undefined, multiCustomer = true): string {
-  return `${grant.role} · ${describeScope(grant, names, multiCustomer)}`;
+  return `${t(`common.role.${grant.role}`)} · ${describeScope(grant, names, multiCustomer)}`;
 }
 
 function describeScope(
@@ -75,24 +76,26 @@ function describeScope(
 ) {
   if (grant.site_id) {
     const site = names?.sites.find((s) => s.id === grant.site_id);
-    return site ? placeLabel(site.customer_name, site.name, multiCustomer) : "a site";
+    return site ? placeLabel(site.customer_name, site.name, multiCustomer) : t("users.aSite");
   }
   if (grant.customer_id) {
-    if (!multiCustomer) return ALL_SITES.toLowerCase();
-    return names?.customers.find((c) => c.id === grant.customer_id)?.name ?? "a customer";
+    if (!multiCustomer) return t("users.allSites");
+    return names?.customers.find((c) => c.id === grant.customer_id)?.name ?? t("users.aCustomer");
   }
-  return "everything";
+  return t("users.everything");
 }
 
 const roleReach = (multiCustomer: boolean) =>
-  multiCustomer ? "A role applies to everything, one customer, or one site" : "A role applies to everything or to one site";
+  multiCustomer ? t("users.reachCustomers") : t("users.reach");
 
-const ROLES: { role: Role; hint: string }[] = [
-  { role: "viewer", hint: "Sees servers, metrics and incidents." },
-  { role: "operator", hint: "Also changes alerts and checks, and runs updates." },
-  { role: "approver", hint: "Also approves low-impact AI commands." },
-  { role: "administrator", hint: "Also manages sites, install tokens and, on everything, users." },
+const ROLES: { role: Role; name: PlainKey; hint: PlainKey }[] = [
+  { role: "viewer", name: "users.role.viewer", hint: "users.hint.viewer" },
+  { role: "operator", name: "users.role.operator", hint: "users.hint.operator" },
+  { role: "approver", name: "users.role.approver", hint: "users.hint.approver" },
+  { role: "administrator", name: "users.role.administrator", hint: "users.hint.administrator" },
 ];
+
+const roleHint = (role: Role) => t(ROLES.find((r) => r.role === role)!.hint);
 
 /** Value of the scope select: `""` for everything, `c:<id>` or `s:<id>`. */
 function grantOf(role: Role, scope: string): GrantRequest {
@@ -122,31 +125,31 @@ function GrantFields({
   const multiCustomer = useMultiCustomer();
   const siteOption = (site: Site) => (
     <option key={site.id} value={`s:${site.id}`}>
-      Site {site.name}
+      {t("users.siteOption", { name: site.name })}
     </option>
   );
   return (
     <>
       <label className={styles.field}>
-        Role
+        {t("users.roleField")}
         <select className={fieldClass} value={role} onChange={(e) => onRole(e.target.value as Role)}>
           {ROLES.map((r) => (
             <option key={r.role} value={r.role}>
-              {r.role.charAt(0).toUpperCase() + r.role.slice(1)}
+              {t(r.name)}
             </option>
           ))}
         </select>
       </label>
       <label className={styles.field}>
-        On
+        {t("users.onField")}
         <select className={fieldClass} value={scope} onChange={(e) => onScope(e.target.value)}>
-          <option value="">Everything</option>
+          <option value="">{t("users.everythingOption")}</option>
           {/* A single company has everything and its sites (ADR-0104). */}
           {!multiCustomer && names.sites.map(siteOption)}
           {multiCustomer &&
             names.customers.map((customer) => (
               <optgroup key={customer.id} label={customer.name}>
-                <option value={`c:${customer.id}`}>All of {customer.name}</option>
+                <option value={`c:${customer.id}`}>{t("users.allOf", { name: customer.name })}</option>
                 {names.sites.filter((site) => site.customer_id === customer.id).map(siteOption)}
               </optgroup>
             ))}
@@ -161,13 +164,12 @@ function LinkPanel({ username, link, invite }: { username: string; link: Passwor
   return (
     <div className={styles.stack}>
       <SecretField
-        label={invite ? `Invitation link for ${username}` : `Password link for ${username}`}
+        label={invite ? t("users.invitationLink", { username }) : t("users.passwordLink", { username })}
         value={passwordLinkUrl(link)}
-        copyName="Copy link"
+        copyName={t("users.copyLink")}
       />
       <span className={styles.hint}>
-        Send it to {username}. It works once, for 7 days: {username} chooses a password and is signed in.
-        {!invite && " Their current password keeps working until then."} It is only shown now.
+        {invite ? t("users.sendInvitation", { username }) : t("users.sendPasswordLink", { username })}
       </span>
     </div>
   );
@@ -195,7 +197,7 @@ function InviteForm({ names, onInvited, inputRef }: { names: Names; onInvited: (
       setError(
         e instanceof ApiError && (e.status === 409 || e.status === 400)
           ? `${e.message.charAt(0).toUpperCase()}${e.message.slice(1)}.`
-          : `Creating the invitation failed. ${describeError(e)}`,
+          : t("users.inviteFailed", { error: describeError(e) }),
       );
     } finally {
       setBusy(false);
@@ -205,27 +207,27 @@ function InviteForm({ names, onInvited, inputRef }: { names: Names; onInvited: (
   return (
     <section className={styles.panel} aria-labelledby={titleId}>
       <h2 id={titleId} className={styles.sectionTitle}>
-        Invite a user
+        {t("users.invite")}
       </h2>
       {invited ? (
         <>
           <LinkPanel username={invited.username} link={invited.link} invite />
           <div className={styles.buttons}>
             <Button variant="k" onClick={() => setInvited(null)}>
-              Done
+              {t("users.done")}
             </Button>
           </div>
         </>
       ) : (
-        <form className={styles.formGrid} onSubmit={submit} aria-label="Invite a user">
+        <form className={styles.formGrid} onSubmit={submit} aria-label={t("users.invite")}>
           <label className={styles.field}>
-            Username
+            {t("users.username")}
             <input
               ref={inputRef}
               className={fieldClass}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="e.g. alice"
+              placeholder={t("users.usernamePlaceholder")}
               autoCapitalize="none"
               spellCheck={false}
               required
@@ -233,10 +235,10 @@ function InviteForm({ names, onInvited, inputRef }: { names: Names; onInvited: (
           </label>
           <GrantFields names={names} role={role} scope={scope} onRole={setRole} onScope={setScope} />
           <Button variant="k" type="submit" disabled={busy || username.trim() === ""}>
-            {busy ? "Creating…" : "Create invitation link"}
+            {busy ? t("users.creating") : t("users.createLink")}
           </Button>
           <span className={error ? styles.hintError : styles.hint} role={error ? "alert" : undefined}>
-            {error ?? ROLES.find((r) => r.role === role)?.hint}
+            {error ?? roleHint(role)}
           </span>
         </form>
       )}
@@ -264,13 +266,13 @@ function AddRole({ user, names, onDone }: { user: UserAccount; names: Names; onD
   }
 
   return (
-    <form className={styles.formGrid} onSubmit={submit} aria-label={`Add a role to ${user.username}`}>
+    <form className={styles.formGrid} onSubmit={submit} aria-label={t("users.addRoleTo", { username: user.username })}>
       <GrantFields names={names} role={role} scope={scope} onRole={setRole} onScope={setScope} />
       <Button variant="k" type="submit" disabled={busy}>
-        Add role
+        {t("users.addRole")}
       </Button>
       <span className={error ? styles.hintError : styles.hint} role={error ? "alert" : undefined}>
-        {error ?? ROLES.find((r) => r.role === role)?.hint}
+        {error ?? roleHint(role)}
       </span>
     </form>
   );
@@ -305,17 +307,17 @@ export function UsersAdmin({ me }: { me: Me }) {
   const columns: Column<UserAccount>[] = [
     {
       key: "user",
-      header: "User",
+      header: t("users.column.user"),
       cell: (user) => (
         <PrimaryCell
           title={user.username}
           sub={
             user.id === me.id
-              ? "You"
+              ? t("users.you")
               : user.state === "invited"
                 ? user.link_expires_at
-                  ? "Has not opened the invitation yet"
-                  : "Invitation expired: issue a new link"
+                  ? t("users.notOpened")
+                  : t("users.expired")
                 : undefined
           }
         />
@@ -323,23 +325,23 @@ export function UsersAdmin({ me }: { me: Me }) {
     },
     {
       key: "state",
-      header: "State",
+      header: t("users.column.state"),
       cell: (user) =>
         user.state === "active" ? (
-          <Label tone="ok">Active</Label>
+          <Label tone="ok">{t("users.active")}</Label>
         ) : user.state === "invited" ? (
-          <Label tone="warn">Invited</Label>
+          <Label tone="warn">{t("users.invited")}</Label>
         ) : (
-          <Label tone="neutral">Disabled</Label>
+          <Label tone="neutral">{t("users.disabled")}</Label>
         ),
     },
     {
       key: "roles",
-      header: "Roles",
+      header: t("users.column.roles"),
       className: styles.wrap,
       cell: (user) =>
         user.roles.length === 0 ? (
-          <span className={styles.dim}>No role: sees nothing</span>
+          <span className={styles.dim}>{t("users.noRoleSeesNothing")}</span>
         ) : (
           user.roles.map((grant) => {
             const text = describeGrant(grant, data, multiCustomer(me));
@@ -349,7 +351,7 @@ export function UsersAdmin({ me }: { me: Me }) {
                 <button
                   type="button"
                   className={styles.grantRemove}
-                  aria-label={`Revoke ${text} from ${user.username}`}
+                  aria-label={t("users.revoke", { grant: text, username: user.username })}
                   onClick={() => void act(user, () => api.revokeRole(user.id, toRequest(grant)))}
                 >
                   ×
@@ -364,18 +366,18 @@ export function UsersAdmin({ me }: { me: Me }) {
   const others = data?.users.filter((user) => user.id !== me.id).length ?? 0;
   return (
     <div className={styles.page}>
-      <PageHeader title="Users and roles" meta={roleReach(multiCustomer(me))} />
+      <PageHeader title={t("settings.users.label")} meta={roleReach(multiCustomer(me))} />
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
-      {!data && error ? <ErrorState what="users" error={describeError(error)} onRetry={refresh} /> : null}
-      {!data && !error && <LoadingBlock label="Loading users" />}
+      {!data && error ? <ErrorState what={t("users.what")} error={describeError(error)} onRetry={refresh} /> : null}
+      {!data && !error && <LoadingBlock label={t("users.loading")} />}
       {data && (
         <>
           <InviteForm names={data} onInvited={refresh} inputRef={invite} />
           <DataTable
             dense
-            label="Users"
+            label={t("users.tableLabel")}
             columns={columns}
             rows={data.users}
             rowKey={(user) => user.id}
@@ -412,32 +414,32 @@ export function UsersAdmin({ me }: { me: Me }) {
                   aria-expanded={open?.id === user.id && open.kind === "role"}
                   onClick={() => setOpen(open?.id === user.id && open.kind === "role" ? null : { id: user.id, kind: "role" })}
                 >
-                  Add role
+                  {t("users.addRole")}
                 </Button>
                 {user.state !== "disabled" && user.id !== me.id && (
                   <Button size="small" onClick={() => void issueLink(user)}>
-                    {user.state === "invited" ? "New invitation link" : "Reset password"}
+                    {user.state === "invited" ? t("users.newInvitation") : t("users.resetPassword")}
                   </Button>
                 )}
                 {user.id !== me.id &&
                   (user.state === "disabled" ? (
                     <Button size="small" onClick={() => void act(user, () => api.setUserDisabled(user.id, false))}>
-                      Enable
+                      {t("users.enable")}
                     </Button>
                   ) : (
                     <Button size="small" onClick={() => void act(user, () => api.setUserDisabled(user.id, true))}>
-                      Disable
+                      {t("users.disable")}
                     </Button>
                   ))}
                 {user.id !== me.id && (
                   <InlineConfirm
                     layout="row"
-                    trigger="Remove"
-                    triggerName={`Remove ${user.username}`}
-                    title={`Remove ${user.username}?`}
-                    consequence="The account goes away. What they did stays in the history."
-                    confirmLabel="Remove user"
-                    pendingLabel="Removing…"
+                    trigger={t("users.remove")}
+                    triggerName={t("users.removeName", { username: user.username })}
+                    title={t("users.removeTitle", { username: user.username })}
+                    consequence={t("users.removeConsequence")}
+                    confirmLabel={t("users.removeConfirm")}
+                    pendingLabel={t("users.removing")}
                     describeError={(e) => (e instanceof ApiError && e.status === 409 ? e.message : describeError(e))}
                     onConfirm={async () => {
                       await api.removeUser(user.id);
@@ -450,10 +452,14 @@ export function UsersAdmin({ me }: { me: Me }) {
           />
           {others === 0 && (
             <EmptyState
-              title="Only you so far"
-              actions={<Button variant="k" onClick={() => invite.current?.focus()}>Invite a colleague</Button>}
+              title={t("users.onlyYou")}
+              actions={
+                <Button variant="k" onClick={() => invite.current?.focus()}>
+                  {t("users.inviteColleague")}
+                </Button>
+              }
             >
-              They get a link to choose their password, with the role you pick.
+              {t("users.onlyYouText")}
             </EmptyState>
           )}
         </>
@@ -466,20 +472,25 @@ export function UsersAdmin({ me }: { me: Me }) {
 function OwnAccount({ me }: { me: Me }) {
   const { data } = usePolledData(loadNames);
   const columns: Column<Me>[] = [
-    { key: "user", header: "User", cell: (user) => <PrimaryCell title={user.username} sub="Signed in now" /> },
-    { key: "state", header: "State", cell: () => <Label tone="ok">Active</Label> },
+    {
+      key: "user",
+      header: t("users.column.user"),
+      cell: (user) => <PrimaryCell title={user.username} sub={t("users.signedInNow")} />,
+    },
+    { key: "state", header: t("users.column.state"), cell: () => <Label tone="ok">{t("users.active")}</Label> },
     {
       key: "grants",
-      header: "Grants",
+      header: t("users.column.grants"),
       className: styles.wrap,
-      cell: (user) => user.roles.map((grant) => describeGrant(grant, data, multiCustomer(me))).join("  ·  ") || "No role",
+      cell: (user) =>
+        user.roles.map((grant) => describeGrant(grant, data, multiCustomer(me))).join("  ·  ") || t("users.noRole"),
     },
   ];
   return (
     <div className={styles.page}>
-      <PageHeader title="Users and roles" meta={roleReach(multiCustomer(me))} />
-      <DataTable dense label="Users" columns={columns} rows={[me]} rowKey={(user) => user.id} />
-      <Banner tone="info">Only an administrator of everything invites users and changes roles. Ask one to add a colleague.</Banner>
+      <PageHeader title={t("settings.users.label")} meta={roleReach(multiCustomer(me))} />
+      <DataTable dense label={t("users.tableLabel")} columns={columns} rows={[me]} rowKey={(user) => user.id} />
+      <Banner tone="info">{t("users.onlyGlobal")}</Banner>
     </div>
   );
 }
