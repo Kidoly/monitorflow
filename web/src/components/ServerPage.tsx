@@ -154,6 +154,8 @@ export function ServerPage({ id }: { id: string | null }) {
   }, [oldTab, setParams]);
   // Commands shown, so a refresh reloads all of them rather than the first page.
   const [commandLimit, setCommandLimit] = useState(COMMANDS_PAGE);
+  // The Details panel under the header; the Commands tab opens it to turn AI commands on.
+  const [details, setDetails] = useState(false);
   const fetcher = useCallback((signal: AbortSignal) => loadServer(id ?? "", commandLimit, signal), [id, commandLimit]);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { enabled: valid });
 
@@ -191,6 +193,8 @@ export function ServerPage({ id }: { id: string | null }) {
         now={updatedAt}
         stale={stale}
         onChanged={refresh}
+        details={details}
+        onDetails={setDetails}
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {server.revoked_at && (
@@ -239,7 +243,10 @@ export function ServerPage({ id }: { id: string | null }) {
         )}
         {tab === "logs" && <ServerLogsTab server={server} />}
         {tab === "updates" && <ServerUpdatesTab server={server} />}
-        {tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} />}
+        {tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} onOpenDetails={() => {
+          setDetails(true);
+          window.scrollTo({ top: 0 });
+        }} />}
         {tab === "commands" && (
           <ServerCommandsTab
             serverId={server.id}
@@ -267,6 +274,8 @@ function ServerHeader({
   now,
   stale,
   onChanged,
+  details,
+  onDetails: setDetails,
 }: {
   server: ServerDetail;
   latestAgent: string | null;
@@ -274,10 +283,11 @@ function ServerHeader({
   now: Date;
   stale: boolean;
   onChanged: () => void;
+  details: boolean;
+  onDetails: (open: boolean) => void;
 }) {
   const me = useMe();
   const severalSites = multiSite(me);
-  const [details, setDetails] = useState(false);
   const [removing, setRemoving] = useState(false);
   const live = !server.revoked_at;
   const silences = useSilenceBar({
@@ -442,16 +452,20 @@ function UpdateAgent({
 }
 
 /** How to turn on AI commands on this server, or who can. */
-function AllowOnThisServer({ server }: { server: ServerDetail }) {
+function AllowOnThisServer({ server, onOpenDetails }: { server: ServerDetail; onOpenDetails: () => void }) {
   const me = useMe();
   const where = server.os_family === "windows" ? t("server.allow.windows") : "";
   if (aiSwitch(server) === "both") {
     return (
       <Banner tone="warn">
         <strong>{t("server.allow.off", { server: server.hostname })}</strong> {t("server.allow.refused")}{" "}
-        {administersSite(me, server.customer_id, server.site_id)
-          ? t("server.allow.turnOnAbove")
-          : t("server.allow.askSite")}
+        {administersSite(me, server.customer_id, server.site_id) ? (
+          <Button variant="ghost" size="small" onClick={onOpenDetails}>
+            {t("server.allow.openDetails")}
+          </Button>
+        ) : (
+          t("server.allow.askSite")
+        )}
       </Banner>
     );
   }

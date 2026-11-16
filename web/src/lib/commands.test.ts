@@ -70,13 +70,15 @@ describe("describeCommand", () => {
 
   it("names agent self-updates by version", () => {
     const update = (parameters: Record<string, unknown>) => describeCommand(command({ kind: "self_update", parameters }));
+    // What every update does goes in a tooltip, not under each row.
     expect(update({ version: "0.3.0", allow_downgrade: false, health_timeout_seconds: 0 })).toEqual({
       title: "Update agent to 0.3.0",
-      sub: "rolls back unless it connects within 300 s",
+      sub: "",
+      note: "Rolls back unless the new agent connects within 300 s.",
     });
-    expect(update({ version: "0.1.0", allow_downgrade: true, health_timeout_seconds: 60 }).sub).toBe(
-      "downgrade allowed · rolls back unless it connects within 60 s",
-    );
+    const downgrade = update({ version: "0.1.0", allow_downgrade: true, health_timeout_seconds: 60 });
+    expect(downgrade.sub).toBe("downgrade allowed");
+    expect(downgrade.note).toBe("Rolls back unless the new agent connects within 60 s.");
   });
 });
 

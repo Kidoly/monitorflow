@@ -430,6 +430,22 @@ describe("ServerPage", () => {
       expect(screen.getByText(/AI commands are off on web-1/)).toBeInTheDocument();
     });
 
+    it("points from the Commands tab to the Details switch in one sentence", async () => {
+      setUrl(`/servers/view/?id=${ID}&tab=commands`);
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting({ ...off, ai_commands: "accepted" }) }));
+      render(
+        <As user={customerAdmin}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      const banner = (await screen.findByText(/AI commands are off on web-1/)).parentElement!;
+      expect(banner.textContent).toBe("AI commands are off on web-1. Its incidents go to a person. Turn them on in Details");
+      expect(document.querySelector("dl")).toBeNull();
+      await userEvent.click(within(banner).getByRole("button", { name: "Turn them on in Details" }));
+      expect(document.querySelector("dl")).toHaveTextContent(/AI commands\s*Off/);
+      expect(screen.getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "true");
+    });
+
     it("sends other people to an administrator", async () => {
       setUrl(`/servers/view/?id=${ID}&tab=commands`);
       stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting(off) }));
