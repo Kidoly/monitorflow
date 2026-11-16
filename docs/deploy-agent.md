@@ -136,13 +136,13 @@ What the rules allow:
 
 | Command | Used by |
 | --- | --- |
-| `monitorflow-agent packages update` | `apply_updates`: every kind, all packages, security only or named packages |
+| `monitorflow-agent packages update` | `apply_updates`: every kind, all packages, security only or named packages, and Flatpak and Snap apps |
 | `shutdown -r +1` | `apply_updates` with `allow_reboot` |
 | `monitorflow-agent sources apply`, `… sources revert` | `configure_sources`, `revert_sources` |
 | `monitorflow-agent self-update` | `self_update`: installs a signed agent release (below) |
 | `monitorflow-agent snapshots inspect`, `… snapshots take`, `… snapshots delete` | The storage part of each package report, `take_snapshot` and `delete_snapshot`: local snapshots before a change (below) |
 
-There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself[^0036]. Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite.
+There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself[^0036]. Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite. Flatpak and Snap apps go through the same helper, which runs `flatpak update --system` or `snap refresh` with the app IDs it checked and found installed[^0140]; the agent reads their inventory as its own user, so they need no sudo line of their own.
 
 ## Port targets
 
@@ -374,3 +374,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0111]: [ADR-0111: Agent-side limit on where port checks connect](adr/0111-port-check-targets.md)
 [^0112]: [ADR-0112: Script arguments need the host's consent](adr/0112-script-arguments-policy.md)
 [^0126]: [ADR-0126: Containers without capabilities, third-party images by digest](adr/0126-container-hardening-and-pinned-images.md)
+[^0140]: [ADR-0140: Flatpak and Snap updates on Linux](adr/0140-flatpak-and-snap-updates.md)
