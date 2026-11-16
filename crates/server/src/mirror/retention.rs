@@ -23,7 +23,7 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
-use super::model::{Family, Mirror, Snapshot, SnapshotState};
+use super::model::{Family, Mirror, Mode, Snapshot, SnapshotState};
 use super::runner::{Invocation, RunError};
 use super::store::{self, RetentionLock};
 use super::{apt, layout, removal, Layout, Mirrors};
@@ -284,7 +284,8 @@ async fn drop_files(
 ) -> Result<(), RetentionError> {
     let dir = mirrors.layout().mirror_dir(mirror);
     for snapshot in snapshots {
-        if mirror.family == Family::Apt {
+        // An on-demand snapshot is only its directory (ADR-0142).
+        if mirror.family == Family::Apt && snapshot.mode == Mode::Full {
             for command in apt::cleanup(mirrors.layout(), mirror, &snapshot.name) {
                 if let Err(error) = mirrors.runner().run(&command).await {
                     tracing::warn!(%error, %command, "cannot run a snapshot cleanup");
@@ -362,13 +363,22 @@ async fn pass(mirrors: &Mirrors) -> Result<usize, RetentionError> {
     let mut removed = 0;
     for (mirror, snapshots) in chosen {
         drop_files(mirrors, &mirror, &snapshots).await?;
-        if mirror.family == Family::Apt {
-            apt_mirrors.push((mirror, snapshots));
-        } else {
-            finish(mirrors.pool(), &mirror, &snapshots).await?;
-            removed += snapshots.len();
+        let (aptly, plain): (Vec<_>, Vec<_>) = snapshots
+            .into_iter()
+            .partition(|s| mirror.family == Family::Apt && s.mode == Mode::Full);
+        if !plain.is_empty() {
+            finish(mirrors.pool(), &mirror, &plain).await?;
+            removed += plain.len();
+        }
+        if !aptly.is_empty() {
+            apt_mirrors.push((mirror, aptly));
         }
     }
+    // Index files only the removed on-demand snapshots linked.
+    let store = mirrors.layout().store();
+    tokio::task::spawn_blocking(move || store.sweep_indexes())
+        .await
+        .map_err(std::io::Error::other)??;
     if !apt_mirrors.is_empty() {
         free_aptly_pool(mirrors, &apt_mirrors).await?;
         for (mirror, snapshots) in &apt_mirrors {

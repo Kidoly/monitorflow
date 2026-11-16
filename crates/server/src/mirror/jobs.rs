@@ -12,10 +12,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::layout::{self, Layout};
-use super::model::{self, Family, Invalid, Mirror, Run, RunKind, Trigger};
+use super::model::{self, Family, Invalid, Mirror, Mode, Run, RunKind, Trigger};
 use super::runner::{keep_tail, Invocation, Runner, OUTPUT_TAIL};
 use super::store::{self, MirrorLock, StoreError};
-use super::{apt, dnf, signing};
+use super::{apt, dnf, ondemand, signing};
 
 /// How often a running tool looks for its mirror being deleted.
 const WATCH: Duration = Duration::from_secs(5);
@@ -241,6 +241,9 @@ impl Job {
         let layout = self.mirrors.layout.clone();
         let prepared = layout.clone();
         Self::blocking(move || prepared.prepare()).await?;
+        if self.mirror.mode == Mode::OnDemand {
+            return self.sync_on_demand(&layout).await;
+        }
         match self.mirror.family {
             Family::Apt => {
                 let existing = self.step(apt::list(&layout)).await?;
@@ -261,6 +264,36 @@ impl Job {
                 self.step(dnf::createrepo(&layout, &self.mirror)).await?;
             }
         }
+        Ok(())
+    }
+
+    /// Downloads the indexes only (ADR-0142), the upstream's `Release`
+    /// verified with gpg before anything it lists is read.
+    async fn sync_on_demand(&mut self, layout: &Layout) -> Result<(), Failed> {
+        self.log
+            .push_str(&format!("# indexes of {}\n", self.mirror.upstream_url));
+        let mut staging = ondemand::Staging::start(layout, &self.mirror).await?;
+        match self.mirror.family {
+            Family::Apt => {
+                let (release, signature) = staging.apt_roots().await?;
+                let status = self
+                    .step(signing::verify_upstream(layout, &signature, &release))
+                    .await?;
+                if !signing::verified(&status) {
+                    return Err(Failed(
+                        "the upstream's Release is not signed by a key of upstream-keyring.gpg"
+                            .into(),
+                    ));
+                }
+                staging.apt_indexes().await?;
+            }
+            Family::Dnf => staging.dnf().await?,
+        }
+        let stats = staging.finish().await?;
+        self.log.push_str(&format!(
+            "{} index files downloaded ({} bytes), {} already stored, {} packages listed\n",
+            stats.downloaded, stats.bytes, stats.reused, stats.packages
+        ));
         Ok(())
     }
 
@@ -293,8 +326,25 @@ impl Job {
         let key = signing::the_key(&keys)?;
         let dir = layout.mirror_dir(&self.mirror);
         let published = dir.join(name);
-        match self.mirror.family {
-            Family::Apt => {
+        match (self.mirror.mode, self.mirror.family) {
+            (Mode::OnDemand, family) => {
+                let building = dir.join(format!(".creating-{name}"));
+                let (l, m, b) = (layout.clone(), self.mirror.clone(), building.clone());
+                Self::blocking(move || ondemand::stage_snapshot(&l, &m, &b)).await?;
+                let signed = ondemand::signed_file(&self.mirror, &building);
+                match family {
+                    Family::Apt => {
+                        self.step(signing::clearsign(&signed, &key)).await?;
+                        self.step(signing::detach_sign(&signed, &key)).await?;
+                    }
+                    Family::Dnf => {
+                        self.step(dnf::sign_repomd(&building, &key)).await?;
+                    }
+                }
+                let target = published.clone();
+                Self::blocking(move || std::fs::rename(building, target)).await?;
+            }
+            (Mode::Full, Family::Apt) => {
                 for cleanup in apt::cleanup(&layout, &self.mirror, name) {
                     // Absent objects are the normal case; only the log
                     // shows these.
@@ -307,7 +357,7 @@ impl Job {
                 self.step(apt::publish(&layout, &self.mirror, name, &key))
                     .await?;
             }
-            Family::Dnf => {
+            (Mode::Full, Family::Dnf) => {
                 let work = layout.dnf_work(&self.mirror);
                 let building = dir.join(format!(".creating-{name}"));
                 let target = building.clone();

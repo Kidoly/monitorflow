@@ -326,6 +326,13 @@ async fn take_down(mirrors: &Mirrors, mirror: &Mirror) -> Result<(), RetentionEr
         if gone.family == Family::Dnf {
             remove_dnf_work(&layout, &gone)?;
         }
+        // Its on-demand working trees (ADR-0142), whatever its mode now;
+        // index files only they linked go with the store's sweep.
+        let work = layout.ondemand_work(&gone);
+        layout::remove_tree(&work)?;
+        layout::remove_tree(&layout.ondemand_staging(&gone))?;
+        layout::remove_tree(&work.with_file_name(format!(".old-{}", gone.name)))?;
+        layout.store().sweep_indexes()?;
         Ok(())
     })
     .await?;
