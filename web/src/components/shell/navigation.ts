@@ -55,7 +55,7 @@ export const NAVIGATION: NavSection[] = [
     heading: "shell.nav.updates",
     items: [
       { label: "shell.nav.mirrors", href: MIRRORS_PATH, icon: "mirrors", visible: administersEverything },
-      { label: "shell.nav.automaticUpdates", href: AUTO_UPDATE_PATH, icon: "campaigns", visible: administersEverything },
+      { label: "shell.nav.automaticUpdates", href: AUTO_UPDATE_PATH, icon: "autoUpdate", visible: administersEverything },
       // The handoff moves it to /updates/campaigns/ with its redesign.
       { label: "shell.nav.campaigns", href: CAMPAIGNS_PATH, icon: "campaigns" },
     ],

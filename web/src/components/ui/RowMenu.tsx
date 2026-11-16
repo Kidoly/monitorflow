@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
+import { buttonClass } from "./Button";
 import { cx } from "./cx";
 import styles from "./RowMenu.module.css";
 
@@ -14,9 +15,20 @@ export type RowMenuItem =
  * The `⋯` button of a table row and its menu. It opens on click, Enter,
  * Space or ↓, focuses the first item, moves with ↑ ↓ Home End, and closes on
  * Escape (focus back on the button), Tab, a choice or a click elsewhere.
- * `label` names the row: "Actions for Disk used /var".
+ * `label` names the row: "Actions for Disk used /var". With `trigger`, the
+ * button is a small labelled one ("Silence ▾") instead of `⋯`.
  */
-export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }) {
+export function RowMenu({
+  label,
+  items,
+  trigger,
+  disabled,
+}: {
+  label: string;
+  items: RowMenuItem[];
+  trigger?: ReactNode;
+  disabled?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -64,8 +76,9 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
       <button
         ref={buttonRef}
         type="button"
-        className={styles.button}
+        className={trigger ? buttonClass({ size: "small" }) : styles.button}
         aria-label={label}
+        disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
@@ -77,7 +90,13 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
           }
         }}
       >
-        <span aria-hidden="true">⋯</span>
+        {trigger ? (
+          <>
+            {trigger} <span aria-hidden="true">▾</span>
+          </>
+        ) : (
+          <span aria-hidden="true">⋯</span>
+        )}
       </button>
       {open && (
         <div ref={menuRef} id={id} role="menu" aria-label={label} className={styles.menu} onKeyDown={onMenuKey}>

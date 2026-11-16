@@ -91,17 +91,7 @@ function AutoUpdate() {
   const header = (
     <PageHeader
       title={t("autoUpdate.title")}
-      meta={
-        <>
-          {t("autoUpdate.globalOnly")}
-          {(updatedAt !== null || error !== null) && (
-            <>
-              {" · "}
-              <RefreshLine updatedAt={updatedAt} stale={stale} />
-            </>
-          )}
-        </>
-      }
+      meta={updatedAt !== null || error !== null ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : undefined}
     />
   );
   if (error instanceof ApiError && error.status === 403) {

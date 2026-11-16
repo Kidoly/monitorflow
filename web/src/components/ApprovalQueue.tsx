@@ -107,12 +107,7 @@ export function ApprovalQueue() {
     <Page>
       <PageHeader
         title={t("remediation.queue.title")}
-        meta={
-          <>
-            {data && t("remediation.queue.waiting", { count: all.length })}
-            <RefreshLine updatedAt={updatedAt} stale={stale} />
-          </>
-        }
+        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
         actions={<ButtonLink href={scopedHref(AUDIT_PATH, scope)}>{t("remediation.queue.auditLog")}</ButtonLink>}
       />
       <FilterBar

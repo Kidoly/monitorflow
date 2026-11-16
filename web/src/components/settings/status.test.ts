@@ -12,6 +12,7 @@ import {
   backupsStatus,
   integrationsStatus,
   licenseStatus,
+  notificationsStatus,
   relaysStatus,
   serverUpdateStatus,
   sitesStatus,
@@ -20,6 +21,14 @@ import {
 const NOW = new Date("2026-11-14T10:00:00");
 
 describe("settings status lines", () => {
+  it("makes no notification channel a problem, which puts a badge on Settings", () => {
+    const none = notificationsStatus([]);
+    expect(none).toEqual({ text: "No channel yet", tone: "bad" });
+    expect(attention({ notifications: none })).toEqual({ count: 1, tone: "bad" });
+    const one = { last_error: null } as Parameters<typeof notificationsStatus>[0][number];
+    expect(notificationsStatus([one])).toEqual({ text: "1 channel", tone: "neutral" });
+  });
+
   it("counts sites, and customers only for someone who sees several", () => {
     const site = (customer_id: string) => ({ customer_id }) as Parameters<typeof sitesStatus>[0][number];
     expect(sitesStatus([site("a"), site("a"), site("b")], true).text).toBe("2 customers · 3 sites");

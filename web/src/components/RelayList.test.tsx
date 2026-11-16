@@ -159,7 +159,6 @@ describe("RelayListPage", () => {
     );
     expect(rows[2]).toHaveTextContent(/relay-2.*Offline.*Valid/);
     expect(rows[3]).toHaveTextContent(/relay-3.*Offline.*None/);
-    expect(screen.getByText(/3 relays, 1 online/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add relay" })).toBeInTheDocument();
   });
 

@@ -55,6 +55,31 @@ a:hover {
   outline-offset: 2px;
 }
 
+/* Hover, background and border changes ease in rather than snap. */
+a,
+button,
+input,
+select,
+textarea,
+summary,
+td {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
 button,
 input,
 select,

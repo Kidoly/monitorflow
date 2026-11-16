@@ -8,6 +8,7 @@ import { formatNumber, unitOf } from "@/lib/format";
 import { incidentTitle } from "@/lib/incidents";
 import { formatSensorValue } from "@/lib/sensors";
 import { niceTicks, segments, timeTicks } from "@/components/ui/chartScale";
+import { SkeletonLines } from "@/components/ui/PageState";
 import { formatSince } from "@/components/ui/time";
 
 import { emptyReason } from "./DashboardPanel";
@@ -138,7 +139,7 @@ export function ScreenPanel({
   if (!data || !window) {
     return (
       <Frame panel={panel}>
-        <p className={styles.muted}>{t("display.screen.loading")}</p>
+        <SkeletonLines label={t("display.screen.loading")} />
       </Frame>
     );
   }

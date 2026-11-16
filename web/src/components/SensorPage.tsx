@@ -276,7 +276,7 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
         compact
         label={t("sensors.page.summary")}
         tiles={[
-          { label: t("sensors.page.current"), value: current === null ? "–" : format(current), tone: TONES[status] },
+          { label: t("sensors.page.current"), value: current === null ? "–" : format(current), tone: status === "ok" ? undefined : TONES[status] },
           { label: t("sensors.page.peak", { range: data.range.label }), value: values.length ? format(Math.max(...values)) : "–" },
           {
             label: t("sensors.page.average", { range: data.range.label }),

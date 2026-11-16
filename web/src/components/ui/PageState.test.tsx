@@ -28,14 +28,14 @@ describe("in French", () => {
         <ErrorState what="les serveurs" error="Délai dépassé." onRetry={() => {}} />
         <StaleBanner error="Délai dépassé." updatedAt={new Date(2026, 9, 22, 14, 32, 5)} failures={2} />
         <p>
-          <RefreshLine updatedAt={new Date(2026, 9, 22, 14, 32, 5)} />
+          <RefreshLine updatedAt={new Date(Date.now() - 180_000)} stale />
         </p>
       </>,
     );
     expect(screen.getByText("Impossible de charger les serveurs :")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Réessayer" })).toBeInTheDocument();
     expect(screen.getByText(/2 tentatives ont échoué\./)).toBeInTheDocument();
-    expect(screen.getByText("Mis à jour à 14:32:05, actualisé toutes les 15 secondes")).toBeInTheDocument();
+    expect(screen.getByText("Mis à jour il y a 3 min")).toBeInTheDocument();
   });
 });
 

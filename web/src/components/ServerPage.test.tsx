@@ -152,7 +152,15 @@ function routes(overrides: Record<string, unknown> = {}) {
   } as Parameters<typeof stubFetch>[0];
 }
 
-const heading = () => screen.findByRole("heading", { level: 1, name: "web-1" });
+/** The title block: title, status, actions, the facts line and its badges. */
+const header = () => screen.getByRole("heading", { level: 1 }).parentElement!;
+
+/** Waits for the page, then opens Details, where the full facts list is. */
+async function heading() {
+  const title = await screen.findByRole("heading", { level: 1, name: "web-1" });
+  await userEvent.click(screen.getByRole("button", { name: /^(Details|Détails)$/ }));
+  return title;
+}
 
 describe("ServerPage", () => {
   beforeEach(() => {
@@ -180,7 +188,7 @@ describe("ServerPage", () => {
     expect(screen.getByRole("status", { name: "Loading server" })).toBeInTheDocument();
     await heading();
     await vi.waitFor(() => expect(document.title).toBe("web-1 · MonitorFlow"));
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Fleet/web-1");
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Fleet›web-1");
     const facts = document.querySelector("dl")!;
     expect(facts).toHaveTextContent(/Site\s*paris · acme/);
     expect(facts).toHaveTextContent(/Last seen\s*12 s ago/);
@@ -189,22 +197,26 @@ describe("ServerPage", () => {
     expect(facts).toHaveTextContent(/Agent\s*0\.2\.0 · via relay-paris-1/);
     expect(facts).toHaveTextContent(/Certificate\s*Valid, renews automatically/);
     expect(facts).toHaveTextContent(/Added\s*2026-05-03 09:12/);
-    expect(facts).not.toHaveTextContent("Certificate ID");
-    const details = screen.getByText("Details").closest("details")!;
-    expect(details).not.toHaveAttribute("open");
-    expect(details).toHaveTextContent(/Certificate ID\s*agent-1/);
-    expect(details).toHaveTextContent(/Certificate valid until\s*2026-12/);
+    expect(facts).toHaveTextContent(/Certificate ID\s*agent-1/);
+    expect(facts).toHaveTextContent(/Certificate valid until\s*2026-12/);
+    // One line of facts under the title, and no badge while everything is as usual.
+    expect(screen.getByText(/^Debian 12 · agent 0\.2\.0/)).toHaveTextContent(/^Debian 12 · agent 0\.2\.0 · paris · seen 12 s ago/);
+    expect(within(header()).queryByRole("tooltip", { hidden: true })).not.toBeInTheDocument();
 
     expect(screen.getByRole("tab", { name: "Sensors · 3" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Commands · 1 running" })).toBeInTheDocument();
-    expect(screen.getByText("Configuration up to date").parentElement).toHaveTextContent(/applied 3 min ago/);
+    expect(screen.queryByText(/Configuration up to date/)).not.toBeInTheDocument();
     const rows = within(screen.getByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
-    // Each row: the sensor, its status, why, its value, then its rule and where the rule comes from.
+    // Each row: the sensor with why it is not OK (or its kind), its status, its value alone, then its
+    // compact rule (the sentence in its tooltip) and where the rule comes from.
     expect(rows.map((r) => r.textContent)).toEqual([
-      "Disk used /vardisk · /varCritical94.2% used is above the critical limit of 95%94.2% · since 11:40, 2 h 52 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
-      "CPU usagecpuOK38.4%every 15 s · warn > 90% · for 10 minBuilt-in⋯",
-      "Disk used /disk · /OK61%every 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
+      "Disk used /var94.2% used is above the critical limit of 95%Critical94.2%30 s · > 85% / 95% · 5 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
+      "CPU usagecpuOK38.4%15 s · > 90% · 10 minevery 15 s · warn > 90% · for 10 minBuilt-in⋯",
+      "Disk used /disk · /OK61%30 s · > 85% / 95% · 5 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
     ]);
+    expect(within(rows[0]!).getByText("30 s · > 85% / 95% · 5 min").closest("[tabindex]")).toHaveAccessibleDescription(
+      "every 30 s · warn > 85% · crit > 95% · for 5 min",
+    );
     expect(screen.queryByRole("tab", { name: "Alerts and checks" })).not.toBeInTheDocument();
     expect(within(rows[1]!).getByRole("img", { name: "CPU usage, last hour" })).toBeInTheDocument();
     expect(within(rows[0]!).getByRole("link", { name: "Disk used /var" })).toHaveAttribute(
@@ -218,14 +230,13 @@ describe("ServerPage", () => {
     stubFetch(routes());
     render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByRole("navigation", { name: "Fil d’Ariane" })).toHaveTextContent("Parc/web-1");
+    expect(screen.getByRole("navigation", { name: "Fil d’Ariane" })).toHaveTextContent("Parc›web-1");
     const facts = document.querySelector("dl")!;
     expect(facts).toHaveTextContent(/Dernier contact\s*il y a 12 s/);
     expect(facts).toHaveTextContent(/Connecté depuis\s*2026-10-19 02:14/);
     expect(facts).toHaveTextContent(/Certificat\s*Valide, se renouvelle automatiquement/);
     expect(screen.getByRole("tab", { name: "Capteurs · 3" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Commandes · 1 en cours" })).toBeInTheDocument();
-    expect(screen.getByText("Configuration à jour").parentElement).toHaveTextContent(/appliquée il y a 3 min/);
     const table = screen.getByRole("table", { name: "Capteurs" });
     expect(within(table).getByRole("columnheader", { name: "Dernière valeur" })).toBeInTheDocument();
     expect(within(table).getByRole("img", { name: "Utilisation CPU, dernière heure" })).toBeInTheDocument();
@@ -257,7 +268,7 @@ describe("ServerPage", () => {
       }));
     render(<ServerPage id={ID} />);
     const table = await screen.findByRole("table", { name: "Sensors" });
-    expect(within(table).getByRole("row", { name: /Disk used \// })).toHaveTextContent(/Unknown\s*No data for 15 minutes/);
+    expect(within(table).getByRole("row", { name: /Disk used \// })).toHaveTextContent(/No data for 15 minutes\s*Unknown/);
     const urls = fetchMock.mock.calls.map(([input]) => String(input));
     expect(urls.filter((u) => u.startsWith("/api/metrics/"))).toEqual([]);
     expect(urls.filter((u) => u.endsWith("/sensor-values"))).toHaveLength(1);
@@ -271,7 +282,7 @@ describe("ServerPage", () => {
     );
     render(<ServerPage id={ID} />);
     const table = await screen.findByRole("table", { name: "Sensors" });
-    expect(within(table).getByRole("row", { name: /CPU usage/ })).toHaveTextContent(/Unknown\s*The metrics backend is unavailable/);
+    expect(within(table).getByRole("row", { name: /CPU usage/ })).toHaveTextContent(/The metrics backend is unavailable.*Unknown/);
   });
 
   it("lists the commands in their tab, with the output under the row", async () => {
@@ -315,8 +326,10 @@ describe("ServerPage", () => {
     stubFetch(routes({ [`GET /api/servers/${ID}`]: ok(server) }));
     render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByText("Package updates aren't available on this system; monitoring works normally")).toBeInTheDocument();
-    expect(screen.getByText("Alpine 3.20")).toBeInTheDocument();
+    expect(screen.getByText("No package updates")).toBeInTheDocument();
+    const facts = within(document.querySelector("dl")!);
+    expect(facts.getByText("Package updates aren't available on this system; monitoring works normally")).toBeInTheDocument();
+    expect(facts.getByText("Alpine 3.20")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Updates" }));
     expect(await screen.findByText(/update web-1 with\s+its own tools/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open campaigns" })).not.toBeInTheDocument();
@@ -359,7 +372,8 @@ describe("ServerPage", () => {
       stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting({ ...off, shell: "accepted" }) }));
       render(<ServerPage id={ID} />);
       await heading();
-      expect(screen.getByText(/Runs the commands AI sends/)).toHaveTextContent(/^On Runs/);
+      expect(screen.getByText("AI commands on")).toBeInTheDocument();
+      expect(within(document.querySelector("dl")!).getByText(/Runs the commands AI sends/)).toHaveTextContent(/^On Runs/);
       expect(screen.queryByRole("link", { name: "How to turn them on" })).not.toBeInTheDocument();
     });
 
@@ -493,7 +507,9 @@ describe("ServerPage", () => {
         </As>,
       );
       await heading();
-      expect(screen.getByText(/Runs the commands AI sends/)).toHaveTextContent(/Turned on by alice at 2026-11-16 \d\d:02\./);
+      expect(within(document.querySelector("dl")!).getByText(/Runs the commands AI sends/)).toHaveTextContent(
+        /Turned on by alice at 2026-11-16 \d\d:02\./,
+      );
       unmount();
 
       const pending = { ...change, on: false, state: "queued", finished_at: null } as const;
@@ -504,7 +520,7 @@ describe("ServerPage", () => {
         </As>,
       );
       await heading();
-      expect(screen.getByText(/Runs the commands AI sends/)).toHaveTextContent(
+      expect(within(document.querySelector("dl")!).getByText(/Runs the commands AI sends/)).toHaveTextContent(
         /Turning off… asked by alice at .*\. It applies when the server is back\./,
       );
       expect(screen.queryByRole("button", { name: "Turn off…" })).not.toBeInTheDocument();
@@ -554,7 +570,8 @@ describe("ServerPage", () => {
       await vi.waitFor(() => expect(window.location.search).toBe(`?id=${ID}`));
       expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Sensors · 3", "Logs", "Updates", "Commands · 1 running"]);
       expect(screen.getByRole("button", { name: "Add a check" })).toBeInTheDocument();
-      expect(screen.getByText(/Built-in checks run/)).toBeInTheDocument();
+      // How often built-in checks run is a site setting, under Settings, Sites.
+      expect(screen.queryByText(/Built-in checks run/)).not.toBeInTheDocument();
     });
 
     it("opens a row's menu from the keyboard, Escape giving focus back", async () => {
@@ -697,7 +714,8 @@ describe("ServerPage", () => {
         <ServerPage id={ID} />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Remove web-1…" }));
+    await userEvent.click(await screen.findByRole("button", { name: "More actions for web-1" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Remove web-1…" }));
     expect(screen.getByRole("form", { name: "Remove web-1?" })).toHaveTextContent("history is kept");
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/revoke"))).toBe(false);
     await userEvent.click(screen.getByRole("button", { name: "Remove web-1" }));
@@ -755,14 +773,15 @@ describe("ServerPage", () => {
     stubFetch(routes({ [`GET /api/servers/${ID}`]: ok({ ...web1, certificate }) }));
     const { unmount } = render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByText("Renewal late, expires in 1 day")).toBeInTheDocument();
+    expect(within(header()).getByRole("tooltip", { hidden: true })).toHaveTextContent("Renewal late, expires in 1 day");
+    expect(within(document.querySelector("dl")!).getByText("Renewal late, expires in 1 day")).toBeInTheDocument();
     unmount();
 
     const revoked = { ...certificate, revoked: true, revoked_at: "2026-10-19T08:00:00", revocation_reason: "key_compromise" };
     stubFetch(routes({ [`GET /api/servers/${ID}`]: ok({ ...web1, certificate: revoked }) }));
     render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByText("Revoked").closest("dd")).toHaveTextContent("Revoked 2026-10-19 08:00 (key compromise)");
+    expect(within(document.querySelector("dl")!).getByText("Revoked").closest("dd")).toHaveTextContent("Revoked 2026-10-19 08:00 (key compromise)");
   });
 
   it("reads the server from its own endpoint, not the list", async () => {
