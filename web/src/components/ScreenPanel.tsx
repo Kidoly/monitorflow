@@ -2,6 +2,7 @@
 
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
+import { t } from "@/i18n";
 import type { DashboardData, Panel, PanelData } from "@/lib/api";
 import { formatNumber, unitOf } from "@/lib/format";
 import { incidentTitle } from "@/lib/incidents";
@@ -137,7 +138,7 @@ export function ScreenPanel({
   if (!data || !window) {
     return (
       <Frame panel={panel}>
-        <p className={styles.muted}>Loading…</p>
+        <p className={styles.muted}>{t("display.screen.loading")}</p>
       </Frame>
     );
   }
@@ -170,7 +171,7 @@ export function ScreenPanel({
               ratio={unitOf(metric) === "ratio"}
             />
           ) : (
-            <p className={styles.muted}>No data in this range.</p>
+            <p className={styles.muted}>{t("display.screen.noData")}</p>
           )}
         </Frame>
       );
@@ -181,7 +182,7 @@ export function ScreenPanel({
             {data.value === null ? "–" : panel.combine === "count" ? formatNumber(data.value) : format(data.value)}
           </p>
           <p className={styles.muted}>
-            {data.value === null ? "No recent value" : `${data.servers} ${data.servers === 1 ? "server" : "servers"}`}
+            {data.value === null ? t("display.screen.noValue") : t("display.panel.servers", { count: data.servers })}
           </p>
         </Frame>
       );
@@ -189,7 +190,7 @@ export function ScreenPanel({
       return (
         <Frame panel={panel}>
           {data.rows.length === 0 ? (
-            <p className={styles.muted}>No recent values.</p>
+            <p className={styles.muted}>{t("display.screen.noValues")}</p>
           ) : (
             <ol className={styles.rows}>
               {data.rows.map((row) => (
@@ -210,16 +211,19 @@ export function ScreenPanel({
       return (
         <Frame panel={panel}>
           {data.alerts.length === 0 ? (
-            <p className={styles.ok}>No open alerts</p>
+            <p className={styles.ok}>{t("display.screen.noAlerts")}</p>
           ) : (
             <ul className={styles.rows}>
               {data.alerts.map((alert) => (
                 <li key={alert.id} className={alert.severity === "critical" ? styles.critical : styles.warning}>
                   <span className={styles.name}>
-                    <b>{alert.severity === "critical" ? "Critical" : "Warning"}</b> {incidentTitle(alert)}{" "}
-                    <span className={styles.muted}>on {alert.hostname}</span>
+                    <b>{alert.severity === "critical" ? t("display.panel.critical") : t("display.panel.warning")}</b>{" "}
+                    {incidentTitle(alert)}{" "}
+                    <span className={styles.muted}>{t("display.panel.on", { hostname: alert.hostname })}</span>
                   </span>
-                  <span className={styles.muted}>since {formatSince(new Date(alert.opened_at), now)}</span>
+                  <span className={styles.muted}>
+                    {t("display.panel.since", { time: formatSince(new Date(alert.opened_at), now) })}
+                  </span>
                 </li>
               ))}
             </ul>
