@@ -23,6 +23,7 @@ pub mod sources;
 #[cfg(unix)]
 pub mod update;
 pub mod windows_update;
+pub mod winget;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
