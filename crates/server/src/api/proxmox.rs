@@ -188,11 +188,22 @@ impl From<&local::LocalUnavailable> for LocalReason {
         use monitorflow_common::snapshot::Refusal as R;
         let code = why.code();
         match why {
-            L::Inspect { error } => Self { code, error: Some(error.clone()), ..Self::default() },
-            L::Refused(R::RootNotCovered { fs_type }) => {
-                Self { code, fs_type: Some(fs_type.clone()), ..Self::default() }
-            }
-            L::Refused(R::NoSpace { mount_point, group, free_bytes, needed_bytes }) => Self {
+            L::Inspect { error } => Self {
+                code,
+                error: Some(error.clone()),
+                ..Self::default()
+            },
+            L::Refused(R::RootNotCovered { fs_type }) => Self {
+                code,
+                fs_type: Some(fs_type.clone()),
+                ..Self::default()
+            },
+            L::Refused(R::NoSpace {
+                mount_point,
+                group,
+                free_bytes,
+                needed_bytes,
+            }) => Self {
                 code,
                 mount_point: Some(mount_point.clone()),
                 group: Some(group.clone()),
@@ -200,14 +211,21 @@ impl From<&local::LocalUnavailable> for LocalReason {
                 needed_bytes: Some(*needed_bytes),
                 ..Self::default()
             },
-            L::Refused(R::PoolFull { mount_point, free_bytes, pool_bytes }) => Self {
+            L::Refused(R::PoolFull {
+                mount_point,
+                free_bytes,
+                pool_bytes,
+            }) => Self {
                 code,
                 mount_point: Some(mount_point.clone()),
                 free_bytes: Some(*free_bytes),
                 pool_bytes: Some(*pool_bytes),
                 ..Self::default()
             },
-            _ => Self { code, ..Self::default() },
+            _ => Self {
+                code,
+                ..Self::default()
+            },
         }
     }
 }
