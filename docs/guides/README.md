@@ -43,3 +43,11 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor time synchronisation (NTP) on Linux and Windows](monitor-time-sync.md): Get alerted when chrony, systemd-timesyncd or Windows Time stops, and when a server's clock drifts too far, before logins and certificates fail.
 - [How to monitor Postfix on Linux](monitor-postfix.md): Get alerted when Postfix stops, port 25 no longer answers, or the mail queue grows, so mail from your servers and applications keeps flowing.
 - [How to monitor NFS and SMB file shares](monitor-nfs-smb-shares.md): Get alerted when a file server stops answering on NFS or SMB, when its service stops, or when a mounted share fills up on a Linux client.
+
+## Windows
+
+- [How to monitor Windows services](monitor-windows-services.md): Get an alert when a Windows service stops or disappears, such as Windows Update, Print Spooler, DNS Server or Windows Time.
+- [How to monitor IIS](monitor-iis.md): Get an alert when the IIS web server stops or no longer answers on ports 80 and 443 on your Windows servers.
+- [How to monitor Active Directory domain controllers](monitor-active-directory.md): Watch your domain controllers: Active Directory, DNS Server, LDAP on port 389, Windows Time and System event log errors, with alerts.
+- [How to monitor the Windows event log for errors](monitor-windows-event-log.md): Get an alert when Windows writes a critical or error event to the System or Application log, on one server or a whole site.
+- [How to monitor Remote Desktop (RDP)](monitor-remote-desktop.md): Get an alert when Remote Desktop stops answering on port 3389 or its service stops, on your Windows servers.
