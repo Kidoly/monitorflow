@@ -35,6 +35,10 @@ npm run build      # static files in web/out
 
 `npm run dev` forwards `/api` to the server's API listener (`MONITORFLOW_API_URL`, default `http://127.0.0.1:7444`), so the session cookie stays same-origin. Over plain HTTP, set `api_cookie_secure = false` in the server configuration for development, and create a user with `monitorflow-server user add --username admin --role admin`. In production, a TLS reverse proxy serves `web/out` and forwards `/api`; see `deploy/caddy/Caddyfile`.
 
+### Static demo
+
+`npm run build:demo` builds a read-only demo of the web interface with made-up data and no server, in `web/out`. The website repository publishes it at `demo.<domain>`. See [docs/demo.md](docs/demo.md).
+
 ### Architecture diagram
 
 `docs/images/architecture.html` is the source of the diagram in the README: a self-contained page with its icons inlined. After editing it, screenshot its `.canvas` element in light and dark at 2x (with the `data-theme="dark"` attribute on `<html>` for dark) into `architecture.png` and `architecture-dark.png`.
