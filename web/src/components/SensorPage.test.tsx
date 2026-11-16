@@ -97,7 +97,8 @@ describe("SensorPage", () => {
       /Current94\.2%\s*Peak, 6 h94\.2%\s*Average, 6 h92\.1%\s*Above critical for2 h 52 min/,
     );
     const chart = screen.getByRole("figure", { name: "History" });
-    expect(within(chart).getAllByTestId("chart-threshold").map((l) => l.textContent)).toEqual(["Warning 80%", "Critical 90%"]);
+    expect(within(chart).getAllByTestId("chart-threshold")).toHaveLength(2);
+    expect(chart).toHaveTextContent(/Warning 80%.*Critical 90%/);
     expect(within(chart).getByTestId("chart-marker")).toHaveTextContent("Opened 11:40");
     expect(within(chart).getByTestId("chart-band")).toBeInTheDocument();
     expect(within(chart).getByRole("button", { name: "Download CSV" })).toBeInTheDocument();

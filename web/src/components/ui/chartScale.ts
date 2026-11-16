@@ -22,19 +22,20 @@ export function niceTicks(min: number, max: number, count = 5): number[] {
   }
 }
 
+import { dateLocale } from "@/i18n/locale";
+
 const pad = (n: number) => String(n).padStart(2, "0");
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /**
  * Seven x ticks, every sixth of `[start, end]` (unix seconds), labelled
- * HH:MM up to 24 h and DD MMM beyond.
+ * HH:MM up to 24 h and DD MMM beyond, the month in the active language.
  */
 export function timeTicks(start: number, end: number): { t: number; label: string }[] {
   const daily = end - start > 86_400;
   return Array.from({ length: 7 }, (_, i) => {
     const t = start + ((end - start) * i) / 6;
     const d = new Date(t * 1000);
-    return { t, label: daily ? `${pad(d.getDate())} ${MONTHS[d.getMonth()]}` : `${pad(d.getHours())}:${pad(d.getMinutes())}` };
+    return { t, label: daily ? d.toLocaleDateString(dateLocale(), { day: "2-digit", month: "short" }) : `${pad(d.getHours())}:${pad(d.getMinutes())}` };
   });
 }
 

@@ -2,6 +2,8 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import { niceTicks, segments, timeTicks } from "./chartScale";
 import { TimeChart, type TimeSeries } from "./TimeChart";
 
@@ -54,14 +56,17 @@ describe("TimeChart", () => {
     );
   });
 
-  it("draws nice y ticks, x ticks every sixth, dashed labelled thresholds, markers and the band", () => {
+  it("draws nice y ticks, x ticks every sixth, dashed thresholds named in the legend, markers and the band", () => {
     renderChart();
     const svg = screen.getByRole("group", { name: /Disk used/ });
     const texts = [...svg.querySelectorAll("text")].map((t) => t.textContent);
     expect(texts).toEqual(expect.arrayContaining(["100 %", "75 %", "50 %", "25 %", "0"]));
     expect(texts).toEqual(expect.arrayContaining(["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30"]));
     const thresholds = screen.getAllByTestId("chart-threshold");
-    expect(thresholds.map((t) => t.textContent)).toEqual(["Warning 80 %", "Critical 90 %"]);
+    // Named once, in the legend: labels on close lines overlapped.
+    expect(thresholds.map((t) => t.textContent)).toEqual(["", ""]);
+    expect(screen.getByText("Warning 80 %")).toBeInTheDocument();
+    expect(screen.getByText("Critical 90 %")).toBeInTheDocument();
     expect(thresholds[0]!.querySelector("line")).toHaveAttribute("stroke-dasharray", "4 3");
     expect(screen.getAllByTestId("chart-marker").map((m) => m.textContent)).toEqual(["Opened 11:40", "Now · open"]);
     expect(screen.getByTestId("chart-band")).toHaveAttribute("opacity", "0.06");
@@ -115,6 +120,23 @@ describe("TimeChart", () => {
     expect(screen.getByText("2 more series not shown.")).toBeInTheDocument();
   });
 
+  it("has no legend button for a lone series, which the title names", () => {
+    render(<TimeChart title="Memory available" series={[{ label: "Average", points: samples(() => 1) }]} />);
+    expect(screen.queryByRole("button", { name: "Average" })).toBeNull();
+    expect(screen.queryByText("Average")).toBeNull();
+  });
+
+  it("says in French how many series it left out", () => {
+    setActiveLocale("fr");
+    try {
+      const many = Array.from({ length: 10 }, (_, i) => ({ label: `cpu${i}`, points: samples(() => i) }));
+      render(<TimeChart title="CPU" series={many} />);
+      expect(screen.getByText("2 autres séries non affichées.")).toBeInTheDocument();
+    } finally {
+      setActiveLocale("en");
+    }
+  });
+
   it("says when there is nothing to draw", () => {
     render(<TimeChart title="CPU" series={[{ label: "cpu", points: [[START, null]] }]} emptyText="No data yet." />);
     expect(screen.getByText("No data yet.")).toBeInTheDocument();
@@ -136,6 +158,12 @@ describe("chart scales", () => {
     const week = timeTicks(START, START + 6 * 86_400).map((t) => t.label);
     expect(week[0]).toBe("22 Oct");
     expect(week[6]).toBe("28 Oct");
+    setActiveLocale("fr");
+    try {
+      expect(timeTicks(START, START + 6 * 86_400)[0]!.label).toBe("22 oct.");
+    } finally {
+      setActiveLocale("en");
+    }
   });
 
   it("breaks lines at nulls and long gaps", () => {

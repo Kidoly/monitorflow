@@ -104,7 +104,8 @@ describe("IncidentPage", () => {
     ]);
 
     const chart = screen.getByRole("figure", { name: "Around the incident" });
-    expect(within(chart).getAllByTestId("chart-threshold").map((l) => l.textContent)).toEqual(["Warning 85%", "Critical 95%"]);
+    expect(within(chart).getAllByTestId("chart-threshold")).toHaveLength(2);
+    expect(chart).toHaveTextContent(/Warning 85%.*Critical 95%/);
     expect(within(chart).getAllByTestId("chart-marker").map((m) => m.textContent)).toEqual([
       `Opened ${clock("2026-10-19T11:00:00Z")}`,
       `Resolved ${clock("2026-10-19T11:40:00Z")}`,
