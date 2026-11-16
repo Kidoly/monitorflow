@@ -68,6 +68,12 @@ impl CurrentUser {
         }
     }
 
+    /// The session the request came with; `None` through an API key or a
+    /// display link.
+    pub(super) fn session(&self) -> Option<&SessionToken> {
+        self.session.as_ref()
+    }
+
     /// 403 for a request made with an API key. For what belongs to the
     /// person rather than to what the key reaches: their own contact, and
     /// credentials that act as them or outlive the key. v1 leaves these

@@ -673,6 +673,14 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::OK);
             assert_eq!(body, json!({ "theme": "dark" }));
         }
+        // Personal (ADR-0138): one's own password only. A wrong current
+        // password changes nothing, so the shared session lives on.
+        ("POST", "/api/me/password") => {
+            let body = json!({ "current_password": "not it at all", "new_password": "another long password" });
+            let (status, body) = ctx.call(method, path, Some(body)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
         // Global: the agent releases the server holds (ADR-0053).
         ("GET", "/api/agent-releases") => {
             let (status, body) = ctx.call(method, path, None).await;
