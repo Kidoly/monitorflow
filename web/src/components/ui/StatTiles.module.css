@@ -15,7 +15,14 @@
   border: 1px solid transparent;
 }
 
+.button {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 a.tile:hover,
+button.tile:hover,
 .tile.active {
   text-decoration: none;
   border-color: currentColor;
@@ -56,6 +63,7 @@ a.tile:hover,
 }
 
 a.plain:hover,
+button.plain:hover,
 .plain.active {
   border-color: var(--border-strong);
 }
