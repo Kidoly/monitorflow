@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 scripts/check-numbers.sh
+scripts/check-typography.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 # The server from AGPL code only, without the Enterprise edition (ADR-0100).

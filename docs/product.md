@@ -1,4 +1,4 @@
-# MonitorFlow — Product, roadmap and business model
+# MonitorFlow: product, roadmap and business model
 
 Status: draft, 2026-10-18.
 

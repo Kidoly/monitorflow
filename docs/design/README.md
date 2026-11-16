@@ -1,11 +1,11 @@
-# MonitorFlow — UI design handoff
+# MonitorFlow UI design handoff
 
 Target stack: Next.js static export, React 19, TypeScript, CSS Modules, CSS custom properties on `:root`, no component library, hand-written SVG charts.
 
 ## What is in this folder
 
-- `tokens.css` — every colour, size and font as CSS variables, light and dark (`data-theme="dark"` on `<html>`, or `prefers-color-scheme` when unset).
-- `screens/*.html` — one self-contained, pixel-reference HTML file per screen (open in a browser). Files ending in `.dark.html` are the same screen with the dark token set. `00-design-system.html` shows every component in isolation. `09-page-states.html` shows loading, empty, error, stale, not-found, no-permission and the phone layout.
+- `tokens.css`: every colour, size and font as CSS variables, light and dark (`data-theme="dark"` on `<html>`, or `prefers-color-scheme` when unset).
+- `screens/*.html`: one self-contained, pixel-reference HTML file per screen (open in a browser). Files ending in `.dark.html` are the same screen with the dark token set. `00-design-system.html` shows every component in isolation. `09-page-states.html` shows loading, empty, error, stale, not-found, no-permission and the phone layout.
 - The markup in each screen is the intended DOM: real `<nav>`, `<table>`, `<button>`, `<a>`, `<label>`, `aria-current`, `aria-sort`, `role="tablist"`. Reproduce its structure and class roles in CSS Modules; copy numeric values (sizes, paddings, radii) exactly, do not round them.
 
 ## The system in one paragraph
@@ -35,7 +35,7 @@ Black on white, Inter 14 px / 1.5, thin #eaeaea borders, no shadows except menus
 
 ## Interaction notes
 
-Interaction notes — navigation and shell
+Interaction notes: navigation and shell
 
 • Sidebar is a <nav aria-label="Main"> of <a> links; the active link carries aria-current="page" and is drawn as a solid black (dark: white) pill. Open incident count is a <span> inside the Incidents link with aria-label="3 open incidents".
 • Scope switcher is a <button aria-haspopup="listbox"> that opens a two-level list (customer → sites). It shows only the customer name; the site filter lives in the filter bar. Choice is stored in the URL (?customer=acme) so every page keeps it and links are shareable.
@@ -44,7 +44,7 @@ Interaction notes — navigation and shell
 • Status is never a symbol: every status, severity and state is a word inside a tinted label (light background, dark text of the same hue, ≥ 4.5:1). The word is the accessible name.
 • At < 1100 px the sidebar collapses to icons with tooltips; at < 800 px it becomes a top bar with a menu button and the content stacks.
 
-Interaction notes — tables and charts
+Interaction notes: tables and charts
 
 Tables
 • 52 px rows, 14 px text, five columns or fewer; secondary facts (OS, agent version, relay) are a 12 px grey sub-line under the hostname.
@@ -62,7 +62,7 @@ Charts
 • Ticks: 5 y ticks from a nice-number scale; x ticks every 1/6 of the range, HH:MM for ≤ 24 h, DD MMM for 7 d.
 • Max 8 series; legend items are <button aria-pressed> that toggle a series (dimmed, not removed).
 
-Interaction notes — forms, confirmations, secrets
+Interaction notes: forms, confirmations, secrets
 
 • Inline confirmation replaces the trigger button in place (no modal): a bordered box with the consequence sentence, the reason <select>, Cancel and the danger button whose label names the target ("Revoke web-01"). The danger button is disabled until a reason is chosen. Focus moves to the select on open and back to the trigger on cancel.
 • Secrets shown once: the token field is a read-only <input> with a Copy button (navigator.clipboard, then the button reads "Copied" for 2 s and announces it through aria-live). The warning banner precedes the field in DOM order.
@@ -70,7 +70,7 @@ Interaction notes — forms, confirmations, secrets
 • Load more: a <button> appends 50 rows and keeps focus on the first new row's first link.
 • Responsive: at ≤ 1280 px the facts list goes to a single column and the chart grid to 2 columns; on a tablet charts are 1 column; on a phone only the Incidents list and page are expected to be used, read-only.
 
-Interaction notes — coming next
+Interaction notes: coming next
 
 • Approvals: the AI text block is visually marked "AI-generated, untrusted" and is never rendered as HTML (plain text, pre-wrap). The risk tier label comes from the rule engine response, with the matched rule shown in monospace; the AI never sets it.
 • Edit then approve: the command becomes an editable <textarea>; approving re-evaluates the tier server-side and shows the new tier before the final confirm.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Administration: Enrollment tokens — MonitorFlow</title>
+<title>Administration: Enrollment tokens · MonitorFlow</title>
 </head>
 <body>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
@@ -68,7 +68,7 @@ h1,h2,h3{margin:0}
 <label class="fld">Site<select class="btn" style="font-weight: 400"><option>Acme Hosting › paris-dc1</option><option>Acme Hosting › lyon-office</option><option selected>Acme Hosting › marseille-dc2</option><option>Northwind Logistics › berlin-hq</option></select></label>
 <label class="fld">Expires in<select class="btn" style="font-weight: 400"><option>15 minutes</option><option selected>1 hour</option><option>1 day</option><option>7 days</option></select></label>
 </div>
-<label class="fld">Server names <span class="dim" style="font-weight: 400">— relays only; the DNS names or IPs agents use to reach it</span><input class="btn mono" placeholder="relay1.paris.example 10.0.0.5" value="relay-marseille-1.acme.example 10.2.0.5" style="font-weight: 400"></label>
+<label class="fld">Server names <span class="dim" style="font-weight: 400">(relays only; the DNS names or IPs agents use to reach it)</span><input class="btn mono" placeholder="relay1.paris.example 10.0.0.5" value="relay-marseille-1.acme.example 10.2.0.5" style="font-weight: 400"></label>
 <div style="display: flex; gap: 12px; align-items: center"><button class="btn btn-k" type="submit">Create token</button><span class="dim" style="font-size: 13px">Recorded in the audit log as alice.</span></div>
 </form>
 
@@ -80,7 +80,7 @@ h1,h2,h3{margin:0}
 <label class="fld">Token<span style="display: flex; gap: 6px"><input class="btn mono" readonly value="mft_9Qk2Zr7wLx3pV8hN4sT6uB1cE0fG5jM2aD7yR" aria-label="Enrollment token" style="flex: 1 1 auto; font-weight: 400"><button class="btn" type="button" aria-label="Copy token">Copy</button></span></label>
 <div style="display: flex; gap: 8px"><button class="btn btn-k" type="button">Done</button><button class="btn" type="button">Create another</button></div>
 </div>
-<div class="fld">Configuration snippet <span class="dim" style="font-weight: 400">— /etc/monitorflow/relay.toml</span>
+<div class="fld">Configuration snippet <span class="dim" style="font-weight: 400">(/etc/monitorflow/relay.toml)</span>
 <div style="position: relative"><pre class="code">[upstream]
 url = "https://mf.acme.example:8443"
 
@@ -101,10 +101,10 @@ server_names = ["relay-marseille-1.acme.example", "10.2.0.5"]</pre><button class
 <tbody>
 <tr><td class="mono" style="font-weight: 600">relay-marseille-1</td><td>Relay</td><td>marseille-dc2</td><td><span class="lab l-info">Pending</span></td><td>14:32 today <span class="dim">by alice</span></td><td>15:32 today <span class="dim">· in 60 min</span></td><td><button class="btn" style="height: 30px">Revoke</button></td></tr>
 <tr><td class="mono" style="font-weight: 600">web-13</td><td>Agent</td><td>paris-dc1</td><td><span class="lab l-info">Pending</span></td><td>09:05 today <span class="dim">by bob</span></td><td>09:05 in 7 days</td><td><div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; white-space: normal; font-size: 13px"><span><strong>Revoke this token?</strong> web-13 will not be able to enroll with it.</span><button class="btn" style="height: 30px">Cancel</button><button class="btn btn-danger" style="height: 30px">Revoke token</button></div></td></tr>
-<tr class="dim"><td class="mono">web-12</td><td>Agent</td><td>berlin-hq</td><td><span class="lab l-ok">Used</span></td><td>2026-10-20 16:40 <span>by alice</span></td><td>used 16:52</td><td>—</td></tr>
-<tr class="dim"><td class="mono">relay-lyon-1</td><td>Relay</td><td>lyon-office</td><td><span class="lab l-ok">Used</span></td><td>2026-04-27 07:30 <span>by alice</span></td><td>used 07:40</td><td>—</td></tr>
-<tr class="dim"><td class="mono">db-03</td><td>Agent</td><td>paris-dc1</td><td><span class="lab l-nt">Expired</span></td><td>2026-10-14 11:00 <span>by bob</span></td><td>2026-10-14 12:00</td><td>—</td></tr>
-<tr class="dim"><td class="mono">web-10</td><td>Agent</td><td>lyon-office</td><td><span class="lab l-nt">Revoked</span></td><td>2026-10-12 09:15 <span>by alice</span></td><td>revoked 09:20 by alice</td><td>—</td></tr>
+<tr class="dim"><td class="mono">web-12</td><td>Agent</td><td>berlin-hq</td><td><span class="lab l-ok">Used</span></td><td>2026-10-20 16:40 <span>by alice</span></td><td>used 16:52</td><td></td></tr>
+<tr class="dim"><td class="mono">relay-lyon-1</td><td>Relay</td><td>lyon-office</td><td><span class="lab l-ok">Used</span></td><td>2026-04-27 07:30 <span>by alice</span></td><td>used 07:40</td><td></td></tr>
+<tr class="dim"><td class="mono">db-03</td><td>Agent</td><td>paris-dc1</td><td><span class="lab l-nt">Expired</span></td><td>2026-10-14 11:00 <span>by bob</span></td><td>2026-10-14 12:00</td><td></td></tr>
+<tr class="dim"><td class="mono">web-10</td><td>Agent</td><td>lyon-office</td><td><span class="lab l-nt">Revoked</span></td><td>2026-10-12 09:15 <span>by alice</span></td><td>revoked 09:20 by alice</td><td></td></tr>
 </tbody></table>
 </div>
 </section>

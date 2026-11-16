@@ -55,7 +55,7 @@ h1,h2,h3{margin:0}
 <p class="dim" style="margin: 0; max-width: 760px">Black on white, Inter 14 px, thin borders, 52 px table rows. Status is always a word in a tinted label, never a symbol or a colour alone. Tokens map one to one to CSS custom properties on <code class="mono">:root</code> and <code class="mono">:root[data-theme="dark"]</code>.</p>
 </header>
 
-<section class="sec"><h2>Colour — light</h2>
+<section class="sec"><h2>Colour: light</h2>
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr)); gap: 14px">
 <div class="sw"><i style="background: #ffffff"></i><b>--bg / --surface</b><code>#ffffff</code></div>
 <div class="sw"><i style="background: #f5f5f5"></i><b>--hl</b><code>#f5f5f5 · hover, group rows</code></div>
@@ -70,7 +70,7 @@ h1,h2,h3{margin:0}
 </div>
 </section>
 
-<section class="sec"><h2>Colour — dark</h2>
+<section class="sec"><h2>Colour: dark</h2>
 <div class="app dark" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr)); gap: 14px; padding: 16px; border-radius: 10px">
 <div class="sw"><i style="background: #0a0a0a"></i><b>--bg</b><code>#0a0a0a</code></div>
 <div class="sw"><i style="background: #111111"></i><b>--surface</b><code>#111111</code></div>
@@ -105,7 +105,7 @@ h1,h2,h3{margin:0}
 <section class="sec"><h2>Type, spacing, radius</h2>
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 28px">
 <div style="display: flex; flex-direction: column; gap: 10px">
-<div class="k">Type — Inter, system-ui fallback, tabular numerals in tables</div>
+<div class="k">Type: Inter, system-ui fallback, tabular numerals in tables</div>
 <div style="font-size: 26px; font-weight: 700; letter-spacing: -.02em">26 / 700 · page title</div>
 <div style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">22 / 700 · page title, dense pages</div>
 <div style="font-size: 16px; font-weight: 600">16 / 600 · section title</div>
@@ -117,7 +117,7 @@ h1,h2,h3{margin:0}
 <div class="mono">ui-monospace 13 · IDs, commands, logs</div>
 </div>
 <div style="display: flex; flex-direction: column; gap: 10px">
-<div class="k">Spacing — 4 px base</div>
+<div class="k">Spacing: 4 px base</div>
 <div class="dim">Page gutter 28 px · section gap 20 px · table row 52 px · header row 40 px · control height 36 px · label height 26 px · sidebar 240 px.</div>
 <div class="k" style="margin-top: 8px">Radius and elevation</div>
 <div style="display: flex; gap: 12px; flex-wrap: wrap">
@@ -144,14 +144,14 @@ h1,h2,h3{margin:0}
 </div>
 </section>
 
-<section class="sec"><h2>Labels — always a word, never a symbol</h2>
+<section class="sec"><h2>Labels: always a word, never a symbol</h2>
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 18px">
 <div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Server status</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-ok">Online</span><span class="lab l-bad">Offline</span><span class="lab l-nt">Revoked</span></div><span class="dim" style="font-size: 12px">"via relay-paris-1" goes in the grey sub-line, not in the label.</span></div>
 <div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Severity</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-bad">Critical</span><span class="lab l-wn">Warning</span><span class="lab l-nt">Resolved</span></div></div>
 <div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Certificate</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-wn">Expires in 5 days</span><span class="lab l-bad">Revoked</span><span class="dim">Valid · 2027-03-02</span></div></div>
 <div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Token state</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-info">Pending</span><span class="lab l-ok">Used</span><span class="lab l-nt">Expired</span><span class="lab l-nt">Revoked</span></div></div>
 <div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Run and command state</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-info">Running</span><span class="lab l-ok">Succeeded</span><span class="lab l-bad">Failed</span><span class="lab l-nt">Queued</span><span class="lab l-nt">Expired</span><span class="lab l-nt">Cancelled</span></div></div>
-<div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Risk tier — set by rules, not by the AI</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-ok">Read-only</span><span class="lab l-info">Low-impact</span><span class="lab l-wn">High-impact</span><span class="lab l-bad">Forbidden</span></div></div>
+<div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Risk tier: set by rules, not by the AI</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-ok">Read-only</span><span class="lab l-info">Low-impact</span><span class="lab l-wn">High-impact</span><span class="lab l-bad">Forbidden</span></div></div>
 </div>
 </section>
 
@@ -189,18 +189,18 @@ h1,h2,h3{margin:0}
 </div>
 </section>
 
-<section class="sec"><h2>Table — 52 px rows, five columns, facts in the sub-line</h2>
+<section class="sec"><h2>Table: 52 px rows, five columns, facts in the sub-line</h2>
 <div class="box" style="overflow: hidden"><table class="t"><thead><tr><th>Host</th><th>Status</th><th>Problem</th><th>Site</th><th>Last seen</th></tr></thead><tbody>
 <tr><td class="host"><a href="#"><b>db-01</b></a><span>Rocky 9 · agent 0.4.2</span></td><td><span class="lab l-ok">Online</span></td><td class="pb"><span class="lab l-bad">Critical</span>&nbsp; Disk used /var <span>96.8 % · 4 h 20 min</span></td><td>paris-dc1</td><td class="dim">8 s ago</td></tr>
 <tr><td class="host"><a href="#"><b>web-03</b></a><span>Debian 12 · agent 0.4.1</span></td><td><span class="lab l-bad">Offline</span></td><td class="dim">No heartbeat since 13:51</td><td>paris-dc1</td><td class="dim">41 min ago</td></tr>
-<tr><td class="host"><a href="#"><b>web-01</b></a><span>Debian 12 · agent 0.4.2 · via relay-paris-1</span></td><td><span class="lab l-ok">Online</span></td><td class="dim">—</td><td>paris-dc1</td><td class="dim">12 s ago</td></tr>
+<tr><td class="host"><a href="#"><b>web-01</b></a><span>Debian 12 · agent 0.4.2 · via relay-paris-1</span></td><td><span class="lab l-ok">Online</span></td><td class="dim">None</td><td>paris-dc1</td><td class="dim">12 s ago</td></tr>
 </tbody></table></div>
 </section>
 
 <section class="sec"><h2>Copy field, code and log blocks, empty and loading states</h2>
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 24px">
 <div style="display: flex; flex-direction: column; gap: 12px">
-<label style="display: flex; flex-direction: column; gap: 4px"><span class="dim" style="font-size: 13px">Enrollment token — shown once</span><span style="display: flex; gap: 6px"><input class="btn mono" readonly value="mft_9Qk2Zr7wLx3pV8hN4sT6uB1cE0fG5jM2aD7yR" style="flex: 1 1 auto; font-weight: 400"><button class="btn">Copy</button></span></label>
+<label style="display: flex; flex-direction: column; gap: 4px"><span class="dim" style="font-size: 13px">Enrollment token (shown once)</span><span style="display: flex; gap: 6px"><input class="btn mono" readonly value="mft_9Qk2Zr7wLx3pV8hN4sT6uB1cE0fG5jM2aD7yR" style="flex: 1 1 auto; font-weight: 400"><button class="btn">Copy</button></span></label>
 <pre class="code">[upstream]
 url = "https://relay-paris-1.acme.example:8443"
 [enrollment]
