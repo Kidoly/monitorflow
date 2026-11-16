@@ -31,7 +31,7 @@ Behaviour outside these spaces can be taken into account when it puts people in 
 
 ## Reporting a problem
 
-If someone's behaviour makes you uncomfortable, or you see something that breaks this code, tell the maintainer privately at **[CONTACT EMAIL]**. Please do not answer it in public: that often makes things worse.
+If someone's behaviour makes you uncomfortable, or you see something that breaks this code, tell the maintainer privately at **conduct@monitorflow.fr**. Please do not answer it in public: that often makes things worse.
 
 Say what happened, where (a link if you have one), when, and who was involved. Screenshots help, since comments can be edited or deleted.
 
