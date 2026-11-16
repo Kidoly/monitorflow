@@ -23,6 +23,10 @@
 //! | GET | `/api/setup` | none | [`setup::Status`]: `{"pending"}`, true while no user exists (ADR-0071) |
 //! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}], "multi_customer"}`; `multi_customer` is whether the user sees more than one customer (ADR-0104) |
+//! | GET | `/api/me/preferences` | session | [`preferences::Preferences`]: the signed-in person's own `{"theme", "language", "sidebar": {"collapsed", "hidden", "order"}}`, every key optional, `{}` when never saved (ADR-0137); never through an API key |
+//! | PUT | `/api/me/preferences` | session | body [`preferences::Preferences`], replacing the stored one; 400 for an unknown key or value, a list over 64 items, an item identifier out of form or a body over 16 KiB. Not audited |
+//! | GET | `/api/me/preferences` | session | [`preferences::Preferences`]: the signed-in person's own `{"theme", "language", "sidebar": {"collapsed", "hidden", "order"}}`, every key optional, `{}` when never saved (ADR-0137); never through an API key |
+//! | PUT | `/api/me/preferences` | session | body [`preferences::Preferences`], replacing the stored one; 400 for an unknown key or value, a list over 64 items, an item identifier out of form or a body over 16 KiB. Not audited |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
 //! | GET | `/api/servers/summary` | any role | [`servers::ServerSummary`]: how many servers are critical, warning, acknowledged, silenced, offline and ok, out of `total`; `?site_id` or `?customer_id` narrows it (ADR-0130) |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
@@ -671,6 +675,7 @@ pub mod package_sources;
 pub mod packages;
 pub mod password;
 pub mod plugins;
+pub mod preferences;
 pub mod proxmox;
 pub mod public_address;
 pub mod recommendations;
@@ -959,6 +964,12 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route(
+            "/api/me/preferences",
+            get(preferences::get)
+                .put(preferences::put)
+                .layer(DefaultBodyLimit::max(preferences::MAX_BYTES)),
+        )
         .route("/api/setup", get(setup::status).post(setup::complete))
         .route("/api/servers", get(servers::list))
         .route("/api/servers/summary", get(servers::summary))

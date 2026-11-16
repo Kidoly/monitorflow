@@ -2,6 +2,17 @@ import type { Catalog, Translation } from "../catalog";
 
 /** The Settings page, its list of pages, and the line under each. */
 export const en = {
+  "group.personal": "You",
+  "preferences.label": "Preferences",
+  "preferences.description": "Theme, language and sidebar, for you on every browser",
+  "preferences.keywords": "personal theme dark light language sidebar menu",
+  "preferences.meta": "Yours only, saved with your account",
+  "preferences.appearance": "Appearance",
+  "preferences.theme": "Theme",
+  "preferences.language": "Language",
+  "preferences.sidebar": "Sidebar",
+  "preferences.saving": "Saving…",
+  "preferences.saveFailed": "Your preferences could not be saved. They apply in this browser until the next change is saved.",
   "group.fleet": "Fleet",
   "group.alerting": "Alerting",
   "group.access": "Access",
@@ -148,6 +159,17 @@ export const en = {
 } as const satisfies Catalog;
 
 export const fr: Translation<typeof en> = {
+  "group.personal": "Vous",
+  "preferences.label": "Préférences",
+  "preferences.description": "Thème, langue et barre latérale, pour vous dans chaque navigateur",
+  "preferences.keywords": "personnel thème sombre clair langue barre latérale menu",
+  "preferences.meta": "Rien que pour vous, enregistrées avec votre compte",
+  "preferences.appearance": "Apparence",
+  "preferences.theme": "Thème",
+  "preferences.language": "Langue",
+  "preferences.sidebar": "Barre latérale",
+  "preferences.saving": "Enregistrement…",
+  "preferences.saveFailed": "Vos préférences n’ont pas pu être enregistrées. Elles s’appliquent dans ce navigateur jusqu’au prochain enregistrement réussi.",
   "group.fleet": "Parc",
   "group.alerting": "Alertes",
   "group.access": "Accès",

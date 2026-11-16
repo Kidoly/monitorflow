@@ -11,6 +11,7 @@ import {
   LICENSE_PATH,
   NOTIFICATIONS_PATH,
   PLUGINS_PATH,
+  PREFERENCES_PATH,
   RELAYS_PATH,
   SERVER_UPDATE_PATH,
   SETTINGS_PATH,
@@ -22,6 +23,7 @@ import {
 import type { IconName } from "../shell/icons";
 
 export type SettingsId =
+  | "preferences"
   | "sites"
   | "relays"
   | "add-servers"
@@ -49,6 +51,8 @@ export interface SettingsEntry {
   keywords?: PlainKey;
   /** UX only, like the sidebar's: the API refuses what the roles do not allow. */
   visible?: (me: Me) => boolean;
+  /** The person's own, for everyone; the others need an administrator role. */
+  personal?: boolean;
 }
 
 export interface SettingsGroup {
@@ -60,6 +64,20 @@ const text = (key: PlainKey) => () => t(key);
 
 /** Every settings page, in groups, in the order the Settings page and its sidebar show them. */
 export const SETTINGS_GROUPS: SettingsGroup[] = [
+  {
+    heading: "settings.group.personal",
+    entries: [
+      {
+        id: "preferences",
+        label: "settings.preferences.label",
+        description: text("settings.preferences.description"),
+        href: PREFERENCES_PATH,
+        icon: "personalize",
+        keywords: "settings.preferences.keywords",
+        personal: true,
+      },
+    ],
+  },
   {
     heading: "settings.group.fleet",
     entries: [
@@ -202,16 +220,16 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   },
 ];
 
-/** Whether `me` sees Settings at all: administrators, as the Administration section was. UX only. */
-export const seesSettings = (me: Me): boolean => isAdministrator(me);
-
-/** The groups and entries `me` sees, empty groups dropped. */
+/**
+ * The groups and entries `me` sees, empty groups dropped: everyone has
+ * their Preferences (ADR-0137); the other pages need an administrator
+ * role, as the Administration section did. UX only.
+ */
 export function visibleSettings(me: Me): SettingsGroup[] {
-  if (!seesSettings(me)) return [];
-  return SETTINGS_GROUPS.map((group) => ({
-    ...group,
-    entries: group.entries.filter((entry) => entry.visible?.(me) ?? true),
-  })).filter((group) => group.entries.length > 0);
+  const sees = (entry: SettingsEntry) => entry.personal || (isAdministrator(me) && (entry.visible?.(me) ?? true));
+  return SETTINGS_GROUPS.map((group) => ({ ...group, entries: group.entries.filter(sees) })).filter(
+    (group) => group.entries.length > 0,
+  );
 }
 
 /**

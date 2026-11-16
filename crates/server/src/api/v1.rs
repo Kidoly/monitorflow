@@ -28,10 +28,12 @@ const WINDOW: Duration = Duration::from_secs(60);
 const MAX_KEYS: usize = 10_000;
 
 /// First segments after `/api/` that v1 does not serve: they are for
-/// people in a browser, or would let a key make a credential that
+/// people in a browser (`me` holds the person's own preferences,
+/// ADR-0137), or would let a key make a credential that
 /// outlives it or acts beyond its reach (another key, a display link).
-const LEFT_OUT: [&str; 7] = [
+const LEFT_OUT: [&str; 8] = [
     "auth",
+    "me",
     "setup",
     "password-link",
     "acknowledge-link",

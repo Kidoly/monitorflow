@@ -87,6 +87,9 @@ const PATHS = {
   ),
   signOut: <path d="M6 3H3v10h3M10 5l3 3-3 3M13 8H6" />,
   menu: <path d="M2 4h12M2 8h12M2 12h12" />,
+  collapse: <path d="M3 2v12M12 4L8 8l4 4" />,
+  expand: <path d="M3 2v12M8 4l4 4-4 4" />,
+  personalize: <path d="M2 4h7M12 4h2M2 12h2M7 12h7M9 2v4M11 2v4M4 10v4M6 10v4" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

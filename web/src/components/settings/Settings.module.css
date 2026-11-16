@@ -110,3 +110,29 @@
 .bad {
   color: var(--bad);
 }
+
+/* Preferences: native radios and a select, one choice per block. */
+.choices {
+  border: 0;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.choiceLegend {
+  font-weight: 600;
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.choiceSelect {
+  max-width: 240px;
+}
