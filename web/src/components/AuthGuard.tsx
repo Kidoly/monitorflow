@@ -17,6 +17,7 @@ import {
   setUnauthorizedHandler,
 } from "@/lib/api";
 import { MeContext, RefreshMeContext } from "@/lib/me";
+import { startPreferences } from "@/lib/preferences";
 
 import styles from "./AuthGuard.module.css";
 
@@ -48,6 +49,10 @@ export function AuthGuard({ children }: { children: ReactNode }) {
       restore();
     };
   }, [router]);
+
+  // The person's preferences, once per sign-in (ADR-0137).
+  const userId = user?.id;
+  useEffect(() => (userId ? startPreferences(userId) : undefined), [userId]);
 
   if (error) {
     return (

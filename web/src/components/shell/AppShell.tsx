@@ -10,7 +10,10 @@ import { Label } from "@/components/ui/StatusLabel";
 import { t } from "@/i18n";
 import { type Customer, LOGIN_PATH, type Me, type Site, api, describeError, isAbortError } from "@/lib/api";
 import { administersEverything, multiCustomer } from "@/lib/me";
+import { setPreference, usePreferences } from "@/lib/preferences";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
+import { SIDEBAR_PREFERENCES_PATH } from "@/lib/routes";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { insideSettings } from "../settings/catalogue";
@@ -18,7 +21,7 @@ import { attention } from "../settings/status";
 import { useSettingsStatuses } from "../settings/SettingsStatus";
 
 import { Icon } from "./icons";
-import { SETTINGS_ITEM, isCurrent, visibleNavigation } from "./navigation";
+import { SETTINGS_ITEM, arrangedNavigation, isCurrent } from "./navigation";
 import { SettingsSidebar } from "./SettingsSidebar";
 import styles from "./Shell.module.css";
 import { ScopeSwitcher } from "./ScopeSwitcher";
@@ -49,8 +52,10 @@ async function openIncidents(scope: Scope, sites: Site[], signal: AbortSignal): 
 
 /**
  * The page chrome for a signed-in user: skip link, the 240 px sidebar
- * (`<nav aria-label="Main">`, icons only under 1100 px, a top bar with a
- * menu under 800 px) and `<main id="main">`. Uses the URL, so it needs a
+ * (`<nav aria-label="Main">`, a top bar with a menu under 800 px) and
+ * `<main id="main">`. The sidebar follows the person's preferences
+ * (ADR-0137): icons only or with labels (by default icons only under
+ * 1100 px), items hidden or reordered. Uses the URL, so it needs a
  * `<Suspense>` boundary above it.
  */
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
@@ -63,6 +68,11 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [openedAt, setOpenedAt] = useState(pathname);
   const [error, setError] = useState<string | null>(null);
+  const sidebar = usePreferences().preferences.sidebar;
+  // The phone menu always has labels; above it, the person's choice or the width.
+  const wide = useMediaQuery("(min-width: 800px)", true);
+  const narrow = useMediaQuery("(max-width: 1099px)", false);
+  const rail = wide && (sidebar?.collapsed ?? narrow);
 
   // A navigation closes the phone menu (state adjusted while rendering).
   if (openedAt !== pathname) {
@@ -144,7 +154,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
       </div>
       <nav
         id="main-nav"
-        className={cx(styles.side, menuOpen && styles.open)}
+        className={cx(styles.side, menuOpen && styles.open, rail && styles.rail)}
         aria-label="Main"
         onKeyDown={(e) => {
           if (e.key === "Escape" && menuOpen) setMenuOpen(false);
@@ -163,7 +173,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             {(multiCustomer(me) || sites.length > 1) && (
               <ScopeSwitcher customers={customers} sites={sites} multiCustomer={multiCustomer(me)} />
             )}
-            {visibleNavigation(me).map((section) => (
+            {arrangedNavigation(me, sidebar).map((section) => (
               <Fragment key={section.heading}>
                 <div className={styles.heading}>{t(section.heading)}</div>
                 {section.items.map((item) => (
@@ -184,24 +194,22 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
                 ))}
               </Fragment>
             ))}
-            {SETTINGS_ITEM.visible?.(me) && (
-              <Link
-                href={scopedHref(SETTINGS_ITEM.href!, scope)}
-                className={cx(styles.item, styles.pinned)}
-                aria-current={isCurrent(SETTINGS_ITEM, pathname) ? "page" : undefined}
-              >
-                <Icon name={SETTINGS_ITEM.icon} />
-                <span className={styles.text}>{t(SETTINGS_ITEM.label)}</span>
-                {pressing && (
-                  <span
-                    className={cx(styles.count, pressing.tone === "warn" && styles.countWarn)}
-                    aria-label={t("shell.settings.attention", { count: pressing.count })}
-                  >
-                    {pressing.count}
-                  </span>
-                )}
-              </Link>
-            )}
+            <Link
+              href={scopedHref(SETTINGS_ITEM.href!, scope)}
+              className={cx(styles.item, styles.pinned)}
+              aria-current={isCurrent(SETTINGS_ITEM, pathname) ? "page" : undefined}
+            >
+              <Icon name={SETTINGS_ITEM.icon} />
+              <span className={styles.text}>{t(SETTINGS_ITEM.label)}</span>
+              {pressing && (
+                <span
+                  className={cx(styles.count, pressing.tone === "warn" && styles.countWarn)}
+                  aria-label={t("shell.settings.attention", { count: pressing.count })}
+                >
+                  {pressing.count}
+                </span>
+              )}
+            </Link>
           </>
         )}
         <div className={styles.foot}>
@@ -220,6 +228,19 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         )}
         <ThemeToggle />
         <LanguageSelect />
+        <Link href={SIDEBAR_PREFERENCES_PATH} className={cx(styles.item, styles.toggle)}>
+          <Icon name="personalize" />
+          <span className={styles.text}>{t("shell.sidebar.personalize")}</span>
+        </Link>
+        <button
+          type="button"
+          className={cx(styles.item, styles.toggle)}
+          aria-expanded={!rail}
+          onClick={() => setPreference("sidebar", { ...sidebar, collapsed: !rail })}
+        >
+          <Icon name={rail ? "expand" : "collapse"} />
+          <span className={styles.text}>{t(rail ? "shell.sidebar.expand" : "shell.sidebar.collapse")}</span>
+        </button>
       </nav>
       <main id="main" className={styles.main} tabIndex={-1}>
         <StatusStrip />

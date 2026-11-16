@@ -105,6 +105,8 @@ The French column is what the French interface says for each word, so a term rea
 | Check | Contrôle |
 | Threshold | Seuil |
 | Settings | Paramètres |
+| Preferences | Préférences |
+| Sidebar | Barre latérale |
 | Monitoring | Supervision |
 | Campaign | Campagne |
 | Mirror | Miroir |

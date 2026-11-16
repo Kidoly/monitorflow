@@ -35,6 +35,7 @@ describe("SettingsIndex", () => {
   it("lists every page in groups, as rows linking to them", () => {
     open(global);
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
+      "You",
       "Fleet",
       "Alerting",
       "Access",
@@ -58,7 +59,7 @@ describe("SettingsIndex", () => {
     await user.type(search, " zebra");
     expect(screen.getByText("No settings match “webhooks zebra”.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear search" }));
-    expect(rowNames()).toHaveLength(14);
+    expect(rowNames()).toHaveLength(15);
   });
 
   it("clears the search with Escape", async () => {
@@ -84,12 +85,25 @@ describe("SettingsIndex", () => {
 
   it("shows customer administrators their pages only, and others a note", () => {
     open(customerAdmin);
-    expect(rowNames()).toEqual(["Sites", "Relays", "Add servers", "Notifications", "Integrations", "Users and roles", "API keys"]);
+    expect(rowNames()).toEqual([
+      "Preferences",
+      "Sites",
+      "Relays",
+      "Add servers",
+      "Notifications",
+      "Integrations",
+      "Users and roles",
+      "API keys",
+    ]);
   });
 
-  it("tells other roles they need an administrator", () => {
+  it("gives other roles their own preferences only", () => {
     open(viewer);
-    expect(screen.getByText("Settings need an administrator role.")).toBeInTheDocument();
+    expect(rowNames()).toEqual(["Preferences"]);
+    expect(screen.getByRole("link", { name: /Preferences/ })).toHaveAttribute(
+      "href",
+      expect.stringMatching(/^\/settings\/preferences\/?$/),
+    );
   });
 
   it("speaks French, and searches the French words", async () => {

@@ -660,6 +660,19 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             // Another customer's existence shows nowhere (ADR-0104).
             assert_eq!(body["multi_customer"], false);
         }
+        // Personal (ADR-0137): only the signed-in person's own preferences,
+        // no customer or site in them.
+        ("GET", "/api/me/preferences") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
+        ("PUT", "/api/me/preferences") => {
+            let body = json!({ "theme": "dark" });
+            let (status, body) = ctx.call(method, path, Some(body)).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body, json!({ "theme": "dark" }));
+        }
         // Global: the agent releases the server holds (ADR-0053).
         ("GET", "/api/agent-releases") => {
             let (status, body) = ctx.call(method, path, None).await;

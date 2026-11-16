@@ -35,11 +35,11 @@ describe("AuthGuard", () => {
     expect(screen.getByRole("navigation", { name: "Main" })).toHaveTextContent("alice · viewer");
   });
 
-  it("shows Settings to administrators only", async () => {
+  it("shows Settings to everyone, for their own preferences", async () => {
     stubFetch({ ...SHELL_ROUTES, "GET /api/auth/me": { status: 200, body: alice } });
     const { unmount } = render(<AuthGuard>fleet page</AuthGuard>);
     await screen.findByText("fleet page");
-    expect(screen.queryByRole("link", { name: /^Settings/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Settings/ })).toHaveAttribute("href", expect.stringMatching(/^\/settings\/?$/));
     unmount();
     const admin = { ...alice, roles: [{ role: "administrator", customer_id: "c1", site_id: null }] };
     stubFetch({ ...SHELL_ROUTES, "GET /api/auth/me": { status: 200, body: admin } });
