@@ -10,13 +10,15 @@ use super::auto_update;
 use super::openapi::{Common, ErrorBody};
 use crate::auto_update::policy::{Settings, SitePhase};
 use crate::auto_update::store::{Kind, Rollout, RolloutState};
+use crate::auto_update::PeerState;
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(auto_update_status, resume_rollout),
+    paths(auto_update_status, auto_update_peers, resume_rollout),
     components(schemas(
         Settings, SitePhase, Kind, Rollout, RolloutState, auto_update::KindView,
-        auto_update::Totals, auto_update::SiteView,
+        auto_update::Totals, auto_update::SiteView, PeerState, auto_update::PeerList,
+        auto_update::PeerView,
     )),
     modifiers(&Common),
     tags(
@@ -110,6 +112,48 @@ pub struct Doc;
 `api_key_scope`: the key lacks the area"),
     ))]
 fn auto_update_status() {}
+
+/// List the agents or relays behind a total
+///
+/// The servers (for `agent`) or relays (for `relay`) counted in one of the
+/// totals of `GET /api/v1/auto-update`, classified the same way, so `total` equals
+/// that count: `up_to_date`, `waiting`, `pending` (an update in progress)
+/// or `failed` (since the rollout started or was resumed). With `site_id`,
+/// only that site's. Failed ones come newest first with the error their
+/// update reported; the others by customer, site and name. A waiting agent
+/// with `waiting_for_relay` goes once its relay is on the target.
+///
+/// Needs a global administrator role and the key area "updates".
+#[utoipa::path(get, path = "/api/v1/auto-update/{kind}/peers", tag = "automatic updates",
+    params(
+        ("kind" = Kind, Path, description = "`agent` or `relay`; anything else is 404"),
+        auto_update::PeersParams,
+    ),
+    responses(
+        (status = 200, description = "One page of the peers in that state", body = auto_update::PeerList, example = json!({
+            "target": "0.3.1",
+            "total": 1,
+            "peers": [{
+                "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+                "name": "web-01",
+                "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                "site_name": "paris",
+                "customer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                "customer_name": "acme",
+                "version": "0.3.0",
+                "state": "failed",
+                "waiting_for_relay": false,
+                "error": "the new version did not connect; rolled back",
+                "finished_at": "2026-11-10T08:12:40Z"
+            }]
+        })),
+        (status = 400, body = ErrorBody, description = "`invalid`: a missing or unknown `state`, \
+a `site_id` that is not a UUID, or `limit` outside 1 to 500"),
+        (status = 403, body = ErrorBody, description = "`forbidden`: not a global administrator. \
+`api_key_scope`: the key lacks the area"),
+        (status = 404, body = ErrorBody, description = "`not_found`: `kind` is not `agent` or `relay`"),
+    ))]
+fn auto_update_peers() {}
 
 /// Resume a halted rollout
 ///
