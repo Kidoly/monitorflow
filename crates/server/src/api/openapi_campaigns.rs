@@ -86,7 +86,8 @@ fn campaign_in(state: &str) -> serde_json::Value {
         "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
         "state": state,
         "error": done.then_some("stopped by user"),
-        "spec": {"packages": [], "security_only": true, "allow_reboot": false},
+        "spec": {"packages": [], "security_only": true, "allow_reboot": false,
+                 "include_os": true, "third_party": []},
         "command_ttl_s": 3600,
         "failure_threshold": {"value": 0, "unit": "count"},
         "windows": [{

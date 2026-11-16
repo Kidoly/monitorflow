@@ -13,11 +13,12 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
-use monitorflow_common::command::{self, valid_package_name};
+use monitorflow_common::command;
 use monitorflow_common::proto::v1::{
     AiCommandsSwitch, ApplyUpdates, ConfigureSources, SelfUpdate, ShellCommand,
 };
 use monitorflow_common::release::Version;
+use monitorflow_common::third_party;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -29,6 +30,7 @@ use super::auth::CurrentUser;
 use super::sensors::{body, parse_id};
 use super::servers::{decode_cursor, encode_cursor, page_limit};
 use super::{ApiError, ApiState};
+use crate::campaign::{ThirdPartySpec, UpdateSpec};
 use crate::commands::{CommandRow, CommandStore, NewCommand, State as CommandState};
 
 pub const DEFAULT_TTL_S: u64 = 3600;
@@ -63,6 +65,13 @@ pub struct CreateRequest {
     /// `apply_updates`: reboot when an update needs it.
     #[serde(default)]
     pub allow_reboot: bool,
+    /// `apply_updates`: include the OS's own updates; true by default
+    /// (ADR-0138).
+    pub include_os: Option<bool>,
+    /// `apply_updates`: third-party managers to update after the OS, each
+    /// once (ADR-0138). Needs an agent that reports third-party apps.
+    #[serde(default)]
+    pub third_party: Vec<ThirdPartySpec>,
     /// Seconds the agent may still start it; [`MIN_TTL_S`] to
     /// [`MAX_TTL_S`], default [`DEFAULT_TTL_S`].
     pub ttl_s: Option<u64>,
@@ -79,7 +88,7 @@ pub struct CommandView {
     /// changes).
     pub kind: String,
     /// What it asks, as JSON, by kind: `{"packages", "security_only",
-    /// "allow_reboot"}` for `apply_updates`, `{"version", "base_urls",
+    /// "allow_reboot", "include_os", "third_party"}` for `apply_updates`, `{"version", "base_urls",
     /// "allow_downgrade", "health_timeout_seconds"}` for `self_update`,
     /// `{"mirror_base_url", "family", "mode", "repositories",
     /// "key_fingerprints"}` for `configure_sources`, `{}` for
@@ -147,6 +156,11 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
                 "packages": p.packages,
                 "security_only": p.security_only,
                 "allow_reboot": p.allow_reboot,
+                "include_os": !p.skip_os,
+                "third_party": p.third_party.iter().map(|s| json!({
+                    "manager": third_party::key(s.manager()),
+                    "packages": s.packages,
+                })).collect::<Vec<_>>(),
             }),
             Err(_) => Value::Null,
         },
@@ -222,8 +236,9 @@ impl From<CommandRow> for CommandDetail {
     }
 }
 
-/// The payload of a valid `apply_updates` request, and its time to live.
-fn check(request: &CreateRequest) -> Result<(Vec<u8>, Duration), ApiError> {
+/// The update a valid `apply_updates` request asks, and its time to
+/// live.
+fn check(request: &CreateRequest) -> Result<(UpdateSpec, Duration), ApiError> {
     if request.kind != command::APPLY_UPDATES {
         return Err(ApiError::Invalid(format!(
             "kind must be `{}` or `{}`",
@@ -236,26 +251,15 @@ fn check(request: &CreateRequest) -> Result<(Vec<u8>, Duration), ApiError> {
             "version, allow_downgrade and health_timeout_s are for self_update".into(),
         ));
     }
-    if request.packages.len() > MAX_PACKAGES {
-        return Err(ApiError::Invalid(format!(
-            "at most {MAX_PACKAGES} packages"
-        )));
-    }
-    if let Some(bad) = request.packages.iter().find(|p| !valid_package_name(p)) {
-        return Err(ApiError::Invalid(format!(
-            "invalid package name `{}`",
-            bad.escape_debug()
-        )));
-    }
-    let ttl = ttl(request.ttl_s)?;
-    let payload = ApplyUpdates {
+    let spec = UpdateSpec {
         packages: request.packages.clone(),
         security_only: request.security_only,
         allow_reboot: request.allow_reboot,
-        ..ApplyUpdates::default()
-    }
-    .encode_to_vec();
-    Ok((payload, ttl))
+        include_os: request.include_os.unwrap_or(true),
+        third_party: request.third_party.clone(),
+    };
+    spec.validate().map_err(ApiError::Invalid)?;
+    Ok((spec, ttl(request.ttl_s)?))
 }
 
 /// Why `name` cannot go to a server of `os_family` (ADR-0049).
@@ -299,11 +303,31 @@ pub async fn create(
         }
         _ => {}
     }
-    let (payload, ttl) = check(&request)?;
-    target.check_package_updates()?;
+    let (spec, ttl) = check(&request)?;
+    if spec.include_os {
+        target.check_package_updates()?;
+    }
     if let Some(bad) = command::unfit_name(&target.os_family, &request.packages) {
         return Err(ApiError::Invalid(unfit_message(&target.os_family, bad)));
     }
+    third_party::check(&spec.apply(), Some(&target.os_family))
+        .map_err(|e| ApiError::Invalid(e.to_string()))?;
+    let reports: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM server_package_managers WHERE server_id = $1)",
+    )
+    .bind(target.id)
+    .fetch_one(&state.pool)
+    .await?;
+    // An older agent would read the command as an OS update (ADR-0138).
+    if spec.has_third_party() && !reports {
+        return Err(ApiError::Invalid(
+            "this agent does not report third-party apps yet".into(),
+        ));
+    }
+    let payload = spec
+        .for_server(&target.os_family, reports)
+        .map_err(ApiError::Invalid)?
+        .encode_to_vec();
     queue(&state, &user, &target, &request.kind, payload, ttl).await
 }
 
@@ -315,9 +339,16 @@ fn check_self_update(
     request: &CreateRequest,
     relay_url: Option<&str>,
 ) -> Result<(Vec<u8>, Duration), ApiError> {
-    if !request.packages.is_empty() || request.security_only || request.allow_reboot {
+    if !request.packages.is_empty()
+        || request.security_only
+        || request.allow_reboot
+        || request.include_os.is_some()
+        || !request.third_party.is_empty()
+    {
         return Err(ApiError::Invalid(
-            "packages, security_only and allow_reboot are for apply_updates".into(),
+            "packages, security_only, allow_reboot, include_os and third_party are for \
+             apply_updates"
+                .into(),
         ));
     }
     let version: Version = request
@@ -548,17 +579,18 @@ mod tests {
 
     #[test]
     fn requests_are_checked_and_encoded() {
-        let (payload, ttl) = check(&request(json!({
+        let (spec, ttl) = check(&request(json!({
             "kind": "apply_updates", "packages": ["libc6", "g++"], "security_only": true
         })))
         .unwrap();
+        let payload = spec.payload();
         assert_eq!(ttl, Duration::from_secs(DEFAULT_TTL_S));
         let decoded = ApplyUpdates::decode(payload.as_slice()).unwrap();
         assert_eq!(decoded.packages, ["libc6", "g++"]);
         assert!(decoded.security_only && !decoded.allow_reboot);
         assert_eq!(
             parameters("apply_updates", &payload),
-            json!({"packages": ["libc6", "g++"], "security_only": true, "allow_reboot": false})
+            json!({"packages": ["libc6", "g++"], "security_only": true, "allow_reboot": false, "include_os": true, "third_party": []})
         );
         assert_eq!(parameters("reboot", &payload), Value::Null);
         let shell = ShellCommand {

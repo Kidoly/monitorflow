@@ -18,8 +18,8 @@ mod store;
 
 pub use model::{
     plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, PinnedMirror,
-    PlanError, SourcesMode, SourcesPin, UpdateSpec, WaveSpec, Window, MAX_PACKAGES, MAX_TARGETS,
-    MAX_WAVES, MAX_WINDOWS,
+    PlanError, SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_PACKAGES,
+    MAX_TARGETS, MAX_WAVES, MAX_WINDOWS, NO_THIRD_PARTY,
 };
 pub use pin::write_pins;
 pub use runner::{Runner, Step, MIN_WINDOW_LEFT, POLL};

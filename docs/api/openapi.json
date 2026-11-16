@@ -1168,8 +1168,10 @@
                       "sources": null,
                       "spec": {
                         "allow_reboot": false,
+                        "include_os": true,
                         "packages": [],
-                        "security_only": true
+                        "security_only": true,
+                        "third_party": []
                       },
                       "started_at": "2026-11-08T22:00:04Z",
                       "state": "running",
@@ -1350,8 +1352,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": null,
                   "state": "draft",
@@ -1580,8 +1584,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "running",
@@ -1801,8 +1807,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "paused",
@@ -2042,8 +2050,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "running",
@@ -2283,8 +2293,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "scheduled",
@@ -2524,8 +2536,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "stopped",
@@ -3214,11 +3228,13 @@
                   "kind": "apply_updates",
                   "parameters": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [
                       "openssl",
                       "libssl3"
                     ],
-                    "security_only": false
+                    "security_only": false,
+                    "third_party": []
                   },
                   "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
                   "sent_at": "2026-11-14T09:00:01Z",
@@ -18029,11 +18045,13 @@
                       "kind": "apply_updates",
                       "parameters": {
                         "allow_reboot": false,
+                        "include_os": true,
                         "packages": [
                           "openssl",
                           "libssl3"
                         ],
-                        "security_only": false
+                        "security_only": false,
+                        "third_party": []
                       },
                       "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
                       "sent_at": "2026-11-14T09:00:01Z",
@@ -18196,11 +18214,13 @@
                   "kind": "apply_updates",
                   "parameters": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [
                       "openssl",
                       "libssl3"
                     ],
-                    "security_only": false
+                    "security_only": false,
+                    "third_party": []
                   },
                   "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
                   "sent_at": null,
@@ -20872,6 +20892,188 @@
           },
           "422": {
             "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/third-party": {
+      "get": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "List a server's third-party apps",
+        "description": "The third-party package managers of the server's latest report (ADR-0138): winget on Windows, Flatpak and Snap on Linux, each `available`, `absent` or `unusable` with its counts, and the apps they list as installed, by manager, ID and scope, with the version an update would install. `pending=true` keeps those with an update, `manager` one manager's. `reported` is false, with nothing listed, until the agent reports third-party managers. OS packages stay in `/servers/{id}/packages`.\n\n**Pages**: `limit` apps per page, 1 to 5000, 500 by default; pass `next_cursor` as `cursor` for the next page, `null` on the last one. `managers` is complete on every page. Unknown parameters are 400.\n\n**Who**: any role on the server's site. **Area**: `updates`.",
+        "operationId": "server_third_party",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "manager",
+            "in": "query",
+            "description": "`winget`, `flatpak` or `snap`: only that manager's apps.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pending",
+            "in": "query",
+            "description": "`true`: only apps with an update pending.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 5000, default 500.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The managers and one page of apps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThirdPartyList"
+                },
+                "example": {
+                  "managers": [
+                    {
+                      "error": null,
+                      "installed": 2,
+                      "manager": "flatpak",
+                      "pending": 1,
+                      "state": "available",
+                      "version": "1.14.10"
+                    },
+                    {
+                      "error": null,
+                      "installed": 0,
+                      "manager": "snap",
+                      "pending": 0,
+                      "state": "absent",
+                      "version": null
+                    }
+                  ],
+                  "next_cursor": null,
+                  "packages": [
+                    {
+                      "available_version": "132.0",
+                      "id": "app/org.mozilla.firefox/x86_64/stable",
+                      "manager": "flatpak",
+                      "name": "Firefox",
+                      "origin": "flathub",
+                      "scope": "machine",
+                      "version": "131.0"
+                    },
+                    {
+                      "available_version": null,
+                      "id": "runtime/org.freedesktop.Platform/x86_64/23.08",
+                      "manager": "flatpak",
+                      "name": "Freedesktop Platform",
+                      "origin": "flathub",
+                      "scope": "machine",
+                      "version": "23.08.24"
+                    }
+                  ],
+                  "reported": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`limit` out of range, an unknown `manager`, a bad `cursor` or an unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
             "content": {
               "application/json": {
                 "schema": {
@@ -28895,6 +29097,13 @@
           "failure_threshold": {
             "$ref": "#/components/schemas/CampaignFailureThreshold"
           },
+          "include_os": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether OS updates are included; true by default. Without them,\nonly servers of a platform a selected manager is for are targets\n(ADR-0138)."
+          },
           "name": {
             "type": "string"
           },
@@ -28935,6 +29144,13 @@
                 "type": "null"
               }
             ]
+          },
+          "third_party": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThirdPartySelection"
+            },
+            "description": "Third-party managers to update after the OS, each once:\n`[{\"manager\": \"winget\" | \"flatpak\" | \"snap\", \"packages\": [id]}]`,\nempty `packages` for every pending app (ADR-0138)."
           },
           "waves": {
             "type": "array",
@@ -29086,16 +29302,27 @@
             "type": "boolean",
             "description": "Whether the agent may reboot the server when an update needs it."
           },
+          "include_os": {
+            "type": "boolean",
+            "description": "Whether the OS's own updates are included; true by default\n(ADR-0138)."
+          },
           "packages": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Packages to upgrade; empty upgrades everything."
+            "description": "OS packages to upgrade; empty upgrades everything."
           },
           "security_only": {
             "type": "boolean",
-            "description": "Only security updates."
+            "description": "Only security updates of the OS. Third-party managers have no\nsecurity classification: they are included whole or not at all."
+          },
+          "third_party": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThirdPartySelection"
+            },
+            "description": "Third-party managers to update, after the OS (ADR-0138)."
           }
         }
       },
@@ -29655,6 +29882,13 @@
             "description": "`self_update`: seconds the new agent has to connect before the\nold one comes back; 30 to 3600, 300 by default.",
             "minimum": 0
           },
+          "include_os": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`apply_updates`: include the OS's own updates; true by default\n(ADR-0138)."
+          },
           "kind": {
             "type": "string",
             "description": "`apply_updates` or `self_update`."
@@ -29669,6 +29903,13 @@
           "security_only": {
             "type": "boolean",
             "description": "`apply_updates`: security updates only."
+          },
+          "third_party": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThirdPartySelection"
+            },
+            "description": "`apply_updates`: third-party managers to update after the OS, each\nonce (ADR-0138). Needs an agent that reports third-party apps."
           },
           "ttl_s": {
             "type": [
@@ -29764,7 +30005,7 @@
             "description": "`apply_updates`, `self_update`, `configure_sources`,\n`revert_sources`, `shell` (AI remediation), `ai_commands`, or\n`take_snapshot` and `delete_snapshot` (local snapshots before AI\nchanges)."
           },
           "parameters": {
-            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\"}` for `apply_updates`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`; `null` for a kind this version does not\nknow."
+            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\", \"include_os\", \"third_party\"}` for `apply_updates`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`; `null` for a kind this version does not\nknow."
           },
           "requested_by": {
             "type": [
@@ -37730,6 +37971,155 @@
             "description": "`vg/lv` for LVM, the dataset for ZFS, the device otherwise."
           }
         }
+      },
+      "ThirdPartyList": {
+        "type": "object",
+        "required": [
+          "reported",
+          "managers",
+          "packages"
+        ],
+        "properties": {
+          "managers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThirdPartyManager"
+            },
+            "description": "Every third-party manager of the server's platform, present or\nnot, by name."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last one."
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThirdPartyPackage"
+            },
+            "description": "Apps by manager, ID and scope."
+          },
+          "reported": {
+            "type": "boolean",
+            "description": "False until the agent reports third-party managers: an agent or\nrelay before ADR-0138. `managers` and `packages` are then empty."
+          }
+        }
+      },
+      "ThirdPartyManager": {
+        "type": "object",
+        "description": "One third-party package manager of the server.",
+        "required": [
+          "manager",
+          "state",
+          "installed",
+          "pending"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it is unusable, one line."
+          },
+          "installed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Apps it lists as installed."
+          },
+          "manager": {
+            "type": "string",
+            "description": "`winget`, `flatpak` or `snap`."
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, apps with an update pending."
+          },
+          "state": {
+            "type": "string",
+            "description": "`available`, `absent` (not installed) or `unusable` (installed,\nbut its apps could not be listed; see `error`)."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The manager's version, when known."
+          }
+        }
+      },
+      "ThirdPartyPackage": {
+        "type": "object",
+        "description": "One app a third-party manager installed.",
+        "required": [
+          "manager",
+          "id",
+          "version",
+          "scope"
+        ],
+        "properties": {
+          "available_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version an update would install; `null` when none is pending."
+          },
+          "id": {
+            "type": "string",
+            "description": "What the manager's update takes: winget package identifier,\nFlatpak ref, snap name."
+          },
+          "manager": {
+            "type": "string",
+            "description": "`winget`, `flatpak` or `snap`."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name, `null` when the manager gives none."
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where updates come from: winget source, Flatpak remote, snap\nchannel; `null` when unknown."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`machine`, the only scope updates touch, or `user` (the agent's\nown account; listed only)."
+          },
+          "version": {
+            "type": "string",
+            "description": "The installed version, as the manager writes it."
+          }
+        }
+      },
+      "ThirdPartySelection": {
+        "type": "object",
+        "description": "What an update asks of one third-party manager (ADR-0138).",
+        "required": [
+          "manager"
+        ],
+        "properties": {
+          "manager": {
+            "type": "string",
+            "description": "`winget`, `flatpak` or `snap`."
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Package IDs to update; empty updates every pending one."
+          }
+        },
+        "additionalProperties": false
       },
       "Threshold": {
         "type": "object",

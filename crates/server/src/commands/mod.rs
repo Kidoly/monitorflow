@@ -12,6 +12,7 @@ mod dispatcher;
 mod packages;
 pub mod sources;
 mod store;
+pub(crate) mod third_party;
 pub mod update_source;
 
 use chrono::{DateTime, Utc};
