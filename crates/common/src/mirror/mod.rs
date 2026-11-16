@@ -3,8 +3,9 @@
 //! what is published, and the atomic `current` link.
 //!
 //! With the `mirror` feature, `serve` holds the listener and `index` the
-//! index built from the tree; `repo` reads repositories and `packages`
-//! lists what an on-demand snapshot can fetch (ADR-0142).
+//! index built from the tree; `repo` reads repositories, `store` keeps
+//! the files of on-demand mirrors by checksum and `packages` lists what
+//! an on-demand snapshot can fetch (ADR-0142).
 
 #[cfg(unix)]
 use std::io;
@@ -20,6 +21,8 @@ pub mod packages;
 pub mod repo;
 #[cfg(feature = "mirror")]
 pub mod serve;
+#[cfg(feature = "mirror")]
+pub mod store;
 
 #[cfg(feature = "mirror")]
 pub use index::{
