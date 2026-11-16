@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { IntegrationEndpoint } from "@/lib/api";
 import { EVENT_GROUPS } from "@/lib/integrations";
 import { As, customerAdmin, me, viewer } from "@/test/admin";
@@ -67,6 +68,24 @@ const page = (user = globalAdmin) =>
       <IntegrationsPage />
     </As>,
   );
+
+describe("in French", () => {
+  it("lists integrations and opens the form", async () => {
+    setActiveLocale("fr");
+    stubFetch({
+      [`GET ${ENDPOINTS}`]: list([endpoint({ pending: 2 })]),
+      "GET /api/customers": oneCustomer,
+      "GET /api/sites": noSites,
+    });
+    page();
+    expect(await screen.findByText("Tous les événements")).toBeInTheDocument();
+    expect(screen.getByText("Rien d’envoyé pour l’instant")).toBeInTheDocument();
+    expect(screen.getByText(/2 en attente/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Ajouter une intégration" }));
+    expect(screen.getByRole("group", { name: "Serveurs" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Ne répond plus")).toBeInTheDocument();
+  });
+});
 
 function sent(
   fetchMock: ReturnType<typeof stubFetch>,
