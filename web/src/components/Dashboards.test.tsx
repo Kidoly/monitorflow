@@ -10,7 +10,7 @@ import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { router, setUrl } from "@/test/navigation";
 
-import { DashboardPanel, emptyReason } from "./DashboardPanel";
+import { DashboardPanel, emptyReason, seriesLabel } from "./DashboardPanel";
 import { DashboardView, DashboardsPage } from "./Dashboards";
 import { PanelForm } from "./PanelForm";
 
@@ -111,11 +111,12 @@ describe("DashboardPanel", () => {
       { id: "c", servers: 12, unavailable: 0, kind: "figure", value: 11 },
     );
     expect(screen.getByText("11")).toBeInTheDocument();
-    expect(screen.getByText("Now, of 12 servers")).toBeInTheDocument();
+    // Not "Now, of 12 servers" under every figure of a row.
+    expect(screen.queryByText(/12 servers/)).toBeNull();
     unmount();
 
     const top = render1(
-      { ...chart, kind: "top", metric: "monitorflow_disk_used_ratio", order: "highest", count: 5, title: "Fullest disks" },
+      { ...chart, kind: "top", metric: "monitorflow_disk_used_ratio", instance: undefined, order: "highest", count: 5, title: "Fullest disks" },
       { id: "c", servers: 3, unavailable: 0, kind: "top", rows: [{ server_id: "s1", hostname: "db-1", instance: "/var", value: 0.931 }] },
     );
     expect(screen.getByRole("link", { name: "db-1" })).toHaveAttribute(
@@ -123,7 +124,16 @@ describe("DashboardPanel", () => {
       "/servers/sensor?id=s1&sensor=disk_used_ratio&instance=%2Fvar",
     );
     expect(screen.getByText("93.1%")).toBeInTheDocument();
+    expect(screen.getByText("/var")).toBeInTheDocument();
     top.unmount();
+
+    // A panel watching one instance does not repeat it on every row.
+    const total = render1(
+      { ...chart, kind: "top", order: "highest", count: 5, title: "Busiest servers now" },
+      { id: "c", servers: 3, unavailable: 0, kind: "top", rows: [{ server_id: "s1", hostname: "db-1", instance: "total", value: 0.5 }] },
+    );
+    expect(screen.getByRole("listitem")).toHaveTextContent(/^db-150/);
+    total.unmount();
 
     render1(
       { id: "a", title: "Open alerts", kind: "alerts", width: 3, servers: { kind: "all" }, count: 10 },
@@ -148,6 +158,23 @@ describe("DashboardPanel", () => {
     expect(screen.getByText("Critical")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Disk used /var" })).toHaveAttribute("href", "/incidents/view?id=i1");
     expect(screen.getByText("on db-1")).toBeInTheDocument();
+  });
+
+  it("says how many servers of the panel its lines show", () => {
+    const lines = Array.from({ length: 8 }, (_, i) => ({ label: `web-${i}`, server_id: `s${i}`, points: [[1_800_000_000, 0.5]] as [number, number][] }));
+    render1(chart, { id: "c", servers: 16, unavailable: 0, kind: "chart", series: lines });
+    expect(screen.getByText("8 of 16 servers")).toBeInTheDocument();
+  });
+
+  it("names a combined line in the active language, with no legend for it alone", () => {
+    setActiveLocale("fr");
+    render1(
+      { ...chart, combine: "avg", title: "Mémoire disponible, moyenne" },
+      { id: "c", servers: 3, unavailable: 0, kind: "chart", series: [{ label: "Average", points: [[1_800_000_000, 0.5]] }] },
+    );
+    expect(screen.getByText("3 serveurs")).toBeInTheDocument();
+    expect(screen.queryByText("Average")).toBeNull();
+    expect(seriesLabel({ ...chart, combine: "avg" }, { label: "Average", points: [] })).toBe("Moyenne");
   });
 
   it("says why it is empty or failed", () => {
@@ -229,6 +256,19 @@ describe("Dashboards", () => {
     expect(await screen.findByRole("link", { name: "Web" })).toHaveAttribute("href", `/dashboards/view?id=${ID}`);
     expect(screen.getByText("Customer acme")).toBeInTheDocument();
     for (const d of readyMades()) expect(screen.getByRole("link", { name: new RegExp(d.name) })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "New dashboard" })).toHaveLength(1);
+  });
+
+  it("offers New dashboard once, in the empty state, while the user has none", async () => {
+    setUrl("/dashboards/");
+    stubFetch({ "GET /api/dashboards": { status: 200, body: { dashboards: [] } } });
+    render(
+      <As user={viewer}>
+        <DashboardsPage />
+      </As>,
+    );
+    expect(await screen.findByText("No dashboard of your own yet")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "New dashboard" })).toHaveLength(1);
   });
 
   it("speaks French when that is the language", async () => {
@@ -354,7 +394,12 @@ describe("Dashboards", () => {
         <DashboardView />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Add a panel" }));
+    const add = await screen.findByRole("button", { name: "Add a panel" });
+    // "Only me" once, in the Shared with field: no badge, no note; no moving help without panels.
+    expect(screen.getAllByText("Only me")).toHaveLength(1);
+    expect(screen.queryByText(/Only you see it/)).toBeNull();
+    expect(screen.queryByText(/Drag a panel/)).toBeNull();
+    await userEvent.click(add);
     const form = await screen.findByRole("form", { name: "New panel" });
     await within(form).findByRole("option", { name: "total" });
     await userEvent.click(within(form).getByRole("button", { name: "Add panel" }));

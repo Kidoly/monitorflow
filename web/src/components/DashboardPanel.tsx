@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { t } from "@/i18n";
-import type { DashboardData, Panel, PanelData } from "@/lib/api";
+import type { ChartLine, DashboardData, Panel, PanelData } from "@/lib/api";
 import { formatNumber, unitOf } from "@/lib/format";
 import { incidentTitle } from "@/lib/incidents";
 import { incidentHref, sensorHref } from "@/lib/routes";
@@ -15,6 +15,16 @@ import { TimeChart } from "@/components/ui/TimeChart";
 import { formatSince } from "@/components/ui/time";
 
 import styles from "./Dashboards.module.css";
+
+/**
+ * A chart line's name: the server (the API's label), or for servers
+ * combined into one line, how they combine in the active language; the
+ * API's label for it is English.
+ */
+export function seriesLabel(panel: Panel, line: ChartLine): string {
+  if (line.server_id) return line.label;
+  return panel.combine && panel.combine !== "each" ? t(`dashboards.combine.${panel.combine}`) : line.label;
+}
 
 /** Why a panel shows nothing, in plain words; null when it shows something. */
 export function emptyReason(panel: Panel, data: PanelData): string | null {
@@ -85,12 +95,18 @@ export function DashboardPanel({
   switch (data.kind) {
     case "chart": {
       const ratio = unitOf(metric) === "ratio";
+      // "One line per server" draws the worst few: say how many of them.
+      const drawn = new Set(data.series.flatMap((s) => (s.server_id ? [s.server_id] : []))).size;
+      const subtitle =
+        panel.combine === "each" && drawn < data.servers
+          ? t("display.panel.someServers", { shown: drawn, count: data.servers })
+          : t("display.panel.servers", { count: data.servers });
       return (
         <div className={styles.chart}>
           <TimeChart
             title={panel.title}
-            subtitle={t("display.panel.servers", { count: data.servers })}
-            series={data.series.map((s) => ({ label: s.label, points: s.points }))}
+            subtitle={subtitle}
+            series={data.series.map((s) => ({ label: seriesLabel(panel, s), points: s.points }))}
             start={window.start}
             end={window.end}
             step={window.step}
@@ -113,11 +129,8 @@ export function DashboardPanel({
                 ? formatNumber(data.value)
                 : format(data.value)}
           </p>
-          <p className={styles.muted}>
-            {data.value === null
-              ? t("display.panel.noValue")
-              : t("display.panel.now", { count: data.servers })}
-          </p>
+          {/* With a value, no "Now, of 16 servers" under each figure: it said the same on every card. */}
+          {data.value === null && <p className={styles.muted}>{t("display.panel.noValue")}</p>}
         </Frame>
       );
     case "top":
@@ -132,7 +145,8 @@ export function DashboardPanel({
                   <Link href={scopedHref(sensorHref(row.server_id, metric, row.instance ?? ""), scope)}>
                     {row.hostname}
                   </Link>
-                  {row.instance && <span className={styles.muted}> {row.instance}</span>}
+                  {/* The instance the panel watches ("total") is the same on every row. */}
+                  {row.instance && !panel.instance && <span className={styles.muted}> {row.instance}</span>}
                   <span className={styles.value}>{format(row.value ?? Number.NaN)}</span>
                 </li>
               ))}
