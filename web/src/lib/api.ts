@@ -1737,6 +1737,19 @@ export interface UpdateSpec {
   packages: string[];
   security_only: boolean;
   allow_reboot: boolean;
+  /** OS updates included (ADR-0138); absent from servers before it, which update only the OS. */
+  include_os?: boolean;
+  /** Third-party managers to update after the OS (ADR-0138). */
+  third_party?: ThirdPartySelection[];
+}
+
+/** A third-party package manager (ADR-0138): winget on Windows, Flatpak and Snap on Linux. */
+export type ThirdPartyManagerName = "winget" | "flatpak" | "snap";
+
+/** What an update asks of one third-party manager; empty `packages` for every pending app. */
+export interface ThirdPartySelection {
+  manager: ThirdPartyManagerName;
+  packages: string[];
 }
 
 /** Published mirror snapshots a campaign installs from (ADR-0038). */
@@ -1849,6 +1862,9 @@ export interface CampaignRequest {
   windows: CampaignWindow[];
   /** An agent update campaign instead of packages (ADR-0053). */
   agent_version?: string;
+  /** False: third-party apps only (ADR-0138). */
+  include_os?: boolean;
+  third_party?: ThirdPartySelection[];
 }
 
 /** A package of a server's latest report (ADR-0031). */
@@ -1874,6 +1890,40 @@ export interface PackageList {
   /** When the agent collected the report, by its clock. */
   reported_at: string | null;
   packages: Package[];
+  next_cursor: string | null;
+}
+
+/** A third-party manager of a server's latest report (ADR-0138). */
+export interface ThirdPartyManager {
+  manager: ThirdPartyManagerName;
+  /** `unusable`: installed, but its apps could not be listed; see `error`. */
+  state: "available" | "absent" | "unusable";
+  version: string | null;
+  error: string | null;
+  installed: number;
+  pending: number;
+}
+
+/** An app a third-party manager installed. */
+export interface ThirdPartyPackage {
+  manager: ThirdPartyManagerName;
+  /** What the manager's update takes: winget ID, Flatpak ref, snap name. */
+  id: string;
+  name: string | null;
+  version: string;
+  /** Null when no update is pending. */
+  available_version: string | null;
+  /** Updates touch `machine` installs only. */
+  scope: "machine" | "user";
+  origin: string | null;
+}
+
+/** `GET /api/servers/{id}/third-party`. */
+export interface ThirdPartyList {
+  /** False until the agent reports third-party managers. */
+  reported: boolean;
+  managers: ThirdPartyManager[];
+  packages: ThirdPartyPackage[];
   next_cursor: string | null;
 }
 
@@ -2769,6 +2819,23 @@ export const api = {
         {
           signal,
         },
+      );
+      packages.push(...page.packages);
+      cursor = page.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    return { ...page, packages, next_cursor: null };
+  },
+
+  /** The server's third-party managers and apps (ADR-0138), following `next_cursor` across pages. */
+  serverThirdParty: async (serverId: string, signal?: AbortSignal): Promise<ThirdPartyList> => {
+    const base = `/api/servers/${encodeURIComponent(serverId)}/third-party?limit=5000`;
+    const packages: ThirdPartyPackage[] = [];
+    let cursor: string | undefined;
+    let page: ThirdPartyList;
+    do {
+      page = await request<ThirdPartyList>(
+        cursor === undefined ? base : `${base}&cursor=${encodeURIComponent(cursor)}`,
+        { signal },
       );
       packages.push(...page.packages);
       cursor = page.next_cursor ?? undefined;

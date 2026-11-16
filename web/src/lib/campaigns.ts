@@ -17,6 +17,7 @@ import type {
   FailureThreshold,
   Server,
   SourcesPin,
+  ThirdPartyManagerName,
   UpdateSpec,
   WaveSpec,
 } from "./api";
@@ -64,6 +65,19 @@ export interface WindowDraft {
 /** `agent` updates the agents themselves (ADR-0053). */
 export type UpdateKind = "all" | "security" | "packages" | "agent";
 
+/** Which updates a package campaign installs (ADR-0138): the OS's, third-party apps', or both. */
+export type UpdateSources = "os" | "apps" | "both";
+
+/** Third-party managers, Windows first. */
+export const THIRD_PARTY_MANAGERS: ThirdPartyManagerName[] = ["winget", "flatpak", "snap"];
+
+/** A manager's name on screen. */
+export const MANAGER_NAMES: Record<ThirdPartyManagerName, string> = { winget: "winget", flatpak: "Flatpak", snap: "Snap" };
+
+/** Whether `manager` runs on servers of `osFamily`: winget on Windows, Flatpak and Snap on Linux. */
+export const managerFits = (manager: ThirdPartyManagerName, osFamily: string): boolean =>
+  (manager === "winget") === (osFamily === "windows");
+
 /** What the creation form edits. */
 export interface CampaignDraft {
   customerId: string;
@@ -75,6 +89,10 @@ export interface CampaignDraft {
   update: UpdateKind;
   /** Package names separated by spaces, commas or lines. */
   packages: string;
+  /** OS updates by default; third-party apps on request. */
+  sources: UpdateSources;
+  /** The third-party managers updated, unless `sources` is `os`. */
+  managers: ThirdPartyManagerName[];
   /** For `agent`: the version to update to. */
   agentVersion: string;
   allowReboot: boolean;
@@ -101,6 +119,8 @@ export function emptyDraft(customerId = ""): CampaignDraft {
     waves: [],
     update: "all",
     packages: "",
+    sources: "os",
+    managers: [...THIRD_PARTY_MANAGERS],
     agentVersion: "",
     allowReboot: false,
     ttl: 3600,
@@ -128,16 +148,21 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
       ? { kind: "weekly", weekdays: [...w.weekdays].sort((a, b) => a - b), start: w.start, end: w.end, timezone: w.timezone.trim() }
       : { kind: "once", starts_at: localToIso(w.startsAt), ends_at: localToIso(w.endsAt) },
   );
+  const agent = draft.update === "agent";
+  const os = agent || draft.sources !== "apps";
+  const apps = !agent && draft.sources !== "os";
   return {
     customer_id: draft.customerId,
     name: draft.name,
     ...(draft.siteId && { site_id: draft.siteId }),
     server_ids: draft.serverIds,
     waves,
-    packages: draft.update === "packages" ? draft.packages.split(/[\s,]+/).filter(Boolean) : [],
-    security_only: draft.update === "security",
+    packages: os && draft.update === "packages" ? draft.packages.split(/[\s,]+/).filter(Boolean) : [],
+    security_only: os && draft.update === "security",
     allow_reboot: draft.update !== "agent" && draft.allowReboot,
     ...(draft.update === "agent" && { agent_version: draft.agentVersion }),
+    ...(!os && { include_os: false }),
+    ...(apps && { third_party: draft.managers.map((manager) => ({ manager, packages: [] })) }),
     command_ttl_s: draft.ttl,
     failure_threshold: { value: Number(draft.thresholdValue), unit: draft.thresholdUnit },
     windows,
@@ -147,6 +172,8 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
 /**
  * The servers a campaign would target, in the API's order: hostname, then
  * peer ID. Only an agent update reaches hosts that take no package updates.
+ * Without OS updates (`appsOnly`, the managers chosen), only servers of a
+ * platform one of them is for.
  */
 export function campaignTargets(
   servers: Server[],
@@ -154,6 +181,7 @@ export function campaignTargets(
   siteId: string,
   serverIds: string[],
   agentUpdate = false,
+  appsOnly: ThirdPartyManagerName[] | null = null,
 ): Server[] {
   const named = new Set(serverIds);
   return servers
@@ -161,7 +189,9 @@ export function campaignTargets(
       (s) =>
         s.customer_id === customerId &&
         s.revoked_at === null &&
-        (agentUpdate || s.package_updates !== false) &&
+        (appsOnly
+          ? appsOnly.some((m) => managerFits(m, s.os_family))
+          : agentUpdate || s.package_updates !== false) &&
         ((siteId && s.site_id === siteId) || named.has(s.id)),
     )
     .sort((a, b) => cmp(a.hostname, b.hostname) || cmp(a.peer_id, b.peer_id));
@@ -235,6 +265,7 @@ export function validateCampaign(request: CampaignRequest, targets: string[]): s
   if (request.agent_version !== undefined && compareVersions(request.agent_version, request.agent_version) === null) {
     errors.push(t("campaigns.check.agentVersion"));
   }
+  if (request.third_party?.length === 0) errors.push(t("campaigns.check.managers"));
   if (request.packages.length > MAX_PACKAGES) errors.push(t("campaigns.check.packageCount", { max: String(MAX_PACKAGES) }));
   const badPackage = request.packages.find((p) => p.length > 128 || !PACKAGE.test(p));
   if (badPackage !== undefined) errors.push(t("campaigns.check.packageName", { name: badPackage }));
@@ -300,14 +331,26 @@ export function isFinal(state: CampaignState): boolean {
   return state === "stopped" || state === "completed" || state === "failed";
 }
 
+/** "winget, Flatpak": the third-party managers of `spec`, or "" for none. */
+export function describeManagers(spec: UpdateSpec): string {
+  return (spec.third_party ?? []).map((s) => MANAGER_NAMES[s.manager] ?? s.manager).join(", ");
+}
+
 export function describeUpdate(spec: UpdateSpec, agentVersion: string | null = null): string {
   if (agentVersion) return t("campaigns.update.agent", { version: agentVersion });
-  const what =
+  const os =
     spec.packages.length > 0
       ? t("campaigns.update.packages", { packages: spec.packages.join(", ") })
       : spec.security_only
         ? t("campaigns.update.security")
         : t("campaigns.update.all");
+  const managers = describeManagers(spec);
+  const what =
+    spec.include_os === false
+      ? t("campaigns.update.apps", { managers })
+      : managers
+        ? t("campaigns.update.osAndApps", { update: os, managers })
+        : os;
   return spec.allow_reboot ? t("campaigns.update.reboot", { update: what }) : what;
 }
 
@@ -370,11 +413,13 @@ export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources
     batches,
     campaign.sources &&
       t("campaigns.subline.snapshots", { count: campaign.sources.mirrors.length, sources: describeSources(campaign.sources) }),
-    spec.packages.length > 0
-      ? t("campaigns.subline.packages", { count: spec.packages.length })
-      : spec.security_only
-        ? t("campaigns.subline.security")
-        : t("campaigns.subline.all"),
+    spec.include_os !== false &&
+      (spec.packages.length > 0
+        ? t("campaigns.subline.packages", { count: spec.packages.length })
+        : spec.security_only
+          ? t("campaigns.subline.security")
+          : t("campaigns.subline.all")),
+    describeManagers(spec) && t("campaigns.subline.apps", { managers: describeManagers(spec) }),
     spec.allow_reboot && t("campaigns.subline.reboot"),
   ]
     .filter(Boolean)
