@@ -35,3 +35,19 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller un site web en HTTPS](surveiller-site-web-https.md) : Sachez quand votre site ne répond plus sur le port 443 ou 80, et vérifiez son code de réponse et l'expiration de son certificat avec un script.
 - [Comment surveiller Docker](surveiller-docker.md) : Soyez alerté quand le moteur Docker ou containerd s'arrête sur un serveur Linux, et quand un port publié par un conteneur ne répond plus.
 - [Comment surveiller Proxmox VE](surveiller-proxmox-ve.md) : Surveillez vos hôtes Proxmox VE : l'interface web sur le port 8006, le service de cluster, et l'espace disque, le CPU et la mémoire des VM.
+
+## Services Linux
+
+- [Comment surveiller SSH et fail2ban sous Linux](surveiller-ssh-fail2ban.md) : Soyez alerté quand le serveur SSH s'arrête, que le port 22 ne répond plus, que fail2ban cesse de bannir ou que les connexions ratées s'accumulent.
+- [Comment surveiller cron et les tâches planifiées sous Linux](surveiller-cron.md) : Soyez alerté quand cron s'arrête sur un serveur Linux, et quand une tâche nocturne, comme une sauvegarde, n'a pas produit son résultat à temps.
+- [Comment surveiller la synchronisation de l'heure (NTP) sous Linux et Windows](surveiller-synchronisation-heure.md) : Soyez alerté quand chrony, systemd-timesyncd ou le service de temps Windows s'arrête, et quand l'horloge dérive, avant l'échec des connexions.
+- [Comment surveiller Postfix sous Linux](surveiller-postfix.md) : Soyez alerté quand Postfix s'arrête, que le port 25 ne répond plus ou que la file d'attente grossit, pour que le courrier de vos serveurs continue de partir.
+- [Comment surveiller les partages de fichiers NFS et SMB](surveiller-partages-nfs-smb.md) : Soyez alerté quand un serveur de fichiers ne répond plus en NFS ou SMB, que son service s'arrête, ou qu'un partage monté sur un client Linux se remplit.
+
+## Windows
+
+- [Comment surveiller les services Windows](surveiller-services-windows.md) : Soyez alerté quand un service Windows s'arrête ou disparaît, comme Windows Update, le spouleur d'impression, le serveur DNS ou le service de temps.
+- [Comment surveiller IIS](surveiller-iis.md) : Soyez alerté quand le serveur web IIS s'arrête ou ne répond plus sur les ports 80 et 443 de vos serveurs Windows.
+- [Comment surveiller les contrôleurs de domaine Active Directory](surveiller-active-directory.md) : Surveillez vos contrôleurs de domaine : Active Directory, serveur DNS, LDAP sur le port 389, service de temps et erreurs du journal Système.
+- [Comment surveiller les erreurs du journal d'événements Windows](surveiller-journal-evenements-windows.md) : Soyez alerté quand Windows écrit un événement critique ou d'erreur dans le journal Système ou Application, sur un serveur ou tout un site.
+- [Comment surveiller le Bureau à distance (RDP)](surveiller-bureau-a-distance.md) : Soyez alerté quand le Bureau à distance ne répond plus sur le port 3389 ou que son service s'arrête, sur vos serveurs Windows.
