@@ -1,4 +1,4 @@
-//! A signed-in person changes their own password (ADR-0138): current
+//! A signed-in person changes their own password (ADR-0141): current
 //! password required, same length rule as elsewhere, sign-in limits,
 //! audited, other sessions ended and this one kept, never through an API
 //! key or without the CSRF header. Ignored without `DATABASE_URL`.

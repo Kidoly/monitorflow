@@ -2701,7 +2701,7 @@ export const api = {
   preferences: (signal?: AbortSignal) => request<Preferences>("/api/me/preferences", { signal }),
 
   /**
-   * Changes the signed-in person's own password (ADR-0138). Ends their other
+   * Changes the signed-in person's own password (ADR-0141). Ends their other
    * sessions and keeps this one; a wrong current password is a 400.
    */
   changePassword: (currentPassword: string, newPassword: string) =>

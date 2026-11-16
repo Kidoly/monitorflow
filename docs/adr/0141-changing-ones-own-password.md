@@ -1,4 +1,4 @@
-# ADR-0138: Changing one's own password
+# ADR-0141: Changing one's own password
 
 Date: 2026-11-16
 Status: accepted

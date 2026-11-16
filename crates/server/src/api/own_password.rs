@@ -1,4 +1,4 @@
-//! The signed-in person changes their own password (ADR-0138).
+//! The signed-in person changes their own password (ADR-0141).
 //!
 //! Only from a browser session: v1 leaves `/api/me/` out
 //! ([`super::v1::left_out`]) and an API key gets 403. The current password

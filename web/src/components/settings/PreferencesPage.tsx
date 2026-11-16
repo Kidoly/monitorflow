@@ -23,7 +23,7 @@ import styles from "./Settings.module.css";
  * `/settings/preferences/`: the signed-in person's own choices (ADR-0137),
  * for everyone, distinct from the server-wide settings around it. The
  * sidebar's user button leads here, so it also holds the password
- * (ADR-0138) and Sign out. Each preference applies at once and is saved
+ * (ADR-0141) and Sign out. Each preference applies at once and is saved
  * with the account.
  */
 export function PreferencesPage() {

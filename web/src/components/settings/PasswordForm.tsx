@@ -13,7 +13,7 @@ type Outcome =
   { kind: "done" } | { kind: "mismatch" } | { kind: "failed"; message: string };
 
 /**
- * The signed-in person changes their password (ADR-0138): the current one,
+ * The signed-in person changes their password (ADR-0141): the current one,
  * then the new one twice. The server ends their other sessions and keeps
  * this one, so they stay signed in here.
  */
