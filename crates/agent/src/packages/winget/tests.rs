@@ -2,6 +2,24 @@ use super::*;
 
 const SCAN: &[u8] = include_bytes!("fixtures/scan.json");
 
+fn app(id: &str, available: &str) -> App {
+    App {
+        id: id.into(),
+        name: format!("{id} app"),
+        source: DEFAULT_SOURCE.into(),
+        version: "1.0".into(),
+        available: available.into(),
+    }
+}
+
+fn ids(apps: &[&App]) -> Vec<String> {
+    apps.iter().map(|a| a.id.clone()).collect()
+}
+
+fn strings(s: &[&str]) -> Vec<String> {
+    s.iter().map(|s| s.to_string()).collect()
+}
+
 #[test]
 fn a_scan_keeps_used_sources_and_valid_ids_pending_first() {
     let (apps, invalid) = parse_scan(SCAN, &Policy::default());
@@ -113,6 +131,107 @@ fn a_scan_is_capped_with_pending_apps_kept() {
 }
 
 #[test]
+fn upgrades_parse_their_results() {
+    let archiver = app("Example.Archiver", "2.0");
+    let parse = |json: &[u8]| parse_upgrade(&archiver, json);
+    assert_eq!(
+        parse(include_bytes!("fixtures/upgrade-ok.json")),
+        Upgraded::Done(
+            InstallResult {
+                name: "Example.Archiver".into(),
+                title: "Example.Archiver app".into(),
+                result: Outcome::Succeeded,
+                hresult: 0,
+            },
+            true
+        )
+    );
+    // The extended error wins over the installer's code.
+    let Upgraded::Done(in_use, false) = parse(include_bytes!("fixtures/upgrade-in-use.json"))
+    else {
+        panic!("not a failure");
+    };
+    assert_eq!(in_use.result, Outcome::Failed);
+    assert_eq!(in_use.hresult as u32, 0x8A15_0101);
+    assert_eq!(
+        in_use.title,
+        "Example.Archiver app: The application is currently running. Exit the application then try again."
+    );
+    let Upgraded::Done(installer, false) = parse(include_bytes!("fixtures/upgrade-installer.json"))
+    else {
+        panic!("not a failure");
+    };
+    assert_eq!(installer.hresult, 1603);
+    assert_eq!(installer.title, "Example.Archiver app: InstallError");
+    assert_eq!(
+        parse(include_bytes!("fixtures/upgrade-none.json")),
+        Upgraded::NotPending
+    );
+    let Upgraded::Done(error, _) = parse(include_bytes!("fixtures/upgrade-error.json")) else {
+        panic!("not a failure");
+    };
+    assert_eq!(
+        error.title,
+        "Example.Archiver app: No package found matching input criteria."
+    );
+    let Upgraded::Done(garbage, _) = parse(b"\xEF\xBB\xBFnot json") else {
+        panic!("not a failure");
+    };
+    assert_eq!(garbage.result, Outcome::Failed);
+}
+
+#[test]
+fn selections_take_pending_apps() {
+    let apps = [
+        app("Example.Archiver", "2.0"),
+        app("Example.Editor", ""),
+        app("Example.Viewer", "3.1"),
+    ];
+    let (picked, not_pending, over) = select(&[], &apps);
+    assert_eq!(ids(&picked), ["Example.Archiver", "Example.Viewer"]);
+    assert!(not_pending.is_empty());
+    assert!(over.is_empty());
+    // Case does not matter; current, unknown and repeated IDs are not
+    // updated.
+    let (picked, not_pending, _) = select(
+        &strings(&[
+            "example.viewer",
+            "Example.Editor",
+            "Example.Missing",
+            "Example.Viewer",
+        ]),
+        &apps,
+    );
+    assert_eq!(ids(&picked), ["Example.Viewer"]);
+    assert_eq!(not_pending, ["Example.Editor", "Example.Missing"]);
+}
+
+#[test]
+fn selections_stop_at_the_limit() {
+    let apps: Vec<App> = (0..MAX_UPGRADES + 3)
+        .map(|i| app(&format!("Example.App{i}"), "2.0"))
+        .collect();
+    let (picked, _, over) = select(&[], &apps);
+    assert_eq!(picked.len(), MAX_UPGRADES);
+    assert_eq!(
+        ids(&over),
+        ["Example.App100", "Example.App101", "Example.App102"]
+    );
+    let result = not_attempted(over[0]);
+    assert_eq!(result.result, Outcome::NotStarted);
+    assert_eq!(
+        result.title,
+        "Example.App100 app: not attempted, over 100 apps"
+    );
+    let result = timed_out(over[0], UPGRADE_TIMEOUT);
+    assert!(!result.result.succeeded());
+    assert_eq!(
+        result.title,
+        "Example.App100 app: timed out after 30 minutes"
+    );
+}
+
+#[test]
 fn scans_become_report_entries() {
     let (apps, _) = parse_scan(SCAN, &Policy::default());
     let (status, packages) = to_report(&apps);
@@ -153,15 +272,25 @@ fn apps_cross_the_pipe_unchanged() {
 
 #[test]
 fn scripts_take_no_value_but_from_the_environment() {
-    // Each script answers with one JSON object.
-    let scripts: &[&str] = &[SCAN_SCRIPT];
-    for body in scripts {
+    for body in [SCAN_SCRIPT, UPGRADE_SCRIPT] {
         let script = script(body);
         assert!(script.starts_with("$ErrorActionPreference = 'Stop'"));
         assert!(script.contains(MODULE));
         // Every script answers with one JSON object, errors included.
         assert!(script.contains("@{ error = $_.Exception.Message }"));
         assert!(!script.contains('\u{2014}'));
+    }
+    assert!(UPGRADE_SCRIPT.contains(&format!("-Id $env:{ENV_ID}")));
+    assert!(UPGRADE_SCRIPT.contains(&format!("-Source $env:{ENV_SOURCE}")));
+    assert!(UPGRADE_SCRIPT.contains("-MatchOption Equals -Mode Silent"));
+    for never in [
+        "-Force",
+        "-IncludeUnknown",
+        "-AllowHashMismatch",
+        "-Override",
+        "-Custom",
+    ] {
+        assert!(!UPGRADE_SCRIPT.contains(never), "{never}");
     }
     assert!(SCAN_SCRIPT.contains(&format!("$env:{ENV_EXCLUDE}")));
 }

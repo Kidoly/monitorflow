@@ -18,16 +18,26 @@ use monitorflow_common::proto::v1::{
 use monitorflow_common::third_party::valid_id;
 use serde::{Deserialize, Serialize};
 
+use super::windows_update::{InstallResult, Outcome};
+
 /// The module that runs winget in the system context.
 pub const MODULE: &str = "Microsoft.WinGet.Client";
 /// winget's store source, never used (ADR-0138).
 pub const STORE_SOURCE: &str = "msstore";
 /// winget's community source, which `EnableDefaultSource` turns off.
 pub const DEFAULT_SOURCE: &str = "winget";
+/// The package ID of an update, read by [`UPGRADE_SCRIPT`].
+pub const ENV_ID: &str = "MONITORFLOW_WINGET_ID";
+/// The source of an update, read by [`UPGRADE_SCRIPT`].
+pub const ENV_SOURCE: &str = "MONITORFLOW_WINGET_SOURCE";
 /// Comma-separated sources [`SCAN_SCRIPT`] leaves out.
 pub const ENV_EXCLUDE: &str = "MONITORFLOW_WINGET_EXCLUDE";
 /// A scan: the first one downloads the community source's index.
 pub const SCAN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// One app's update.
+pub const UPGRADE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Most apps one command updates.
+pub const MAX_UPGRADES: usize = 100;
 /// Most apps in a report (ADR-0138).
 pub const MAX_APPS: usize = 5000;
 const MAX_NAME: usize = 256;
@@ -65,6 +75,25 @@ pub const SCAN_SCRIPT: &str = "try {
   })
   [ordered]@{ module = $module.Version.ToString(); sources = $sources; apps = $apps } |
     ConvertTo-Json -Depth 4 -Compress
+} catch {
+  @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+";
+
+/// Updates the one app named by the environment, silently, from its
+/// source, as one JSON object: the module's result or `{"error"}`.
+pub const UPGRADE_SCRIPT: &str = "try {
+  if (-not $module) { throw 'the Microsoft.WinGet.Client module is not installed' }
+  Import-Module $module
+  $r = Update-WinGetPackage -Id $env:MONITORFLOW_WINGET_ID -Source $env:MONITORFLOW_WINGET_SOURCE `
+    -MatchOption Equals -Mode Silent
+  $extended = 0
+  if ($r.ExtendedErrorCode) { $extended = $r.ExtendedErrorCode.HResult }
+  $message = ''
+  try { $message = [string]$r.ErrorMessage() } catch { }
+  [ordered]@{ status = [string]$r.Status; reboot_required = [bool]$r.RebootRequired;
+    installer_error = [int64]$r.InstallerErrorCode; extended_error = [int64]$extended;
+    message = $message } | ConvertTo-Json -Compress
 } catch {
   @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
 }
@@ -264,6 +293,136 @@ pub fn parse_scan(stdout: &[u8], policy: &Policy) -> (Apps, usize) {
         apps,
     };
     (apps, invalid)
+}
+
+/// What the upgrade script wrote.
+#[derive(Debug, Deserialize)]
+struct UpgradeOutput {
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    reboot_required: bool,
+    #[serde(default)]
+    installer_error: i64,
+    #[serde(default)]
+    extended_error: i64,
+    #[serde(default)]
+    message: String,
+    error: Option<String>,
+}
+
+/// What became of one app's update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Upgraded {
+    /// Its result, and whether it needs a restart.
+    Done(InstallResult, bool),
+    /// winget had no update for it after all.
+    NotPending,
+}
+
+/// One app's result from the upgrade script's stdout.
+pub fn parse_upgrade(app: &App, stdout: &[u8]) -> Upgraded {
+    let failed = |hresult: i64, message: &str| {
+        let title = match one_line(message, MAX_ERROR) {
+            m if m.is_empty() => app.name.clone(),
+            m => format!("{}: {m}", app.name),
+        };
+        Upgraded::Done(
+            InstallResult {
+                name: app.id.clone(),
+                title,
+                result: Outcome::Failed,
+                // HRESULTs are 32 bits; the module widens them.
+                hresult: hresult as i32,
+            },
+            false,
+        )
+    };
+    let output: UpgradeOutput = match serde_json::from_slice(trim_bom(stdout)) {
+        Ok(output) => output,
+        Err(_) => return failed(0, "the winget update wrote no valid JSON"),
+    };
+    if let Some(error) = output.error {
+        return failed(0, &error);
+    }
+    match output.status.as_str() {
+        "Ok" => Upgraded::Done(
+            InstallResult {
+                name: app.id.clone(),
+                title: app.name.clone(),
+                result: Outcome::Succeeded,
+                hresult: 0,
+            },
+            output.reboot_required,
+        ),
+        "NoApplicableUpgrade" => Upgraded::NotPending,
+        status => {
+            let code = if output.extended_error != 0 {
+                output.extended_error
+            } else {
+                output.installer_error
+            };
+            let message = if output.message.trim().is_empty() {
+                status.to_owned()
+            } else {
+                output.message
+            };
+            failed(code, &message)
+        }
+    }
+}
+
+/// The app an update of `id` takes, the IDs compared without case as
+/// winget does.
+fn find<'a>(apps: &'a [App], id: &str) -> Option<&'a App> {
+    apps.iter().find(|app| app.id.eq_ignore_ascii_case(id))
+}
+
+/// Which `apps` a selection of `ids` updates (every pending one when
+/// empty), at most [`MAX_UPGRADES`]; the IDs that are not pending; and the
+/// apps left out over the limit.
+pub fn select<'a>(ids: &[String], apps: &'a [App]) -> (Vec<&'a App>, Vec<String>, Vec<&'a App>) {
+    let mut not_pending = Vec::new();
+    let mut picked: Vec<&App> = if ids.is_empty() {
+        apps.iter().filter(|app| app.pending()).collect()
+    } else {
+        let mut picked: Vec<&App> = Vec::new();
+        for id in ids {
+            match find(apps, id).filter(|app| app.pending()) {
+                Some(app) if !picked.contains(&app) => picked.push(app),
+                Some(_) => {}
+                None => not_pending.push(id.clone()),
+            }
+        }
+        picked
+    };
+    let over = picked.split_off(picked.len().min(MAX_UPGRADES));
+    (picked, not_pending, over)
+}
+
+/// The result of an app [`select`] left out over the limit: not started,
+/// which fails the command.
+pub fn not_attempted(app: &App) -> InstallResult {
+    InstallResult {
+        name: app.id.clone(),
+        title: format!("{}: not attempted, over {MAX_UPGRADES} apps", app.name),
+        result: Outcome::NotStarted,
+        hresult: 0,
+    }
+}
+
+/// The result of an app whose update did not finish in `timeout`.
+pub fn timed_out(app: &App, timeout: Duration) -> InstallResult {
+    InstallResult {
+        name: app.id.clone(),
+        title: format!(
+            "{}: timed out after {} minutes",
+            app.name,
+            timeout.as_secs() / 60
+        ),
+        result: Outcome::Aborted,
+        hresult: 0,
+    }
 }
 
 /// The report's status and apps for a scan (ADR-0138).
