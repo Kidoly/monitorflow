@@ -718,6 +718,167 @@
         }
       }
     },
+    "/api/v1/auto-update/{kind}/peers": {
+      "get": {
+        "tags": [
+          "automatic updates"
+        ],
+        "summary": "List the agents or relays behind a total",
+        "description": "The servers (for `agent`) or relays (for `relay`) counted in one of the\ntotals of `GET /api/v1/auto-update`, classified the same way, so `total` equals\nthat count: `up_to_date`, `waiting`, `pending` (an update in progress)\nor `failed` (since the rollout started or was resumed). With `site_id`,\nonly that site's. Failed ones come newest first with the error their\nupdate reported; the others by customer, site and name. A waiting agent\nwith `waiting_for_relay` goes once its relay is on the target.\n\nNeeds a global administrator role and the key area \"updates\".",
+        "operationId": "auto_update_peers",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "`agent` or `relay`; anything else is 404",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AutoUpdateKind"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "The total to list.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AutoUpdatePeerState"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the peers of this site.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 500, default 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Peers to skip, default 0.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the peers in that state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoUpdatePeerList"
+                },
+                "example": {
+                  "peers": [
+                    {
+                      "customer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                      "customer_name": "acme",
+                      "error": "the new version did not connect; rolled back",
+                      "finished_at": "2026-11-10T08:12:40Z",
+                      "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+                      "name": "web-01",
+                      "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "site_name": "paris",
+                      "state": "failed",
+                      "version": "0.3.0",
+                      "waiting_for_relay": false
+                    }
+                  ],
+                  "target": "0.3.1",
+                  "total": 1
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: a missing or unknown `state`, a `site_id` that is not a UUID, or `limit` outside 1 to 500",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not a global administrator. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: `kind` is not `agent` or `relay`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backups": {
       "get": {
         "tags": [
@@ -28544,6 +28705,113 @@
             "description": "The sum of `sites`."
           }
         }
+      },
+      "AutoUpdatePeer": {
+        "type": "object",
+        "description": "One agent or relay.",
+        "required": [
+          "id",
+          "name",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "customer_name",
+          "state",
+          "waiting_for_relay"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why its automatic update to the target failed; `null` otherwise."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its automatic update to the target finished; `null` when not\ntried or not finished."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The server's ID for an agent, the relay's for a relay."
+          },
+          "name": {
+            "type": "string",
+            "description": "The server's hostname or the relay's name."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AutoUpdatePeerState"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version it reports; `null` before it reported one."
+          },
+          "waiting_for_relay": {
+            "type": "boolean",
+            "description": "A waiting agent whose relay runs an older version or is being\nupdated: it goes once its relay is on the target."
+          }
+        }
+      },
+      "AutoUpdatePeerList": {
+        "type": "object",
+        "description": "Body of `GET /api/auto-update/{kind}/peers`.",
+        "required": [
+          "total",
+          "peers"
+        ],
+        "properties": {
+          "peers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutoUpdatePeer"
+            },
+            "description": "Failed ones newest first, the others by customer, site and name."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What peers move to; `null` when there is none, and then nothing is\nlisted."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Peers in this state (and site), the matching total of\n`GET /api/auto-update`; `peers` holds one page of them.",
+            "minimum": 0
+          }
+        }
+      },
+      "AutoUpdatePeerState": {
+        "type": "string",
+        "description": "Where a peer stands towards the target, as the totals of\n`GET /api/auto-update` count it.",
+        "enum": [
+          "up_to_date",
+          "waiting",
+          "pending",
+          "failed"
+        ]
       },
       "AutoUpdateRequest": {
         "type": "object",

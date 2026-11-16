@@ -2,6 +2,9 @@
 //!
 //! - `GET /api/auto-update`: the settings, the release agents move to, the
 //!   rollout's progress per site, and earlier rollouts.
+//! - `GET /api/auto-update/{kind}/peers?state=…`: the agents or relays
+//!   behind one of those totals, classified by the same
+//!   [`Peer::state`](crate::auto_update::Peer::state).
 //! - `PUT /api/settings/auto-update`: changes `enabled` (unless the
 //!   configuration sets it), `paused` or `failure_threshold`, stored in
 //!   `server_settings` like the other server-wide settings (ADR-0054);
@@ -9,12 +12,13 @@
 //! - `POST /api/auto-update/rollouts/{kind}/{version}/resume`: resumes a
 //!   halted rollout; audited as `auto_update.resume`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Path, Query, State};
 use axum::Json;
+use chrono::{DateTime, Utc};
 use monitorflow_common::release::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,13 +28,17 @@ use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::mirrors::require_global_admin;
 use super::sensors::body;
+use super::servers::page_limit;
 use super::{ApiError, ApiState};
 use crate::auto_update::policy::{self, Settings, SitePhase, Tries};
 use crate::auto_update::store::{self, Kind, Rollout, Stored};
-use crate::auto_update::{self, server_version};
+use crate::auto_update::{self, server_version, PeerState};
 
 /// Earlier rollouts listed.
 const HISTORY: i64 = 10;
+/// Peers listed per page of `GET /api/auto-update/{kind}/peers`.
+pub const DEFAULT_PEERS: u32 = 100;
+pub const MAX_PEERS: u32 = 500;
 
 /// Body of `GET /api/auto-update`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -191,28 +199,23 @@ async fn kind_view(
         let mut totals: BTreeMap<Uuid, Totals> = BTreeMap::new();
         for peer in &peers {
             let site = totals.entry(peer.site_id).or_default();
-            if peer.tried.is_none() {
-                if peer.needs(target) {
+            match peer.state(target) {
+                Some(PeerState::UpToDate) => site.up_to_date += 1,
+                Some(PeerState::Waiting) => {
                     site.waiting += 1;
                     if peer.held_by_relay(target) {
                         site.waiting_for_relay += 1;
                     }
-                } else if peer
-                    .version
-                    .as_deref()
-                    .and_then(|v| Version::from_str(v).ok())
-                    .is_some_and(|v| v >= *target)
-                {
-                    site.up_to_date += 1;
                 }
-            } else if peer.tried.as_deref() == Some("succeeded") {
-                site.up_to_date += 1;
+                Some(PeerState::Pending) => site.pending += 1,
+                Some(PeerState::Failed) => site.failed += 1,
+                None => {}
             }
         }
         for site in &mut sites {
             let t = tries.get(&site.id).copied().unwrap_or_default();
             let mut view = totals.get(&site.id).copied().unwrap_or_default();
-            (view.pending, view.succeeded, view.failed) = (t.pending, t.succeeded, t.failed);
+            view.succeeded = t.succeeded;
             site.totals = view;
             if site.enabled && (t != Tries::default() || view.waiting > 0) {
                 site.phase = Some(t.phase());
@@ -229,6 +232,171 @@ async fn kind_view(
         sites,
         history,
     })
+}
+
+/// Query string of `GET /api/auto-update/{kind}/peers`.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PeersParams {
+    /// The total to list.
+    pub state: PeerState,
+    /// Only the peers of this site.
+    pub site_id: Option<Uuid>,
+    /// 1 to 500, default 100.
+    pub limit: Option<u32>,
+    /// Peers to skip, default 0.
+    pub offset: Option<u32>,
+}
+
+/// Body of `GET /api/auto-update/{kind}/peers`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdatePeerList)]
+pub struct PeerList {
+    /// What peers move to; `null` when there is none, and then nothing is
+    /// listed.
+    pub target: Option<String>,
+    /// Peers in this state (and site), the matching total of
+    /// `GET /api/auto-update`; `peers` holds one page of them.
+    pub total: usize,
+    /// Failed ones newest first, the others by customer, site and name.
+    pub peers: Vec<PeerView>,
+}
+
+/// One agent or relay.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdatePeer)]
+pub struct PeerView {
+    /// The server's ID for an agent, the relay's for a relay.
+    pub id: Uuid,
+    /// The server's hostname or the relay's name.
+    pub name: String,
+    pub site_id: Uuid,
+    pub site_name: String,
+    pub customer_id: Uuid,
+    pub customer_name: String,
+    /// The version it reports; `null` before it reported one.
+    pub version: Option<String>,
+    pub state: PeerState,
+    /// A waiting agent whose relay runs an older version or is being
+    /// updated: it goes once its relay is on the target.
+    pub waiting_for_relay: bool,
+    /// Why its automatic update to the target failed; `null` otherwise.
+    pub error: Option<String>,
+    /// When its automatic update to the target finished; `null` when not
+    /// tried or not finished.
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct PeerRow {
+    id: Uuid,
+    name: String,
+    site_name: String,
+    customer_id: Uuid,
+    customer_name: String,
+    error: Option<String>,
+    finished_at: Option<DateTime<Utc>>,
+}
+
+/// `GET /api/auto-update/{kind}/peers`.
+pub async fn peers(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(kind): Path<String>,
+    params: Result<Query<PeersParams>, QueryRejection>,
+) -> Result<Json<PeerList>, ApiError> {
+    require_global_admin(&user)?;
+    let kind = Kind::from_str(&kind).map_err(|()| ApiError::NotFound)?;
+    let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
+    let limit = page_limit(params.limit, DEFAULT_PEERS, MAX_PEERS)? as usize;
+    let offset = params.offset.unwrap_or(0) as usize;
+    let held = state.settings.agent_releases.held().await;
+    let Some(target) = policy::target(&held, &server_version()).cloned() else {
+        return Ok(Json(PeerList {
+            target: None,
+            total: 0,
+            peers: Vec::new(),
+        }));
+    };
+    let counted_from = Rollout::load(&state.pool, kind, &target)
+        .await?
+        .map(|r| r.counted_from);
+    let matching: Vec<_> = store::peers(&state.pool, kind, &target, counted_from)
+        .await?
+        .into_iter()
+        .filter(|p| p.state(&target) == Some(params.state))
+        .filter(|p| params.site_id.is_none_or(|site| p.site_id == site))
+        .collect();
+    let ids: Vec<Uuid> = matching.iter().map(|p| p.id).collect();
+    let sql = match kind {
+        Kind::Agent => {
+            "SELECT s.id, s.hostname AS name, si.name AS site_name, c.id AS customer_id,
+                    c.name AS customer_name, cmd.error, cmd.finished_at
+             FROM servers s
+             JOIN sites si ON si.id = s.site_id
+             JOIN customers c ON c.id = si.customer_id
+             LEFT JOIN agent_auto_updates a ON a.server_id = s.id AND a.version = $2
+             LEFT JOIN commands cmd ON cmd.id = a.command_id
+             WHERE s.id = ANY($1)"
+        }
+        Kind::Relay => {
+            "SELECT r.id, r.name, si.name AS site_name, c.id AS customer_id,
+                    c.name AS customer_name, cmd.error, cmd.finished_at
+             FROM relays r
+             JOIN sites si ON si.id = r.site_id
+             JOIN customers c ON c.id = si.customer_id
+             LEFT JOIN relay_auto_updates a ON a.relay_id = r.id AND a.version = $2
+             LEFT JOIN relay_commands cmd ON cmd.id = a.command_id
+             WHERE r.id = ANY($1)"
+        }
+    };
+    let mut rows: HashMap<Uuid, PeerRow> = sqlx::query_as::<_, PeerRow>(sql)
+        .bind(&ids)
+        .bind(target.to_string())
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .map(|row| (row.id, row))
+        .collect();
+    let total = matching.len();
+    let mut peers: Vec<PeerView> = matching
+        .into_iter()
+        .filter_map(|peer| {
+            let row = rows.remove(&peer.id)?;
+            let failed = params.state == PeerState::Failed;
+            Some(PeerView {
+                id: peer.id,
+                name: row.name,
+                site_id: peer.site_id,
+                site_name: row.site_name,
+                customer_id: row.customer_id,
+                customer_name: row.customer_name,
+                waiting_for_relay: params.state == PeerState::Waiting
+                    && peer.held_by_relay(&target),
+                version: peer.version,
+                state: params.state,
+                error: row.error.filter(|_| failed),
+                finished_at: row.finished_at,
+            })
+        })
+        .collect();
+    peers.sort_by(|a, b| {
+        let newest = match params.state {
+            PeerState::Failed => b.finished_at.cmp(&a.finished_at),
+            _ => std::cmp::Ordering::Equal,
+        };
+        newest
+            .then_with(|| a.customer_name.cmp(&b.customer_name))
+            .then_with(|| a.site_name.cmp(&b.site_name))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    let peers = peers.into_iter().skip(offset).take(limit).collect();
+    Ok(Json(PeerList {
+        target: Some(target.to_string()),
+        total,
+        peers,
+    }))
 }
 
 /// Body of `PUT /api/settings/auto-update`: the fields to change.

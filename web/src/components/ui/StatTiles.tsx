@@ -19,11 +19,18 @@ export interface StatTile {
   href?: string;
   /** The filter this tile links to is the one applied. */
   active?: boolean;
+  /**
+   * Makes the tile a button that shows or hides a list (`expanded` with
+   * `active`), the element `controls` names.
+   */
+  onToggle?: () => void;
+  controls?: string;
 }
 
 /**
  * The counters under a list page's title. Tiles with `href` are links that
- * filter the list; `compact` is the smaller variant of detail pages;
+ * filter the list, tiles with `onToggle` buttons that show one below;
+ * `compact` is the smaller variant of detail pages;
  * `dense` the 84 px counters of the updates, approvals and users pages.
  */
 export function StatTiles({
@@ -62,6 +69,20 @@ export function StatTiles({
             </b>
           </>
         );
+        if (tile.onToggle) {
+          return (
+            <button
+              key={tile.label}
+              type="button"
+              className={cx(className, styles.button)}
+              aria-expanded={tile.active ?? false}
+              aria-controls={tile.active ? tile.controls : undefined}
+              onClick={tile.onToggle}
+            >
+              {body}
+            </button>
+          );
+        }
         return tile.href ? (
           <Link key={tile.label} href={tile.href} className={className} aria-current={tile.active ? "true" : undefined}>
             {body}

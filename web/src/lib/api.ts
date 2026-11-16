@@ -649,6 +649,40 @@ export interface AutoUpdateStatus {
   relays: AutoUpdateKind;
 }
 
+/** One of the totals of `GET /api/auto-update`. */
+export type AutoUpdatePeerState = "up_to_date" | "waiting" | "pending" | "failed";
+
+/** One agent (a server) or relay of `GET /api/auto-update/{kind}/peers`. */
+export interface AutoUpdatePeer {
+  /** The server's ID for an agent, the relay's for a relay. */
+  id: string;
+  /** The server's hostname or the relay's name. */
+  name: string;
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  version: string | null;
+  state: AutoUpdatePeerState;
+  /** A waiting agent whose relay is older or being updated. */
+  waiting_for_relay: boolean;
+  /** Why its update failed, in the peer's words. */
+  error: string | null;
+  finished_at: string | null;
+}
+
+/** `GET /api/auto-update/{kind}/peers`: one page and the total. */
+export interface AutoUpdatePeerList {
+  target: string | null;
+  /** The matching total of `GET /api/auto-update`. */
+  total: number;
+  /** Failed ones newest first, the others by customer, site and name. */
+  peers: AutoUpdatePeer[];
+}
+
+/** The most peers one request lists. */
+export const AUTO_UPDATE_PEERS_MAX = 500;
+
 /** Fields of `PUT /api/settings/auto-update`; absent ones are unchanged. */
 export interface AutoUpdateChange {
   enabled?: boolean;
@@ -3444,6 +3478,18 @@ export const api = {
   /** Automatic updates: settings and rollouts; global administrators only (ADR-0055). */
   autoUpdate: (signal?: AbortSignal) =>
     request<AutoUpdateStatus>("/api/auto-update", { signal }),
+
+  /** The agents or relays in one of the totals of `autoUpdate`, at most 500; global administrators only. */
+  autoUpdatePeers: (
+    kind: RolloutKind,
+    state: AutoUpdatePeerState,
+    siteId: string | null,
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams({ state, limit: String(AUTO_UPDATE_PEERS_MAX) });
+    if (siteId) query.set("site_id", siteId);
+    return request<AutoUpdatePeerList>(`/api/auto-update/${kind}/peers?${query}`, { signal });
+  },
 
   /** Changes automatic update settings; global administrators only; audited. */
   setAutoUpdate: (change: AutoUpdateChange) =>

@@ -776,6 +776,7 @@ mod tests {
             (&get, "/api/commands/{id}", Some(Area::Updates)),
             (&post, "/api/campaigns/{id}/start", Some(Area::Updates)),
             (&get, "/api/settings/auto-update", Some(Area::Updates)),
+            (&get, "/api/auto-update/{kind}/peers", Some(Area::Updates)),
             (
                 &post,
                 "/api/sites/{id}/ai-commands",
