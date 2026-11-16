@@ -217,6 +217,7 @@ db_tests! {
                 "sites",
                 "thresholds",
                 "user_contacts",
+                "user_preferences",
                 "user_roles",
                 "users"
             ]
