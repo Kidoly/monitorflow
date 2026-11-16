@@ -26,8 +26,8 @@ describe("visibleNavigation", () => {
   it("holds daily work only: administration is under Settings", () => {
     expect(labels(as(null))).not.toContain("Relays");
     expect(labels(as(null))).not.toContain("Backups");
-    expect(SETTINGS_ITEM.visible?.(as("c1"))).toBe(true);
-    expect(SETTINGS_ITEM.visible?.({ ...as(null), roles: [{ role: "viewer", customer_id: null, site_id: null }] })).toBe(false);
+    // Everyone has Settings, for their own preferences (ADR-0137).
+    expect(SETTINGS_ITEM.visible).toBeUndefined();
   });
 });
 
