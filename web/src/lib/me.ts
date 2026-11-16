@@ -1,5 +1,7 @@
 import { createContext, useContext } from "react";
 
+import { t } from "@/i18n";
+
 import type { Me } from "./api";
 
 /** The signed-in user, provided by `AuthGuard`; null outside it. */
@@ -111,5 +113,13 @@ export function modifiesSite(me: Me | null, customerId: string, siteId: string):
         grant.role !== "viewer" &&
         (grant.site_id ? grant.site_id === siteId : !grant.customer_id || grant.customer_id === customerId),
     ) ?? false
+  );
+}
+
+/** The names of `me`'s roles, each once, like "administrator, viewer". */
+export function roleNames(me: Me): string {
+  return (
+    [...new Set(me.roles.map((grant) => grant.role))].map((role) => t(`common.role.${role}`)).join(", ") ||
+    t("common.role.none")
   );
 }
