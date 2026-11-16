@@ -1,63 +1,55 @@
+import { type PlainKey, t } from "@/i18n";
+
 import type { IntegrationDelivery, IntegrationEndpoint } from "./api";
 
 /** The receiver guide: payload, headers and how to check the signature (ADR-0102). */
 export const INTEGRATIONS_GUIDE =
   "https://github.com/Kidoly/monitorflow/blob/main/docs/integrations.md";
 
-/** Events by what they are about, in plain words, in the API's order. */
-export const EVENT_GROUPS: {
-  title: string;
-  events: { event: string; label: string }[];
-}[] = [
+type EventGroup = "incidents" | "servers" | "updates" | "campaigns" | "approvals";
+
+/** Events by what they are about, in the API's order; their words are `integrations.event.<event>`. */
+export const EVENT_GROUPS: { group: EventGroup; events: { event: string }[] }[] = [
   {
-    title: "Incidents",
+    group: "incidents",
     events: [
-      { event: "incident.opened", label: "Opened" },
-      { event: "incident.escalated", label: "Became critical" },
-      { event: "incident.acknowledged", label: "Acknowledged" },
-      { event: "incident.resolved", label: "Resolved" },
+      { event: "incident.opened" },
+      { event: "incident.escalated" },
+      { event: "incident.acknowledged" },
+      { event: "incident.resolved" },
     ],
   },
   {
-    title: "Servers",
-    events: [
-      { event: "server.added", label: "Added" },
-      { event: "server.removed", label: "Removed" },
-      { event: "server.offline", label: "Stopped reporting" },
-      { event: "server.online", label: "Reporting again" },
-    ],
+    group: "servers",
+    events: [{ event: "server.added" }, { event: "server.removed" }, { event: "server.offline" }, { event: "server.online" }],
   },
   {
-    title: "Updates of one server",
-    events: [
-      { event: "update.started", label: "Started" },
-      { event: "update.succeeded", label: "Succeeded" },
-      { event: "update.failed", label: "Did not succeed" },
-    ],
+    group: "updates",
+    events: [{ event: "update.started" }, { event: "update.succeeded" }, { event: "update.failed" }],
   },
   {
-    title: "Campaigns",
-    events: [
-      { event: "campaign.started", label: "Started" },
-      { event: "campaign.succeeded", label: "Finished" },
-      { event: "campaign.failed", label: "Did not finish" },
-    ],
+    group: "campaigns",
+    events: [{ event: "campaign.started" }, { event: "campaign.succeeded" }, { event: "campaign.failed" }],
   },
   {
-    title: "Approvals",
-    events: [
-      { event: "approval.waiting", label: "Waiting" },
-      { event: "approval.decided", label: "Decided" },
-    ],
+    group: "approvals",
+    events: [{ event: "approval.waiting" }, { event: "approval.decided" }],
   },
 ];
 
+/** The title of a group of events, in the active language. */
+export const groupTitle = (group: EventGroup) => t(`integrations.group.${group}`);
+
+/** The words of a known event within its group: "Opened". */
+export const eventLabel = (event: string) => t(`integrations.event.${event}` as PlainKey);
+
 /** "Incidents: Opened" for an event, the raw name for one this page does not know. */
 export function eventName(event: string): string {
-  if (event === "test") return "Test";
+  if (event === "test") return t("integrations.event.test");
   for (const group of EVENT_GROUPS) {
-    const found = group.events.find((e) => e.event === event);
-    if (found) return `${group.title}: ${found.label}`;
+    if (group.events.some((e) => e.event === event)) {
+      return t("integrations.eventOfGroup", { group: groupTitle(group.group), events: eventLabel(event) });
+    }
   }
   return event;
 }
@@ -67,17 +59,21 @@ function byGroup(events: string[]): string[] {
   return EVENT_GROUPS.flatMap((group) => {
     const chosen = group.events.filter((e) => events.includes(e.event));
     if (chosen.length === 0) return [];
-    if (chosen.length === group.events.length) return [group.title];
-    return [`${group.title}: ${chosen.map((e) => e.label).join(", ")}`];
+    if (chosen.length === group.events.length) return [groupTitle(group.group)];
+    return [
+      t("integrations.eventOfGroup", {
+        group: groupTitle(group.group),
+        events: chosen.map((e) => eventLabel(e.event)).join(", "),
+      }),
+    ];
   });
 }
 
 /** What an integration asks for, in a few words: all, all but a few, or by group. */
 export function eventsSummary(events: string[], all: string[]): string {
   const missing = all.filter((e) => !events.includes(e));
-  if (missing.length === 0) return "All events";
-  if (missing.length <= 3)
-    return `All events but ${byGroup(missing).join("; ")}`;
+  if (missing.length === 0) return t("integrations.allEvents");
+  if (missing.length <= 3) return t("integrations.allEventsBut", { events: byGroup(missing).join("; ") });
   return byGroup(events).join("; ");
 }
 
@@ -88,21 +84,21 @@ export function stateLabel(
   text: string;
   tone: "ok" | "warn" | "bad" | "neutral";
 } {
-  if (endpoint.state === "paused") return { text: "Paused", tone: "neutral" };
-  if (endpoint.state === "disabled") return { text: "Turned off", tone: "bad" };
+  if (endpoint.state === "paused") return { text: t("integrations.state.paused"), tone: "neutral" };
+  if (endpoint.state === "disabled") return { text: t("integrations.state.disabled"), tone: "bad" };
   return endpoint.failing_since
-    ? { text: "Failing", tone: "warn" }
-    : { text: "On", tone: "ok" };
+    ? { text: t("integrations.state.failing"), tone: "warn" }
+    : { text: t("integrations.state.on"), tone: "ok" };
 }
 
 /** How a delivery went, in a few words. */
 export function deliveryResult(delivery: IntegrationDelivery): string {
   const code = delivery.last_status ? ` (${delivery.last_status})` : "";
-  if (delivery.state === "delivered") return `Delivered${code}`;
-  if (delivery.state === "failed")
-    return `Gave up after ${delivery.attempts} tries${code}`;
-  if (delivery.attempts === 0) return "Waiting to be sent";
-  return `Tried ${delivery.attempts} ${delivery.attempts === 1 ? "time" : "times"}${code}, trying again`;
+  const count = delivery.attempts;
+  if (delivery.state === "delivered") return t("integrations.delivered", { code });
+  if (delivery.state === "failed") return t("integrations.gaveUp", { count, code });
+  if (count === 0) return t("integrations.waitingToSend");
+  return t("integrations.tried", { count, code });
 }
 
 /** The value of a `datetime-local` input as an ISO time, or null when empty or invalid. */

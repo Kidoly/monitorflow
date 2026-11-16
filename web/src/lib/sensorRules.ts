@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 import {
   type ConfigOwner,
   type EffectiveSensor,
@@ -7,7 +9,7 @@ import {
   api,
 } from "./api";
 import { type Shape, saveThreshold } from "./alerts";
-import { formatNumber, formatSeconds } from "./format";
+import { formatNumber, formatPercent, formatSeconds } from "./format";
 import { every } from "./intervals";
 import { primaryMetric, sensorOf } from "./sensors";
 
@@ -21,12 +23,20 @@ export type RuleLevel = "builtin" | "site" | "server" | "sensor";
 
 const RANK: Record<RuleLevel, number> = { builtin: 0, site: 1, server: 2, sensor: 3 };
 
-/** The source badge of a rule. */
+/** The source badge of a rule, in the active language: read when shown. */
 export const LEVEL_LABELS: Record<RuleLevel, string> = {
-  builtin: "Built-in",
-  site: "Site default",
-  server: "This server",
-  sensor: "This sensor",
+  get builtin() {
+    return t("sensors.level.builtin");
+  },
+  get site() {
+    return t("sensors.level.site");
+  },
+  get server() {
+    return t("sensors.level.server");
+  },
+  get sensor() {
+    return t("sensors.level.sensor");
+  },
 };
 
 /**
@@ -87,7 +97,7 @@ export function ruleLevel(sensor: EffectiveSensor, rule: EffectiveThreshold | un
 const SIGNS = { ">": ">", ">=": "≥", "<": "<", "<=": "≤" } as const;
 
 function value(shape: Shape, v: number): string {
-  if (shape.type === "percent") return `${formatNumber(v * 100, 1)}%`;
+  if (shape.type === "percent") return formatPercent(v);
   return shape.type === "number" && shape.unit ? `${formatNumber(v)} ${shape.unit}` : formatNumber(v);
 }
 
@@ -95,17 +105,17 @@ function value(shape: Shape, v: number): string {
 export function ruleSummary(shape: Shape, rule: EffectiveThreshold | undefined, intervalMs: number): string {
   const parts = [every(intervalMs)];
   if (!rule) {
-    parts.push("no alert");
+    parts.push(t("sensors.summary.noAlert"));
   } else if (!rule.enabled) {
-    parts.push("alert turned off");
+    parts.push(t("sensors.summary.off"));
   } else if (shape.type === "event") {
-    parts.push(`${rule.critical !== null ? "critical" : "warning"} ${shape.brief}`);
+    parts.push(t(rule.critical !== null ? "sensors.summary.event.critical" : "sensors.summary.event.warning", { brief: shape.brief }));
   } else {
     const sign = SIGNS[rule.comparison];
-    if (rule.warning !== null) parts.push(`warn ${sign} ${value(shape, rule.warning)}`);
-    if (rule.critical !== null) parts.push(`crit ${sign} ${value(shape, rule.critical)}`);
+    if (rule.warning !== null) parts.push(t("sensors.summary.warn", { sign, value: value(shape, rule.warning) }));
+    if (rule.critical !== null) parts.push(t("sensors.summary.crit", { sign, value: value(shape, rule.critical) }));
   }
-  if (rule?.enabled && rule.duration_s > 0) parts.push(`for ${formatSeconds(rule.duration_s)}`);
+  if (rule?.enabled && rule.duration_s > 0) parts.push(t("sensors.summary.for", { duration: formatSeconds(rule.duration_s) }));
   return parts.join(" · ");
 }
 
@@ -123,12 +133,12 @@ export function instanceNoun(sensor: EffectiveSensor): string {
   switch (sensor.kind) {
     case "disk":
     case "diskio":
-      return "disk";
+      return t("sensors.noun.disk");
     case "cpu":
-      return "CPU";
+      return t("sensors.noun.cpu");
     case "systemd":
     case "windows_service":
-      return "service";
+      return t("sensors.noun.service");
     default:
       return sensor.name;
   }
@@ -143,9 +153,14 @@ export function applyToChoices(
 ): { value: ApplyTo; label: string }[] {
   const several = perInstance(sensor, instance);
   return [
-    ...(several ? [{ value: "sensor" as const, label: `this sensor only (${instance})` }] : []),
-    { value: "server", label: several ? `every ${instanceNoun(sensor)} on ${hostname}` : `this server only (${hostname})` },
-    { value: "site", label: `every server of ${siteName} (site default)` },
+    ...(several ? [{ value: "sensor" as const, label: t("sensors.apply.sensor", { instance }) }] : []),
+    {
+      value: "server",
+      label: several
+        ? t("sensors.apply.every", { noun: instanceNoun(sensor), host: hostname })
+        : t("sensors.apply.server", { host: hostname }),
+    },
+    { value: "site", label: t("sensors.apply.site", { site: siteName }) },
   ];
 }
 

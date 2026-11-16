@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { t } from "@/i18n";
 import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
 import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffline } from "@/lib/incidents";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
@@ -24,7 +25,7 @@ import { AcknowledgeButton } from "./AcknowledgeButton";
 import styles from "./IncidentList.module.css";
 
 /** A threshold incident's value; offline ones have none. */
-const value = (i: Incident, v: number) => (isOffline(i) ? "—" : formatSensorValue(i.metric, v));
+const value = (i: Incident, v: number) => (isOffline(i) ? "" : formatSensorValue(i.metric, v));
 
 /** Whether a silence keeps this incident quiet now, or did. */
 function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {
@@ -32,11 +33,12 @@ function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {
     return (
       <>
         {" "}
-        <Label tone="neutral">Silenced</Label> <span className={styles.small}>until {formatDay(new Date(incident.silenced_until), now)}</span>
+        <Label tone="neutral">{t("incidents.silenced")}</Label>{" "}
+        <span className={styles.small}>{t("incidents.silencedUntil", { when: formatDay(new Date(incident.silenced_until), now) })}</span>
       </>
     );
   }
-  return incident.silenced ? <span className={styles.small}> · was silenced</span> : null;
+  return incident.silenced ? <span className={styles.small}>{t("incidents.wasSilencedShort")}</span> : null;
 }
 
 /** Who said they are on it (ADR-0082), or the button to say so. */
@@ -53,8 +55,10 @@ function Acknowledged({
   if (incident.acknowledged_at) {
     return (
       <span className={styles.small}>
-        {" "}
-        · Acknowledged by {incident.acknowledged_by ?? "someone"} {formatSince(new Date(incident.acknowledged_at), now)}
+        {t("incidents.acknowledgedBy", {
+          name: incident.acknowledged_by ?? t("incidents.someone"),
+          when: formatSince(new Date(incident.acknowledged_at), now),
+        })}
         {incident.acknowledged_note && `: ${incident.acknowledged_note}`}
       </span>
     );
@@ -65,7 +69,7 @@ function Acknowledged({
       {" "}
       <AcknowledgeButton
         size="small"
-        name={`Acknowledge ${incident.hostname}`}
+        name={t("incidents.acknowledgeHost", { host: incident.hostname })}
         onAcknowledge={(note) => onAcknowledge([incident.id], note)}
         describeError={describeError}
       />
@@ -149,20 +153,20 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
   const columns: Column<Incident>[] = [
     {
       key: "severity",
-      header: "Severity",
+      header: t("incidents.column.severity"),
       cell: (i) =>
         i.state === "open" ? (
           <StatusLabel kind="severity" value={i.severity} />
         ) : (
           <>
             <StatusLabel kind="severity" value="resolved" />{" "}
-            <span className={styles.small}>was {i.severity === "critical" ? "Critical" : "Warning"}</span>
+            <span className={styles.small}>{t("incidents.was", { severity: t(`sensors.severity.${i.severity}`) })}</span>
           </>
         ),
     },
     {
       key: "server",
-      header: "Server",
+      header: t("incidents.column.server"),
       cell: (i) => (
         <PrimaryCell
           title={i.hostname}
@@ -173,7 +177,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     },
     {
       key: "metric",
-      header: "Metric",
+      header: t("incidents.column.metric"),
       cell: (i) => (
         <Link href={scopedHref(incidentHref(i.id), scope)} className={i.state === "open" ? styles.strong : undefined}>
           {incidentTitle(i)}
@@ -182,7 +186,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     },
     {
       key: "opened",
-      header: "Opened",
+      header: t("incidents.column.opened"),
       cell: (i) => (
         <time dateTime={i.opened_at} title={formatExact(new Date(i.opened_at))}>
           {formatDay(new Date(i.opened_at), now)}
@@ -191,10 +195,10 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     },
     {
       key: "state",
-      header: "State",
+      header: t("incidents.column.state"),
       cell: (i) => (
         <>
-          {i.resolved_at ? `Resolved ${formatSince(new Date(i.resolved_at), now)}` : "Open"}
+          {i.resolved_at ? t("incidents.resolvedSince", { when: formatSince(new Date(i.resolved_at), now) }) : t("incidents.open")}
           <SilencedSign incident={i} now={now} />
           <Acknowledged incident={i} now={now} onAcknowledge={acknowledge} />
         </>
@@ -202,15 +206,15 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     },
     {
       key: "duration",
-      header: "Duration",
+      header: t("incidents.column.duration"),
       cell: (i) => formatDuration(((i.resolved_at ? Date.parse(i.resolved_at) : now.getTime()) - Date.parse(i.opened_at)) / 1000),
     },
     {
       key: "last",
-      header: "Last value",
+      header: t("incidents.column.last"),
       cell: (i) => <span className={i.state === "open" ? styles.strong : undefined}>{value(i, i.last_value)}</span>,
     },
-    { key: "peak", header: "Peak", cell: (i) => value(i, i.peak_value) },
+    { key: "peak", header: t("incidents.column.peak"), cell: (i) => value(i, i.peak_value) },
   ];
 
   const critical = open.filter((i) => i.severity === "critical").length;
@@ -218,10 +222,10 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
   return (
     <Page>
       <PageHeader
-        title="Incidents"
+        title={t("incidents.title")}
         meta={
           <>
-            {data && `${open.length} open, ${critical} critical · `}
+            {data && `${t("incidents.count.open", { count: open.length })}, ${t("incidents.count.critical", { count: critical })} · `}
             <RefreshLine updatedAt={updatedAt} stale={stale} />
           </>
         }
@@ -230,22 +234,22 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         filters={[
           {
             name: "state",
-            label: "State",
+            label: t("incidents.filter.state"),
             options: [
-              { value: "open", label: "Open" },
-              { value: "resolved", label: "Resolved" },
+              { value: "open", label: t("incidents.open") },
+              { value: "resolved", label: t("incidents.resolved") },
             ],
           },
           {
             name: "severity",
-            label: "Severity",
+            label: t("incidents.filter.severity"),
             options: [
-              { value: "critical", label: "Critical" },
-              { value: "warning", label: "Warning" },
+              { value: "critical", label: t("sensors.severity.critical") },
+              { value: "warning", label: t("sensors.severity.warning") },
             ],
           },
-          ...(scope.siteId ? [] : [{ name: "site", label: "Site", options: siteChoices.map((s) => ({ value: s.id, label: s.name })) }]),
-          { name: "server", label: "Server", options: serverChoices.map((s) => ({ value: s.id, label: s.hostname })) },
+          ...(scope.siteId ? [] : [{ name: "site", label: t("incidents.filter.site"), options: siteChoices.map((s) => ({ value: s.id, label: s.name })) }]),
+          { name: "server", label: t("incidents.filter.server"), options: serverChoices.map((s) => ({ value: s.id, label: s.hostname })) },
         ]}
         // Another site's server would match nothing.
         onChange={(next) => next.get("site") !== (filters.siteId ?? null) && next.get("server") && replaceParams({ server: null })}
@@ -255,15 +259,15 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       )}
       {filters.groupId && (
         <Banner tone="info">
-          Sent together in one notification: the incidents below were told in a single message, with the other filters
-          still applied. <Link href={scopedHref(incidentsHref({ ...filters, groupId: null }), scope)}>Show all incidents</Link>
+          {t("incidents.group.banner")}{" "}
+          <Link href={scopedHref(incidentsHref({ ...filters, groupId: null }), scope)}>{t("incidents.group.showAll")}</Link>
           {acknowledgeable.length > 1 && (
             <>
               {" "}
               <AcknowledgeButton
                 size="small"
                 variant="k"
-                label={`Acknowledge all ${acknowledgeable.length}`}
+                label={t("incidents.group.acknowledgeAll", { count: acknowledgeable.length })}
                 onAcknowledge={(note) => acknowledge(acknowledgeable.map((i) => i.id), note)}
                 describeError={describeError}
               />
@@ -272,28 +276,28 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         </Banner>
       )}
       {!data && error !== null && !isUnauthorized(error) ? (
-        <ErrorState what="incidents" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what={t("incidents.load.list")} error={describeError(error)} onRetry={refresh} />
       ) : data && incidents.length === 0 ? (
         filtered ? (
           <NoMatches names={["state", "severity", "server", "group", ...(scope.siteId ? [] : ["site"])]}>
-            No incidents match these filters.
+            {t("incidents.noMatch")}
           </NoMatches>
         ) : (
           <EmptyState
             actions={
               administersEverything(me) ? (
-                <ButtonLink href={NOTIFICATIONS_PATH}>Set up notifications</ButtonLink>
+                <ButtonLink href={NOTIFICATIONS_PATH}>{t("incidents.setUpNotifications")}</ButtonLink>
               ) : (
-                <ButtonLink href={scopedHref("/", scope)}>Back to the fleet</ButtonLink>
+                <ButtonLink href={scopedHref("/", scope)}>{t("incidents.backToFleet")}</ButtonLink>
               )
             }
           >
-            No incidents. No threshold has fired and every server and relay is reporting.
+            {t("incidents.empty")}
           </EmptyState>
         )
       ) : (
         <DataTable
-          label="Incidents"
+          label={t("incidents.title")}
           columns={columns}
           rows={incidents}
           rowKey={(i) => i.id}
@@ -301,7 +305,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
           loading={!data}
           hasMore={Boolean(data?.more) && limit < MAX_LIMIT}
           onLoadMore={() => setLimit((n) => Math.min(MAX_LIMIT, n + PAGE_SIZE))}
-          summary={(shown) => `Showing ${shown} ${shown === 1 ? "incident" : "incidents"} · ${PAGE_SIZE} per page`}
+          summary={(shown) => t("incidents.summary", { count: shown, perPage: PAGE_SIZE })}
         />
       )}
     </Page>

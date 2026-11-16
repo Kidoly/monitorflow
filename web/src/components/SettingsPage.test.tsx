@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { RetentionSettings, ServerSettings } from "@/lib/api";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -98,6 +99,17 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText(/Keep metrics/)).toHaveValue(90);
     expect(screen.getByLabelText(/Agents reach this server at/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+  });
+
+  it("speaks French", async () => {
+    setActiveLocale("fr");
+    stub(settings());
+    open();
+    expect(await screen.findByLabelText(/Déconnecter après, en heures/)).toHaveValue(12);
+    expect(screen.getByText(/par défaut 12 heures/)).toBeInTheDocument();
+    expect(screen.getByText(/par défaut 90 jours/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Général" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Conservation des données" })).toBeInTheDocument();
   });
 
   it("saves sign-in settings in seconds, keeping the others", async () => {

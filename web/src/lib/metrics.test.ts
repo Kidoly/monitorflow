@@ -1,7 +1,26 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import type { EffectiveSensor } from "./api";
-import { rollupFor, sensorInterval } from "./metrics";
+import { diskIoCharts } from "./diskio";
+import { metricTitle, rollupFor, sensorInterval } from "./metrics";
+
+describe("metricTitle", () => {
+  it("names built-in metrics in the active language, others by their short name", () => {
+    expect(metricTitle("monitorflow_cpu_usage_ratio")).toBe("CPU usage");
+    expect(metricTitle("monitorflow_port_open")).toBe("port_open");
+    setActiveLocale("fr");
+    expect(metricTitle("monitorflow_disk_used_ratio")).toBe("Disque utilisé");
+    expect(diskIoCharts("diskio", "monitorflow_diskio_busy_ratio")[0]).toEqual({
+      title: "Lu et écrit",
+      series: [
+        { metric: "monitorflow_diskio_read_bytes_per_second", label: "Lu" },
+        { metric: "monitorflow_diskio_written_bytes_per_second", label: "Écrit" },
+      ],
+    });
+  });
+});
 
 function sensor(name: string, interval_ms: number, instance = ""): EffectiveSensor {
   return { origin: "default", entry_id: null, kind: name, name, instance, interval_ms, timeout_ms: null, params: {} };

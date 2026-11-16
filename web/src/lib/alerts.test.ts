@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import type { EffectiveSensor, EffectiveThreshold } from "./api";
 import {
   CHECK_TYPES,
@@ -43,6 +45,24 @@ const sensor = (kind: string, name: string, params: Record<string, string>): Eff
 });
 
 const type = (kind: string) => CHECK_TYPES.find((t) => t.kind === kind)!;
+
+describe("in French", () => {
+  it("reads thresholds, kinds, titles and errors in French, and takes a decimal comma", () => {
+    setActiveLocale("fr");
+    const say = (r: EffectiveThreshold) => describeThreshold(shapeFor([], r), r);
+    expect(say(rule())).toBe("Avertir quand un disque est au-dessus de 85\u00a0% de remplissage, critique au-dessus de 95\u00a0%, pendant 5 min.");
+    const port = sensor("port", "port_443", { port: "443", host: "127.0.0.1" });
+    const closed = rule({ metric: "monitorflow_port_443_up", comparison: "<", warning: null, critical: 1, duration_s: 60 });
+    expect(describeThreshold(shapeFor([port], closed), closed)).toBe("Critique quand le port 443 est fermé pendant 1 min.");
+    expect(type("port").label).toBe("Un port répond");
+    expect(checkTitle(sensor("systemd", "service_nginx", { units: "nginx" }))).toBe("Service nginx");
+    expect(checkErrors(type("port"), { port: "", host: "127.0.0.1" })).toEqual({ port: "Renseignez le champ «\u00a0port\u00a0»." });
+    const shape = shapeFor([], rule());
+    expect(thresholdRequest(shape, rule(), { warning: "85,5", critical: "95", severity: "critical", minutes: "5" })).toMatchObject({
+      request: { warning: 0.855, critical: 0.95 },
+    });
+  });
+});
 
 describe("thresholds in plain words", () => {
   it("reads the built-in defaults as sentences", () => {

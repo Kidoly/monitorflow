@@ -228,7 +228,7 @@ describe("ServerPage", () => {
     expect(screen.getByText("Configuration à jour").parentElement).toHaveTextContent(/appliquée il y a 3 min/);
     const table = screen.getByRole("table", { name: "Capteurs" });
     expect(within(table).getByRole("columnheader", { name: "Dernière valeur" })).toBeInTheDocument();
-    expect(within(table).getByRole("img", { name: "CPU usage, dernière heure" })).toBeInTheDocument();
+    expect(within(table).getByRole("img", { name: "Utilisation CPU, dernière heure" })).toBeInTheDocument();
   });
 
   it("shows configuration drift and missing sensors", async () => {

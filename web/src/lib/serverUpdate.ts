@@ -2,20 +2,24 @@
 
 import type { ReleaseImported, ServerUpdateCheck, ServerUpdateRun, ServerUpdateState } from "./api";
 import type { Tone } from "@/components/ui/tone";
+import { t } from "@/i18n";
 
-/** The word and tint of each state. */
-export const STATE_WORDS: Record<ServerUpdateState, readonly [string, Tone]> = {
-  verifying: ["Verifying the release", "info"],
-  downloading: ["Downloading", "info"],
-  backing_up: ["Backing up the database", "info"],
-  updating: ["Restarting on the new version", "info"],
-  checking: ["Checking health", "info"],
-  caching_agents: ["Caching the agent release", "info"],
-  rolling_back: ["Rolling back", "warn"],
-  succeeded: ["Updated", "ok"],
-  failed: ["Failed", "bad"],
-  rolled_back: ["Rolled back", "bad"],
+/** The tint of each state. */
+export const STATE_TONES: Record<ServerUpdateState, Tone> = {
+  verifying: "info",
+  downloading: "info",
+  backing_up: "info",
+  updating: "info",
+  checking: "info",
+  caching_agents: "info",
+  rolling_back: "warn",
+  succeeded: "ok",
+  failed: "bad",
+  rolled_back: "bad",
 };
+
+/** The word of a state, in the active language. */
+export const stateWord = (state: ServerUpdateState): string => t(`serverUpdate.state.${state}`);
 
 export function isFinal(state: ServerUpdateState): boolean {
   return state === "succeeded" || state === "failed" || state === "rolled_back";
@@ -28,7 +32,7 @@ export function inProgress(run: ServerUpdateRun | null, requested: boolean): boo
 
 /** The image's short form: `monitorflow-server@sha256:3f2a1b0c…`; null is a local build. */
 export function imageText(image: string | null): string {
-  if (image === null) return "local build";
+  if (image === null) return t("serverUpdate.localBuild");
   const [name, digest] = image.split("@sha256:");
   const short = name!.split("/").pop();
   return digest ? `${short}@sha256:${digest.slice(0, 12)}…` : image;
@@ -39,12 +43,12 @@ export function changeLines(check: ServerUpdateCheck): string[] {
   const latest = check.latest;
   if (!latest) return [];
   return [
-    `Server: ${check.running_version} → ${latest.version}`,
-    latest.web_changes ? "Web interface: new image" : "Web interface: unchanged",
-    latest.updater_changes ? "Updater: new image, which replaces itself last" : "Updater: unchanged",
+    t("serverUpdate.change.server", { from: check.running_version, to: latest.version }),
+    latest.web_changes ? t("serverUpdate.change.webNew") : t("serverUpdate.change.webSame"),
+    latest.updater_changes ? t("serverUpdate.change.updaterNew") : t("serverUpdate.change.updaterSame"),
     latest.agent_release_cached
-      ? `Agent release ${latest.version}: already cached`
-      : `Agent release ${latest.version}: cached during the update, so agents can follow`,
+      ? t("serverUpdate.change.agentCached", { version: latest.version })
+      : t("serverUpdate.change.agentCaching", { version: latest.version }),
   ];
 }
 
@@ -57,8 +61,8 @@ export function releasesPage(source: string): string | null {
 /** What a partial import cannot do, in plain words. */
 export function importNotes({ missing }: ReleaseImported): string[] {
   const lines: string[] = [];
-  if (missing.includes("install.sh")) lines.push("Without install.sh, Linux servers cannot install from this server.");
-  if (missing.some((name) => name.endsWith(".msi"))) lines.push("Without the MSI, Windows servers cannot install from this server.");
+  if (missing.includes("install.sh")) lines.push(t("serverUpdate.import.noInstallSh"));
+  if (missing.some((name) => name.endsWith(".msi"))) lines.push(t("serverUpdate.import.noMsi"));
   return lines;
 }
 
