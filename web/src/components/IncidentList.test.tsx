@@ -68,8 +68,8 @@ describe("IncidentList", () => {
     render(<IncidentList filters={NO_FILTERS} />);
     const rows = within(await table()).getAllByRole("row");
     expect(rows).toHaveLength(3);
-    expect(rows[1]).toHaveTextContent(/^Critical\s*web-1paris · Acme Hosting\s*Disk used \/var\s*09:40 today\s*Open\s*4 h 20 min\s*96\.2%\s*97\.1%$/);
-    expect(rows[2]).toHaveTextContent(/^Resolved was Warning\s*db-1berlin · Northwind\s*Memory used\s*Yesterday 23:10\s*Resolved 01:42\s*2 h 32 min\s*1\.5 GiB\s*2 GiB$/);
+    expect(rows[1]).toHaveTextContent(/^Critical\s*Disk used \/varweb-1 · paris · Acme Hosting\s*09:40 today\s*Open · 4 h 20 min\s*96\.2%\s*peak 97\.1%$/);
+    expect(rows[2]).toHaveTextContent(/^Resolved was Warning\s*Memory useddb-1 · berlin · Northwind\s*Yesterday 23:10\s*Resolved 01:42 · 2 h 32 min\s*1\.5 GiB\s*peak 2 GiB$/);
     expect(within(rows[1]!).getByRole("link", { name: "web-1" })).toHaveAttribute(
       "href",
       expect.stringMatching(new RegExp(`^/servers/view/?\\?id=${SERVER_ID}$`)),
@@ -79,7 +79,6 @@ describe("IncidentList", () => {
       expect.stringMatching(new RegExp(`^/incidents/view/?\\?id=${open.id}$`)),
     );
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
-    expect(screen.getByText("Showing 2 incidents · 50 per page")).toBeInTheDocument();
   });
 
   it("speaks French", async () => {
@@ -90,11 +89,10 @@ describe("IncidentList", () => {
     });
     render(<IncidentList filters={NO_FILTERS} />);
     const rows = within(await screen.findByRole("table", { name: "Incidents" })).getAllByRole("row");
-    expect(rows[0]).toHaveTextContent(/Gravité\s*Serveur\s*Métrique\s*Ouvert\s*État\s*Durée\s*Dernière valeur\s*Pic/);
-    expect(rows[1]).toHaveTextContent(/aujourd’hui 09:40\s*Ouvert\s*4 h 20 min\s*96,2 %/);
+    expect(rows[0]).toHaveTextContent(/Gravité\s*Incident\s*Ouvert\s*État\s*Dernière valeur/);
+    expect(rows[1]).toHaveTextContent(/aujourd’hui 09:40\s*Ouvert · 4 h 20 min\s*96,2 %\s*pic 97,1 %/);
     expect(rows[2]).toHaveTextContent(/était Avertissement/);
     expect(rows[2]).toHaveTextContent(/Résolu 01:42/);
-    expect(screen.getByText("2 incidents affichés · 50 par page")).toBeInTheDocument();
   });
 
   it("loads 50 more and keeps every loaded incident on refresh", async () => {

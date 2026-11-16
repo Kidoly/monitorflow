@@ -138,3 +138,12 @@
   font-size: 14px;
   font-weight: 600;
 }
+
+/* "Turn this alert off…", away from Save. */
+.turnOff {
+  margin-left: auto;
+}
+
+.turnOff button:not([type="submit"]) {
+  color: var(--bad);
+}
