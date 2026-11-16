@@ -102,13 +102,15 @@
   outline-offset: 2px;
 }
 
-/* Settings, pinned under the daily work; the account line follows it. */
+/* Settings sits at the bottom, right above the foot: it takes the free
+   space above it. */
 .pinned {
   margin-top: auto;
 }
 
-.pinned + /* The foot: the person's button, which leads to Preferences, and a small
-   collapse toggle next to it. */
+/* The foot: the person's button, which leads to Preferences, and a small
+   collapse toggle next to it. At the bottom on its own in the settings
+   list, right under Settings elsewhere. */
 .foot {
   margin-top: auto;
   padding-top: 8px;
@@ -116,6 +118,10 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+.pinned + .foot {
+  margin-top: 0;
 }
 
 .user {
