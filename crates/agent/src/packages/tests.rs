@@ -430,6 +430,30 @@ async fn dnf_reports_from_rpm() {
 }
 
 #[tokio::test]
+async fn reports_say_which_third_party_managers_are_absent() {
+    use monitorflow_common::proto::v1::package_manager_status::State;
+    use monitorflow_common::proto::v1::PackageManager;
+
+    let fakes = Fakes::new(0, 0, 0);
+    let (reports, report) = Reports::new(for_family(OsFamily::Rhel, fakes.tools()).unwrap());
+    reports.collect().await;
+    let report = report.borrow().clone().unwrap();
+    assert!(report.third_party.is_empty());
+    let managers: Vec<_> = report
+        .managers
+        .iter()
+        .map(|m| (m.manager(), m.state()))
+        .collect();
+    assert_eq!(
+        managers,
+        [
+            (PackageManager::Flatpak, State::Absent),
+            (PackageManager::Snap, State::Absent)
+        ]
+    );
+}
+
+#[tokio::test]
 async fn a_missing_tool_reports_nothing() {
     let missing = Path::new("/nonexistent/dpkg-query");
     let tools = Tools {
