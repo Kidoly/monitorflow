@@ -15,6 +15,13 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "MonitorFlow",
   description: "Monitoring and fleet management",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+      { url: "/brand/slime-violette-petit.svg", type: "image/svg+xml" },
+    ],
+    apple: "/brand/apple-touch-icon.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

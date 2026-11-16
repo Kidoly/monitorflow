@@ -6,6 +6,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { SetupHint } from "@/components/SetupHint";
 import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
+import { Logo } from "@/components/ui/Logo";
 import { t } from "@/i18n";
 import { ApiError, LOGIN_PATH, MIN_PASSWORD_LENGTH, api, describeError, isAbortError } from "@/lib/api";
 
@@ -80,7 +81,10 @@ export function SetupForm() {
   return (
     <div className={styles.page}>
       <main id="main" className={styles.main}>
-        <h1 className={styles.brand}>MonitorFlow</h1>
+        <h1 className={styles.brand}>
+          <Logo size={32} />
+          MonitorFlow
+        </h1>
         {!ready ? null : noLink ? (
           <div className={styles.box}>
             <h2 className={styles.title}>{t("auth.setup.linkNeeded")}</h2>

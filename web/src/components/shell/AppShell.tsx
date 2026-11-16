@@ -7,6 +7,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useState } from "reac
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { Label } from "@/components/ui/StatusLabel";
+import { Logo } from "@/components/ui/Logo";
 import { t } from "@/i18n";
 import { type Customer, type Me, type Site, api, isAbortError } from "@/lib/api";
 import { administersEverything, multiCustomer, roleNames } from "@/lib/me";
@@ -161,10 +162,8 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         }}
       >
         <Link href={scopedHref("/", scope)} className={styles.brand} aria-label="MonitorFlow">
+          <Logo size={24} />
           <span className={styles.brandFull}>MonitorFlow</span>
-          <span className={styles.brandShort} aria-hidden="true">
-            MF
-          </span>
         </Link>
         {inSettings ? (
           <SettingsSidebar me={me} pathname={pathname} backHref={backHref ?? scopedHref("/", scope)} />

@@ -165,7 +165,7 @@ describe("AppShell", () => {
       .getAllByRole("link")
       .map((a) => a.textContent);
     expect(links).toEqual([
-      "MonitorFlowMF",
+      "MonitorFlow",
       "Fleet",
       "Dashboards",
       "Incidents",
@@ -409,7 +409,7 @@ describe("AppShell", () => {
       await user.type(search, "key");
       const names = () => within(nav()).getAllByRole("link").map((a) => a.textContent);
       expect(names()).toEqual([
-        "MonitorFlowMF",
+        "MonitorFlow",
         "Back",
         "Settings",
         "API keys",

@@ -6,6 +6,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
+import { Logo } from "@/components/ui/Logo";
 import { rich, t } from "@/i18n";
 import {
   ApiError,
@@ -92,7 +93,10 @@ export function WelcomeForm() {
   return (
     <div className={styles.page}>
       <main id="main" className={styles.main}>
-        <h1 className={styles.brand}>MonitorFlow</h1>
+        <h1 className={styles.brand}>
+          <Logo size={32} />
+          MonitorFlow
+        </h1>
         {owner === null ? (
           <div className={styles.box}>
             <h2 className={styles.title}>{t("auth.welcome.invalidTitle")}</h2>
