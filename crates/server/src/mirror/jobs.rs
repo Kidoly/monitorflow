@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use monitorflow_common::mirror::demand::{OnDemand, Source};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -53,6 +54,7 @@ pub struct Mirrors {
     pool: PgPool,
     runner: Arc<dyn Runner>,
     layout: Layout,
+    ondemand: OnDemand,
 }
 
 /// A job holding its mirror's lock, ready to execute.
@@ -67,11 +69,19 @@ pub struct Job {
 
 impl Mirrors {
     pub fn new(pool: PgPool, runner: Arc<dyn Runner>, layout: Layout) -> Self {
+        let ondemand = OnDemand::new(layout.store(), Source::Origin(ondemand::client()));
         Self {
             pool,
             runner,
             layout,
+            ondemand,
         }
+    }
+
+    /// Fetches the packages of on-demand snapshots, for the listener and
+    /// prefetching alike, which share their downloads (ADR-0142).
+    pub fn ondemand(&self) -> &OnDemand {
+        &self.ondemand
     }
 
     pub fn pool(&self) -> &PgPool {

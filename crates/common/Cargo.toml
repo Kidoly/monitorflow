@@ -74,3 +74,7 @@ tonic-prost-build.workspace = true
 [[test]]
 name = "mirror_serve"
 required-features = ["mirror"]
+
+[[test]]
+name = "mirror_on_demand"
+required-features = ["mirror"]

@@ -94,6 +94,15 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(f).await?
 }
 
+/// The HTTP client of on-demand fetches toward upstreams, at no base URL
+/// of its own: each `.origin` gives one.
+pub fn client() -> Fetcher {
+    Fetcher::with_agent("http://upstream.invalid", TIMEOUT, "monitorflow-server")
+        // Only fails when the TLS backend cannot start, which every other
+        // client of the server would hit first.
+        .expect("the HTTP client of on-demand mirrors")
+}
+
 /// What a sync did, for the run's log.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Stats {

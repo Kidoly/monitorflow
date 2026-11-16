@@ -99,6 +99,15 @@ impl Fetcher {
         })
     }
 
+    /// The same client and timeout, at another base URL.
+    pub fn at(&self, base: &str) -> Self {
+        Self {
+            client: self.client.clone(),
+            base: base.trim_end_matches('/').to_owned(),
+            timeout: self.timeout,
+        }
+    }
+
     /// URL of `path` (`/`-separated), each segment percent-encoded.
     pub fn url(&self, path: &str) -> String {
         let mut url = self.base.clone();

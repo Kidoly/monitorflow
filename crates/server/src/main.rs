@@ -642,9 +642,14 @@ async fn main() -> anyhow::Result<()> {
                 .context("API server")
         },
         async {
-            mirror::http::serve(mirror_listener, mirrors.layout().clone(), until_stopped())
-                .await
-                .context("mirror server")
+            mirror::http::serve(
+                mirror_listener,
+                mirrors.layout().clone(),
+                Some(mirrors.ondemand().clone()),
+                until_stopped(),
+            )
+            .await
+            .context("mirror server")
         },
         async {
             mirror::scheduler::run(
