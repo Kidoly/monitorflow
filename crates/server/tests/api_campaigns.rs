@@ -183,7 +183,7 @@ db_tests! {
         );
         assert_eq!(created["state"], "draft");
         assert_eq!(created["customer_name"], "acme");
-        assert_eq!(created["spec"], json!({"packages": [], "security_only": true, "allow_reboot": false}));
+        assert_eq!(created["spec"], json!({"packages": [], "security_only": true, "allow_reboot": false, "include_os": true, "third_party": []}));
         assert_eq!(created["command_ttl_s"], 3600);
         assert_eq!(created["failure_threshold"], json!({"value": 10, "unit": "percent"}));
         assert_eq!(created["windows"], h.body()["windows"]);

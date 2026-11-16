@@ -1168,8 +1168,10 @@
                       "sources": null,
                       "spec": {
                         "allow_reboot": false,
+                        "include_os": true,
                         "packages": [],
-                        "security_only": true
+                        "security_only": true,
+                        "third_party": []
                       },
                       "started_at": "2026-11-08T22:00:04Z",
                       "state": "running",
@@ -1350,8 +1352,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": null,
                   "state": "draft",
@@ -1580,8 +1584,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "running",
@@ -1801,8 +1807,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "paused",
@@ -2042,8 +2050,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "running",
@@ -2283,8 +2293,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "scheduled",
@@ -2524,8 +2536,10 @@
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [],
-                    "security_only": true
+                    "security_only": true,
+                    "third_party": []
                   },
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "stopped",
@@ -3214,11 +3228,13 @@
                   "kind": "apply_updates",
                   "parameters": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [
                       "openssl",
                       "libssl3"
                     ],
-                    "security_only": false
+                    "security_only": false,
+                    "third_party": []
                   },
                   "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
                   "sent_at": "2026-11-14T09:00:01Z",
@@ -18029,11 +18045,13 @@
                       "kind": "apply_updates",
                       "parameters": {
                         "allow_reboot": false,
+                        "include_os": true,
                         "packages": [
                           "openssl",
                           "libssl3"
                         ],
-                        "security_only": false
+                        "security_only": false,
+                        "third_party": []
                       },
                       "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
                       "sent_at": "2026-11-14T09:00:01Z",
@@ -18196,11 +18214,13 @@
                   "kind": "apply_updates",
                   "parameters": {
                     "allow_reboot": false,
+                    "include_os": true,
                     "packages": [
                       "openssl",
                       "libssl3"
                     ],
-                    "security_only": false
+                    "security_only": false,
+                    "third_party": []
                   },
                   "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
                   "sent_at": null,
@@ -29077,6 +29097,13 @@
           "failure_threshold": {
             "$ref": "#/components/schemas/CampaignFailureThreshold"
           },
+          "include_os": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether OS updates are included; true by default. Without them,\nonly servers of a platform a selected manager is for are targets\n(ADR-0138)."
+          },
           "name": {
             "type": "string"
           },
@@ -29117,6 +29144,13 @@
                 "type": "null"
               }
             ]
+          },
+          "third_party": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThirdPartySelection"
+            },
+            "description": "Third-party managers to update after the OS, each once:\n`[{\"manager\": \"winget\" | \"flatpak\" | \"snap\", \"packages\": [id]}]`,\nempty `packages` for every pending app (ADR-0138)."
           },
           "waves": {
             "type": "array",
@@ -29268,16 +29302,27 @@
             "type": "boolean",
             "description": "Whether the agent may reboot the server when an update needs it."
           },
+          "include_os": {
+            "type": "boolean",
+            "description": "Whether the OS's own updates are included; true by default\n(ADR-0138)."
+          },
           "packages": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Packages to upgrade; empty upgrades everything."
+            "description": "OS packages to upgrade; empty upgrades everything."
           },
           "security_only": {
             "type": "boolean",
-            "description": "Only security updates."
+            "description": "Only security updates of the OS. Third-party managers have no\nsecurity classification: they are included whole or not at all."
+          },
+          "third_party": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThirdPartySelection"
+            },
+            "description": "Third-party managers to update, after the OS (ADR-0138)."
           }
         }
       },
@@ -29837,6 +29882,13 @@
             "description": "`self_update`: seconds the new agent has to connect before the\nold one comes back; 30 to 3600, 300 by default.",
             "minimum": 0
           },
+          "include_os": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`apply_updates`: include the OS's own updates; true by default\n(ADR-0138)."
+          },
           "kind": {
             "type": "string",
             "description": "`apply_updates` or `self_update`."
@@ -29851,6 +29903,13 @@
           "security_only": {
             "type": "boolean",
             "description": "`apply_updates`: security updates only."
+          },
+          "third_party": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThirdPartySelection"
+            },
+            "description": "`apply_updates`: third-party managers to update after the OS, each\nonce (ADR-0138). Needs an agent that reports third-party apps."
           },
           "ttl_s": {
             "type": [
@@ -29946,7 +30005,7 @@
             "description": "`apply_updates`, `self_update`, `configure_sources`,\n`revert_sources`, `shell` (AI remediation), `ai_commands`, or\n`take_snapshot` and `delete_snapshot` (local snapshots before AI\nchanges)."
           },
           "parameters": {
-            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\"}` for `apply_updates`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`; `null` for a kind this version does not\nknow."
+            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\", \"include_os\", \"third_party\"}` for `apply_updates`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`; `null` for a kind this version does not\nknow."
           },
           "requested_by": {
             "type": [
@@ -38040,6 +38099,27 @@
             "description": "The installed version, as the manager writes it."
           }
         }
+      },
+      "ThirdPartySelection": {
+        "type": "object",
+        "description": "What an update asks of one third-party manager (ADR-0138).",
+        "required": [
+          "manager"
+        ],
+        "properties": {
+          "manager": {
+            "type": "string",
+            "description": "`winget`, `flatpak` or `snap`."
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Package IDs to update; empty updates every pending one."
+          }
+        },
+        "additionalProperties": false
       },
       "Threshold": {
         "type": "object",

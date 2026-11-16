@@ -188,7 +188,7 @@ db_tests! {
         assert_eq!(created["kind"], "apply_updates");
         assert_eq!(
             created["parameters"],
-            json!({"packages": ["libc6"], "security_only": true, "allow_reboot": false})
+            json!({"packages": ["libc6"], "security_only": true, "allow_reboot": false, "include_os": true, "third_party": []})
         );
         assert!(created["requested_by"].as_str().is_some());
         let id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
@@ -374,6 +374,51 @@ db_tests! {
         assert_eq!(cleared, json!({"reported": false, "managers": [], "packages": [], "next_cursor": null}));
         let (_, os) = h.send("GET", &format!("/api/servers/{}/packages", h.server), &viewer, None).await;
         assert_eq!(os["packages"][0]["name"], "libc6");
+    }
+
+    #[sqlx::test]
+    async fn third_party_updates_go_only_to_agents_that_report_them(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let uri = format!("/api/servers/{}/commands", h.server);
+        let snap = json!({"kind": "apply_updates", "include_os": false, "third_party": [{"manager": "snap", "packages": ["firefox"]}]});
+        // An older agent would run an OS update instead.
+        let (status, body) = h.send("POST", &uri, &admin, Some(snap.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"], "this agent does not report third-party apps yet");
+
+        sqlx::query("INSERT INTO server_package_managers (server_id, manager, state) VALUES ($1, 'snap', 'available')")
+            .bind(h.server)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for bad in [
+            json!({"kind": "apply_updates", "include_os": false}),
+            json!({"kind": "apply_updates", "third_party": [{"manager": "winget"}]}),
+            json!({"kind": "apply_updates", "third_party": [{"manager": "snap", "packages": ["-x"]}]}),
+            json!({"kind": "apply_updates", "third_party": [{"manager": "brew"}]}),
+            json!({"kind": "apply_updates", "include_os": false, "packages": ["libc6"], "third_party": [{"manager": "snap"}]}),
+            json!({"kind": "self_update", "version": "0.3.0", "include_os": true}),
+        ] {
+            let (status, body) = h.send("POST", &uri, &admin, Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+        }
+        let (status, created) = h.send("POST", &uri, &admin, Some(snap)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(
+            created["parameters"],
+            json!({"packages": [], "security_only": false, "allow_reboot": false, "include_os": false,
+                   "third_party": [{"manager": "snap", "packages": ["firefox"]}]})
+        );
+        let id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+        let payload: Vec<u8> = sqlx::query_scalar("SELECT payload FROM commands WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let apply = ApplyUpdates::decode(payload.as_slice()).unwrap();
+        assert!(apply.skip_os);
+        assert_eq!(apply.third_party[0].manager(), PackageManager::Snap);
     }
 
     #[sqlx::test]
