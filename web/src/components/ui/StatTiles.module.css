@@ -23,14 +23,14 @@ a.tile:hover,
 
 .label {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .value {
-  font-size: 34px;
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 600;
   line-height: 1;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
 }
 
 .total {
@@ -50,7 +50,14 @@ a.tile:hover,
 }
 
 .plain {
-  background: var(--hl);
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-panel);
+}
+
+a.plain:hover,
+.plain.active {
+  border-color: var(--border-strong);
 }
 
 .plain .label {
@@ -67,5 +74,5 @@ a.tile:hover,
 }
 
 .dense .value {
-  font-size: 30px;
+  font-size: 28px;
 }

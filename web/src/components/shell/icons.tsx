@@ -22,7 +22,10 @@ const PATHS = {
       <path d="M8 5v3l2 1" />
     </>
   ),
-  campaigns: <path d="M3 8h10M9 4l4 4-4 4" />,
+  // Stacked waves: a campaign rolls an update out in waves.
+  campaigns: <path d="M8 2l6 3-6 3-6-3zM2 8l6 3 6-3M2 11l6 3 6-3" />,
+  // Two turning arrows: updates that apply themselves.
+  autoUpdate: <path d="M13.5 6A5.7 5.7 0 0 0 3 4.5M2.5 2v3h3M2.5 10a5.7 5.7 0 0 0 10.5 1.5M13.5 14v-3h-3" />,
   approvals: <path d="M3 8l3 3 7-7" />,
   audit: <path d="M4 3h8v10H4zM6 6h4M6 9h4" />,
   relays: (

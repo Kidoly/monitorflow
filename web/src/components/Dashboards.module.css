@@ -69,13 +69,13 @@
 
 .boxTitle {
   margin: 0;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .figure {
   margin: 0;
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 600;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;

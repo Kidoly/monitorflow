@@ -21,8 +21,9 @@
 /* StatusBadge, kept for the relay pages until their redesign. */
 .online,
 .offline {
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
+  padding: 2px 8px;
+  border-radius: var(--radius-label);
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -49,4 +50,11 @@
   color: var(--text);
   white-space: normal;
   max-width: 56ch;
+}
+
+/* The server's sub-line (OS, agent, relay) ends with an ellipsis rather than widening the table. */
+.host span {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

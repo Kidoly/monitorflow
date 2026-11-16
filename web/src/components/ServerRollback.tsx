@@ -12,6 +12,7 @@ import admin from "./AdminPages.module.css";
 import styles from "./ServerRollback.module.css";
 import { ProxmoxRollback, useProxmox } from "./ProxmoxRollback";
 import { type Column, DataTable } from "./ui/DataTable";
+import { Hint } from "./ui/Hint";
 import { ErrorState, LoadingBlock } from "./ui/PageState";
 import { RelativeTime } from "./ui/RelativeTime";
 import { Label } from "./ui/StatusLabel";
@@ -46,6 +47,22 @@ export function RollbackFact({ server, canMap }: { server: ServerDetail; canMap:
     return <ProxmoxRollback view={proxmoxView} onChanged={refresh} local={local} />;
   }
   return local ?? <GuestLine data={data} />;
+}
+
+/** "Rollback limited ⓘ" when changes would run without a snapshot; nothing otherwise. */
+export function RollbackBadge({ serverId }: { serverId: string }) {
+  const { data } = useRollback(serverId);
+  if (!data || data.snapshots.available) return null;
+  const { snapshots } = data;
+  const why =
+    snapshots.method !== "proxmox" && !proxmoxGuest(data)
+      ? t("serverUpdate.rollback.withoutSnapshot", { reason: capitalize(snapshots.detail ?? t("serverUpdate.rollback.noSupport")) })
+      : capitalize(snapshotReason(snapshots.reason, snapshots.kind));
+  return (
+    <Hint tone="warn" label={t("serverUpdate.rollback.limited")}>
+      {why}
+    </Hint>
+  );
 }
 
 /** The server is a Proxmox guest whose snapshot Proxmox decides. */

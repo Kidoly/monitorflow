@@ -141,12 +141,7 @@ export function RemediationAudit({ filters }: { filters: AuditFilters }) {
     <Page>
       <PageHeader
         title={t("remediation.audit.title")}
-        meta={
-          <>
-            {t("remediation.audit.meta")}
-            <RefreshLine updatedAt={updatedAt} stale={stale} />
-          </>
-        }
+        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
         actions={<ButtonLink href={scopedHref(APPROVALS_PATH, scope)}>{t("remediation.audit.approvals")}</ButtonLink>}
       />
       <FilterBar

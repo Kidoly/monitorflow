@@ -108,9 +108,9 @@ export function CheckCatalogue({
       {!filtered && top.length > 0 && (
         <section aria-label={mostUsed.length > 0 ? t("checks.catalogue.mostUsed") : t("checks.catalogue.common")}>
           <h3 className={styles.rowTitle}>{mostUsed.length > 0 ? t("checks.catalogue.mostUsed") : t("checks.catalogue.common")}</h3>
-          <ul className={cx(styles.grid, styles.top)}>
+          <ul className={styles.grid}>
             {top.map((entry) => (
-              <EntryCard key={entry.id} entry={entry} onPick={pick} />
+              <EntryCard key={entry.id} entry={entry} selected={shown?.id === entry.id} onPick={pick} />
             ))}
           </ul>
         </section>
@@ -136,7 +136,7 @@ export function CheckCatalogue({
           <>
             <ul className={styles.grid}>
               {(filtered || all ? matching : matching.slice(0, FIRST)).map((entry) => (
-                <EntryCard key={entry.id} entry={entry} onPick={pick} />
+                <EntryCard key={entry.id} entry={entry} selected={shown?.id === entry.id} onPick={pick} />
               ))}
             </ul>
             {!filtered && !all && matching.length > FIRST && (
@@ -192,10 +192,10 @@ function FilterRow<T extends string>({
   );
 }
 
-function EntryCard({ entry, onPick }: { entry: CatalogueEntry; onPick: (entry: CatalogueEntry) => void }) {
+function EntryCard({ entry, selected, onPick }: { entry: CatalogueEntry; selected: boolean; onPick: (entry: CatalogueEntry) => void }) {
   return (
     <li>
-      <button type="button" className={styles.card} onClick={() => onPick(entry)}>
+      <button type="button" className={cx(styles.card, selected && styles.selected)} onClick={() => onPick(entry)}>
         <span className={styles.cardTitle}>{entry.title}</span>
         <span className={styles.cardText}>{entry.description}</span>
         <span className={styles.cardFacts}>

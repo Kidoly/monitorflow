@@ -24,14 +24,18 @@ export function RemovePeer({
   id,
   name,
   onRemoved,
+  onClose,
 }: {
   kind: "servers" | "relays";
   id: string;
   name: string;
   onRemoved: () => void;
+  /** Opens at once, without its own trigger (chosen from a menu); called on cancel. */
+  onClose?: () => void;
 }) {
   return (
     <InlineConfirm
+      onClose={onClose}
       trigger={t("server.remove.trigger", { name })}
       title={t("server.remove.title", { name })}
       consequence={kind === "relays" ? t("server.remove.consequenceRelay") : t("server.remove.consequence")}

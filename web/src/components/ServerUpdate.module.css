@@ -24,7 +24,7 @@
 }
 
 .title {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   margin: 0;
 }
@@ -95,4 +95,17 @@
   text-decoration: underline;
   cursor: pointer;
   font: inherit;
+}
+
+/* Download, confirmed under the row: the warning about what a backup holds, then the file. */
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.confirmActions {
+  display: flex;
+  gap: 8px;
 }

@@ -115,7 +115,6 @@ export function FleetOverview() {
 
   const now = updatedAt ?? new Date();
   const all = data ? toRows({ ...data, servers: data.servers.filter((s) => inScope(s, scope)) }, now) : [];
-  const online = all.filter((r) => r.server.status === "online").length;
 
   // `status` (online, offline) is kept for older links.
   const status = params.get("status");
@@ -147,6 +146,7 @@ export function FleetOverview() {
     {
       key: "host",
       header: t("fleet.column.server"),
+      className: styles.host,
       cell: (r) => (
         <PrimaryCell
           title={r.server.hostname}
@@ -183,12 +183,7 @@ export function FleetOverview() {
     <Page>
       <PageHeader
         title={t("fleet.title")}
-        meta={
-          <>
-            {data && t("fleet.count", { count: all.length, online })}
-            <RefreshLine updatedAt={updatedAt} stale={stale} />
-          </>
-        }
+        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
         actions={
           <>
             <Button onClick={refresh}>{t("fleet.refresh")}</Button>
@@ -357,7 +352,7 @@ export function StatusBadge({
   const online = server.status === "online";
   return (
     <span className={online ? styles.online : styles.offline}>
-      <span aria-hidden="true">{online ? "●" : "○"}</span> {online ? t("fleet.online") : t("fleet.offline")}
+      {online ? t("fleet.online") : t("fleet.offline")}
       {server.via_relay && ` ${t("fleet.via", { relay: server.via_relay })}`}
       {server.revoked_at && t("fleet.revoked")}
     </span>
