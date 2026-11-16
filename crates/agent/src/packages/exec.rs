@@ -28,6 +28,12 @@ pub struct Tools {
     pub agent: PathBuf,
     /// Exists when a Debian-family host needs a reboot.
     pub reboot_required_file: PathBuf,
+    /// Flatpak, when installed (ADR-0138).
+    pub flatpak: PathBuf,
+    /// The snap command, for the root helper's refreshes (ADR-0138).
+    pub snap: PathBuf,
+    /// snapd's REST API, which the agent reads as its own user (ADR-0138).
+    pub snapd_socket: PathBuf,
 }
 
 impl Default for Tools {
@@ -41,6 +47,9 @@ impl Default for Tools {
             shutdown: "/usr/sbin/shutdown".into(),
             agent: "/usr/bin/monitorflow-agent".into(),
             reboot_required_file: "/var/run/reboot-required".into(),
+            flatpak: "/usr/bin/flatpak".into(),
+            snap: "/usr/bin/snap".into(),
+            snapd_socket: "/run/snapd.socket".into(),
         }
     }
 }
