@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { Contact, OnCallSchedule, OnCallTurn } from "@/lib/api";
 import { formatWhen } from "@/lib/onCall";
 import { As, customerAdmin, me } from "@/test/admin";
@@ -92,6 +93,26 @@ describe("OnCallPage", () => {
     expect(within(table).getByText("Now")).toBeInTheDocument();
     expect(within(card).queryByText(/nobody can be told/)).not.toBeInTheDocument();
     expect(screen.getByText("alice@example.com")).toBeInTheDocument();
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch({
+      "GET /api/on-call/schedules": { status: 200, body: { schedules: [schedule()] } },
+      "GET /api/on-call/contact": { status: 200, body: contact },
+    });
+    render(
+      <As user={customerAdmin}>
+        <OnCallPage />
+      </As>,
+    );
+    const card = await screen.findByRole("region", { name: "Ops" });
+    expect(within(card).getByText("Tout acme · Relève chaque lundi à 09:00, heure de Europe/Paris")).toBeInTheDocument();
+    expect(within(card).getByText("D’astreinte maintenant").nextSibling).toHaveTextContent("alice");
+    const table = within(card).getByRole("table", { name: "Semaines à venir de Ops" });
+    expect(within(table).getByText("Maintenant")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Astreinte" })).toBeInTheDocument();
+    expect(screen.getByText("Comment vous joindre")).toBeInTheDocument();
   });
 
   it("shows gaps before they happen, and who is told instead", async () => {

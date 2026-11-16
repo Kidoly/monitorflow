@@ -1,5 +1,7 @@
 // Short local dates and times of the administration pages' tables and facts.
 
+import { t } from "@/i18n";
+
 const pad = (n: number) => String(n).padStart(2, "0");
 
 const sameDay = (a: Date, b: Date) =>
@@ -22,10 +24,10 @@ export function formatMinute(date: Date): string {
 
 /** Relative to `now`'s day: "14:32 today", "yesterday 22:05", else "2026-10-20 16:40". */
 export function formatWhen(date: Date, now: Date): string {
-  if (sameDay(date, now)) return `${formatHourMinute(date)} today`;
+  if (sameDay(date, now)) return t("ui.clock.today", { time: formatHourMinute(date) });
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (sameDay(date, yesterday)) return `yesterday ${formatHourMinute(date)}`;
+  if (sameDay(date, yesterday)) return t("ui.clock.yesterday", { time: formatHourMinute(date) });
   return formatMinute(date);
 }
 

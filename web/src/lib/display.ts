@@ -1,5 +1,6 @@
 import type { Panel } from "./api";
 import { formatClock } from "@/components/ui/time";
+import { t } from "@/i18n";
 
 /** The page that shows dashboards on a screen (ADR-0099). */
 export const DISPLAY_PATH = "/display/";
@@ -51,7 +52,7 @@ export function isStale(lastAnswer: number | null, now: number, refreshMs: numbe
 
 /** The banner of a stale screen, with the time of what it shows. */
 export function staleText(dataTime: Date): string {
-  return `Data from ${formatClock(dataTime).slice(0, 5)} — this screen has lost its connection to MonitorFlow. It keeps trying.`;
+  return t("display.screen.stale", { time: formatClock(dataTime).slice(0, 5) });
 }
 
 /** The page after `page` of `count`, back to the first after the last. */
@@ -62,17 +63,13 @@ export function nextPage(page: number, count: number): number {
 /** Why a screen shows no dashboard, in plain words. */
 export type ScreenProblem = "gone" | "nothing" | "missing";
 
-export const PROBLEM_TEXT: Record<ScreenProblem, { title: string; text: string }> = {
-  gone: {
-    title: "This display link no longer works",
-    text: "It was turned off or has expired. Ask an administrator for a new one.",
-  },
-  nothing: {
-    title: "Nothing to show",
-    text: "The person who made this display link can no longer show its dashboards. This screen tries again every few minutes.",
-  },
-  missing: {
-    title: "Nothing to show",
-    text: "This dashboard does not exist, or you cannot see it.",
-  },
-};
+export function problemText(problem: ScreenProblem): { title: string; text: string } {
+  switch (problem) {
+    case "gone":
+      return { title: t("display.problem.gone"), text: t("display.problem.goneText") };
+    case "nothing":
+      return { title: t("display.problem.nothing"), text: t("display.problem.nothingText") };
+    case "missing":
+      return { title: t("display.problem.nothing"), text: t("display.problem.missingText") };
+  }
+}

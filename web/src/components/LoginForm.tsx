@@ -6,6 +6,7 @@ import { type FormEvent, useEffect, useState, useSyncExternalStore } from "react
 import { SetupHint } from "@/components/SetupHint";
 import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
+import { t } from "@/i18n";
 import { ApiError, api, describeError } from "@/lib/api";
 
 import styles from "./LoginForm.module.css";
@@ -96,7 +97,7 @@ export function LoginForm() {
   }
 
   const invalid = failure?.kind === "credentials";
-  const server = host || "The server";
+  const server = host || t("auth.theServer");
 
   if (setupPending) {
     return (
@@ -104,9 +105,9 @@ export function LoginForm() {
         <main id="main" className={styles.main}>
           <h1 className={styles.brand}>MonitorFlow</h1>
           <div className={styles.box}>
-            <h2 className={styles.title}>Finish setting up</h2>
+            <h2 className={styles.title}>{t("auth.setupPending.title")}</h2>
             <Banner tone="warn">
-              <strong>No account yet.</strong> Create the administrator with the setup link.
+              <strong>{t("auth.setupPending.noAccount")}</strong> {t("auth.setupPending.text")}
             </Banner>
             <SetupHint />
           </div>
@@ -121,23 +122,23 @@ export function LoginForm() {
         <h1 className={styles.brand}>MonitorFlow</h1>
         <form className={styles.box} onSubmit={onSubmit} aria-labelledby="signin-title">
           <h2 id="signin-title" className={styles.title}>
-            Sign in
+            {t("auth.signIn")}
           </h2>
           {failure?.kind === "credentials" && (
             <Banner tone="bad">
-              <strong>Wrong username or password.</strong> Check both and try again.
+              <strong>{t("auth.wrong.title")}</strong> {t("auth.wrong.text")}
             </Banner>
           )}
           {failure?.kind === "unreachable" && (
             // An alert, not a status: it stops the sign-in.
             <Banner tone="warn" role="alert">
-              <strong>Server unreachable.</strong> {server} did not respond.
-              {!failure.sent && " Your credentials were not sent."}
+              <strong>{t("auth.unreachable.title")}</strong> {t("auth.unreachable.text", { server })}
+              {!failure.sent && ` ${t("auth.unreachable.notSent")}`}
             </Banner>
           )}
           {failure?.kind === "other" && <Banner tone="bad">{failure.message}</Banner>}
           <label className={styles.label}>
-            Username
+            {t("auth.username")}
             <input
               className={styles.input}
               name="username"
@@ -151,7 +152,7 @@ export function LoginForm() {
             />
           </label>
           <label className={styles.label}>
-            Password
+            {t("auth.password")}
             <input
               className={styles.input}
               name="password"
@@ -164,7 +165,7 @@ export function LoginForm() {
             />
           </label>
           <Button className={styles.submit} variant="k" size="large" type="submit" disabled={pending || waiting}>
-            {pending ? "Signing in…" : waiting ? `Retrying in ${retryIn} s…` : "Sign in"}
+            {pending ? t("auth.signingIn") : waiting ? t("auth.retryingIn", { seconds: String(retryIn) }) : t("auth.signIn")}
           </Button>
         </form>
         {host && <p className={styles.foot}>{host} · MonitorFlow</p>}

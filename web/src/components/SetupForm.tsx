@@ -6,6 +6,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { SetupHint } from "@/components/SetupHint";
 import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
+import { t } from "@/i18n";
 import { ApiError, LOGIN_PATH, MIN_PASSWORD_LENGTH, api, describeError, isAbortError } from "@/lib/api";
 
 import styles from "./LoginForm.module.css";
@@ -82,14 +83,13 @@ export function SetupForm() {
         <h1 className={styles.brand}>MonitorFlow</h1>
         {!ready ? null : noLink ? (
           <div className={styles.box}>
-            <h2 className={styles.title}>Setup link needed</h2>
+            <h2 className={styles.title}>{t("auth.setup.linkNeeded")}</h2>
             <Banner tone="warn">
               {token === "" ? (
-                <strong>This address has no setup link.</strong>
+                <strong>{t("auth.setup.noLink")}</strong>
               ) : (
                 <>
-                  <strong>This setup link is no longer valid.</strong> It was already used, replaced by a newer one, or
-                  expired.
+                  <strong>{t("auth.setup.linkInvalid")}</strong> {t("auth.setup.linkInvalidText")}
                 </>
               )}
             </Banner>
@@ -98,17 +98,17 @@ export function SetupForm() {
         ) : (
           <form className={styles.box} onSubmit={onSubmit} aria-labelledby="setup-title">
             <h2 id="setup-title" className={styles.title}>
-              Create the administrator
+              {t("auth.setup.title")}
             </h2>
-            <p className={styles.text}>This account manages everything. You can add colleagues once you are signed in.</p>
+            <p className={styles.text}>{t("auth.setup.text")}</p>
             {failure?.kind === "mismatch" && (
               <Banner tone="bad">
-                <strong>The passwords differ.</strong> Type the same password twice.
+                <strong>{t("auth.mismatch.title")}</strong> {t("auth.mismatch.text")}
               </Banner>
             )}
             {failure?.kind === "other" && <Banner tone="bad">{failure.message}</Banner>}
             <label className={styles.label}>
-              Username
+              {t("auth.username")}
               <input
                 className={styles.input}
                 name="username"
@@ -121,7 +121,7 @@ export function SetupForm() {
               />
             </label>
             <label className={styles.label}>
-              Password
+              {t("auth.password")}
               <input
                 className={styles.input}
                 name="password"
@@ -135,10 +135,10 @@ export function SetupForm() {
               />
             </label>
             <p id="password-hint" className={styles.hint}>
-              At least {MIN_PASSWORD_LENGTH} characters.
+              {t("auth.passwordHint", { count: MIN_PASSWORD_LENGTH })}
             </p>
             <label className={styles.label}>
-              Confirm password
+              {t("auth.confirmPassword")}
               <input
                 className={styles.input}
                 name="confirm"
@@ -151,7 +151,7 @@ export function SetupForm() {
               />
             </label>
             <Button className={styles.submit} variant="k" size="large" type="submit" disabled={pending}>
-              {pending ? "Creating…" : "Create and sign in"}
+              {pending ? t("auth.setup.creating") : t("auth.setup.create")}
             </Button>
           </form>
         )}

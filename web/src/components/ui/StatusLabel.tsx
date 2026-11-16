@@ -1,60 +1,53 @@
 import type { ReactNode } from "react";
 
+import { type PlainKey, t } from "@/i18n";
+
 import { cx } from "./cx";
 import styles from "./StatusLabel.module.css";
 import type { Tone } from "./tone";
 
 /**
- * Every status word of the handoff and its tint, by domain: the same word
- * can take another tint elsewhere ("Removed" is neutral for a server, "Revoked" bad
- * for a certificate; "Pending" is info for a token, warn for a patch).
+ * Every status of the handoff and its tint, by domain; the words are the
+ * catalog's `ui.status.<kind>.<value>`. The same word can take another tint
+ * elsewhere ("Removed" is neutral for a server, "Revoked" bad for a
+ * certificate; "Pending" is info for a token, warn for a patch).
  */
-export const STATUS_WORDS = {
-  server: { online: ["Online", "ok"], offline: ["Offline", "bad"], revoked: ["Removed", "neutral"] },
-  sensor: { ok: ["OK", "ok"], warning: ["Warning", "warn"], critical: ["Critical", "bad"], unknown: ["Unknown", "neutral"] },
-  severity: { critical: ["Critical", "bad"], warning: ["Warning", "warn"], resolved: ["Resolved", "neutral"] },
-  certificate: { revoked: ["Revoked", "bad"] },
-  token: { pending: ["Pending", "info"], used: ["Used", "ok"], expired: ["Expired", "neutral"], revoked: ["Revoked", "neutral"] },
-  installKey: { active: ["Active", "ok"], expired: ["Expired", "neutral"], used_up: ["All hosts used", "neutral"], revoked: ["Revoked", "neutral"] },
+export const STATUS_TONES = {
+  server: { online: "ok", offline: "bad", revoked: "neutral" },
+  sensor: { ok: "ok", warning: "warn", critical: "bad", unknown: "neutral" },
+  severity: { critical: "bad", warning: "warn", resolved: "neutral" },
+  certificate: { revoked: "bad" },
+  token: { pending: "info", used: "ok", expired: "neutral", revoked: "neutral" },
+  installKey: { active: "ok", expired: "neutral", used_up: "neutral", revoked: "neutral" },
   run: {
-    running: ["Running", "info"],
-    sent: ["Sent", "info"],
-    succeeded: ["Succeeded", "ok"],
-    failed: ["Failed", "bad"],
-    queued: ["Queued", "neutral"],
-    expired: ["Expired", "neutral"],
-    cancelled: ["Cancelled", "neutral"],
+    running: "info",
+    sent: "info",
+    succeeded: "ok",
+    failed: "bad",
+    queued: "neutral",
+    expired: "neutral",
+    cancelled: "neutral",
   },
-  patch: {
-    pending: ["Pending", "warn"],
-    approved: ["Approved", "info"],
-    installed: ["Installed", "ok"],
-    failed: ["Failed", "bad"],
-    rejected: ["Rejected", "neutral"],
-  },
+  patch: { pending: "warn", approved: "info", installed: "ok", failed: "bad", rejected: "neutral" },
   remediation: {
-    open: ["Open", "warn"],
-    running: ["Running", "info"],
-    awaiting_approval: ["Awaiting approval", "warn"],
-    resolved: ["Resolved", "ok"],
-    escalated: ["Escalated", "bad"],
-    failed: ["Failed", "bad"],
+    open: "warn",
+    running: "info",
+    awaiting_approval: "warn",
+    resolved: "ok",
+    escalated: "bad",
+    failed: "bad",
   },
-  approval: { waiting: ["Waiting", "warn"], approved: ["Approved", "ok"], rejected: ["Rejected", "neutral"] },
-  risk: {
-    "read-only": ["Read-only", "ok"],
-    "low-impact": ["Low-impact", "info"],
-    "high-impact": ["High-impact", "warn"],
-    forbidden: ["Forbidden", "bad"],
-  },
-} as const satisfies Record<string, Record<string, readonly [string, Tone]>>;
+  approval: { waiting: "warn", approved: "ok", rejected: "neutral" },
+  risk: { "read-only": "ok", "low-impact": "info", "high-impact": "warn", forbidden: "bad" },
+} as const satisfies Record<string, Record<string, Tone>>;
 
-export type StatusKind = keyof typeof STATUS_WORDS;
-export type StatusValue<K extends StatusKind> = keyof (typeof STATUS_WORDS)[K];
+export type StatusKind = keyof typeof STATUS_TONES;
+export type StatusValue<K extends StatusKind> = keyof (typeof STATUS_TONES)[K];
 
-/** The word and tint of `value` in `kind`. */
+/** The word, in the active language, and tint of `value` in `kind`. */
 export function statusWord<K extends StatusKind>(kind: K, value: StatusValue<K>): readonly [string, Tone] {
-  return (STATUS_WORDS[kind] as Record<PropertyKey, readonly [string, Tone]>)[value]!;
+  const tone = (STATUS_TONES[kind] as Record<PropertyKey, Tone>)[value]!;
+  return [t(`ui.status.${kind}.${String(value)}` as PlainKey), tone];
 }
 
 /**

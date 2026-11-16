@@ -89,3 +89,8 @@ export function activeLocale(): Locale {
 export function setActiveLocale(locale: Locale) {
   active = locale;
 }
+
+/** The locale dates are written in: English ones read day first, "30 November 2027", as the design has them. */
+export function dateLocale(): string {
+  return active === "en" ? "en-GB" : active;
+}

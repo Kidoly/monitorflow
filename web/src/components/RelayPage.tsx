@@ -8,9 +8,11 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { type Fact, FactsBox } from "@/components/ui/FactsBox";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
+import { missingText } from "@/components/ui/Missing";
 import { ErrorState, LoadingBlock, NotFound, PageHeader, StaleBanner } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { StatusLabel } from "@/components/ui/StatusLabel";
+import { t } from "@/i18n";
 import {
   ApiError,
   type AttachedServer,
@@ -45,13 +47,18 @@ import { CertificateCell, relayStatus } from "./RelayList";
 import { NewInstallKey } from "./TokensAdmin";
 
 /** RFC 5280 reasons, as the revoke route takes them (ADR-0029). */
-const REASONS: { value: RevocationReason; label: string }[] = [
-  { value: "cessation_of_operation", label: "Decommissioned" },
-  { value: "key_compromise", label: "Key compromised" },
-  { value: "affiliation_changed", label: "Moved to another organisation" },
-  { value: "superseded", label: "Replaced by a new install" },
-  { value: "unspecified", label: "Unspecified" },
+const REASONS: readonly RevocationReason[] = [
+  "cessation_of_operation",
+  "key_compromise",
+  "affiliation_changed",
+  "superseded",
+  "unspecified",
 ];
+
+/** A revocation reason in words; an unknown one as the server says it. */
+function reasonWord(reason: string): string {
+  return (REASONS as readonly string[]).includes(reason) ? t(`relays.reason.${reason as RevocationReason}`) : reason;
+}
 
 /** Open incidents fetched to fill the Problem column; the API has no per-relay filter. */
 const INCIDENT_LIMIT = 500;
@@ -110,15 +117,17 @@ export function updateText(update: RelayCommand): string {
   switch (update.state) {
     case "queued":
     case "sent":
-      return `Update to ${update.version} queued`;
+      return t("relays.update.queued", { version: update.version });
     case "running":
-      return `Updating to ${update.version}`;
+      return t("relays.update.running", { version: update.version });
     case "succeeded":
-      return `Updated to ${update.version}`;
+      return t("relays.update.succeeded", { version: update.version });
     case "failed":
-      return `Update to ${update.version} failed${update.error ? `: ${update.error}` : ""}`;
+      return update.error
+        ? t("relays.update.failedWith", { version: update.version, error: update.error })
+        : t("relays.update.failed", { version: update.version });
     default:
-      return `Update to ${update.version} ${update.state}`;
+      return t("relays.update.other", { version: update.version, state: update.state });
   }
 }
 
@@ -139,17 +148,20 @@ function UpdateRelay({ relay, latest, me, onQueued }: { relay: RelayDetail; late
   }
   return (
     <InlineConfirm
-      trigger={`Update relay to ${latest}…`}
+      trigger={t("relays.update.trigger", { version: latest })}
       triggerVariant="default"
-      title={`Update ${relay.peer_id} to ${latest}?`}
-      consequence={`The relay downloads ${latest}, checks its signature and restarts into it; its agents reconnect a few seconds later. If the new relay does not connect within 5 minutes, ${relay.relay_version ?? "the current version"} comes back.`}
-      confirmLabel={`Update ${relay.peer_id}`}
-      pendingLabel="Queuing…"
+      title={t("relays.update.title", { name: relay.peer_id, version: latest })}
+      consequence={t("relays.update.consequence", {
+        version: latest,
+        current: relay.relay_version ?? t("relays.update.current"),
+      })}
+      confirmLabel={t("relays.update.confirm", { name: relay.peer_id })}
+      pendingLabel={t("relays.update.queuing")}
       onConfirm={async () => {
         await api.updateRelay(relay.id, latest);
         onQueued();
       }}
-      describeError={(e) => `The update was not queued. ${describeError(e)}`}
+      describeError={(e) => t("relays.update.notQueued", { error: describeError(e) })}
     />
   );
 }
@@ -169,7 +181,7 @@ function AddServers({ relay, me }: { relay: RelayDetail; me: Me }) {
     try {
       setCreated(await api.createInstallKey({ site_id: relay.site_id, require_approval: false }));
     } catch (e) {
-      setError(`Creating the install command failed. ${describeError(e)}`);
+      setError(t("relays.add.createFailed", { error: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -188,7 +200,7 @@ function AddServers({ relay, me }: { relay: RelayDetail; me: Me }) {
   return (
     <div className={styles.buttons}>
       <Button variant="k" disabled={busy} onClick={() => void create()}>
-        Add servers behind this relay
+        {t("relays.addServersBehind")}
       </Button>
       {error && (
         <p className={styles.formError} role="alert">
@@ -209,7 +221,7 @@ function Problem({ row, now }: { row: Row; now: Date }) {
         &nbsp; {metricTitle(worst.metric)}
         {worst.instance && ` ${worst.instance}`}{" "}
         <span className={styles.dim}>{formatValue(worst.last_value, unitOf(worst.metric))}</span>
-        {others.length > 0 && <span className={styles.dim}> · {others.length} more</span>}
+        {others.length > 0 && <span className={styles.dim}> · {t("relays.more", { count: others.length })}</span>}
       </>
     );
   }
@@ -217,11 +229,11 @@ function Problem({ row, now }: { row: Row; now: Date }) {
     const last = row.server?.last_heartbeat;
     return (
       <span className={styles.dim}>
-        {last ? `Last contact ${formatWhen(new Date(last), now)}` : "Never connected"}
+        {last ? t("relays.lastContact", { when: formatWhen(new Date(last), now) }) : t("relays.neverConnected")}
       </span>
     );
   }
-  return <span className={styles.dim}>—</span>;
+  return null;
 }
 
 export function RelayPage({ id, me }: { id: string | null; me: Me }) {
@@ -229,20 +241,27 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
   const fetcher = useCallback((signal: AbortSignal) => load(id ?? "", signal), [id]);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { enabled: valid });
 
-  const crumb = (current: string) => <Breadcrumb parents={[{ label: "Relays", href: RELAYS_PATH }]} current={current} />;
+  const crumb = (current: string) => <Breadcrumb parents={[{ label: t("relays.title"), href: RELAYS_PATH }]} current={current} />;
   if (!valid || data === null) {
     return (
       <div className={styles.page}>
-        {crumb("Not found")}
-        <NotFound title="Relay not found" actions={<ButtonLink href={RELAYS_PATH}>Back to relays</ButtonLink>} />
+        {crumb(t("relays.notFound"))}
+        <NotFound
+          title={t("relays.notFound.title")}
+          actions={<ButtonLink href={RELAYS_PATH}>{t("relays.back")}</ButtonLink>}
+        />
       </div>
     );
   }
   if (!data) {
     return (
       <div className={styles.page}>
-        {crumb("Relay")}
-        {error ? <ErrorState what="the relay" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock label="Loading relay" />}
+        {crumb(t("relays.relay"))}
+        {error ? (
+          <ErrorState what={t("relays.whatOne")} error={describeError(error)} onRetry={refresh} />
+        ) : (
+          <LoadingBlock label={t("relays.loading")} />
+        )}
       </div>
     );
   }
@@ -251,17 +270,17 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
   const now = updatedAt ?? new Date();
   const { certificate } = relay;
   const facts: Fact[] = [
-    { label: "Site", value: multiCustomer(me) ? `${relay.site_name} · ${relay.customer_name}` : relay.site_name },
+    { label: t("relays.facts.site"), value: multiCustomer(me) ? `${relay.site_name} · ${relay.customer_name}` : relay.site_name },
     {
-      label: "Last seen",
-      value: relay.last_heartbeat ? <RelativeTime value={relay.last_heartbeat} now={now} /> : "never",
+      label: t("relays.facts.seen"),
+      value: relay.last_heartbeat ? <RelativeTime value={relay.last_heartbeat} now={now} /> : t("relays.never"),
     },
     {
-      label: "Connected since",
-      value: relay.status === "online" && relay.connected_at ? formatMinute(new Date(relay.connected_at)) : "—",
+      label: t("relays.facts.since"),
+      value: relay.status === "online" && relay.connected_at ? formatMinute(new Date(relay.connected_at)) : t("relays.facts.notConnected"),
     },
     {
-      label: "Certificate",
+      label: t("relays.facts.certificate"),
       value: certificate?.revoked ? (
         <StatusLabel kind="certificate" value="revoked" />
       ) : relay.cert_not_after && certificateState(relay.cert_not_after, now) !== "valid" ? (
@@ -271,36 +290,34 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
       ) : (
         <>
           <CertificateCell notAfter={relay.cert_not_after} now={now} />
-          {relay.cert_not_after && ", renews automatically"}
+          {relay.cert_not_after && t("relays.facts.renews")}
         </>
       ),
     },
-    { label: "Version", value: relay.relay_version ?? "—" },
-    ...(relay.last_update ? [{ label: "Self-update", value: updateText(relay.last_update) }] : []),
+    { label: t("relays.facts.version"), value: relay.relay_version ?? missingText("unknown") },
+    ...(relay.last_update ? [{ label: t("relays.facts.selfUpdate"), value: updateText(relay.last_update) }] : []),
     {
-      label: "Addresses",
-      value: relay.pending_names ? "Waiting for confirmation" : relay.server_names.join(", ") || "—",
+      label: t("relays.facts.addresses"),
+      value: relay.pending_names ? t("relays.waitingConfirmation") : relay.server_names.join(", ") || missingText("none"),
     },
-    { label: "Added", value: formatMinute(new Date(relay.created_at)) },
+    { label: t("relays.facts.added"), value: formatMinute(new Date(relay.created_at)) },
     ...(relay.revoked_at
       ? []
-      : [{ label: "Offline alerts", value: <OfflineAlerts kind="relays" target={relay} onChanged={refresh} /> }]),
+      : [{ label: t("relays.facts.offlineAlerts"), value: <OfflineAlerts kind="relays" target={relay} onChanged={refresh} /> }]),
     ...(relay.revoked_at
       ? [
           ...(certificate?.revocation_reason ? [
                 {
-                  label: "Reason",
-                  value:
-                    REASONS.find((r) => r.value === certificate.revocation_reason)?.label ??
-                    certificate.revocation_reason,
+                  label: t("relays.facts.reason"),
+                  value: reasonWord(certificate.revocation_reason),
                 },
               ] : []),
         ]
       : []),
   ];
   const details: Fact[] = [
-    ...(certificate ? [{ label: "Certificate serial", value: certificate.serial, mono: true }] : []),
-    ...(relay.cert_not_after ? [{ label: "Certificate valid until", value: formatDay(new Date(relay.cert_not_after)) }] : []),
+    ...(certificate ? [{ label: t("relays.facts.serial"), value: certificate.serial, mono: true }] : []),
+    ...(relay.cert_not_after ? [{ label: t("relays.facts.validUntil"), value: formatDay(new Date(relay.cert_not_after)) }] : []),
   ];
 
   const connected = rows.filter((row) => row.status === "online").length;
@@ -308,28 +325,28 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
   const columns: Column<Row>[] = [
     {
       key: "host",
-      header: "Server",
+      header: t("relays.column.server"),
       cell: (row) => (
         <PrimaryCell
           title={row.hostname}
           href={serverHref(row.id)}
           sub={
             row.server &&
-            [formatOs(row.server.os_family, row.server.os_version), row.server.agent_version && `agent ${row.server.agent_version}`]
+            [formatOs(row.server.os_family, row.server.os_version), row.server.agent_version && t("relays.agent", { version: row.server.agent_version })]
               .filter(Boolean)
               .join(" · ")
           }
         />
       ),
     },
-    { key: "status", header: "Status", cell: (row) => <StatusLabel kind="server" value={row.status} /> },
-    { key: "problem", header: "Problem", cell: (row) => <Problem row={row} now={now} /> },
+    { key: "status", header: t("relays.column.status"), cell: (row) => <StatusLabel kind="server" value={row.status} /> },
+    { key: "problem", header: t("relays.column.problem"), cell: (row) => <Problem row={row} now={now} /> },
     {
       key: "seen",
-      header: "Last seen",
+      header: t("relays.column.seen"),
       className: styles.dim,
       cell: (row) =>
-        row.server?.last_heartbeat ? <RelativeTime value={row.server.last_heartbeat} now={now} /> : "never",
+        row.server?.last_heartbeat ? <RelativeTime value={row.server.last_heartbeat} now={now} /> : t("relays.never"),
     },
   ];
 
@@ -372,11 +389,9 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
       <section className={styles.section} aria-labelledby="attached-title">
         <div className={styles.sectionHead}>
           <h2 id="attached-title" className={styles.sectionTitle}>
-            Servers connecting through {relay.peer_id}
+            {t("relays.attached.title", { name: relay.peer_id })}
           </h2>
-          <span className={styles.dim}>
-            {rows.length} {rows.length === 1 ? "server" : "servers"}, {connected} connected now
-          </span>
+          <span className={styles.dim}>{t("relays.attached.count", { count: rows.length, connected })}</span>
         </div>
         {canAdminister && !relay.pending_names && relay.server_names.length > 0 && (
           <AddServers relay={relay} me={me} />
@@ -384,11 +399,11 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
         {rows.length === 0 ? (
           <p className={styles.sectionNote}>
             {relay.pending_names
-              ? "Agents can connect through this relay once its addresses are confirmed."
-              : "No agent has connected through this relay yet."}
+              ? t("relays.attached.waiting")
+              : t("relays.attached.none")}
           </p>
         ) : (
-          <DataTable bare label={`Servers connecting through ${relay.peer_id}`} columns={columns} rows={rows} rowKey={(row) => row.id} />
+          <DataTable bare label={t("relays.attached.title", { name: relay.peer_id })} columns={columns} rows={rows} rowKey={(row) => row.id} />
         )}
       </section>
     </div>

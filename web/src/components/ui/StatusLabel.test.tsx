@@ -1,13 +1,16 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { Label, STATUS_WORDS, type StatusKind, StatusLabel } from "./StatusLabel";
+import { setActiveLocale } from "@/i18n/locale";
+
+import { Label, STATUS_TONES, type StatusKind, StatusLabel, statusWord } from "./StatusLabel";
 import styles from "./StatusLabel.module.css";
 
 describe("StatusLabel", () => {
   it("writes every status of the handoff as a word in its tint", () => {
-    for (const [kind, words] of Object.entries(STATUS_WORDS)) {
-      for (const [value, [word, tone]] of Object.entries(words)) {
+    for (const [kind, tones] of Object.entries(STATUS_TONES)) {
+      for (const value of Object.keys(tones)) {
+        const [word, tone] = statusWord(kind as StatusKind, value as never);
         const { unmount } = render(<StatusLabel kind={kind as StatusKind} value={value as never} />);
         const label = screen.getByText(word);
         expect(label).toHaveClass(styles.label!, styles[tone]!);
@@ -17,7 +20,11 @@ describe("StatusLabel", () => {
   });
 
   it("covers the README's vocabulary", () => {
-    const words = new Set(Object.values(STATUS_WORDS).flatMap((w) => Object.values(w).map(([word]) => word)));
+    const words = new Set(
+      Object.entries(STATUS_TONES).flatMap(([kind, tones]) =>
+        Object.keys(tones).map((value) => statusWord(kind as StatusKind, value as never)[0]),
+      ),
+    );
     for (const word of ["Online", "Offline", "Revoked", "OK", "Warning", "Critical", "Unknown", "Pending", "Approved", "Installed", "Failed", "Rejected", "Read-only", "Low-impact", "High-impact", "Forbidden"]) {
       expect(words).toContain(word);
     }
@@ -38,6 +45,12 @@ describe("StatusLabel", () => {
     const [token, patch] = screen.getAllByText("Pending");
     expect(token).toHaveClass(styles.info!);
     expect(patch).toHaveClass(styles.warn!, styles.small!);
+  });
+
+  it("speaks the active language", () => {
+    setActiveLocale("fr");
+    render(<StatusLabel kind="server" value="offline" />);
+    expect(screen.getByText("Hors ligne")).toHaveClass(styles.bad!);
   });
 
   it("takes free words", () => {

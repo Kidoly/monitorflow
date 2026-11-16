@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { ChatKind, NotificationChannel } from "@/lib/api";
 import { As, customerAdmin, me, single, siteAdmin, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -132,6 +133,26 @@ describe("NotificationsPage", () => {
     for (const name of ["Add Slack", "Add Teams", "Add Discord"]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch({
+      [`GET ${CHANNELS}`]: { status: 200, body: { channels: [hook()] } },
+      "GET /api/customers": customers,
+    });
+    page();
+    expect(await screen.findByText("Webhook vers hooks.slack.com")).toBeInTheDocument();
+    expect(screen.getByText("Rien d’envoyé pour l’instant")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ajouter e-mail" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Envoyer un test" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Envoie à" })).toBeInTheDocument();
+    const email = hook({
+      kind: "email",
+      settings: { to: ["a@example.com"], host: "smtp.example.com", port: 587, username: "", from: "" },
+    } as Partial<NotificationChannel>);
+    expect(destination(email)).toBe("E-mail à a@example.com via smtp.example.com:587");
+    expect(destination(chat())).toBe("Slack : #ops");
   });
 
   it.each([

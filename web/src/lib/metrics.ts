@@ -1,34 +1,40 @@
+import { t } from "@/i18n";
+
 import type { EffectiveSensor, Rollup } from "./api";
 
 /** Prefix of every metric MonitorFlow stores (ADR-0015). */
 export const METRIC_PREFIX = "monitorflow_";
 
-/** Built-in metrics (ADR-0015) in display order, with their titles. */
-export const METRIC_TITLES: Record<string, string> = {
-  cpu_usage_ratio: "CPU usage",
-  cpu_load1: "Load average, 1 min",
-  cpu_load5: "Load average, 5 min",
-  cpu_load15: "Load average, 15 min",
-  memory_used_bytes: "Memory used",
-  memory_available_ratio: "Memory available",
-  memory_available_bytes: "Memory available (bytes)",
-  memory_total_bytes: "Memory total",
-  memory_swap_free_bytes: "Swap free",
-  memory_swap_total_bytes: "Swap total",
-  disk_used_ratio: "Disk used",
-  disk_available_bytes: "Disk available",
-  disk_free_bytes: "Disk free",
-  disk_total_bytes: "Disk size",
-  disk_inodes_free: "Free inodes",
-  disk_inodes: "Inodes",
-  diskio_busy_ratio: "Disk busy",
-  diskio_wait_seconds: "Disk wait",
-  diskio_read_bytes_per_second: "Disk read",
-  diskio_written_bytes_per_second: "Disk written",
-  diskio_reads_per_second: "Disk reads",
-  diskio_writes_per_second: "Disk writes",
-  diskio_queue_depth: "Disk queue",
-};
+/** Built-in metrics (ADR-0015) in display order; their titles are in the catalog. */
+export const BUILTIN_METRICS = [
+  "cpu_usage_ratio",
+  "cpu_load1",
+  "cpu_load5",
+  "cpu_load15",
+  "memory_used_bytes",
+  "memory_available_ratio",
+  "memory_available_bytes",
+  "memory_total_bytes",
+  "memory_swap_free_bytes",
+  "memory_swap_total_bytes",
+  "disk_used_ratio",
+  "disk_available_bytes",
+  "disk_free_bytes",
+  "disk_total_bytes",
+  "disk_inodes_free",
+  "disk_inodes",
+  "diskio_busy_ratio",
+  "diskio_wait_seconds",
+  "diskio_read_bytes_per_second",
+  "diskio_written_bytes_per_second",
+  "diskio_reads_per_second",
+  "diskio_writes_per_second",
+  "diskio_queue_depth",
+] as const;
+
+type BuiltinMetric = (typeof BUILTIN_METRICS)[number];
+
+const isBuiltin = (name: string): name is BuiltinMetric => (BUILTIN_METRICS as readonly string[]).includes(name);
 
 /** The metric's name without the prefix: `monitorflow_port_open` gives `port_open`. */
 export function shortMetric(metric: string): string {
@@ -38,7 +44,7 @@ export function shortMetric(metric: string): string {
 /** A readable title: a built-in metric's, else its short name. */
 export function metricTitle(metric: string): string {
   const short = shortMetric(metric);
-  return METRIC_TITLES[short] ?? short;
+  return isBuiltin(short) ? t(`server.metric.${short}`) : short;
 }
 
 /** Collection interval when the sensor's configuration is not known (ADR-0016). */

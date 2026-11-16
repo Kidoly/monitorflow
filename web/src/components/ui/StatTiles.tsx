@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { t } from "@/i18n";
+
 import { cx } from "./cx";
 import styles from "./StatTiles.module.css";
 import { toneClass } from "./StatusLabel";
@@ -26,7 +28,7 @@ export interface StatTile {
  */
 export function StatTiles({
   tiles,
-  label = "Summary, click to filter",
+  label = t("ui.tiles.label"),
   compact,
   dense,
   maxWidth = compact ? 900 : dense ? 800 : 640,

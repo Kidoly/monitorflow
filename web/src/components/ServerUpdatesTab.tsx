@@ -1,3 +1,4 @@
+import { t } from "@/i18n";
 import type { ServerDetail } from "@/lib/api";
 import { readsCustomers, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, serverHref } from "@/lib/routes";
@@ -16,12 +17,11 @@ import { ServerRollback } from "./ServerRollback";
 export function ServerUpdatesTab({ server }: { server: ServerDetail }) {
   const me = useMe();
   const scope = useScope();
-  const sensors = <ButtonLink href={scopedHref(serverHref(server.id), scope)}>Back to sensors</ButtonLink>;
+  const sensors = <ButtonLink href={scopedHref(serverHref(server.id), scope)}>{t("server.updatesTab.back")}</ButtonLink>;
   if (server.package_updates === false) {
     return (
-      <EmptyState title="Package updates aren't available on this system" actions={sensors}>
-        Monitoring works normally. MonitorFlow applies updates on Debian, RHEL and compatible systems; update {server.hostname} with
-        its own tools.
+      <EmptyState title={t("server.updatesTab.unavailable")} actions={sensors}>
+        {t("server.updatesTab.unavailableText", { server: server.hostname })}
       </EmptyState>
     );
   }
@@ -31,10 +31,10 @@ export function ServerUpdatesTab({ server }: { server: ServerDetail }) {
       <ServerRollback server={server} />
       <EmptyState
         actions={
-          readsCustomers(me) ? <ButtonLink href={scopedHref(CAMPAIGNS_PATH, scope)}>Open campaigns</ButtonLink> : sensors
+          readsCustomers(me) ? <ButtonLink href={scopedHref(CAMPAIGNS_PATH, scope)}>{t("server.updatesTab.openCampaigns")}</ButtonLink> : sensors
         }
       >
-        Updates for {server.hostname} are applied through update campaigns for now.
+        {t("server.updatesTab.throughCampaigns", { server: server.hostname })}
       </EmptyState>
     </Page>
   );
