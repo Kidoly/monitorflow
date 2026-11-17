@@ -143,7 +143,14 @@ db_tests! {
         let sealed = secrets::seal_stored(&pool).await.unwrap();
         assert_eq!(
             sealed,
-            [Column::NotificationChannels, Column::UserContacts, Column::IntegrationEndpoints, Column::AiApiKey]
+            [
+                Column::NotificationChannels,
+                Column::UserContacts,
+                Column::IntegrationEndpoints,
+                Column::AiApiKey,
+                Column::IdentityProviders,
+                Column::ImportRuns,
+            ]
         );
         let channels = "SELECT secret FROM notification_channels ORDER BY settings->>'url'";
         let first = stored(&pool, channels).await;
@@ -164,6 +171,8 @@ db_tests! {
         assert_eq!(
             listed,
             [
+                "identity_providers.secret",
+                "import_runs.secrets",
                 "integration_endpoints.secret",
                 "notification_channels.secret",
                 "server_settings.ai_api_key",

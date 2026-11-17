@@ -1,0 +1,48 @@
+# Alertmanager of the import test stack. Every address is an example: the
+# containers resolve them to nothing (compose.yml), so no notification
+# leaves this machine.
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: mail.example.com:587
+  smtp_from: alertmanager@example.com
+  smtp_auth_username: alertmanager@example.com
+  smtp_auth_password: example-smtp-password
+  smtp_require_tls: true
+
+route:
+  receiver: ops-email
+  group_by: [alertname, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: ['severity=~"critical|page"']
+      receiver: on-call
+      continue: true
+    - matchers: ['alertname=~"Blackbox.*"']
+      receiver: web-team
+
+receivers:
+  - name: ops-email
+    email_configs:
+      - to: ops@example.com, admin@example.com
+        send_resolved: true
+
+  - name: on-call
+    slack_configs:
+      - api_url: https://hooks.slack.com/services/T0/B0/EXAMPLE
+        channel: "#alerts"
+        send_resolved: true
+    pagerduty_configs:
+      - routing_key: 0123456789abcdef0123456789abcdef
+
+  - name: web-team
+    msteams_configs:
+      - webhook_url: https://example00.westeurope.logic.azure.com/workflows/00000000000000000000000000000000/triggers/manual/paths/invoke?api-version=2016-06-01&sig=EXAMPLE
+    discord_configs:
+      - webhook_url: https://discord.com/api/webhooks/000000000000000000/EXAMPLE-TOKEN
+
+  - name: automation
+    webhook_configs:
+      - url: http://hooks.example.com/alertmanager
+        send_resolved: true

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Builds /srv: one package for all architectures in an apt repository signed
-# by a throwaway key, with a component that holds nothing, and one noarch
-# package in a dnf repository with a group. /srv/next is the same upstream
+# by a throwaway key (InRelease and Release.gpg, like Debian), with a
+# component that holds nothing, and one noarch package in a dnf repository
+# with a group. /srv/next is the same upstream
 # with a new version of the package, which replaced the old one: the smoke
 # test swaps it in to prove that retention frees what upstream dropped. Runs
 # when the fixture image is built.
@@ -37,6 +38,7 @@ CONTROL
         release . >/tmp/Release
     mv /tmp/Release Release
     gpg --batch --quiet --pinentry-mode loopback --passphrase '' --clearsign -o InRelease Release
+    gpg --batch --quiet --pinentry-mode loopback --passphrase '' --armor --detach-sign -o Release.gpg Release
 }
 
 # build_dnf <version> <directory>

@@ -59,6 +59,7 @@ pub fn build() -> Document {
     doc.merge(super::openapi_system::SystemDoc::openapi());
     doc.merge(super::openapi_settings::SettingsDoc::openapi());
     doc.merge(super::openapi_users::UsersDoc::openapi());
+    doc.merge(super::openapi_sso::SsoDoc::openapi());
     doc.merge(super::openapi_dashboards::DashboardsDoc::openapi());
     doc.merge(super::openapi_plugins::PluginsDoc::openapi());
     doc.merge(openapi_core::Doc::openapi());
@@ -71,6 +72,7 @@ pub fn build() -> Document {
     doc.merge(super::openapi_campaigns::Doc::openapi());
     doc.merge(super::openapi_auto_update::Doc::openapi());
     doc.merge(super::openapi_checks::Doc::openapi());
+    doc.merge(super::openapi_imports::Doc::openapi());
     doc
 }
 

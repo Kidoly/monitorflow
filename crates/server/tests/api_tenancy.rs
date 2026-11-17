@@ -538,6 +538,18 @@ impl Ctx {
         .unwrap()
     }
 
+    /// A confirmed import into `site` (ADR-0146).
+    async fn import(&self, site: Uuid) -> Uuid {
+        sqlx::query_scalar(
+            "INSERT INTO import_runs (source, site_id, input, items, state, confirmed_at)
+             VALUES ('test', $1, 'export.yaml', '[]', 'confirmed', now()) RETURNING id",
+        )
+        .bind(site)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap()
+    }
+
     /// An integration endpoint of `customer`, or for everything when
     /// `null` (ADR-0102).
     async fn integration(&self, customer: Value) -> Uuid {
@@ -659,6 +671,38 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             );
             // Another customer's existence shows nowhere (ADR-0104).
             assert_eq!(body["multi_customer"], false);
+        }
+        // Sign-in providers on the login page (ADR-0145): no customer or
+        // site in them, and the sign-in itself only redirects.
+        ("GET", "/api/auth/providers") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
+        ("GET", "/api/auth/oidc/{id}/start") | ("GET", "/api/auth/oidc/callback") => {
+            let (status, _) = ctx.call(method, &concrete(path), None).await;
+            assert_eq!(status, StatusCode::SEE_OTHER);
+        }
+        // Server-wide: only global administrators manage sign-in providers.
+        ("GET", "/api/identity-providers")
+        | ("POST", "/api/identity-providers")
+        | ("POST", "/api/identity-providers/test")
+        | ("GET", "/api/identity-providers/{id}")
+        | ("PUT", "/api/identity-providers/{id}")
+        | ("DELETE", "/api/identity-providers/{id}")
+        | ("GET", "/api/identity-providers/{id}/groups")
+        | ("PUT", "/api/identity-providers/{id}/groups") => {
+            let settings =
+                json!({ "kind": "oidc", "issuer": "https://id.example.com", "client_id": "mf" });
+            let body = match method {
+                "POST" | "PUT" if path.ends_with("groups") => Some(json!({ "mappings": [] })),
+                "POST" | "PUT" => Some(json!({ "name": "x", "settings": settings })),
+                _ => None,
+            };
+            assert_eq!(
+                ctx.status(method, &concrete(path), body).await,
+                StatusCode::FORBIDDEN
+            );
         }
         // Personal (ADR-0137): only the signed-in person's own preferences,
         // no customer or site in them.
@@ -1121,6 +1165,29 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 text.contains("pending-a") && !text.contains("pending-b"),
                 "{body}"
             );
+        }
+        ("GET", "/api/imports/sources") => {
+            assert_eq!(ctx.status(method, path, None).await, StatusCode::OK);
+        }
+        ("GET", "/api/imports") => {
+            let (mine, other) = (ctx.import(a.site).await, ctx.import(b.site).await);
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            let text = body.to_string();
+            assert!(
+                text.contains(&mine.to_string()) && !text.contains(&other.to_string()),
+                "{body}"
+            );
+        }
+        ("POST", "/api/imports") => {
+            let body = json!({ "source": "none", "site_id": b.site, "files": [{"name": "a.yaml", "content": "x"}] });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("GET", "/api/imports/{id}")
+        | ("POST", "/api/imports/{id}/confirm")
+        | ("POST", "/api/imports/{id}/undo") => {
+            let uri = path.replace("{id}", &ctx.import(b.site).await.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
         ("POST", "/api/install-keys") => {
             let body = json!({ "site_id": b.site });

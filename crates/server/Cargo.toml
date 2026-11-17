@@ -25,6 +25,8 @@ monitorflow-server-ee = { workspace = true, optional = true }
 # server-update: checks and requests of server updates (ADR-0056).
 monitorflow-common = { workspace = true, features = ["mirror", "server-update", "openapi"] }
 monitorflow-sensors.workspace = true
+# Readers of other monitoring tools' configuration (ADR-0146).
+monitorflow-import.workspace = true
 # AI remediation loop (ADR-0039, ADR-0043).
 monitorflow-ai.workspace = true
 # Plugins: signed packages and their runtime (ADR-0103).
@@ -69,6 +71,10 @@ lettre.workspace = true
 async-trait.workspace = true
 # Secret redaction of AI context (ADR-0040).
 regex.workspace = true
+# Sign-in providers (ADR-0145): LDAP directories, and the public
+# certificate authorities they and OpenID Connect providers are checked with.
+ldap3.workspace = true
+webpki-roots.workspace = true
 # Kills a timed-out mirror tool with the programs it started.
 rustix = { workspace = true, features = ["process"] }
 

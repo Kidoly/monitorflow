@@ -36,6 +36,7 @@ import { FactsBox } from "@/components/ui/FactsBox";
 import { Hint } from "@/components/ui/Hint";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Page } from "@/components/ui/Page";
+import { WaitingForAgent } from "@/components/imports/WaitingForAgent";
 import { Banner, ErrorState, LoadingBlock, NotFound, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { RowMenu } from "@/components/ui/RowMenu";
@@ -197,6 +198,7 @@ export function ServerPage({ id }: { id: string | null }) {
         onDetails={setDetails}
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
+      {server.awaiting_agent && !server.revoked_at && <WaitingForAgent server={server} />}
       {server.revoked_at && (
         <RemovedPanel
           kind="agent"
@@ -303,7 +305,7 @@ function ServerHeader({
       <PageHeader
         detail
         title={server.hostname}
-        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.status} />}
+        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.awaiting_agent ? "waiting" : server.status} />}
         meta={<RefreshLine updatedAt={now} stale={stale} />}
         actions={
           <>
@@ -339,7 +341,7 @@ function ServerHeader({
                 t("server.line.neverSeen")
               )}
             </span>
-            {live && <ServerBadges server={server} now={now} />}
+            {live && !server.awaiting_agent && <ServerBadges server={server} now={now} />}
             <Button variant="ghost" size="small" aria-expanded={details} onClick={() => setDetails(!details)}>
               {t("ui.details")}
             </Button>

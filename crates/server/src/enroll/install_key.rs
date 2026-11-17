@@ -197,7 +197,15 @@ pub(super) async fn consume(
         "relay" => PeerRole::Relay,
         _ => PeerRole::Agent,
     };
-    let peer_id = match removed_id(tx, &role, site_id, hostname, &base).await? {
+    let expected = match peer_role {
+        PeerRole::Agent => expected_id(tx, site_id, hostname, &base).await?,
+        _ => None,
+    };
+    let found = match expected {
+        Some(id) => Some(id),
+        None => removed_id(tx, &role, site_id, hostname, &base).await?,
+    };
+    let peer_id = match found {
         // Not under an ID the other role took meanwhile (ADR-0105).
         Some(id) if !identity::held_by_other_role(tx, peer_role, &id, Pending::Ignored).await? => {
             id
@@ -245,6 +253,41 @@ pub(super) async fn consume(
         peer_id,
         site_id,
     }))
+}
+
+/// The ID of the one server of `site_id` an import made for this host,
+/// still waiting for its agent (ADR-0146): its ID or host name is the
+/// host's, or the first label of either is the other. Not one an agent
+/// holds a certificate for already, nor two candidates: the key then
+/// gives a new ID as before.
+async fn expected_id(
+    tx: &mut Transaction<'_, Postgres>,
+    site_id: Uuid,
+    hostname: &str,
+    base: &str,
+) -> Result<Option<String>, EnrollError> {
+    let short = base.split('.').next().unwrap_or(base);
+    let candidates: Vec<String> = sqlx::query_scalar(
+        "SELECT s.peer_id FROM servers s
+         WHERE s.site_id = $1 AND s.awaiting_agent AND s.revoked_at IS NULL
+           AND (lower(s.peer_id) = $2 OR lower(s.hostname) = lower($3)
+                OR split_part(lower(s.peer_id), '.', 1) = $4)
+           AND NOT EXISTS (SELECT 1 FROM certificates c
+                           WHERE c.peer_role = 'agent' AND c.peer_id = s.peer_id
+                             AND c.revoked_at IS NULL AND c.not_after > now())
+           AND NOT EXISTS (SELECT 1 FROM pending_hosts p WHERE p.peer_id = s.peer_id)
+         LIMIT 2",
+    )
+    .bind(site_id)
+    .bind(base)
+    .bind(hostname.trim())
+    .bind(short)
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(match candidates.as_slice() {
+        [one] => Some(one.clone()),
+        _ => None,
+    })
 }
 
 /// The ID of the server or relay last removed from `site_id` with this

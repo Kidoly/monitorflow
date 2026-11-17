@@ -1,0 +1,236 @@
+{
+    "zabbix_export": {
+        "version": "6.0",
+        "date": "2026-11-17T01:45:00Z",
+        "groups": [
+            {
+                "uuid": "c9d5fc57550a4c3eaf557719c625d37e",
+                "name": "Databases"
+            },
+            {
+                "uuid": "dc579cd7a1a34222933f24f52a68bcd8",
+                "name": "Linux servers"
+            },
+            {
+                "uuid": "4bcc8bff3cb3437292f23e164fee8e47",
+                "name": "Web"
+            }
+        ],
+        "hosts": [
+            {
+                "host": "db-01",
+                "name": "Database 01",
+                "templates": [
+                    {
+                        "name": "Linux by Zabbix agent"
+                    }
+                ],
+                "groups": [
+                    {
+                        "name": "Databases"
+                    },
+                    {
+                        "name": "Linux servers"
+                    }
+                ],
+                "interfaces": [
+                    {
+                        "useip": "NO",
+                        "ip": "",
+                        "dns": "mf-import-zbx-db-01",
+                        "interface_ref": "if1"
+                    }
+                ],
+                "items": [
+                    {
+                        "name": "Backup age",
+                        "key": "backup.age[pg]",
+                        "delay": "1h",
+                        "interface_ref": "if1",
+                        "triggers": [
+                            {
+                                "expression": "last(/db-01/backup.age[pg])>1d",
+                                "name": "Backup is old",
+                                "priority": "WARNING"
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Syslog errors",
+                        "type": "ZABBIX_ACTIVE",
+                        "key": "log[/var/log/syslog,error]",
+                        "trends": "0",
+                        "value_type": "LOG",
+                        "triggers": [
+                            {
+                                "expression": "find(/db-01/log[/var/log/syslog,error],,\"regexp\",\"error\")=1",
+                                "name": "Errors in syslog",
+                                "priority": "WARNING"
+                            }
+                        ]
+                    },
+                    {
+                        "name": "PostgreSQL port",
+                        "key": "net.tcp.port[,5432]",
+                        "delay": "30s",
+                        "interface_ref": "if1",
+                        "triggers": [
+                            {
+                                "expression": "max(/db-01/net.tcp.port[,5432],3m)=0",
+                                "name": "PostgreSQL port 5432 is down",
+                                "priority": "HIGH"
+                            }
+                        ]
+                    },
+                    {
+                        "name": "NTP answers",
+                        "type": "SIMPLE",
+                        "key": "net.udp.service[ntp]",
+                        "delay": "5m",
+                        "interface_ref": "if1"
+                    },
+                    {
+                        "name": "PostgreSQL processes",
+                        "key": "proc.num[postgres]",
+                        "interface_ref": "if1",
+                        "triggers": [
+                            {
+                                "expression": "last(/db-01/proc.num[postgres])<1",
+                                "name": "No PostgreSQL process",
+                                "priority": "DISASTER"
+                            }
+                        ]
+                    },
+                    {
+                        "name": "PostgreSQL service",
+                        "key": "systemd.unit.info[postgresql.service]",
+                        "trends": "0",
+                        "value_type": "TEXT",
+                        "interface_ref": "if1",
+                        "triggers": [
+                            {
+                                "expression": "last(/db-01/systemd.unit.info[postgresql.service])<>\"active\"",
+                                "name": "PostgreSQL service is not running",
+                                "priority": "AVERAGE"
+                            }
+                        ]
+                    }
+                ],
+                "macros": [
+                    {
+                        "macro": "{$MEMORY.UTIL.MAX}",
+                        "value": "95"
+                    },
+                    {
+                        "macro": "{$VFS.FS.PUSED.MAX.CRIT:\"/var/lib/postgresql\"}",
+                        "value": "95"
+                    }
+                ],
+                "inventory": {
+                    "os": "Linux (Ubuntu 24.04 LTS)"
+                }
+            },
+            {
+                "host": "web-01",
+                "name": "Web server 01",
+                "templates": [
+                    {
+                        "name": "Linux by Zabbix agent"
+                    },
+                    {
+                        "name": "Nginx by Zabbix agent"
+                    }
+                ],
+                "groups": [
+                    {
+                        "name": "Linux servers"
+                    },
+                    {
+                        "name": "Web"
+                    }
+                ],
+                "interfaces": [
+                    {
+                        "useip": "NO",
+                        "ip": "",
+                        "dns": "mf-import-zbx-web-01",
+                        "interface_ref": "if1"
+                    }
+                ],
+                "items": [
+                    {
+                        "name": "SSH answers",
+                        "key": "net.tcp.service[ssh]",
+                        "interface_ref": "if1",
+                        "triggers": [
+                            {
+                                "expression": "last(/web-01/net.tcp.service[ssh])=0",
+                                "name": "SSH is down",
+                                "priority": "HIGH"
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Root space used",
+                        "key": "vfs.fs.size[/,pused]",
+                        "value_type": "FLOAT",
+                        "interface_ref": "if1",
+                        "triggers": [
+                            {
+                                "expression": "last(/web-01/vfs.fs.size[/,pused])>85",
+                                "name": "Root file system is filling up",
+                                "priority": "WARNING"
+                            }
+                        ]
+                    }
+                ],
+                "httptests": [
+                    {
+                        "name": "Shop home",
+                        "delay": "2m",
+                        "steps": [
+                            {
+                                "name": "Home",
+                                "url": "http://127.0.0.1/",
+                                "status_codes": "200"
+                            },
+                            {
+                                "name": "Status",
+                                "url": "http://127.0.0.1/basic_status",
+                                "status_codes": "200"
+                            }
+                        ]
+                    }
+                ],
+                "macros": [
+                    {
+                        "macro": "{$CPU.UTIL.CRIT}",
+                        "value": "80",
+                        "description": "Busier than the default"
+                    },
+                    {
+                        "macro": "{$NGINX.STUB_STATUS.PATH}",
+                        "value": "basic_status"
+                    }
+                ],
+                "inventory": {
+                    "os": "Linux (Ubuntu 24.04 LTS)"
+                }
+            }
+        ],
+        "triggers": [
+            {
+                "expression": "min(/db-01/system.cpu.util,10m)>{$DB.CPU.HIGH}",
+                "recovery_mode": "RECOVERY_EXPRESSION",
+                "recovery_expression": "max(/db-01/system.cpu.util,5m)<70",
+                "name": "Database CPU is high",
+                "priority": "DISASTER"
+            },
+            {
+                "expression": "last(/web-01/web.test.fail[Shop home])<>0",
+                "name": "Shop home page fails",
+                "priority": "HIGH"
+            }
+        ]
+    }
+}

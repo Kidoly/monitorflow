@@ -1,0 +1,100 @@
+# A throwaway Zabbix for testing MonitorFlow's import from Zabbix
+# (ADR-0146), in local Docker only. Run it through setup.sh, which starts
+# it, configures it through the API and writes exports:
+#
+#   deploy/import-test/zabbix/setup.sh            # Zabbix 7.0 LTS
+#   ZABBIX_VERSION=6.0 deploy/import-test/zabbix/setup.sh
+#
+# The web interface and the API answer on http://127.0.0.1:18080 only.
+# Stop and remove everything with:
+#
+#   docker compose -p mf-import-zbx -f deploy/import-test/zabbix/compose.yml down -v
+name: mf-import-zbx
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mf-import-zbx-postgres
+    environment:
+      POSTGRES_USER: zabbix
+      # A throwaway database reachable only inside this compose network.
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix"]
+      interval: 5s
+      retries: 30
+
+  server:
+    image: zabbix/zabbix-server-pgsql:ubuntu-${ZABBIX_VERSION:-7.0}-latest
+    container_name: mf-import-zbx-server
+    environment:
+      DB_SERVER_HOST: postgres
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: zabbix/zabbix-web-nginx-pgsql:ubuntu-${ZABBIX_VERSION:-7.0}-latest
+    container_name: mf-import-zbx-web
+    environment:
+      ZBX_SERVER_HOST: server
+      DB_SERVER_HOST: postgres
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+      PHP_TZ: UTC
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      - server
+
+  # web-01: nginx, with the agent in its network and process namespaces,
+  # so the agent sees nginx's port and processes as on one machine.
+  web-01:
+    image: nginx:1.27-alpine
+    container_name: mf-import-zbx-web-01
+    hostname: web-01
+    configs:
+      - source: stub_status
+        target: /etc/nginx/conf.d/status.conf
+
+  web-01-agent:
+    image: zabbix/zabbix-agent2:ubuntu-${ZABBIX_VERSION:-7.0}-latest
+    container_name: mf-import-zbx-web-01-agent
+    network_mode: "service:web-01"
+    pid: "service:web-01"
+    environment:
+      ZBX_HOSTNAME: web-01
+      ZBX_SERVER_HOST: mf-import-zbx-server
+      ZBX_SERVER_ACTIVE: mf-import-zbx-server
+    depends_on:
+      - web-01
+      - server
+
+  db-01:
+    image: zabbix/zabbix-agent2:ubuntu-${ZABBIX_VERSION:-7.0}-latest
+    container_name: mf-import-zbx-db-01
+    hostname: db-01
+    environment:
+      ZBX_HOSTNAME: db-01
+      ZBX_SERVER_HOST: mf-import-zbx-server
+      ZBX_SERVER_ACTIVE: mf-import-zbx-server
+    depends_on:
+      - server
+
+configs:
+  stub_status:
+    content: |
+      server {
+        listen 127.0.0.1:80;
+        location = /basic_status { stub_status; }
+      }
+
+volumes:
+  db:
