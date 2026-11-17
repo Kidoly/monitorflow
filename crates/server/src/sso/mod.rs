@@ -3,6 +3,7 @@
 //! groups, accounts made at first sign-in.
 
 pub mod config;
+pub mod jws;
 pub mod tls;
 
 use crate::api::users::GrantScope;
