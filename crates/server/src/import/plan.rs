@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::{DateTime, SubsecRound, TimeDelta, Utc};
 use monitorflow_import::args;
 use monitorflow_import::model::{
-    Check, Direction, Fidelity, Inventory, Measure, Os, Severity, SilenceScope, Target, Watch,
+    Alert, Check, Direction, Fidelity, Inventory, Measure, Os, Severity, SilenceScope, Target,
+    Watch,
 };
 use monitorflow_import::Note;
 use serde_json::{json, Map, Value};
@@ -23,7 +24,7 @@ const MAX_SILENCE_DAYS: i64 = 30;
 /// Longest silence reason, in characters.
 const MAX_REASON: usize = 200;
 /// Minutes before an offline alert, as the offline rule waits.
-const OFFLINE_MINUTES: u32 = 3;
+const OFFLINE_MINUTES: u32 = 5;
 
 /// A server MonitorFlow has.
 #[derive(Debug, Clone)]
@@ -96,6 +97,8 @@ pub fn plan(
         hosts: HashMap::new(),
         used_ids: HashSet::new(),
         check_names: HashSet::new(),
+        checks: HashMap::new(),
+        alerts: HashMap::new(),
         thresholds: BTreeMap::new(),
     };
     planner.hosts();
@@ -149,6 +152,11 @@ struct Planner<'a> {
     used_ids: HashSet<String>,
     /// (lowercase peer ID, check name) planned already.
     check_names: HashSet<(String, String)>,
+    /// Checks planned by (lowercase peer ID, kind, parameters), to their
+    /// name.
+    checks: HashMap<(String, String, String), String>,
+    /// Alert items planned, by metric of a server, to their index.
+    alerts: HashMap<String, usize>,
     thresholds: BTreeMap<ThresholdKey, Merged>,
 }
 
@@ -331,9 +339,16 @@ impl Planner<'_> {
                     (kind, params, ("service".into(), name.clone()))
                 }
                 Watch::Port { address, port } => {
+                    // The server itself, however the source wrote it.
+                    let address = address.as_deref().filter(|a| {
+                        !matches!(
+                            a.trim().to_ascii_lowercase().as_str(),
+                            "127.0.0.1" | "localhost" | "::1" | "[::1]" | ""
+                        )
+                    });
                     let mut params = Map::new();
                     params.insert("port".into(), json!(port.to_string()));
-                    let host = address.clone().unwrap_or_else(|| "127.0.0.1".into());
+                    let host = address.unwrap_or("127.0.0.1").to_owned();
                     let text = match address {
                         Some(a) => format!("{a}_{port}"),
                         None => port.to_string(),
@@ -391,6 +406,19 @@ impl Planner<'_> {
             }
         };
         let lower = server.peer_id.to_ascii_lowercase();
+        // The same check twice, from two items or a template and the host,
+        // is one check: the first one, with an alert if either has one.
+        let same = (
+            lower.clone(),
+            kind.to_owned(),
+            Value::Object(params.clone()).to_string(),
+        );
+        if let Some(name) = self.checks.get(&same).cloned() {
+            if let Some(alert) = &check.alert {
+                self.alert(&server, kind, &name, alert, origin);
+            }
+            return;
+        }
         let mut name = check_name(&prefix_text.0, &prefix_text.1);
         let base = name.clone();
         let mut n = 2;
@@ -438,8 +466,24 @@ impl Planner<'_> {
                 params,
             }),
         });
-        let Some(alert) = &check.alert else { return };
-        // The alert that comes with the check, as the web interface adds it.
+        self.checks.insert(same, name.clone());
+        if let Some(alert) = &check.alert {
+            self.alert(&server, kind, &name, alert, origin);
+        }
+    }
+
+    /// The alert that comes with the check `name`, as the web interface
+    /// adds it; once per check.
+    fn alert(
+        &mut self,
+        server: &Server,
+        kind: &str,
+        name: &str,
+        alert: &Alert,
+        origin: OriginView,
+    ) {
+        let lower = server.peer_id.to_ascii_lowercase();
+        let id = format!("check:{lower}:{name}");
         let (suffix, comparison, value) = match kind {
             "port" => ("up", "<", 1.0),
             "systemd" | "windows_service" => ("active", "<", 1.0),
@@ -450,9 +494,29 @@ impl Planner<'_> {
             Severity::Warning => (Some(value), None),
             Severity::Critical => (None, Some(value)),
         };
+        let key = format!("{lower}:{metric}");
+        if let Some(&index) = self.alerts.get(&key) {
+            // A second alert on the same check: the more severe one stays.
+            if let Some(Item {
+                create:
+                    Some(Create::Threshold {
+                        warning: w,
+                        critical: c,
+                        ..
+                    }),
+                ..
+            }) = self.out.items.get_mut(index)
+            {
+                if critical.is_some() {
+                    (*w, *c) = (None, critical);
+                }
+            }
+            return;
+        }
         let threshold_id = self.unique_id(format!("threshold:{lower}:{metric}"));
+        self.alerts.insert(key, self.out.items.len());
         let mut needs = vec![id];
-        needs.extend(Self::needs(&server));
+        needs.extend(Self::needs(server));
         let present = self
             .existing
             .thresholds
@@ -810,6 +874,27 @@ impl Planner<'_> {
                     channel_key(channel.target.kind(), url.expose())
                 }
             };
+            // What the channels page would refuse cannot be moved, such as
+            // a retired chat URL: the preview says so, not the confirmation.
+            let mut full = Value::Object(settings.clone());
+            if let Some(url) = &secret.url {
+                full["url"] = Value::String(url.clone());
+            }
+            if let Err(error) = crate::api::notifications::checked(
+                channel.target.kind(),
+                full,
+                secret.secret.clone(),
+                None,
+            ) {
+                let reason = error.to_string();
+                self.not_movable(
+                    "channel",
+                    origin,
+                    vec![],
+                    note("refused", args! {"reason" => reason.trim_end_matches('.')}),
+                );
+                continue;
+            }
             let present = self.existing.channels.contains(&key);
             let id = self.unique_id(format!(
                 "channel:{}:{}",

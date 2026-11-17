@@ -161,6 +161,8 @@ db_tests! {
                 "display_sessions",
                 "enrollment_tokens",
                 "follow_up_policies",
+                "import_created",
+                "import_runs",
                 "incident_acknowledgements",
                 "incident_events",
                 "incident_follow_ups",

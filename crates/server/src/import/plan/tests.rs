@@ -692,3 +692,74 @@ fn chosen_items_follow_what_they_need() {
     assert_eq!(ids, vec!["server:b", "check:b:service_ssh"]);
     assert_eq!((skipped, present), (4, 0));
 }
+
+#[test]
+fn channels_the_channels_page_would_refuse_cannot_be_moved() {
+    let inventory = Inventory {
+        channels: vec![Channel {
+            name: "Old Teams".into(),
+            target: Target::Teams {
+                url: Secret::new("https://example.webhook.office.com/webhookb2/x"),
+            },
+            origin: Origin::new("media_type", "Old Teams"),
+            fidelity: Fidelity::Exact,
+        }],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let item = &planned.items[0];
+    assert_eq!(item.list, List::NotMovable);
+    assert_eq!(item.note.as_ref().unwrap().code, "refused");
+    assert!(item.note.as_ref().unwrap().text.contains("retired"));
+    assert!(planned.secrets.is_empty());
+}
+
+#[test]
+fn the_same_check_twice_is_one_check_with_the_more_severe_alert() {
+    let inventory = Inventory {
+        hosts: vec![host("1", "a", Os::Linux)],
+        checks: vec![
+            check(
+                "1",
+                Watch::Port {
+                    address: None,
+                    port: 80,
+                },
+                Some(Severity::Warning),
+            ),
+            check(
+                "1",
+                Watch::Port {
+                    address: Some("127.0.0.1".into()),
+                    port: 80,
+                },
+                Some(Severity::Critical),
+            ),
+            check(
+                "1",
+                Watch::Port {
+                    address: Some("localhost".into()),
+                    port: 80,
+                },
+                None,
+            ),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let checks: Vec<_> = planned.items.iter().filter(|i| i.kind == "check").collect();
+    assert_eq!(checks.len(), 1);
+    let alerts: Vec<_> = planned
+        .items
+        .iter()
+        .filter(|i| i.kind == "threshold")
+        .collect();
+    assert_eq!(alerts.len(), 1);
+    let Some(Create::Threshold {
+        warning, critical, ..
+    }) = &alerts[0].create
+    else {
+        panic!()
+    };
+    assert_eq!((*warning, *critical), (None, Some(1.0)));
+}
