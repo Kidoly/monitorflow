@@ -134,7 +134,8 @@ fn user_example() -> serde_json::Value {
             { "role": "operator", "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b", "site_id": null },
             { "role": "administrator", "customer_id": null, "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b" }
         ],
-        "link_expires_at": null
+        "link_expires_at": null,
+        "provider": null
     })
 }
 
@@ -201,7 +202,8 @@ fn disabled_example() -> serde_json::Value {
 /// as `user.grant`.
 ///
 /// Errors: 400 `invalid` for both a customer and a site, or one that does
-/// not exist; 404 `not_found` for an unknown user.
+/// not exist; 404 `not_found` for an unknown user; 409 `conflict` for an
+/// account of a sign-in provider, whose roles follow its groups.
 #[utoipa::path(post, path = "/api/v1/users/{id}/roles", tag = "users",
     params(("id" = uuid::Uuid, Path, description = "The user's ID")),
     request_body(content = user_admin::GrantRequest, example = json!({
@@ -231,9 +233,9 @@ fn grant_role() {}
                 "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a", "username": "alice", "state": "active",
                 "created_at": "2026-09-01T08:00:00Z",
                 "roles": [{ "role": "operator", "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b", "site_id": null }],
-                "link_expires_at": null
+                "link_expires_at": null, "provider": null
             })),
-        (status = 409, body = ErrorBody, description = "Last administrator: `conflict`"),
+        (status = 409, body = ErrorBody, description = "Last administrator, or an account of a sign-in provider: `conflict`"),
     ))]
 fn revoke_role() {}
 

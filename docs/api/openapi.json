@@ -6142,6 +6142,1275 @@
         ]
       }
     },
+    "/api/v1/identity-providers": {
+      "get": {
+        "tags": [
+          "sign-in"
+        ],
+        "summary": "List sign-in providers",
+        "description": "Every provider, oldest first (the order directories are tried in),\nwith its groups and how many accounts sign in through it, the redirect\nURI to enter in an OpenID Connect provider, and how many local\nadministrators keep a password.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "The providers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderList"
+                },
+                "example": {
+                  "local_administrators": 1,
+                  "providers": [
+                    {
+                      "accounts": 12,
+                      "created_at": "2026-11-17T08:00:00Z",
+                      "enabled": true,
+                      "has_secret": true,
+                      "id": "0c4b7f0e-8a51-4f3e-9d0a-2b1c3d4e5f60",
+                      "kind": "oidc",
+                      "mappings": [
+                        {
+                          "customer_id": null,
+                          "group": "monitorflow-admins",
+                          "role": "administrator",
+                          "site_id": null
+                        },
+                        {
+                          "customer_id": null,
+                          "group": "helpdesk",
+                          "role": "viewer",
+                          "site_id": null
+                        }
+                      ],
+                      "name": "Keycloak",
+                      "settings": {
+                        "ca_pem": null,
+                        "client_id": "monitorflow",
+                        "groups_claim": "groups",
+                        "issuer": "https://id.example.com/realms/acme",
+                        "kind": "oidc",
+                        "scopes": "openid profile email groups"
+                      },
+                      "updated_at": "2026-11-17T08:05:00Z"
+                    }
+                  ],
+                  "redirect_uri": "https://monitor.example.com/api/auth/oidc/callback"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sign-in"
+        ],
+        "summary": "Add a sign-in provider",
+        "description": "`settings.kind` is `oidc` or `ldap`. An `ldap://` address needs\n`starttls`; plain LDAP is refused. The secret is the client secret,\nabsent for a public client, or the service account's password; it is\nstored encrypted and never returned. `enabled: true` tests the\nprovider first, as `POST /api/v1/identity-providers/test` does.\nAudited as `identity_provider.create`, never with the secret.\n\nErrors: 400 `invalid` for settings that do not hold or a test that\nfailed, with the reason; 409 `conflict` for a name another provider\nhas.",
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityProviderRequest"
+              },
+              "example": {
+                "enabled": false,
+                "name": "Keycloak",
+                "secret": "client-secret",
+                "settings": {
+                  "ca_pem": null,
+                  "client_id": "monitorflow",
+                  "groups_claim": "groups",
+                  "issuer": "https://id.example.com/realms/acme",
+                  "kind": "oidc",
+                  "scopes": "openid profile email groups"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderView"
+                },
+                "example": {
+                  "accounts": 12,
+                  "created_at": "2026-11-17T08:00:00Z",
+                  "enabled": true,
+                  "has_secret": true,
+                  "id": "0c4b7f0e-8a51-4f3e-9d0a-2b1c3d4e5f60",
+                  "kind": "oidc",
+                  "mappings": [
+                    {
+                      "customer_id": null,
+                      "group": "monitorflow-admins",
+                      "role": "administrator",
+                      "site_id": null
+                    },
+                    {
+                      "customer_id": null,
+                      "group": "helpdesk",
+                      "role": "viewer",
+                      "site_id": null
+                    }
+                  ],
+                  "name": "Keycloak",
+                  "settings": {
+                    "ca_pem": null,
+                    "client_id": "monitorflow",
+                    "groups_claim": "groups",
+                    "issuer": "https://id.example.com/realms/acme",
+                    "kind": "oidc",
+                    "scopes": "openid profile email groups"
+                  },
+                  "updated_at": "2026-11-17T08:05:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name taken: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity-providers/test": {
+      "post": {
+        "tags": [
+          "sign-in"
+        ],
+        "summary": "Test a sign-in provider",
+        "description": "Checks settings without saving them. OpenID Connect: the discovery\ndocument, the signing keys, and the client ID and secret, by trading\na code that does not exist. LDAP: the TLS connection, the service\naccount and the bases; with `username` and `password`, the whole\nsign-in, the groups found and, with `id`, the roles they give. With\n`id` and no secret, the stored secret is used, only for the address it\nwas entered for. A failed test is a 200 with `ok: false` and the\nreason.",
+        "operationId": "test",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityProviderTestRequest"
+              },
+              "example": {
+                "id": "0c4b7f0e-8a51-4f3e-9d0a-2b1c3d4e5f60",
+                "password": "her password",
+                "settings": {
+                  "bind_dn": "cn=monitorflow,ou=services,dc=example,dc=com",
+                  "ca_pem": null,
+                  "group_base_dn": "ou=groups,dc=example,dc=com",
+                  "group_filter": "(|(member={dn})(uniqueMember={dn})(memberUid={username}))",
+                  "group_name_attribute": "cn",
+                  "kind": "ldap",
+                  "nested_groups": true,
+                  "starttls": false,
+                  "url": "ldaps://ldap.example.com",
+                  "user_base_dn": "ou=people,dc=example,dc=com",
+                  "user_filter": "(|(uid={username})(sAMAccountName={username}))"
+                },
+                "username": "alice"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the test found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityProviderTestResult"
+                },
+                "example": {
+                  "error": null,
+                  "ldap": {
+                    "active_directory": false,
+                    "dn": "uid=alice,ou=people,dc=example,dc=com",
+                    "groups": [
+                      "monitorflow-admins",
+                      "staff"
+                    ]
+                  },
+                  "oidc": null,
+                  "ok": true,
+                  "roles": [
+                    {
+                      "customer_id": null,
+                      "role": "administrator",
+                      "site_id": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity-providers/{id}": {
+      "get": {
+        "tags": [
+          "sign-in"
+        ],
+        "summary": "Read a sign-in provider",
+        "description": "One provider, as in the list: its settings without the secret, its\ngroups and how many accounts sign in through it.",
+        "operationId": "detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The provider's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderView"
+                },
+                "example": {
+                  "accounts": 12,
+                  "created_at": "2026-11-17T08:00:00Z",
+                  "enabled": true,
+                  "has_secret": true,
+                  "id": "0c4b7f0e-8a51-4f3e-9d0a-2b1c3d4e5f60",
+                  "kind": "oidc",
+                  "mappings": [
+                    {
+                      "customer_id": null,
+                      "group": "monitorflow-admins",
+                      "role": "administrator",
+                      "site_id": null
+                    },
+                    {
+                      "customer_id": null,
+                      "group": "helpdesk",
+                      "role": "viewer",
+                      "site_id": null
+                    }
+                  ],
+                  "name": "Keycloak",
+                  "settings": {
+                    "ca_pem": null,
+                    "client_id": "monitorflow",
+                    "groups_claim": "groups",
+                    "issuer": "https://id.example.com/realms/acme",
+                    "kind": "oidc",
+                    "scopes": "openid profile email groups"
+                  },
+                  "updated_at": "2026-11-17T08:05:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "sign-in"
+        ],
+        "summary": "Change a sign-in provider",
+        "description": "Replaces its name, settings and whether it is on; its kind stays. An\nempty secret keeps the stored one while the issuer or directory\naddress stays the same, and is required again otherwise. Turning it\non, or changing it while on, tests it first. Turning it off ends the\nsessions of its accounts. Audited as `identity_provider.update` with\nthe old and new settings and `secret_changed`.\n\nErrors: 400 `invalid` as for adding, or for another kind; 409\n`conflict` for a name taken.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The provider's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityProviderRequest"
+              },
+              "example": {
+                "enabled": true,
+                "name": "Directory",
+                "settings": {
+                  "bind_dn": "cn=monitorflow,ou=services,dc=example,dc=com",
+                  "ca_pem": null,
+                  "group_base_dn": "ou=groups,dc=example,dc=com",
+                  "group_filter": "(|(member={dn})(uniqueMember={dn})(memberUid={username}))",
+                  "group_name_attribute": "cn",
+                  "kind": "ldap",
+                  "nested_groups": true,
+                  "starttls": false,
+                  "url": "ldaps://ldap.example.com",
+                  "user_base_dn": "ou=people,dc=example,dc=com",
+                  "user_filter": "(|(uid={username})(sAMAccountName={username}))"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The provider as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderView"
+                },
+                "example": {
+                  "accounts": 12,
+                  "created_at": "2026-11-17T08:00:00Z",
+                  "enabled": true,
+                  "has_secret": true,
+                  "id": "0c4b7f0e-8a51-4f3e-9d0a-2b1c3d4e5f60",
+                  "kind": "oidc",
+                  "mappings": [
+                    {
+                      "customer_id": null,
+                      "group": "monitorflow-admins",
+                      "role": "administrator",
+                      "site_id": null
+                    },
+                    {
+                      "customer_id": null,
+                      "group": "helpdesk",
+                      "role": "viewer",
+                      "site_id": null
+                    }
+                  ],
+                  "name": "Keycloak",
+                  "settings": {
+                    "ca_pem": null,
+                    "client_id": "monitorflow",
+                    "groups_claim": "groups",
+                    "issuer": "https://id.example.com/realms/acme",
+                    "kind": "oidc",
+                    "scopes": "openid profile email groups"
+                  },
+                  "updated_at": "2026-11-17T08:05:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name taken: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sign-in"
+        ],
+        "summary": "Remove a sign-in provider",
+        "description": "Its accounts stay, with their history, but lose their roles, their\nsessions and any way to sign in; remove them or give them a password\nlink under Users. Audited as `identity_provider.delete`.",
+        "operationId": "remove",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The provider's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity-providers/{id}/groups": {
+      "get": {
+        "tags": [
+          "sign-in"
+        ],
+        "summary": "Read the groups of a sign-in provider",
+        "description": "Which role each group gives, and where: everything (both IDs null), a\ncustomer with its sites, or a site.",
+        "operationId": "groups",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The provider's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The groups and their roles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityProviderGroups"
+                },
+                "example": {
+                  "mappings": [
+                    {
+                      "customer_id": null,
+                      "group": "monitorflow-admins",
+                      "role": "administrator",
+                      "site_id": null
+                    },
+                    {
+                      "customer_id": null,
+                      "group": "paris-ops",
+                      "role": "operator",
+                      "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "sign-in"
+        ],
+        "summary": "Replace the groups of a sign-in provider",
+        "description": "The whole list at once, at most 500. Group names are compared without\nregard to case. The roles of every account of the provider are\nreplaced at once from the groups it had at its last sign-in; an\naccount left without any loses its sessions and cannot sign in.\nAudited as `identity_provider.groups`.\n\nErrors: 400 `invalid` for an empty group, both a customer and a site,\nor one that does not exist.",
+        "operationId": "set_groups",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The provider's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityProviderGroups"
+              },
+              "example": {
+                "mappings": [
+                  {
+                    "customer_id": null,
+                    "group": "monitorflow-admins",
+                    "role": "administrator",
+                    "site_id": null
+                  },
+                  {
+                    "customer_id": null,
+                    "group": "paris-ops",
+                    "role": "operator",
+                    "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The groups as they now stand",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityProviderGroups"
+                },
+                "example": {
+                  "mappings": [
+                    {
+                      "customer_id": null,
+                      "group": "monitorflow-admins",
+                      "role": "administrator",
+                      "site_id": null
+                    },
+                    {
+                      "customer_id": null,
+                      "group": "paris-ops",
+                      "role": "operator",
+                      "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/incidents": {
       "get": {
         "tags": [
@@ -28306,6 +29575,7 @@
                       "created_at": "2026-09-01T08:00:00Z",
                       "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
                       "link_expires_at": null,
+                      "provider": null,
                       "roles": [
                         {
                           "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
@@ -28601,6 +29871,7 @@
                   "created_at": "2026-09-01T08:00:00Z",
                   "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
                   "link_expires_at": null,
+                  "provider": null,
                   "roles": [
                     {
                       "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
@@ -28716,7 +29987,7 @@
           "users"
         ],
         "summary": "Grant a role",
-        "description": "Gives the user a role on everything (both IDs absent), on one customer\nand all its sites, or on one site. Takes effect at the user's next\nrequest, for their sessions and API keys alike. Granting a role the\nuser already holds changes nothing, so it is safe to repeat. Audited\nas `user.grant`.\n\nErrors: 400 `invalid` for both a customer and a site, or one that does\nnot exist; 404 `not_found` for an unknown user.",
+        "description": "Gives the user a role on everything (both IDs absent), on one customer\nand all its sites, or on one site. Takes effect at the user's next\nrequest, for their sessions and API keys alike. Granting a role the\nuser already holds changes nothing, so it is safe to repeat. Audited\nas `user.grant`.\n\nErrors: 400 `invalid` for both a customer and a site, or one that does\nnot exist; 404 `not_found` for an unknown user; 409 `conflict` for an\naccount of a sign-in provider, whose roles follow its groups.",
         "operationId": "grant_role",
         "parameters": [
           {
@@ -28778,6 +30049,7 @@
                   "created_at": "2026-09-01T08:00:00Z",
                   "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
                   "link_expires_at": null,
+                  "provider": null,
                   "roles": [
                     {
                       "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
@@ -28953,6 +30225,7 @@
                   "created_at": "2026-09-01T08:00:00Z",
                   "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
                   "link_expires_at": null,
+                  "provider": null,
                   "roles": [
                     {
                       "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
@@ -29007,7 +30280,7 @@
             }
           },
           "409": {
-            "description": "Last administrator: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "description": "Last administrator, or an account of a sign-in provider: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -29060,6 +30333,27 @@
   },
   "components": {
     "schemas": {
+      "AccountProvider": {
+        "type": "object",
+        "description": "The sign-in provider of an account.",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "AcknowledgeRequest": {
         "type": "object",
         "description": "Body of `POST /api/incidents/acknowledge`.",
@@ -32841,6 +34135,7 @@
               "unauthenticated",
               "invalid_credentials",
               "forbidden",
+              "no_access",
               "api_key_scope",
               "cross_site",
               "rate_limited",
@@ -33250,6 +34545,34 @@
           }
         }
       },
+      "Found": {
+        "type": "object",
+        "description": "What a passed connection test found.",
+        "required": [
+          "active_directory",
+          "groups"
+        ],
+        "properties": {
+          "active_directory": {
+            "type": "boolean",
+            "description": "Whether the root DSE says Active Directory."
+          },
+          "dn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The entry of the person tried, when a username was given."
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Their groups."
+          }
+        }
+      },
       "GroupView": {
         "type": "object",
         "description": "A notification that told this incident with others (ADR-0080).",
@@ -33294,6 +34617,186 @@
           "status": {
             "type": "string",
             "description": "`ok` (live), `ready` or `unavailable` (ready)."
+          }
+        }
+      },
+      "IdentityProviderGroups": {
+        "type": "object",
+        "description": "Body of `GET` and `PUT /api/identity-providers/{id}/groups`.",
+        "required": [
+          "mappings"
+        ],
+        "properties": {
+          "mappings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MappingView"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "IdentityProviderRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/identity-providers` and of `PUT` on one.",
+        "required": [
+          "name",
+          "settings"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Turning it on tests it first; 400 with the reason when the test\nfails."
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The client secret (OpenID Connect, absent for a public client) or\nthe service account's password (LDAP). Absent, `null` or empty\nkeeps the stored one while the issuer or the directory's address\nstays the same."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/IdentityProviderSettings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IdentityProviderSettings": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OidcSettings"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "oidc"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LdapSettings"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "ldap"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "description": "The settings of a provider, by kind."
+      },
+      "IdentityProviderTestRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/identity-providers/test`: what the form holds.",
+        "required": [
+          "settings"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A stored provider whose secret to use when `secret` is empty, and\nwhose groups to read the roles from."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "settings": {
+            "$ref": "#/components/schemas/IdentityProviderSettings"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "LDAP only: a person to sign in as, to see their groups and roles."
+          }
+        },
+        "additionalProperties": false
+      },
+      "IdentityProviderTestResult": {
+        "type": "object",
+        "description": "Body of the test's answer.",
+        "required": [
+          "ok",
+          "roles"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, in plain words; `null` when `ok`."
+          },
+          "ldap": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Found",
+                "description": "What an LDAP test found."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "oidc": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Found",
+                "description": "What an OpenID Connect test found."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoleGrant"
+            },
+            "description": "The roles the person tried would get, from the stored groups of\n`id`."
           }
         }
       },
@@ -34134,6 +35637,14 @@
           }
         }
       },
+      "Kind": {
+        "type": "string",
+        "description": "What a provider is.",
+        "enum": [
+          "oidc",
+          "ldap"
+        ]
+      },
       "LatestRelease": {
         "type": "object",
         "description": "A verified release and what installing it changes.",
@@ -34185,6 +35696,64 @@
           "site",
           "server"
         ]
+      },
+      "LdapSettings": {
+        "type": "object",
+        "description": "An LDAP directory, over LDAPS or StartTLS only. The service account's\npassword is apart.",
+        "required": [
+          "url",
+          "bind_dn",
+          "user_base_dn"
+        ],
+        "properties": {
+          "bind_dn": {
+            "type": "string",
+            "description": "The service account that searches people."
+          },
+          "ca_pem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A certificate authority in PEM to trust besides the public ones."
+          },
+          "group_base_dn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where groups are searched; absent or empty is `user_base_dn`."
+          },
+          "group_filter": {
+            "type": "string",
+            "description": "Finds the person's groups; `{dn}` is their entry, `{username}`\nwhat they typed, both escaped."
+          },
+          "group_name_attribute": {
+            "type": "string",
+            "description": "The attribute that names a group in \"Groups and roles\"."
+          },
+          "nested_groups": {
+            "type": "boolean",
+            "description": "Count the groups of the person's groups too."
+          },
+          "starttls": {
+            "type": "boolean",
+            "description": "Upgrade an `ldap://` connection with StartTLS before anything is\nsent; required for `ldap://`."
+          },
+          "url": {
+            "type": "string",
+            "description": "`ldaps://host[:port]`, or `ldap://host[:port]` with `starttls`."
+          },
+          "user_base_dn": {
+            "type": "string",
+            "description": "Where people are searched."
+          },
+          "user_filter": {
+            "type": "string",
+            "description": "Finds one person; `{username}` is what they typed, escaped."
+          }
+        },
+        "additionalProperties": false
       },
       "LicenseRequest": {
         "type": "object",
@@ -34506,6 +36075,40 @@
             "description": "Units of the range whatever the other filters, sorted."
           }
         }
+      },
+      "MappingView": {
+        "type": "object",
+        "description": "One line of \"Groups and roles\".",
+        "required": [
+          "group",
+          "role"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer, with all its sites; absent or `null` with `site_id`\nfor everything."
+          },
+          "group": {
+            "type": "string",
+            "description": "The group's name as the provider sends it, compared without regard\nto case."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One site; never with `customer_id`."
+          }
+        },
+        "additionalProperties": false
       },
       "MetricCatalog": {
         "type": "object",
@@ -35263,6 +36866,40 @@
           "enabled": {
             "type": "boolean",
             "description": "`false` turns offline incidents off."
+          }
+        },
+        "additionalProperties": false
+      },
+      "OidcSettings": {
+        "type": "object",
+        "description": "An OpenID Connect provider. The client secret is apart.",
+        "required": [
+          "issuer",
+          "client_id"
+        ],
+        "properties": {
+          "ca_pem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A certificate authority in PEM to trust besides the public ones, for\na provider with a private certificate."
+          },
+          "client_id": {
+            "type": "string",
+            "description": "The client ID the provider gave MonitorFlow."
+          },
+          "groups_claim": {
+            "type": "string",
+            "description": "The claim of the ID token, or of userinfo, that lists the groups."
+          },
+          "issuer": {
+            "type": "string",
+            "description": "The provider's issuer, `https`: its discovery document is at\n`<issuer>/.well-known/openid-configuration`."
+          },
+          "scopes": {
+            "type": "string",
+            "description": "Scopes asked for, separated by spaces; `openid` is required. A\nscope the discovery document does not list is left out at sign-in."
           }
         },
         "additionalProperties": false
@@ -36782,6 +38419,92 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "ProviderList": {
+        "type": "object",
+        "description": "Body of `GET /api/identity-providers`.",
+        "required": [
+          "providers",
+          "redirect_uri",
+          "local_administrators"
+        ],
+        "properties": {
+          "local_administrators": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Enabled administrators of everything who sign in with a password\nkept by MonitorFlow. There is always one (ADR-0145)."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderView"
+            }
+          },
+          "redirect_uri": {
+            "type": "string",
+            "description": "The address to enter as the redirect URI in an OpenID Connect\nprovider."
+          }
+        }
+      },
+      "ProviderView": {
+        "type": "object",
+        "description": "A sign-in provider, without its secret.",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "enabled",
+          "has_secret",
+          "settings",
+          "mappings",
+          "accounts",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "accounts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Accounts that sign in through it."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether people sign in through it."
+          },
+          "has_secret": {
+            "type": "boolean",
+            "description": "Whether a client secret or service account password is stored. It\nis never returned."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "mappings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MappingView"
+            },
+            "description": "Which role each group gives."
+          },
+          "name": {
+            "type": "string",
+            "description": "What the login page's button says: \"Sign in with <name>\"."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/IdentityProviderSettings"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -40925,6 +42648,17 @@
             "format": "date-time",
             "description": "Expiry of the user's unused password link, if any."
           },
+          "provider": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AccountProvider",
+                "description": "The sign-in provider the account signs in through, whose groups\ngive its roles; `null` for an account with a password kept by\nMonitorFlow (ADR-0145)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "roles": {
             "type": "array",
             "items": {
@@ -41161,6 +42895,10 @@
     {
       "name": "license",
       "description": "The subscription's license key: its tier (Basic, Standard, Premium or Enterprise), the managed and central servers it covers and its dates, checked offline. Without one the install is on the free Community tier, with every feature. A valid key moves the central server to the tested update channel; an Enterprise key allows additional central servers on one database. A global administrator's; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area."
+    },
+    {
+      "name": "sign-in",
+      "description": "Sign-in providers: OpenID Connect providers (Entra ID, Google, Okta, Keycloak, authentik and any other that follows the standard) and LDAP directories over LDAPS or StartTLS only. People sign in through them with the provider's own password and second factor; their account is made at their first sign-in, and its roles are those its groups give under \"Groups and roles\", replaced at each sign-in and as soon as the groups change. Someone in no mapped group cannot sign in. One administrator of everything with a password kept by MonitorFlow always remains, so a provider that is down never locks everyone out. A provider is turned on only once its connection test passes. Secrets are stored encrypted and never returned. Only a global administrator manages these; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area. Every change is in the audit log. Signing in itself is done in a browser and is not part of this API."
     },
     {
       "name": "dashboards",

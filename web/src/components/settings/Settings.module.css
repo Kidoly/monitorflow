@@ -157,3 +157,10 @@
   color: var(--muted);
   font-size: 12px;
 }
+
+/* Where a provider's account changes its password instead (ADR-0145). */
+.note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}

@@ -69,6 +69,10 @@ lettre.workspace = true
 async-trait.workspace = true
 # Secret redaction of AI context (ADR-0040).
 regex.workspace = true
+# Sign-in providers (ADR-0145): LDAP directories, and the public
+# certificate authorities they and OpenID Connect providers are checked with.
+ldap3.workspace = true
+webpki-roots.workspace = true
 # Kills a timed-out mirror tool with the programs it started.
 rustix = { workspace = true, features = ["process"] }
 

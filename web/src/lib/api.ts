@@ -33,6 +33,103 @@ export interface Me {
   multi_customer?: boolean;
   /** Whether the user sees more than one site; read it with `useMultiSite`. */
   multi_site?: boolean;
+  /** The sign-in provider that keeps the person's password; null for a password kept here (ADR-0145). */
+  provider?: AccountProvider | null;
+}
+
+/** The sign-in provider an account signs in through (ADR-0145). */
+export interface AccountProvider {
+  id: string;
+  name: string;
+  kind: IdentityProviderKind;
+}
+
+export type IdentityProviderKind = "oidc" | "ldap";
+
+/** `GET /api/auth/providers`: what the login page offers. */
+export interface LoginProvider {
+  id: string;
+  name: string;
+  kind: IdentityProviderKind;
+}
+
+export interface OidcSettings {
+  kind: "oidc";
+  issuer: string;
+  client_id: string;
+  scopes: string;
+  groups_claim: string;
+  ca_pem: string | null;
+}
+
+export interface LdapSettings {
+  kind: "ldap";
+  /** `ldaps://host[:port]`, or `ldap://host[:port]` with `starttls`. */
+  url: string;
+  starttls: boolean;
+  ca_pem: string | null;
+  bind_dn: string;
+  user_base_dn: string;
+  user_filter: string;
+  group_base_dn: string | null;
+  group_filter: string;
+  group_name_attribute: string;
+  nested_groups: boolean;
+}
+
+export type IdentityProviderSettings = OidcSettings | LdapSettings;
+
+/** One line of "Groups and roles": no customer and no site is everything. */
+export interface GroupMapping {
+  group: string;
+  role: Role;
+  customer_id: string | null;
+  site_id: string | null;
+}
+
+/** A sign-in provider, without its secret. */
+export interface IdentityProvider {
+  id: string;
+  kind: IdentityProviderKind;
+  name: string;
+  enabled: boolean;
+  has_secret: boolean;
+  settings: IdentityProviderSettings;
+  mappings: GroupMapping[];
+  accounts: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IdentityProviderList {
+  providers: IdentityProvider[];
+  /** What to enter as the redirect URI in an OpenID Connect provider. */
+  redirect_uri: string;
+  local_administrators: number;
+}
+
+export interface IdentityProviderRequest {
+  name: string;
+  enabled: boolean;
+  /** Empty or null keeps the stored one. */
+  secret: string | null;
+  settings: IdentityProviderSettings;
+}
+
+export interface IdentityProviderTest {
+  id?: string;
+  secret: string | null;
+  settings: IdentityProviderSettings;
+  username?: string;
+  password?: string;
+}
+
+export interface IdentityProviderTestResult {
+  ok: boolean;
+  error: string | null;
+  oidc: { issuer: string; keys: number; client_checked: boolean } | null;
+  ldap: { active_directory: boolean; dn: string | null; groups: string[] } | null;
+  roles: RoleGrant[];
 }
 
 export type ServerStatus = "online" | "offline";
@@ -2233,6 +2330,8 @@ export interface UserAccount {
   roles: RoleGrant[];
   /** Expiry of the user's unused password link, if any. */
   link_expires_at: string | null;
+  /** The sign-in provider whose groups give the roles; null for a password kept here (ADR-0145). */
+  provider?: AccountProvider | null;
 }
 
 export interface UserList {
@@ -2999,6 +3098,36 @@ export const api = {
 
   /** Every account; global administrators only (ADR-0059). */
   users: (signal?: AbortSignal) => request<UserList>("/api/users", { signal }),
+
+  /** The sign-in providers turned on, for the login page; no session needed (ADR-0145). */
+  loginProviders: (signal?: AbortSignal) =>
+    request<{ providers: LoginProvider[] }>("/api/auth/providers", { signal, redirectOn401: false }),
+
+  /** Sign-in providers, without secrets; global administrators only (ADR-0145). */
+  identityProviders: (signal?: AbortSignal) =>
+    request<IdentityProviderList>("/api/identity-providers", { signal }),
+
+  /** Adds a provider; turning it on tests it first. */
+  createIdentityProvider: (body: IdentityProviderRequest) =>
+    request<IdentityProvider>("/api/identity-providers", { method: "POST", body }),
+
+  /** Replaces a provider; an empty secret keeps the stored one for the same address. */
+  updateIdentityProvider: (id: string, body: IdentityProviderRequest) =>
+    request<IdentityProvider>(`/api/identity-providers/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  removeIdentityProvider: (id: string) =>
+    request<void>(`/api/identity-providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Tests what the form holds, saving nothing. */
+  testIdentityProvider: (body: IdentityProviderTest) =>
+    request<IdentityProviderTestResult>("/api/identity-providers/test", { method: "POST", body }),
+
+  /** Replaces the groups and roles of a provider; its accounts follow at once. */
+  setIdentityProviderGroups: (id: string, mappings: GroupMapping[]) =>
+    request<{ mappings: GroupMapping[] }>(`/api/identity-providers/${encodeURIComponent(id)}/groups`, {
+      method: "PUT",
+      body: { mappings },
+    }),
 
   /** Creates `username` with one role, and returns their invitation link. */
   inviteUser: (username: string, grant: GrantRequest) =>

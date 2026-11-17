@@ -59,7 +59,7 @@ describe("SettingsIndex", () => {
     await user.type(search, " zebra");
     expect(screen.getByText("No settings match “webhooks zebra”.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear search" }));
-    expect(rowNames()).toHaveLength(15);
+    expect(rowNames()).toHaveLength(16);
   });
 
   it("clears the search with Escape", async () => {

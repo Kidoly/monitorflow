@@ -111,6 +111,20 @@ describe("PreferencesPage", () => {
     expect(screen.queryByText(/Yours only/)).not.toBeInTheDocument();
   });
 
+  it("sends a provider's account to its provider for the password (ADR-0145)", async () => {
+    stubFetch({ [`GET ${URL}`]: { status: 200, body: {} } });
+    const user = { ...viewer, provider: { id: "p1", name: "Keycloak", kind: "oidc" as const } };
+    render(
+      <LocaleProvider>
+        <As user={user}>
+          <PreferencesPage />
+        </As>
+      </LocaleProvider>,
+    );
+    expect(screen.getByText("Your password is kept by Keycloak. Change it there.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Current password")).not.toBeInTheDocument();
+  });
+
   it("signs out from the header", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const fetchMock = await open({}, undefined, { "POST /api/auth/logout": { status: 204 } });
