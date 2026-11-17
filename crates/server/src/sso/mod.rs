@@ -2,8 +2,11 @@
 //! Connect providers and LDAP directories over TLS, roles from their
 //! groups, accounts made at first sign-in.
 
+pub mod accounts;
 pub mod config;
 pub mod jws;
+pub mod ldap;
+pub mod oidc;
 pub mod tls;
 
 use crate::api::users::GrantScope;
