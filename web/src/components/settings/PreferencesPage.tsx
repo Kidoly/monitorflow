@@ -109,7 +109,12 @@ export function PreferencesPage() {
         <h2 id="preferences-password" className={styles.groupTitle}>
           {t("settings.preferences.password")}
         </h2>
-        <PasswordForm username={me.username} />
+        {me.provider ? (
+          // A provider's account has no password here (ADR-0145).
+          <p className={styles.note}>{t("signIn.keptBy", { name: me.provider.name })}</p>
+        ) : (
+          <PasswordForm username={me.username} />
+        )}
       </section>
     </Page>
   );
