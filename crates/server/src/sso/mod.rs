@@ -5,6 +5,7 @@
 pub mod accounts;
 pub mod config;
 pub mod jws;
+pub mod ldap;
 pub mod oidc;
 pub mod tls;
 
