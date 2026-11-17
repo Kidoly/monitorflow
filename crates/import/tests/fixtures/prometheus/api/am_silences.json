@@ -1,0 +1,65 @@
+[
+  {
+    "id": "819c4d4b-4de3-48e5-9c07-fef0ab67e4e1",
+    "status": {
+      "state": "active"
+    },
+    "updatedAt": "2026-11-17T01:26:32.040Z",
+    "comment": "Old staging machines",
+    "createdBy": "setup.sh",
+    "endsAt": "2026-11-19T01:26:32.000Z",
+    "matchers": [
+      {
+        "isEqual": true,
+        "isRegex": true,
+        "name": "instance",
+        "value": "staging-.*"
+      }
+    ],
+    "startsAt": "2026-11-17T01:26:32.040Z"
+  },
+  {
+    "id": "1450c470-3ef0-4e7f-9311-dcea30ef1108",
+    "status": {
+      "state": "active"
+    },
+    "updatedAt": "2026-11-17T01:26:32.019Z",
+    "comment": "Database upgrade",
+    "createdBy": "setup.sh",
+    "endsAt": "2026-11-19T01:26:32.000Z",
+    "matchers": [
+      {
+        "isEqual": true,
+        "isRegex": true,
+        "name": "instance",
+        "value": "db-01.*"
+      }
+    ],
+    "startsAt": "2026-11-17T01:26:32.019Z"
+  },
+  {
+    "id": "29377787-ab67-420b-aaaa-9ac2a6e8627a",
+    "status": {
+      "state": "active"
+    },
+    "updatedAt": "2026-11-17T01:26:32.030Z",
+    "comment": "Nightly batch on the web server",
+    "createdBy": "setup.sh",
+    "endsAt": "2026-11-19T01:26:32.000Z",
+    "matchers": [
+      {
+        "isEqual": true,
+        "isRegex": false,
+        "name": "instance",
+        "value": "web-01:9100"
+      },
+      {
+        "isEqual": true,
+        "isRegex": false,
+        "name": "alertname",
+        "value": "HostHighCpuLoad"
+      }
+    ],
+    "startsAt": "2026-11-17T01:26:32.030Z"
+  }
+]

@@ -78,7 +78,7 @@ impl GrantScope {
     }
 
     /// `(customer_id, site_id)` of `user_roles`.
-    pub(super) fn columns(self) -> (Option<Uuid>, Option<Uuid>) {
+    pub(crate) fn columns(self) -> (Option<Uuid>, Option<Uuid>) {
         match self {
             Self::Global => (None, None),
             Self::Customer(id) => (Some(id), None),
@@ -87,7 +87,7 @@ impl GrantScope {
     }
 
     /// Audit details of a grant: `role`, plus the scope unless global.
-    pub(super) fn details(self, role: Role) -> serde_json::Value {
+    pub(crate) fn details(self, role: Role) -> serde_json::Value {
         let mut details = json!({ "role": role });
         match self {
             Self::Global => {}

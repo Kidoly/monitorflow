@@ -1,0 +1,94 @@
+# A throwaway Prometheus setup for testing MonitorFlow's import from
+# Prometheus (ADR-0146), in local Docker only. Run it through setup.sh,
+# which starts it, reloads the configuration and creates silences:
+#
+#   deploy/import-test/prometheus/setup.sh
+#
+# Two machines with node exporter (web-01, db-01), a blackbox exporter on
+# monitor-01 probing a small web site (shop), Prometheus and Alertmanager.
+# Their configuration is in config/, the same files the import tests read.
+# Prometheus answers on http://127.0.0.1:19090 and Alertmanager on
+# http://127.0.0.1:19093 only. Stop and remove everything with:
+#
+#   docker compose -p mf-import-prom -f deploy/import-test/prometheus/compose.yml down -v
+name: mf-import-prom
+
+# Alertmanager sends to the receivers of config/alertmanager.yml when an
+# alert fires. Their example addresses lead nowhere from these containers,
+# so nothing ever leaves this machine.
+x-nowhere: &nowhere
+  extra_hosts:
+    - "mail.example.com:127.0.0.1"
+    - "hooks.example.com:127.0.0.1"
+    - "hooks.slack.com:127.0.0.1"
+    - "discord.com:127.0.0.1"
+    - "example00.westeurope.logic.azure.com:127.0.0.1"
+    - "events.pagerduty.com:127.0.0.1"
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: mf-import-prom-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+      # setup.sh reloads the configuration through POST /-/reload.
+      - --web.enable-lifecycle
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/rules:/etc/prometheus/rules:ro
+      - ./config/targets:/etc/prometheus/targets:ro
+      - prometheus:/prometheus
+    ports:
+      - "127.0.0.1:19090:9090"
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: mf-import-prom-alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager:/alertmanager
+    ports:
+      - "127.0.0.1:19093:9093"
+    <<: *nowhere
+    restart: unless-stopped
+
+  # Two machines: node exporter reports the container's host name as
+  # nodename in node_uname_info.
+  web-01:
+    image: prom/node-exporter:v1.9.1
+    container_name: mf-import-prom-web-01
+    hostname: web-01
+    restart: unless-stopped
+
+  db-01:
+    image: prom/node-exporter:v1.9.1
+    container_name: mf-import-prom-db-01
+    hostname: db-01
+    restart: unless-stopped
+
+  # The blackbox exporter, on the monitoring machine.
+  monitor-01:
+    image: prom/blackbox-exporter:v0.27.0
+    container_name: mf-import-prom-monitor-01
+    hostname: monitor-01
+    command:
+      - --config.file=/etc/blackbox_exporter/config.yml
+    volumes:
+      - ./config/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    restart: unless-stopped
+
+  # The web site the blackbox exporter probes over HTTP and TCP.
+  shop:
+    image: nginx:1.27.5-alpine
+    container_name: mf-import-prom-shop
+    restart: unless-stopped
+
+volumes:
+  prometheus:
+  alertmanager:

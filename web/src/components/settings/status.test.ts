@@ -100,10 +100,11 @@ describe("settings status lines", () => {
       added: Array(added).fill({ name: "b", admitted_at: "", running: true }),
     });
     expect(licenseStatus({ available: false })).toBeUndefined();
-    expect(licenseStatus(view("valid", 0))).toEqual({ text: "Valid until 30 November 2026", tone: "ok" });
+    expect(licenseStatus(view("valid", 0))).toEqual({ text: "Enterprise, valid until 30 November 2026", tone: "ok" });
     expect(licenseStatus(view("expired", 0))?.tone).toBe("neutral");
     expect(licenseStatus(view("expired", 1))?.tone).toBe("bad");
-    expect(licenseStatus(view("none", 0))).toEqual({ text: "No license key", tone: "neutral" });
+    expect(licenseStatus(view("none", 0))).toEqual({ text: "Community edition", tone: "neutral" });
+    expect(licenseStatus(view("none", 1))).toEqual({ text: "No license key", tone: "bad" });
   });
 
   it("counts what needs someone, critical first", () => {

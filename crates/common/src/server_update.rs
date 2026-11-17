@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::release::{self, PublicKey, Release, ReleaseError, Version};
 
 pub mod backup;
+pub mod channel;
 pub mod retention;
 
 /// The release file naming the images, listed in `SHA256SUMS`.
@@ -41,6 +42,8 @@ pub enum UpdateError {
     BadImages(String),
     #[error("{url}: {reason}")]
     Download { url: String, reason: String },
+    #[error("invalid tested.json: {0}")]
+    BadChannel(String),
     #[error("{base} serves {found}, not {expected}")]
     WrongVersion {
         base: String,

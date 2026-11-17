@@ -9,5 +9,5 @@ pub mod license;
 pub mod store;
 
 pub use admission::{Added, Admission, Refusal};
-pub use license::{License, LicenseError, Verifier};
+pub use license::{License, LicenseError, Tier, Verifier};
 pub use store::{Installed, State, Status};

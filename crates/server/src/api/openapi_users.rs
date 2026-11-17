@@ -18,7 +18,7 @@ use super::{license, user_admin};
         list_users, remove_user, set_disabled, grant_role, revoke_role, get_license,
         install_license, remove_license, remove_license_server,
     ),
-    components(schemas(LicenseView, LicenseState, LicenseTerms, AddedServer)),
+    components(schemas(LicenseView, LicenseState, LicenseTerms, LicenseTier, AddedServer)),
     modifiers(&Common),
     tags(
         (name = "users", description = "The accounts of people who sign in to the web \
@@ -30,8 +30,11 @@ and issuing a password link hand out a credential for a person, so they are left
 public API and done in the web interface. No change may leave the server without an active \
 administrator of everything, and nobody may disable or remove their own account. Every change \
 is in the audit log."),
-        (name = "license", description = "The Enterprise license key, which allows additional \
-central servers on one database. A single central server needs none. A global administrator's; \
+        (name = "license", description = "The subscription's license key: its tier (Basic, Standard, \
+Premium or Enterprise), the managed and central servers it covers and its dates, checked offline. \
+Without one the install is on the free Community tier, with every feature. A valid key moves the \
+central server to the tested update channel; an Enterprise key allows additional central servers \
+on one database. A global administrator's; \
 with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area."),
     ),
 )]
@@ -55,6 +58,10 @@ struct LicenseView {
     installed_by: Option<String>,
     /// Central servers added under a license, oldest first.
     added: Vec<AddedServer>,
+    /// Managed servers now, whose agent is not revoked, to compare with
+    /// `license.managed_servers`. Above it nothing changes but a note on
+    /// the License page.
+    managed_servers_in_use: i64,
 }
 
 /// Where the license stands.
@@ -71,18 +78,37 @@ enum LicenseState {
     Invalid,
 }
 
+/// A paid subscription. Community, the free tier, has no key.
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum LicenseTier {
+    Basic,
+    Standard,
+    Premium,
+    /// Premium with the Enterprise edition: more than one central server.
+    Enterprise,
+}
+
 /// What a license key says, once its signature verified.
 #[derive(Serialize, ToSchema)]
 struct LicenseTerms {
-    /// Format of the key, 1.
+    /// Format of the key: 2, or 1 for a key of ADR-0100.
     format: u32,
     id: Uuid,
     /// The licensee's name.
     customer: String,
-    /// `enterprise`.
+    /// `enterprise` when the key includes the Enterprise edition, `core`
+    /// otherwise.
     edition: String,
+    tier: LicenseTier,
+    /// Managed servers the subscription covers; `null` for a format 1 key,
+    /// which does not say.
+    managed_servers: Option<u32>,
     /// Central servers allowed on the database, the first one included.
+    /// Above 1 only for `enterprise`.
     server_instances: u32,
+    /// Where to ask for support: an email address or an `https://` URL.
+    support: Option<String>,
     issued: NaiveDate,
     /// Valid through this whole day, UTC.
     expires: NaiveDate,
@@ -108,7 +134,8 @@ fn user_example() -> serde_json::Value {
             { "role": "operator", "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b", "site_id": null },
             { "role": "administrator", "customer_id": null, "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b" }
         ],
-        "link_expires_at": null
+        "link_expires_at": null,
+        "provider": null
     })
 }
 
@@ -175,7 +202,8 @@ fn disabled_example() -> serde_json::Value {
 /// as `user.grant`.
 ///
 /// Errors: 400 `invalid` for both a customer and a site, or one that does
-/// not exist; 404 `not_found` for an unknown user.
+/// not exist; 404 `not_found` for an unknown user; 409 `conflict` for an
+/// account of a sign-in provider, whose roles follow its groups.
 #[utoipa::path(post, path = "/api/v1/users/{id}/roles", tag = "users",
     params(("id" = uuid::Uuid, Path, description = "The user's ID")),
     request_body(content = user_admin::GrantRequest, example = json!({
@@ -205,9 +233,9 @@ fn grant_role() {}
                 "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a", "username": "alice", "state": "active",
                 "created_at": "2026-09-01T08:00:00Z",
                 "roles": [{ "role": "operator", "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b", "site_id": null }],
-                "link_expires_at": null
+                "link_expires_at": null, "provider": null
             })),
-        (status = 409, body = ErrorBody, description = "Last administrator: `conflict`"),
+        (status = 409, body = ErrorBody, description = "Last administrator, or an account of a sign-in provider: `conflict`"),
     ))]
 fn revoke_role() {}
 
@@ -216,25 +244,31 @@ fn license_example() -> serde_json::Value {
     "available": true,
     "state": "valid",
     "license": {
-        "format": 1,
+        "format": 2,
         "id": "0b6e4c1a-7f3d-4e2b-9a8c-5d1f0e2b3c4a",
         "customer": "Acme",
         "edition": "enterprise",
+        "tier": "enterprise",
+        "managed_servers": 250,
         "server_instances": 3,
+        "support": "support@example.com",
         "issued": "2026-10-01",
         "expires": "2027-09-30"
     },
     "problem": null,
     "installed_at": "2026-10-02T08:12:44Z",
     "installed_by": "admin",
-    "added": [{ "name": "central-2", "admitted_at": "2026-10-02T08:20:01Z", "running": true }]
+    "added": [{ "name": "central-2", "admitted_at": "2026-10-02T08:20:01Z", "running": true }],
+    "managed_servers_in_use": 212
     })
 }
 
 /// Read the license
 ///
 /// Whether this build includes the Enterprise edition, the installed
-/// license key's state and terms, and the central servers added under it.
+/// license key's state and terms (tier, customer, servers covered,
+/// support contact, dates), the central servers added under it and the
+/// managed servers now. No key means the free Community tier.
 /// Without the Enterprise edition only `available: false` is answered.
 #[utoipa::path(get, path = "/api/v1/license", tag = "license",
     responses((status = 200, description = "The license", body = LicenseView, example = license_example)))]
@@ -244,8 +278,9 @@ fn get_license() {}
 ///
 /// Installs the key in place of any other and answers the new state. A key
 /// that does not verify with this build's public keys, or has expired, is
-/// refused. Audited as `license.install` with the licensee, the number of
-/// central servers and the expiry. Safe to repeat with the same key.
+/// refused. Audited as `license.install` with the licensee, the tier, the
+/// numbers of managed and central servers and the expiry. Safe to repeat
+/// with the same key.
 ///
 /// Errors: 400 `invalid` for a key that does not verify or has expired;
 /// 409 `conflict` when the build has no Enterprise edition.

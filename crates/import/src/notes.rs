@@ -203,6 +203,84 @@ pub const NOTES: &[(&str, &str)] = &[
         "unresolved_macro",
         "It uses a value that is not in the source: {macro}.",
     ),
+    // Zabbix.
+    (
+        "zabbix_stock_template",
+        "Read from the defaults of the stock template {template}, which the export does not include: export it too if it was changed.",
+    ),
+    (
+        "zabbix_template_missing",
+        "The template {template} is not among the uploaded files: export it too, or connect to the Zabbix API.",
+    ),
+    (
+        "zabbix_partial",
+        "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
+    ),
+    (
+        "zabbix_no_measure",
+        "MonitorFlow has no threshold on this measure ({key}).",
+    ),
+    (
+        "zabbix_bytes",
+        "MonitorFlow compares shares of memory and disk space, not amounts such as {value}.",
+    ),
+    (
+        "zabbix_no_recipients",
+        "An export has no users' media, so no recipients: connect to the Zabbix API to read them, or add the channel by hand.",
+    ),
+    (
+        "zabbix_not_set",
+        "Its setting {setting} has no usable address in the source.",
+    ),
+    // Prometheus.
+    (
+        "scrape_as_port",
+        "MonitorFlow checks that port {port} answers; it does not read the exporter's metrics.",
+    ),
+    (
+        "ping_as_offline",
+        "The source pings the host; MonitorFlow's offline alert tells when its agent stops answering.",
+    ),
+    (
+        "ping",
+        "MonitorFlow does not ping addresses; it watches servers through their agent.",
+    ),
+    (
+        "disk_wait",
+        "MonitorFlow compares the average wait of the disk's operations, reads and writes together, which differs from what the source measures.",
+    ),
+    (
+        "cpu_busy_modes",
+        "MonitorFlow counts every busy mode of the processors, also the ones the source leaves out.",
+    ),
+    (
+        "extra_condition",
+        "The source adds a condition MonitorFlow does not check; only the threshold is moved.",
+    ),
+    (
+        "service_failed",
+        "MonitorFlow alerts when the service is not active, not only when it failed.",
+    ),
+    (
+        "service_discovery",
+        "The targets come from {kind}, which only a running Prometheus resolves: connect to it to read them.",
+    ),
+    (
+        "file_missing",
+        "The configuration refers to {file}, which is not among the uploaded files.",
+    ),
+    (
+        "secret_hidden",
+        "The source's API does not show this secret: upload its configuration file to move it, or add the channel by hand.",
+    ),
+    (
+        "secret_in_file",
+        "The source reads this secret from {file}, which is not part of the import: add the channel by hand.",
+    ),
+    (
+        "routes",
+        "MonitorFlow sends every alert to every channel of its site; the source's routing by labels is not moved.",
+    ),
 ];
 
 #[cfg(test)]

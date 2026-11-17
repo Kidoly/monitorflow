@@ -1,5 +1,5 @@
 //! The daily release check (ADR-0061): asks the release source what the
-//! latest release is, verified as the updater will, remembers it for the
+//! latest release of the server's channel is (ADR-0147), verified as the updater will, remembers it for the
 //! administrators' banner, and queues `update.available` the first time a
 //! newer version is seen. A server without Internet simply never hears of
 //! one: a failed check is not an error anyone needs to read.
@@ -16,6 +16,8 @@ use sqlx::PgPool;
 use tokio::time::sleep;
 
 use crate::api::server_update::ServerUpdateSettings;
+use crate::edition::{self, Channel};
+use monitorflow_common::server_update::channel::fetch_channel;
 
 /// Time between two checks.
 pub const DAILY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -106,16 +108,21 @@ pub async fn available(pool: &PgPool, running: &Version) -> Result<Option<Availa
     )
 }
 
-/// One check; returns whether it got an answer.
-pub async fn check(pool: &PgPool, settings: &ServerUpdateSettings, running: &Version) -> bool {
-    let base = update::release_base(&settings.source, None);
-    let candidate = match update::fetch(&settings.client, &base, &settings.keys, None).await {
-        Ok(candidate) => candidate,
-        Err(error) => {
-            tracing::debug!(%error, "no answer from the release source");
-            return false;
-        }
-    };
+/// One check of `channel` (ADR-0147); returns whether it got an answer.
+pub async fn check(
+    pool: &PgPool,
+    settings: &ServerUpdateSettings,
+    channel: Channel,
+    running: &Version,
+) -> bool {
+    let candidate =
+        match fetch_channel(&settings.client, &settings.source, &settings.keys, channel).await {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                tracing::debug!(%error, ?channel, "no answer from the release source");
+                return false;
+            }
+        };
     let version = candidate.release.version;
     let notes = update::release_notes_url(&settings.source, &version);
     match record(pool, &version, notes.as_deref(), running).await {
@@ -144,7 +151,16 @@ pub async fn run(
             _ = &mut stop => return,
             _ = sleep(wait) => {}
         }
-        wait = if check(&pool, &settings, &running).await {
+        // Read each time: a license installed or expired changes it.
+        let channel = match edition::update_channel(&pool).await {
+            Ok(channel) => channel,
+            Err(error) => {
+                tracing::warn!(%error, "could not read the license for the release check");
+                wait = RETRY;
+                continue;
+            }
+        };
+        wait = if check(&pool, &settings, channel, &running).await {
             DAILY
         } else {
             RETRY
