@@ -15,7 +15,6 @@ import { Button, buttonClass } from "./ui/Button";
 import { type Column, DataTable } from "./ui/DataTable";
 import { FactsBox } from "./ui/FactsBox";
 import { Banner, EmptyState, ErrorState, LoadingBlock, NoPermission, PageHeader, RefreshLine } from "./ui/PageState";
-import { missingText } from "./ui/Missing";
 import { RelativeTime } from "./ui/RelativeTime";
 import { Label } from "./ui/StatusLabel";
 import type { Tone } from "./ui/tone";
@@ -140,16 +139,11 @@ function Backups() {
         {data.last?.state === "succeeded" && data.last.warning && <Banner tone="warn">{data.last.warning}</Banner>}
         <FactsBox
           columns={2}
+          // The newest file, first in the table below, tells the last backup and its size.
           facts={[
-            {
-              label: t("backups.facts.last"),
-              value: data.last_success_at ? (
-                <RelativeTime value={data.last_success_at} now={now} />
-              ) : (
-                t("backups.facts.noneYet")
-              ),
-            },
-            { label: t("backups.facts.size"), value: data.files[0] ? formatBytes(data.files[0].size) : missingText("none") },
+            ...(data.files.length === 0 && data.last_success_at
+              ? [{ label: t("backups.facts.last"), value: <RelativeTime value={data.last_success_at} now={now} /> }]
+              : []),
             {
               label: t("backups.facts.next"),
               value: data.next_at ? <RelativeTime value={data.next_at} now={now} /> : t("backups.facts.notScheduled"),

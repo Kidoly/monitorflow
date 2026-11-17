@@ -69,7 +69,7 @@ describe("BackupsPage", () => {
     stubFetch({ "GET /api/backups": { status: 200, body: view() } });
     renderPage({ ...globalAdmin, multi_customer: false });
     expect(await screen.findByText("Sauvegardé.")).toBeInTheDocument();
-    expect(screen.getAllByText("3 Mio").length).toBe(2);
+    expect(screen.getAllByText("3 Mio").length).toBe(1);
     const table = screen.getByRole("table", { name: "Sauvegardes" });
     expect(within(table).getByText("Quotidienne")).toBeInTheDocument();
     await userEvent.click(within(table).getByRole("button", { name: "Télécharger" }));
@@ -82,7 +82,10 @@ describe("BackupsPage", () => {
     // "Backed up." stays for screen readers only: the last backup time says it.
     expect(await screen.findByText("Backed up.")).toHaveClass("visually-hidden");
     expect(screen.queryByText(/Anyone with the file can read every customer's data/)).not.toBeInTheDocument();
-    expect(screen.getAllByText("3 MiB").length).toBe(2);
+    // The newest file in the table tells the last backup and its size: the facts keep what it does not.
+    expect(screen.getAllByText("3 MiB").length).toBe(1);
+    expect(screen.queryByText("Last backup")).not.toBeInTheDocument();
+    expect(screen.getByText("Next automatic backup")).toBeInTheDocument();
     const table = screen.getByRole("table", { name: "Backups" });
     expect(within(table).getByText("Daily")).toBeInTheDocument();
     await userEvent.click(within(table).getByRole("button", { name: "Download" }));

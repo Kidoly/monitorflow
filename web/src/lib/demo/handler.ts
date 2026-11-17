@@ -590,6 +590,8 @@ function autoUpdate(): AutoUpdateStatus {
   }));
   const history = [{
     kind: "agent" as const, version: AGENT_VERSION, state: "rolling" as const, started_at: ago(9 * DAY), halted_at: null, reason: null, counted_from: ago(9 * DAY),
+    // Every server runs the target, so the server reports it finished.
+    outcome: "finished" as const,
   }];
   return {
     settings: { enabled: true, enabled_locked: false, paused: false, failure_threshold: 3 },

@@ -71,7 +71,9 @@ describe("RelayListPage", () => {
       </As>,
     );
     await screen.findByText("No relays yet");
-    await user.click(screen.getAllByRole("button", { name: "Add relay" })[0]!);
+    // One button: the empty state's, not a second one in the header.
+    expect(screen.getAllByRole("button", { name: "Add relay" })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Add relay" }));
     await screen.findByRole("option", { name: "acme › paris" });
     expect(screen.queryByLabelText(/Addresses/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show the install command" }));

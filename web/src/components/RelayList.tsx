@@ -103,9 +103,11 @@ export function RelayList({ me }: { me: Me }) {
         meta={
           relays || error ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : undefined
         }
+        // With no relay yet, the empty state below has the button.
         actions={
           canEnroll &&
-          !adding && (
+          !adding &&
+          relays?.length !== 0 && (
             <Button variant="k" onClick={() => setAdding(true)}>
               {t("relays.add")}
             </Button>

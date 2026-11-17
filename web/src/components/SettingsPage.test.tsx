@@ -99,6 +99,14 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText(/Keep metrics/)).toHaveValue(90);
     expect(screen.getByLabelText(/Agents reach this server at/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+    // Said once each: the address's use, and the install source lives on Add servers.
+    expect(screen.getAllByText("(used in every install command)")).toHaveLength(1);
+    expect(screen.queryByRole("form", { name: "Default install source" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Longer needs more disk/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/leave empty to use it/)).not.toBeInTheDocument();
+    const packages = screen.getByRole("textbox", { name: /^Address/ });
+    expect(packages).toHaveValue("");
+    expect(packages).toHaveAttribute("placeholder", "http://mf.example:7480");
   });
 
   it("speaks French", async () => {

@@ -38,7 +38,9 @@ describe("SitePage", () => {
       </As>,
     );
     expect(await screen.findByRole("heading", { level: 1, name: "paris" })).toBeInTheDocument();
-    expect(screen.getByText("acme · 3 servers")).toBeInTheDocument();
+    // The count is the button's to tell.
+    expect(screen.getByText("acme")).toBeInTheDocument();
+    expect(screen.queryByText(/acme · 3 servers/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Show its 3 servers" })).toHaveAttribute("href", `/?customer=c1&site=${ID}`);
     expect(await screen.findByText(/Every server of paris uses these/)).toBeInTheDocument();
     expect(screen.getByText(/Nothing is checked/)).toBeInTheDocument();

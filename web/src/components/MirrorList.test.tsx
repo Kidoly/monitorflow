@@ -45,7 +45,9 @@ describe("MirrorListPage", () => {
     const table = await screen.findByRole("table", { name: "Miroirs" });
     expect(within(table).getByRole("columnheader", { name: /Prochaine synchro/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ajouter un miroir" })).toBeInTheDocument();
-    expect(screen.getByText(/Chaque miroir garde ses 7 instantanés les plus récents/)).toBeInTheDocument();
+    // Retention is told on each mirror's page, not repeated under the list.
+    expect(screen.queryByText(/Chaque miroir garde/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ouvrez un miroir/)).not.toBeInTheDocument();
   });
 
   it("lists mirrors problems first with their last run and counters", async () => {
@@ -71,6 +73,25 @@ describe("MirrorListPage", () => {
     const tiles = screen.getByRole("group", { name: "Summary, click to filter" });
     expect(within(tiles).getByRole("link", { name: /Failed/ })).toHaveTextContent("Failed1");
     expect(within(tiles).getByRole("link", { name: /Never run/ })).toHaveTextContent("Never run0");
+  });
+
+  it("filters by last run with the counters, not a second dropdown", async () => {
+    setUrl("/admin/mirrors/?run=failed");
+    stubFetch({ "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } } });
+    render(
+      <As user={globalAdmin}>
+        <MirrorListPage />
+      </As>,
+    );
+    const tiles = await screen.findByRole("group", { name: "Summary, click to filter" });
+    expect(screen.queryByRole("combobox", { name: "Last run" })).not.toBeInTheDocument();
+    const failed = within(tiles).getByRole("link", { name: /Failed/ });
+    expect(failed).toHaveAttribute("aria-current", "true");
+    // A second click on the active counter clears the filter.
+    expect(failed).toHaveAttribute("href", "/admin/mirrors");
+    expect(within(tiles).getByRole("link", { name: /Succeeded/ })).toHaveAttribute("href", "/admin/mirrors?run=succeeded");
+    expect(screen.getByRole("link", { name: "rocky-9" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "debian-bookworm" })).not.toBeInTheDocument();
   });
 
   it("filters by family in the URL", async () => {

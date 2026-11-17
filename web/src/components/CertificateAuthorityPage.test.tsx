@@ -46,6 +46,11 @@ describe("CertificateAuthorityPage", () => {
     renderPage();
     expect(await screen.findByText("Valid until 2036-09-29")).toBeInTheDocument();
     expect(screen.getByText("2026-10-01")).toBeInTheDocument();
+    // The expiry date is told once, by the status.
+    expect(screen.getAllByText(/2036-09-29/)).toHaveLength(1);
+    // The heading is not the button's label again, and "about an hour" is said once.
+    expect(screen.getByRole("heading", { name: "Planned or emergency change" })).toBeInTheDocument();
+    expect(screen.getByText(/two steps of about an hour each/).textContent!.match(/about an hour/g)).toHaveLength(1);
     expect(screen.getByText("Details")).toBeInTheDocument();
     expect(screen.getByText("a".repeat(64))).toBeInTheDocument();
 

@@ -226,11 +226,12 @@ describe("SiteSources", () => {
     });
     showSite();
     const table = await screen.findByRole("table", { name: "Package sources of the site's servers" });
-    expect(within(table).getByRole("link", { name: "db-1" })).toHaveAttribute(
-      "href",
-      expect.stringContaining("tab=updates"),
-    );
     expect(within(table).getByText("MonitorFlow has no mirror for debian 11.")).toBeInTheDocument();
+    // The server with nothing else to say is counted above the table, not listed.
+    expect(within(table).queryByRole("link", { name: "db-1" })).not.toBeInTheDocument();
+    expect(screen.getByText("1 server uses its own sources and can use the Debian 12 (bookworm) mirror.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show every server" }));
+    expect(within(table).getByRole("link", { name: "db-1" })).toHaveAttribute("href", expect.stringContaining("tab=updates"));
     expect(within(table).getByText("Can use Debian 12 (bookworm).")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Go back on 1 server…" })).toBeInTheDocument();
 
@@ -284,7 +285,7 @@ describe("SiteSources", () => {
     stubFetch({ [`GET ${path}`]: ok({ servers }) });
     const { unmount } = showSite(viewer);
     await screen.findByRole("table");
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /…$/ })).not.toBeInTheDocument();
 
     unmount();
     stubFetch({ [`GET ${path}`]: ok({ servers: [] }) });
