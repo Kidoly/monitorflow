@@ -38,10 +38,11 @@ export interface Me {
 export type ServerStatus = "online" | "offline";
 
 /** A server's one status on the fleet's pages, worst first (ADR-0130). */
-export type ServerState = "critical" | "warning" | "acknowledged" | "silenced" | "offline" | "ok";
+/** `waiting`: made by an import, waiting for its agent (ADR-0146). */
+export type ServerState = "critical" | "warning" | "acknowledged" | "silenced" | "offline" | "ok" | "waiting";
 
-/** `GET /api/servers/summary`: servers per state, out of `total`. */
-export type ServerSummary = Record<ServerState | "total", number>;
+/** `GET /api/servers/summary`: servers per state, out of `total`; `waiting` is absent from a central server older than ADR-0146. */
+export type ServerSummary = Record<Exclude<ServerState, "waiting"> | "total", number> & { waiting?: number };
 
 /** One entry of `GET /api/servers`. Timestamps are RFC 3339 in UTC. */
 export interface Server {
@@ -86,6 +87,8 @@ export interface Server {
   silence?: { by: string | null; until: string; reason: string } | null;
   /** The latest acknowledgement of its open incidents (ADR-0130). */
   acknowledgement?: { by: string; at: string; note: string | null } | null;
+  /** Made by an import and waiting for its agent, which takes it over by enrolling as `peer_id` (ADR-0146). */
+  awaiting_agent?: boolean;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -1156,6 +1159,100 @@ export interface ServerUpdateView {
     release_notes_url: string | null;
     first_seen_at: string;
   } | null;
+}
+
+/** A tool an import reads (ADR-0146), from `GET /api/imports/sources`. */
+export interface ImportSource {
+  id: string;
+  /** The product's name. */
+  name: string;
+  /** File extensions an upload accepts, without the dot; empty when it reads no files. */
+  extensions: string[];
+  many_files: boolean;
+  /** The connection's fields; empty when it cannot connect. */
+  connect: { key: string; secret: boolean; optional: boolean; placeholder: string }[];
+}
+
+/** Which list of the preview an item is in. */
+export type ImportList = "exact" | "approximated" | "not_movable";
+
+/** A note: a code the catalog translates (`imports.note.<code>`), its arguments, the English text. */
+export interface ImportNote {
+  code: string;
+  args?: Record<string, string>;
+  text: string;
+}
+
+/** What an import item creates. */
+export type ImportCreate =
+  | { object: "server"; peer_id: string; hostname: string; os_family: string; addresses: string[] }
+  | { object: "check"; server: string; kind: string; name: string; interval_ms: number; params: Record<string, string> }
+  | {
+      object: "threshold";
+      server: string;
+      metric: string;
+      instance: string | null;
+      comparison: Comparison;
+      warning: number | null;
+      critical: number | null;
+      duration_s: number;
+      hysteresis: number;
+    }
+  | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string }
+  | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null };
+
+/** One line of an import's preview. */
+export interface ImportItem {
+  id: string;
+  /** `server`, `check`, `threshold`, `silence`, `channel`, `builtin` or `other`. */
+  kind: string;
+  list: ImportList;
+  note?: ImportNote;
+  origin: { kind: string; name: string; detail?: string };
+  hosts: string[];
+  /** MonitorFlow has it already. */
+  present: boolean;
+  /** Items it needs: leaving one out leaves this one out. */
+  needs: string[];
+  create?: ImportCreate;
+}
+
+/** What a confirmation and an undo did. */
+export interface ImportResult {
+  created: Record<string, number>;
+  skipped: number;
+  present: number;
+  failed: { item: string; error: string }[];
+  removed: Record<string, number>;
+  kept_servers: string[];
+}
+
+/** One import: a preview, then confirmed, then perhaps undone. */
+export interface ImportRun {
+  id: string;
+  source: string;
+  source_name: string;
+  site_id: string;
+  site_name: string;
+  input: string;
+  state: "preview" | "confirmed" | "undone";
+  created_at: string;
+  created_by: string | null;
+  expires_at: string | null;
+  confirmed_at: string | null;
+  undone_at: string | null;
+  counts: { exact: number; approximated: number; not_movable: number; present: number; to_create: number };
+  /** Absent in lists. */
+  items?: ImportItem[];
+  result: ImportResult | null;
+}
+
+/** Body of `POST /api/imports`: files or a connection. */
+export interface ImportRequest {
+  source: string;
+  site_id?: string;
+  files?: { name: string; content: string; base64?: boolean }[];
+  connection?: Record<string, string>;
 }
 
 export type BackupKind = "daily" | "manual" | "update";
@@ -3707,6 +3804,22 @@ export const api = {
   /** Frees the place of an added central server; audited. */
   removeAddedServer: (name: string) =>
     request<void>(`/api/license/servers/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  /** Moving from another monitoring tool (ADR-0146): the tools an import reads. */
+  importSources: (signal?: AbortSignal) =>
+    request<{ sources: ImportSource[] }>("/api/imports/sources", { signal }),
+  /** The latest imports of the sites the user administers, without their items. */
+  imports: (signal?: AbortSignal) => request<{ imports: ImportRun[] }>("/api/imports", { signal }),
+  /** Reads files or connects, and stores a preview; creates nothing else. */
+  previewImport: (body: ImportRequest) => request<ImportRun>("/api/imports", { method: "POST", body }),
+  importRun: (id: string, signal?: AbortSignal) =>
+    request<ImportRun>(`/api/imports/${encodeURIComponent(id)}`, { signal }),
+  /** Creates the preview's items but `skip` and what needs them; audited. */
+  confirmImport: (id: string, skip: string[]) =>
+    request<ImportRun>(`/api/imports/${encodeURIComponent(id)}/confirm`, { method: "POST", body: { skip } }),
+  /** Removes what the import created, but servers an agent took over; audited. */
+  undoImport: (id: string) =>
+    request<ImportRun>(`/api/imports/${encodeURIComponent(id)}/undo`, { method: "POST" }),
 
   backups: (signal?: AbortSignal) =>
     request<BackupsView>("/api/backups", { signal }),

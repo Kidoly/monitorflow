@@ -86,6 +86,8 @@ export const RELAYS_PATH = "/settings/relays/";
 export const SITES_PATH = "/settings/sites/";
 /** Install commands and single-use tokens. */
 export const TOKENS_PATH = "/settings/add-servers/";
+/** Moving from another monitoring tool (ADR-0146). */
+export const IMPORT_PATH = "/settings/import/";
 export const USERS_PATH = "/settings/users/";
 /** API keys and the public API's documentation (ADR-0101). */
 export const API_KEYS_PATH = "/settings/api-keys/";
