@@ -1,0 +1,46 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {
+          "__name__": "node_uname_info",
+          "domainname": "(none)",
+          "env": "production",
+          "instance": "db-01:9100",
+          "job": "node",
+          "machine": "x86_64",
+          "nodename": "db-01",
+          "release": "7.2.15-zen1-1-zen",
+          "role": "database",
+          "sysname": "Linux",
+          "version": "#1 ZEN SMP PREEMPT_DYNAMIC Tue, 03 Nov 2026 12:37:17 +0000"
+        },
+        "value": [
+          1794878826.796,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "__name__": "node_uname_info",
+          "domainname": "(none)",
+          "env": "production",
+          "instance": "web-01:9100",
+          "job": "node",
+          "machine": "x86_64",
+          "nodename": "web-01",
+          "release": "7.2.15-zen1-1-zen",
+          "role": "web",
+          "sysname": "Linux",
+          "version": "#1 ZEN SMP PREEMPT_DYNAMIC Tue, 03 Nov 2026 12:37:17 +0000"
+        },
+        "value": [
+          1794878826.796,
+          "1"
+        ]
+      }
+    ]
+  }
+}
