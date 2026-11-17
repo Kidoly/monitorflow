@@ -87,6 +87,13 @@ export const SITES_PATH = "/settings/sites/";
 /** Install commands and single-use tokens. */
 export const TOKENS_PATH = "/settings/add-servers/";
 export const USERS_PATH = "/settings/users/";
+/** Sign-in providers: OpenID Connect and LDAP directories (ADR-0145). */
+export const SIGN_IN_PATH = "/settings/sign-in/";
+
+/** Where the login page's "Sign in with ..." button goes: the API redirects to the provider. */
+export function oidcStartHref(providerId: string): string {
+  return `/api/auth/oidc/${encodeURIComponent(providerId)}/start`;
+}
 /** API keys and the public API's documentation (ADR-0101). */
 export const API_KEYS_PATH = "/settings/api-keys/";
 export const API_DOCS_PATH = "/settings/api-keys/docs/";

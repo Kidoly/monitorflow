@@ -106,6 +106,25 @@ describe("UsersAdminPage", () => {
     );
   });
 
+  it("shows a provider's account with its groups giving the roles (ADR-0145)", async () => {
+    const carol = account({
+      id: "u3",
+      username: "carol",
+      roles: [{ role: "operator", customer_id: null, site_id: null }],
+      provider: { id: "p1", name: "Keycloak", kind: "oidc" },
+    });
+    stubFetch({ ...NAMES, "GET /api/users": { status: 200, body: { users: [account({}), carol] } } });
+    renderAsRoot();
+    const table = await screen.findByRole("table", { name: "Users" });
+    const [, , theirs] = within(table).getAllByRole("row");
+    expect(theirs).toHaveTextContent(/carol.*Signs in with Keycloak.*Active.*operator · everything/);
+    expect(within(theirs!).queryByRole("button", { name: /Revoke/ })).not.toBeInTheDocument();
+    expect(within(theirs!).queryByRole("button", { name: "Add role" })).not.toBeInTheDocument();
+    expect(within(theirs!).queryByRole("button", { name: /password|invitation/i })).not.toBeInTheDocument();
+    expect(within(theirs!).getByRole("button", { name: "Disable" })).toBeInTheDocument();
+    expect(screen.getByText("Roles follow this account's groups in Keycloak, under Settings › Sign-in.")).toBeInTheDocument();
+  });
+
   it("explains why a change was refused", async () => {
     stubFetch({
       ...NAMES,
