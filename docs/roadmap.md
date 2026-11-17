@@ -46,7 +46,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Campaigns: model, waves, maintenance windows, stop on failure.
 - [x] Agent: apply updates, report packages and reboot-required.
 - [x] Web: campaign creation and progress.
-- [ ] On-demand mirrors (ADR-0142): indexes only, packages fetched on first request and kept under a storage cap, prefetched for campaigns and pending updates, in cascade on relays. Full mirrors stay available.
+- [x] On-demand mirrors (ADR-0142): indexes only, packages fetched on first request and kept under a storage cap, prefetched for campaigns and pending updates, in cascade on relays. Full mirrors stay available.
 
 ## Phase 5: AI remediation
 
@@ -154,7 +154,7 @@ The open questions in `docs/product.md`.
 - [ ] Subscription tiers and licensing.
 - [x] Enterprise edition: licensed high availability (ADR-0100). The Enterprise directory `ee/` and its license; an offline license key, checked with a key pair of its own, on an Administration › License page; `install-server.sh --join` to add a central server, which starts only with a license that has room. A missing or expired license stops adding central servers, never monitoring or the ones running.
 - [ ] Billing.
-- [ ] Final product name.
+- [x] Final product name: MonitorFlow.
 - [x] "How to monitor" guides in English and French for the showcase website, to bring search traffic: about 25 subjects from the check catalogue, in `docs/guides/`.
 
 ## Phase 15: Your choice
@@ -171,7 +171,7 @@ Let each install pick what suits it instead of a fixed choice.
 Fit into the tools people already use, for a single company and for MSPs alike (see "Who it is for" in `docs/product.md`).
 
 - [x] A clean public API: versioned, documented with OpenAPI, API keys with scopes limited to a customer or a site, pagination and filters, stable errors, idempotent writes and rate limits. Everything the web interface does is possible through it.
-- [ ] Keep the API complete, and prove it: a test that fails when a route the web interface uses is missing from the public API or from its OpenAPI document, with a short, justified list of what stays for people only (signing in, one's own preferences and password, making API keys). Close today's gaps: undocumented routes, actions only a global administrator can do and no key can reach, and anything the web interface does in more than one call that a script should be able to do in one. From then on a feature is done only when the API and its documentation come with it.
+- [x] Keep the API complete, and prove it: a test that fails when a route the web interface uses is missing from the public API or from its OpenAPI document, with a short, justified list of what stays for people only (signing in, one's own preferences and password, making API keys). Close today's gaps: undocumented routes, actions only a global administrator can do and no key can reach, and anything the web interface does in more than one call that a script should be able to do in one. From then on a feature is done only when the API and its documentation come with it.
 - [ ] Move from another monitoring tool: read its configuration (an export file or its API) and create the matching servers, checks, thresholds, silences and notification channels, starting with the most common open-source and commercial tools and the usual open formats for alerting rules and scrape targets. A preview first shows what maps exactly, what is approximated and what cannot be moved, and nothing is created until it is confirmed. Servers then only need the agent; the old tool can keep running side by side until the switch.
 - [x] Outgoing events for integrations: signed webhooks for incidents, acknowledgements, servers and updates, retried and replayable.
 - [ ] PSA connection, HaloPSA first: a ticket per incident with its status kept in step both ways, customers and sites matched to PSA clients and sites, servers synced as assets.
