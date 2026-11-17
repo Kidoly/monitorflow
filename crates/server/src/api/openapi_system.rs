@@ -127,20 +127,25 @@ fn ready() {}
             "finished_at": "2026-11-12T20:03:05Z"
         },
         "requested": false,
-        "available": null
+        "available": null,
+        "channel": "regular"
     }))))]
 fn update_status() {}
 
 /// Check for a newer release
 ///
-/// Fetches the latest release from `source` and verifies its signature, as
-/// the updater will before installing it, and records what it saw as the
-/// daily check does. Installs nothing; safe to repeat. Answers 200 even
+/// Fetches the latest release of the server's `channel` from `source` and
+/// verifies its signature, as the updater will before installing it, and
+/// records what it saw as the daily check does. The `regular` channel is
+/// the latest release; the `tested` channel, followed while a license key
+/// is valid, is the release named by the signed `tested.json` next to it
+/// (ADR-0147). Installs nothing; safe to repeat. Answers 200 even
 /// when the source cannot be reached: `reachable` and `error` say so.
 #[utoipa::path(post, path = "/api/v1/server-update/check", tag = "server-update",
     responses((status = 200, description = "What the source offers", body = server_update::CheckResult, example = json!({
         "source": "https://releases.example.com/monitorflow",
         "running_version": "0.4.0",
+        "channel": "regular",
         "reachable": true,
         "error": null,
         "latest": {

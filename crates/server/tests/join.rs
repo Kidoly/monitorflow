@@ -57,7 +57,7 @@ impl Key {
 
     /// A license for `servers` central servers until `expires`.
     fn license(&self, servers: u32, expires: &str) -> String {
-        let payload = json!({
+        self.sign(json!({
             "format": 1,
             "id": uuid::Uuid::new_v4(),
             "customer": "Example Corp",
@@ -65,8 +65,25 @@ impl Key {
             "server_instances": servers,
             "issued": "2026-01-01",
             "expires": expires,
-        })
-        .to_string();
+        }))
+    }
+
+    /// A subscription key of ADR-0147.
+    fn subscription(&self, tier: &str, servers: u32) -> String {
+        self.sign(json!({
+            "format": 2,
+            "id": uuid::Uuid::new_v4(),
+            "customer": "Example Corp",
+            "tier": tier,
+            "managed_servers": 50,
+            "server_instances": servers,
+            "issued": "2026-01-01",
+            "expires": "2099-12-31",
+        }))
+    }
+
+    fn sign(&self, payload: Value) -> String {
+        let payload = payload.to_string();
         let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
         format!(
             "-----BEGIN MONITORFLOW LICENSE-----\n{}\n-----END MONITORFLOW LICENSE-----\n\
@@ -116,6 +133,28 @@ db_tests! {
         assert!(why.contains("https://github.com/Kidoly/monitorflow#licence"), "{why}");
         assert!(why.contains("The first central server keeps running"), "{why}");
         assert!(added(&pool).await.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn only_an_enterprise_subscription_adds_central_servers(pool: PgPool) {
+        let key = Key::new();
+        for tier in ["basic", "standard", "premium"] {
+            put_license(&pool, &key.subscription(tier, 1)).await;
+            let why = admit(&pool, &key, "host2").await.unwrap_err();
+            let name = format!("{}{}", tier[..1].to_uppercase(), &tier[1..]);
+            assert!(
+                why.starts_with(&format!("The {name} subscription does not include the Enterprise edition")),
+                "{why}"
+            );
+            assert!(why.contains("The first central server keeps running"), "{why}");
+        }
+        assert!(added(&pool).await.is_empty());
+        // Enterprise in format 2: one place, the first server included in two.
+        put_license(&pool, &key.subscription("enterprise", 2)).await;
+        assert_eq!(admit(&pool, &key, "host2").await, Ok(true));
+        let why = admit(&pool, &key, "host3").await.unwrap_err();
+        assert!(why.contains("allows 2 central servers"), "{why}");
+        assert_eq!(added(&pool).await, ["host2"]);
     }
 
     #[sqlx::test(migrations = "./migrations")]

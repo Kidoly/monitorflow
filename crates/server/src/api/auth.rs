@@ -187,6 +187,9 @@ pub struct Me {
     /// sites only then, as a single site's name on every row says
     /// nothing. Like `multi_customer`, it changes words, never access.
     pub multi_site: bool,
+    /// The sign-in provider the person signs in through, which keeps their
+    /// password; `null` for a password kept by MonitorFlow (ADR-0145).
+    pub provider: Option<super::user_admin::AccountProvider>,
 }
 
 impl Me {
@@ -197,6 +200,7 @@ impl Me {
             roles: user.roles.clone(),
             multi_customer: super::customers::several_visible(pool, user).await?,
             multi_site: several_sites(pool, &user.readable_sites()).await?,
+            provider: super::user_admin::account_provider(pool, user.id).await?,
         })
     }
 }
@@ -216,9 +220,22 @@ pub(super) async fn several_sites(
 
 struct Account {
     id: Uuid,
-    /// `None` for an invited user without a password yet (ADR-0059).
+    /// `None` for an invited user without a password yet (ADR-0059), and
+    /// for an account of a sign-in provider (ADR-0145).
     password_hash: Option<String>,
     disabled: bool,
+    /// The sign-in provider of the account, and whether it is a directory.
+    provider: Option<(Uuid, bool)>,
+}
+
+/// What a sign-in attempt came to.
+enum Verdict {
+    /// A local account with its right password.
+    Local(Uuid),
+    /// An account a directory vouched for.
+    Directory(Uuid, Box<crate::sso::accounts::Provider>),
+    /// Refused: who, if known, and why, as audited.
+    Failed { actor: String, reason: &'static str },
 }
 
 /// `POST /api/auth/login`.
@@ -226,7 +243,9 @@ struct Account {
 /// Attempts are limited per source address and per account before
 /// anything is looked up or verified (ADR-0106). A refused attempt costs
 /// no argon2 run and writes no audit row: the wrong attempt that used a
-/// limit up says so in its own row.
+/// limit up says so in its own row. A name of a directory's account, or
+/// one no account has, is tried against the directories turned on
+/// (ADR-0145).
 pub async fn login(
     State(state): State<ApiState>,
     peer: Peer,
@@ -241,37 +260,60 @@ pub async fn login(
             "Too many sign-in attempts. Wait a few minutes and try again.".into(),
         ));
     };
-    let account = sqlx::query_as::<_, (Uuid, Option<String>, bool)>(
-        "SELECT id, password_hash, disabled_at IS NOT NULL
-         FROM users WHERE lower(username) = lower($1)",
+    let account = sqlx::query_as::<_, (Uuid, Option<String>, bool, Option<Uuid>, Option<String>)>(
+        "SELECT u.id, u.password_hash, u.disabled_at IS NOT NULL, u.identity_provider_id, p.kind
+         FROM users u LEFT JOIN identity_providers p ON p.id = u.identity_provider_id
+         WHERE lower(u.username) = lower($1)",
     )
     .bind(&request.username)
     .fetch_optional(&state.pool)
     .await?
-    .map(|(id, password_hash, disabled)| Account {
+    .map(|(id, password_hash, disabled, provider, kind)| Account {
         id,
         password_hash,
         disabled,
+        provider: provider.map(|p| (p, kind.as_deref() == Some("ldap"))),
     });
 
     // Always run one argon2 verification, account or not.
     let stored = account.as_ref().and_then(|a| a.password_hash.clone());
     let password = request.password;
+    let typed = password.clone();
     let matches = tokio::task::spawn_blocking(move || {
-        password::verify_or_dummy(stored.as_deref(), password.expose())
+        password::verify_or_dummy(stored.as_deref(), typed.expose())
     })
     .await
     .map_err(|e| ApiError::Internal(format!("password verification task: {e}")))?;
 
-    let account = match account {
-        Some(account) if matches && !account.disabled => account,
-        other => {
-            let (actor_id, reason) = match &other {
-                None => ("unknown".to_owned(), "unknown_user"),
-                Some(a) if a.disabled => (a.id.to_string(), "disabled"),
-                Some(a) if a.password_hash.is_none() => (a.id.to_string(), "no_password"),
-                Some(a) => (a.id.to_string(), "bad_password"),
-            };
+    let verdict = match &account {
+        Some(a) if a.disabled => Verdict::Failed {
+            actor: a.id.to_string(),
+            reason: "disabled",
+        },
+        Some(a) if a.provider.is_none() => match (&a.password_hash, matches) {
+            (Some(_), true) => Verdict::Local(a.id),
+            (None, _) => Verdict::Failed {
+                actor: a.id.to_string(),
+                reason: "no_password",
+            },
+            (Some(_), false) => Verdict::Failed {
+                actor: a.id.to_string(),
+                reason: "bad_password",
+            },
+        },
+        // An account of an OpenID Connect provider has no password here.
+        Some(a) if a.provider.is_some_and(|(_, directory)| !directory) => Verdict::Failed {
+            actor: a.id.to_string(),
+            reason: "no_password",
+        },
+        Some(a) => directory(&state, Some(a), &request.username, &password).await?,
+        None => directory(&state, None, &request.username, &password).await?,
+    };
+
+    let (user, provider) = match verdict {
+        Verdict::Local(user) => (user, None),
+        Verdict::Directory(user, provider) => (user, Some(provider)),
+        Verdict::Failed { actor, reason } => {
             let mut details = json!({ "reason": reason });
             if let Some(limit) = state.login_limits.failed(&attempt) {
                 // The last row of this source or account until the window
@@ -286,42 +328,74 @@ pub async fn login(
                 &state.pool,
                 Event {
                     actor_kind: "user",
-                    actor_id: &actor_id,
+                    actor_id: &actor,
                     action: "auth.login_failed",
                     target: None,
                     details,
                 },
             )
             .await?;
-            tracing::info!(user = %actor_id, reason, "login failed");
+            tracing::info!(user = %actor, reason, "login failed");
+            // The directory took the password, but no group gives access:
+            // saying so tells nothing to someone without the password.
+            if reason == "no_group" {
+                return Err(ApiError::NoAccess);
+            }
             return Err(ApiError::InvalidCredentials);
         }
     };
 
     state.login_limits.succeeded(attempt);
-
-    let mut tx = state.pool.begin().await?;
-    session::prune(&mut *tx, &state.settings).await?;
-    let token = session::create(&mut *tx, account.id, &state.settings).await?;
-    let actor_id = account.id.to_string();
-    audit::record(
-        &mut *tx,
-        Event {
-            actor_kind: "user",
-            actor_id: &actor_id,
-            action: "auth.login",
-            target: None,
-            details: json!({}),
-        },
-    )
-    .await?;
-    tx.commit().await?;
-    tracing::info!(user = %account.id, "login succeeded");
-
+    let token = match &provider {
+        Some(provider) => super::sso_login::open_session(&state, user, provider).await?,
+        None => {
+            let mut tx = state.pool.begin().await?;
+            session::prune(&mut *tx, &state.settings).await?;
+            let token = session::create(&mut *tx, user, &state.settings).await?;
+            let actor_id = user.to_string();
+            audit::record(
+                &mut *tx,
+                Event {
+                    actor_kind: "user",
+                    actor_id: &actor_id,
+                    action: "auth.login",
+                    target: None,
+                    details: json!({}),
+                },
+            )
+            .await?;
+            tx.commit().await?;
+            tracing::info!(%user, "login succeeded");
+            token
+        }
+    };
     let cookie = session::set_cookie(&state.settings, &token);
-    let user = load_user(&state.pool, account.id, Some(token)).await?;
+    let user = load_user(&state.pool, user, Some(token)).await?;
     let me = Me::of(&state.pool, &user).await?;
     Ok(([(SET_COOKIE, cookie)], Json(me)).into_response())
+}
+
+/// The login form's attempt through a directory: the account's own, or
+/// each one turned on for a name no account has.
+async fn directory(
+    state: &ApiState,
+    account: Option<&Account>,
+    username: &str,
+    password: &Secret,
+) -> Result<Verdict, ApiError> {
+    use super::sso_login::{ldap_login, LdapAttempt};
+    let actor = account.map_or_else(|| "unknown".to_owned(), |a| a.id.to_string());
+    let provider = account.and_then(|a| a.provider).map(|(id, _)| id);
+    Ok(
+        match ldap_login(state, provider, username, password).await? {
+            LdapAttempt::SignedIn { user, provider } => Verdict::Directory(user, provider),
+            LdapAttempt::Refused { reason, user } => Verdict::Failed {
+                actor: user.map_or(actor, |u| u.to_string()),
+                reason: reason.as_str(),
+            },
+            LdapAttempt::Failed { reason } => Verdict::Failed { actor, reason },
+        },
+    )
 }
 
 /// `POST /api/auth/logout`: ends the current session.

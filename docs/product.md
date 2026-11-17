@@ -45,22 +45,22 @@ Open core, like GitLab CE and EE (ADR-0100). The AGPL core holds every feature a
 
 Revenue comes from the Enterprise edition, from subscriptions that sell stability and support, and from services around the product.
 
-### Subscription tiers (proposal)
+### Subscription tiers
 
 | Tier | Update channel | Support | Enterprise edition | Target |
 | --- | --- | --- | --- | --- |
-| Community | No-subscription channel | Community forum | No | Homelabs, evaluation, small teams |
-| Basic | Enterprise channel | Business-hours tickets, limited per year | No | Small companies |
-| Standard | Enterprise channel | Business-hours tickets, unlimited, faster response | No | Production fleets |
-| Premium | Enterprise channel | Priority response, remote assistance | Option | Critical environments, large MSPs |
-| Enterprise | Enterprise channel | As Premium | Yes: a license key for a number of central servers and a period | High availability, large MSPs |
+| Community | Regular channel | Community forum | No | Homelabs, evaluation, small teams |
+| Basic | Tested channel | Business-hours tickets, limited per year | No | Small companies |
+| Standard | Tested channel | Business-hours tickets, unlimited, faster response | No | Production fleets |
+| Premium | Tested channel | Priority response, remote assistance | Option: the Enterprise tier | Critical environments, large MSPs |
+| Enterprise | Tested channel | As Premium | Yes: a license key for a number of central servers and a period | High availability, large MSPs |
 
-Support subscriptions are counted per managed server (or per relay site for MSPs). The Enterprise edition is counted per central server. Without a subscription nothing nags: a single central server never needs a license key, and only Administration › License mentions one. A license that expires stops adding central servers, never monitoring, alerts or the central servers already running.
+Support subscriptions are counted per managed server (or per relay site for MSPs). The Enterprise edition is counted per central server. Without a subscription nothing nags: a single central server never needs a license key, and only Administration › License mentions one. A license that expires stops adding central servers and moves the central server back to the regular channel, never stops monitoring, alerts or the central servers already running. Above the number of managed servers covered, only a calm note on the License page says so. One license key carries the tier, the customer, the servers covered and the dates (ADR-0147). Prices are on the website, not in the product.
 
 ### What the subscription sells
 
 - **Enterprise edition** (Enterprise tier): more than one central server on one database, added with one command, so the platform survives the loss of a host (ADR-0089, ADR-0100).
-- **Enterprise update channel** for the platform itself: builds tested longer than the no-subscription channel.
+- **Tested update channel** for the platform itself: releases the owner promotes after they ran longer than the regular channel (ADR-0147).
 - **Validated distribution snapshots:** apt and dnf snapshots tested on reference servers before campaigns use them.
 - **Support with response times**, by tier.
 

@@ -46,6 +46,12 @@ pub enum Refusal {
          a license with more. {HOW_TO_GET_ONE}"
     )]
     Full { allowed: u32, used: u32 },
+    #[error(
+        "the {0} subscription does not include the Enterprise edition, which adds central \
+         servers. Install an Enterprise license key under Administration > License. \
+         {HOW_TO_GET_ONE}. The first central server keeps running"
+    )]
+    NotEnterprise(&'static str),
 }
 
 /// Why it may start.
@@ -119,6 +125,9 @@ pub async fn check(
         }
         _ => return Ok(Err(Refusal::NoLicense)),
     };
+    if !license.tier.includes_enterprise_edition() {
+        return Ok(Err(Refusal::NotEnterprise(license.tier.name())));
+    }
     let added: i64 = sqlx::query_scalar("SELECT count(*) FROM server_instance_admissions")
         .fetch_one(&mut *db)
         .await?;

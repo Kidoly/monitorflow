@@ -1,4 +1,4 @@
-//! Administration › License (ADR-0100): installing, reading and removing a
+//! Administration › License (ADR-0100, ADR-0147): installing, reading and removing a
 //! license key, who may, and the audit entries. Signed with a throwaway
 //! key pair, never the real one. Ignored without `DATABASE_URL`.
 #![cfg(feature = "enterprise")]
@@ -46,16 +46,40 @@ fn test_key() -> (Ed25519KeyPair, Verifier) {
 }
 
 fn license(pair: &Ed25519KeyPair, expires: &str) -> String {
-    let payload = json!({
-        "format": 1,
-        "id": "6f1c1d1e-8a43-4c55-9d43-3c2f6c0e9a01",
-        "customer": "Example Corp",
-        "edition": "enterprise",
-        "server_instances": 3,
-        "issued": "2026-11-01",
-        "expires": expires,
-    })
-    .to_string();
+    signed(
+        pair,
+        json!({
+            "format": 1,
+            "id": "6f1c1d1e-8a43-4c55-9d43-3c2f6c0e9a01",
+            "customer": "Example Corp",
+            "edition": "enterprise",
+            "server_instances": 3,
+            "issued": "2026-11-01",
+            "expires": expires,
+        }),
+    )
+}
+
+/// A subscription key of ADR-0147.
+fn subscription(pair: &Ed25519KeyPair, tier: &str, managed: u32, expires: &str) -> String {
+    signed(
+        pair,
+        json!({
+            "format": 2,
+            "id": "0d7c2a4e-5b1f-4c3d-8e9a-1f2b3c4d5e6f",
+            "customer": "Example Corp",
+            "tier": tier,
+            "managed_servers": managed,
+            "server_instances": 1,
+            "support": "https://support.example.com",
+            "issued": "2026-11-01",
+            "expires": expires,
+        }),
+    )
+}
+
+fn signed(pair: &Ed25519KeyPair, payload: Value) -> String {
+    let payload = payload.to_string();
     let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
     format!(
         "-----BEGIN MONITORFLOW LICENSE-----\n{}\n-----END MONITORFLOW LICENSE-----\n\
@@ -178,6 +202,66 @@ db_tests! {
         assert_eq!(h.audit("license.remove").await.len(), 1);
         let (status, _) = h.send("DELETE", "/api/license", &admin, None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_subscription_says_its_tier_and_what_it_covers(pool: PgPool) {
+        let (pair, verifier) = test_key();
+        let h = Harness { pool, verifier };
+        let admin = h.login("admin", Role::Administrator, GrantScope::Global).await;
+        let site: uuid::Uuid = sqlx::query_scalar("INSERT INTO sites (name) VALUES ('main') RETURNING id")
+            .fetch_one(&h.pool)
+            .await
+            .unwrap();
+        for (i, revoked) in [false, false, false, true].into_iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at)
+                 VALUES ($1, $2, $1, 'debian', CASE WHEN $3 THEN now() END)",
+            )
+            .bind(format!("host{i}"))
+            .bind(site)
+            .bind(revoked)
+            .execute(&h.pool)
+            .await
+            .unwrap();
+        }
+        let (_, body) = h.send("GET", "/api/license", &admin, None).await;
+        // Revoked agents do not count.
+        assert_eq!(body["managed_servers_in_use"], 3);
+
+        for tier in ["basic", "standard", "premium", "enterprise"] {
+            // Fewer servers covered than there are: installed all the same.
+            let text = subscription(&pair, tier, 2, "2099-12-31");
+            let (status, body) = h
+                .send("PUT", "/api/license", &admin, Some(json!({ "text": text })))
+                .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["state"], "valid");
+            assert_eq!(body["license"]["tier"], tier);
+            assert_eq!(body["license"]["format"], 2);
+            assert_eq!(body["license"]["managed_servers"], 2);
+            assert_eq!(body["license"]["server_instances"], 1);
+            assert_eq!(body["license"]["support"], "https://support.example.com");
+            let edition = if tier == "enterprise" { "enterprise" } else { "core" };
+            assert_eq!(body["license"]["edition"], edition);
+            assert_eq!(body["managed_servers_in_use"], 3);
+        }
+        let audit = h.audit("license.install").await;
+        assert_eq!(audit.len(), 4);
+        assert_eq!(audit[0]["tier"], "basic");
+        assert_eq!(audit[0]["managed_servers"], 2);
+
+        // An expired subscription is refused like any expired key.
+        let (status, body) = h
+            .send(
+                "PUT",
+                "/api/license",
+                &admin,
+                Some(json!({ "text": subscription(&pair, "standard", 10, "2020-01-01") })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("expired on 2020-01-01"), "{body}");
     }
 
     #[sqlx::test(migrations = "./migrations")]
