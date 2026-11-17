@@ -4,9 +4,8 @@ import type { Catalog, Translation } from "../catalog";
 export const en = {
   "group.personal": "You",
   "preferences.label": "Preferences",
-  "preferences.description": "Language, theme, sidebar and password, for you on every browser",
+  "preferences.description": "Language, theme, sidebar and password",
   "preferences.keywords": "personal account theme dark light language sidebar menu password sign out",
-  "preferences.meta": "Yours only, saved with your account",
   "preferences.appearance": "Appearance",
   "preferences.theme": "Theme",
   "preferences.language": "Language",
@@ -169,9 +168,8 @@ export const en = {
 export const fr: Translation<typeof en> = {
   "group.personal": "Vous",
   "preferences.label": "Préférences",
-  "preferences.description": "Langue, thème, barre latérale et mot de passe, pour vous dans chaque navigateur",
+  "preferences.description": "Langue, thème, barre latérale et mot de passe",
   "preferences.keywords": "personnel compte thème sombre clair langue barre latérale menu mot de passe déconnexion",
-  "preferences.meta": "Rien que pour vous, enregistrées avec votre compte",
   "preferences.appearance": "Apparence",
   "preferences.theme": "Thème",
   "preferences.language": "Langue",

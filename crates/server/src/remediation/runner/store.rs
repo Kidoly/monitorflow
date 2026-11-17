@@ -209,6 +209,16 @@ pub async fn transition(
         NewEvent::state_change(Actor::System, from, to),
     )
     .await?;
+    set_state(tx, incident, to).await
+}
+
+/// Moves `incident` to `to` without an event of its own: for a change
+/// another event already records, like [`NewEvent::closing`].
+pub async fn set_state(
+    tx: &mut Transaction<'_, Postgres>,
+    incident: Uuid,
+    to: IncidentState,
+) -> Result<(), AuditError> {
     sqlx::query(
         "UPDATE remediation_incidents
          SET state = $2, closed_at = CASE WHEN $3 THEN now() END

@@ -14,9 +14,9 @@ import {
 } from "@/lib/api";
 import { t } from "@/i18n";
 import { acceptance } from "@/lib/commandKinds";
-import { riskWord, rollbackText, tierName, timeLeft } from "@/lib/remediation";
+import { riskWord, rollbackText, ruleReason, tierName, timeLeft } from "@/lib/remediation";
 import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
-import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
+import { AI_SETTINGS_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -108,7 +108,6 @@ export function ApprovalQueue() {
       <PageHeader
         title={t("remediation.queue.title")}
         meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
-        actions={<ButtonLink href={scopedHref(AUDIT_PATH, scope)}>{t("remediation.queue.auditLog")}</ButtonLink>}
       />
       <FilterBar
         filters={[
@@ -268,7 +267,7 @@ function ApprovalDetail({
         </dd>
         <dt>{t("remediation.detail.rule")}</dt>
         <dd>
-          {item.rule.id} · {item.reason} <span className={styles.dim}>{t("remediation.detail.byRules")}</span>
+          {item.rule.id} · {ruleReason(item.rule, item.reason)} <span className={styles.dim}>{t("remediation.detail.byRules")}</span>
         </dd>
         <dt>{t("remediation.detail.rollback")}</dt>
         <dd>

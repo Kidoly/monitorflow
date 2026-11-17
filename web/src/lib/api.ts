@@ -2663,7 +2663,10 @@ export interface ChannelTestResult {
 export interface AiModel {
   id: string;
   name: string;
+  /** When to pick it, in English. */
   note: string;
+  /** `note` as a stable code: `recommended`, `half_price` or `cheapest`; absent from older servers. */
+  fit?: string;
 }
 
 /** Who answers (ADR-0096): Anthropic, OpenAI, or any OpenAI-compatible server, local models included. */

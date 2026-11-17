@@ -84,9 +84,80 @@ function duration(ms: number): string {
   return `${seconds} ${t("format.unit.second")}`;
 }
 
+/** Closing codes the catalog words (ADR-0144); others show the server's English. */
+const CLOSE_CODES = [
+  "sensor_normal",
+  "duration_limit",
+  "command_limit",
+  "ai_escalated",
+  "not_fixed",
+  "alert_gone",
+  "context_failed",
+  "ai_failed",
+  "forbidden_proposal",
+  "approved_forbidden",
+  "needs_approval",
+  "commands_off",
+  "commands_off_windows",
+  "system_unsupported",
+  "agent_too_old",
+  "snapshot_failed",
+  "command_gone",
+  "timed_out",
+  "incomplete",
+] as const;
+type CloseCode = (typeof CLOSE_CODES)[number];
+
 /**
- * One line for an event of the audit log, from its payload. AI text and
- * commands are shown as given: React escapes them, nothing interprets them.
+ * Why an incident closed, from the `code` of its closing event in the
+ * active language; `fallback`, the server's English, for events written
+ * before codes or with a code this page does not know.
+ */
+export function closeReason(payload: Record<string, unknown>, fallback: string): string {
+  const code = payload.code as CloseCode;
+  if (!CLOSE_CODES.includes(code)) return fallback;
+  return t(`remediation.close.${code}`, {
+    detail: text(payload, "detail"),
+    count: typeof payload.limit === "number" ? payload.limit : 0,
+  });
+}
+
+/** The agent's refusal of shell commands, the start of its English message. */
+const AGENT_SHELL_OFF = "shell commands are disabled on this agent";
+
+/**
+ * Why a command did not complete, in the active language when it is one
+ * of MonitorFlow's own messages: the server's code, or the agent's known
+ * refusal. Anything else is shown as the agent wrote it.
+ */
+export function commandError(payload: Record<string, unknown>): string {
+  if (payload.error_code === "no_result" && typeof payload.limit === "number") {
+    return t("remediation.commandError.noResult", { count: payload.limit });
+  }
+  const error = text(payload, "error");
+  if (error.startsWith(AGENT_SHELL_OFF)) {
+    return error.includes("monitorflow-agent.exe")
+      ? t("remediation.commandError.shellOffWindows")
+      : t("remediation.commandError.shellOff");
+  }
+  return error || t("remediation.summary.noResult");
+}
+
+/**
+ * Why the rules gave a tier, in the active language for the builtin rule
+ * most commands meet ("`df` only reports system state"); other rules'
+ * reasons are shown as the server wrote them.
+ */
+export function ruleReason(rule: unknown, reason: string): string {
+  const builtin = rule && typeof rule === "object" && (rule as Record<string, unknown>).source === "builtin";
+  const reports = builtin ? /^`([^`]+)` only reports system state$/.exec(reason) : null;
+  return reports ? t("remediation.rule.reportsState", { program: reports[1]! }) : reason;
+}
+
+/**
+ * One line for an event of the audit log, from its payload: only what the
+ * event's name, beside it, does not already say. AI text and commands are
+ * shown as given: React escapes them, nothing interprets them.
  */
 export function eventSummary(event: Pick<RemediationEvent, "kind" | "actor_kind" | "payload">): string {
   const p = event.payload;
@@ -97,8 +168,8 @@ export function eventSummary(event: Pick<RemediationEvent, "kind" | "actor_kind"
         redactions && typeof redactions === "object"
           ? Object.values(redactions).reduce<number>((sum, n) => sum + (typeof n === "number" ? n : 0), 0)
           : 0;
-      const sent = t("remediation.summary.contextSent", { model: text(p, "model") || t("remediation.summary.theAi") });
-      return count ? sent + t("remediation.summary.redacted", { count }) : sent;
+      const model = text(p, "model") || t("remediation.summary.theAi");
+      return count ? model + t("remediation.summary.redacted", { count }) : model;
     }
     case "ai_proposal":
       return typeof p.command === "string"
@@ -109,42 +180,44 @@ export function eventSummary(event: Pick<RemediationEvent, "kind" | "actor_kind"
     case "classification": {
       const tier = TIERS.includes(p.tier as RiskTier) ? tierName(p.tier as RiskTier) : text(p, "tier");
       const rule = p.rule && typeof p.rule === "object" ? text(p.rule as Record<string, unknown>, "id") : "";
+      const reason = ruleReason(p.rule, text(p, "reason"));
       return rule
-        ? t("remediation.summary.classifiedByRule", { tier, rule, reason: text(p, "reason") })
-        : t("remediation.summary.classified", { tier, reason: text(p, "reason") });
+        ? t("remediation.summary.classifiedByRule", { tier, rule, reason })
+        : t("remediation.summary.classified", { tier, reason });
     }
     case "approval":
-      return event.actor_kind === "system"
-        ? t("remediation.summary.approvedByPolicy", { command: text(p, "command") })
-        : t("remediation.summary.approved", { command: text(p, "command") });
+      // The actor column says whether a person or the policy approved.
+      return text(p, "command");
     case "edit":
       return t("remediation.summary.edited", { original: text(p, "original"), edited: text(p, "edited") });
     case "rejection":
       return text(p, "reason")
         ? t("remediation.summary.rejectedBecause", { command: text(p, "command"), reason: text(p, "reason") })
-        : t("remediation.summary.rejected", { command: text(p, "command") });
+        : text(p, "command");
     case "snapshot":
       return text(p, "method") === "none"
         ? t("remediation.summary.noSnapshot", { detail: text(p, "detail") })
         : t("remediation.summary.snapshot", { name: text(p, "name"), method: text(p, "method") });
     case "command_queued":
-      return t("remediation.summary.queued", { command: text(p, "command") });
+      return text(p, "command");
     case "command_result": {
       const ms = typeof p.duration_ms === "number" ? p.duration_ms : null;
       const took = ms === null ? "" : `, ${duration(ms)}`;
       return typeof p.exit_code === "number"
         ? t("remediation.summary.exitCode", { code: String(p.exit_code), took })
-        : t("remediation.summary.notCompleted", { error: text(p, "error") || t("remediation.summary.noResult"), took });
+        : t("remediation.summary.notCompleted", { error: commandError(p), took });
     }
-    case "escalation":
-      return t("remediation.summary.escalated", { reason: text(p, "reason") });
+    case "escalation": {
+      const reason = closeReason(p, text(p, "reason"));
+      return p.to === "failed" ? t("remediation.summary.failed", { reason }) : reason;
+    }
     case "state_change":
       return t("remediation.summary.stateChange", {
         from: stateName(p.from) ?? text(p, "from"),
         to: stateName(p.to) ?? text(p, "to"),
       });
     case "note":
-      return text(p, "text");
+      return closeReason(p, text(p, "text"));
   }
 }
 

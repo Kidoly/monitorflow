@@ -444,7 +444,10 @@
 //! `created_at`, `hash`) with its incident's customer, site, server,
 //! `metric` and `instance`. `payload` leaves out `context.rendered` and
 //! command `stdout`/`stderr`; the incident detail has them and verifies
-//! the chain.
+//! the chain. The `escalation` or `note` that closes an incident holds
+//! `from` and `to` in place of a `state_change`, and a stable `code` with
+//! `detail` and `limit` next to its English `reason` or `text`
+//! (ADR-0144).
 //!
 //! # Commands and packages
 //!

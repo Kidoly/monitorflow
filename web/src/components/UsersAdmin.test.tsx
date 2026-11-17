@@ -61,8 +61,9 @@ describe("UsersAdminPage", () => {
     });
     const user = userEvent.setup();
     renderAsRoot();
-    expect(await screen.findByText("Only you so far")).toBeInTheDocument();
-    const form = screen.getByRole("form", { name: "Invite a user" });
+    const form = await screen.findByRole("form", { name: "Invite a user" });
+    // The invite form is the only way to add someone: no second invite action below the table.
+    expect(screen.getAllByRole("button", { name: /invit/i })).toHaveLength(1);
     await user.type(within(form).getByLabelText("Username"), "bob");
     await user.selectOptions(within(form).getByLabelText("Role"), "operator");
     await user.selectOptions(within(form).getByLabelText("On"), "Site lyon-office");
@@ -92,7 +93,6 @@ describe("UsersAdminPage", () => {
     expect(within(mine!).queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
     expect(theirs).toHaveTextContent(/bob.*Has not opened the invitation yet.*Invited/);
     expect(await within(theirs!).findByText("viewer · Acme › lyon-office")).toBeInTheDocument();
-    expect(screen.queryByText("Only you so far")).not.toBeInTheDocument();
 
     await user.click(within(theirs!).getByRole("button", { name: "Revoke viewer · Acme › lyon-office from bob" }));
     await vi.waitFor(() =>

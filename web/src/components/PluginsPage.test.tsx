@@ -86,6 +86,13 @@ describe("PluginsPage", () => {
     expect(screen.getByText("Plugins need a global administrator")).toBeInTheDocument();
   });
 
+  it("says only that no plugin is installed, the upload box being just above", async () => {
+    stubFetch(routes([]));
+    renderPage();
+    expect(await screen.findByText("No plugin installed")).toBeInTheDocument();
+    expect(screen.queryByText(/Upload a .mfplugin file above/)).not.toBeInTheDocument();
+  });
+
   it("lists installed plugins with what they ask for and where they run", async () => {
     stubFetch(routes([plugin()]));
     renderPage();

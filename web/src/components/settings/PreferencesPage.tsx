@@ -52,7 +52,7 @@ export function PreferencesPage() {
     <Page>
       <PageHeader
         title={t("settings.preferences.label")}
-        meta={save === "saving" ? t("settings.preferences.saving") : t("settings.preferences.meta")}
+        meta={save === "saving" ? t("settings.preferences.saving") : undefined}
         sub={t("settings.preferences.account", { name: me.username, roles })}
         actions={<Button onClick={() => void signOut()}>{t("shell.signOut")}</Button>}
       />

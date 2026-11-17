@@ -47,8 +47,11 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct Model {
     pub id: &'static str,
     pub name: &'static str,
-    /// When to pick it, in a few words.
+    /// When to pick it, in a few words, in English.
     pub note: &'static str,
+    /// [`Self::note`] as a stable code for clients to word themselves:
+    /// `recommended`, `half_price` or `cheapest`.
+    pub fit: &'static str,
 }
 
 /// The short list of the web interface, the default first.
@@ -57,16 +60,19 @@ pub const MODELS: &[Model] = &[
         id: DEFAULT_AI_MODEL,
         name: "Claude Opus 5.5",
         note: "Recommended: the best diagnoses",
+        fit: "recommended",
     },
     Model {
         id: "claude-sonnet-5-5",
         name: "Claude Sonnet 5.5",
         note: "Half the price, for most incidents",
+        fit: "half_price",
     },
     Model {
         id: "claude-haiku-5-5",
         name: "Claude Haiku 5.5",
         note: "Cheapest, for simple incidents",
+        fit: "cheapest",
     },
 ];
 
