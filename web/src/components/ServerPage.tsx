@@ -305,7 +305,7 @@ function ServerHeader({
       <PageHeader
         detail
         title={server.hostname}
-        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.status} />}
+        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.awaiting_agent ? "waiting" : server.status} />}
         meta={<RefreshLine updatedAt={now} stale={stale} />}
         actions={
           <>
@@ -341,7 +341,7 @@ function ServerHeader({
                 t("server.line.neverSeen")
               )}
             </span>
-            {live && <ServerBadges server={server} now={now} />}
+            {live && !server.awaiting_agent && <ServerBadges server={server} now={now} />}
             <Button variant="ghost" size="small" aria-expanded={details} onClick={() => setDetails(!details)}>
               {t("ui.details")}
             </Button>

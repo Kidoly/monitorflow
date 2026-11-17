@@ -3,7 +3,13 @@
 import { useState } from "react";
 
 import { t } from "@/i18n";
-import { ApiError, type CreatedToken, type ServerDetail, api, describeError } from "@/lib/api";
+import {
+  ApiError,
+  type CreatedToken,
+  type ServerDetail,
+  api,
+  describeError,
+} from "@/lib/api";
 import { administersCustomer, administersEverything, useMe } from "@/lib/me";
 
 import { NewToken } from "../TokensAdmin";
@@ -31,24 +37,41 @@ export function WaitingForAgent({ server }: { server: ServerDetail }) {
     setError(null);
     try {
       setToken(
-        await api.createToken({ role: "agent", peer_id: server.peer_id, site_id: server.site_id, ttl_s: TOKEN_TTL_S, server_names: [] }),
+        await api.createToken({
+          role: "agent",
+          peer_id: server.peer_id,
+          site_id: server.site_id,
+          ttl_s: TOKEN_TTL_S,
+          server_names: [],
+        }),
       );
     } catch (e) {
-      setError(e instanceof ApiError && e.status < 500 ? e.message : describeError(e));
+      setError(
+        e instanceof ApiError && e.status < 500 ? e.message : describeError(e),
+      );
     } finally {
       setBusy(false);
     }
   }
 
   if (token) {
-    return <NewToken token={token} editable={administersEverything(me)} onDone={() => setToken(null)} onAnother={() => void make()} />;
+    return (
+      <NewToken
+        token={token}
+        editable={administersEverything(me)}
+        onDone={() => setToken(null)}
+        onAnother={() => void make()}
+      />
+    );
   }
   return (
     <section className={styles.box} aria-labelledby="waiting-title">
       <h2 id="waiting-title" className={styles.title}>
         {t("imports.waiting.title")}
       </h2>
-      <p className={styles.note}>{t("imports.waiting.note", { name: server.peer_id })}</p>
+      <p className={styles.note}>
+        {t("imports.waiting.note", { name: server.peer_id })}
+      </p>
       {error && <Banner tone="bad">{error}</Banner>}
       {canMake && (
         <div className={styles.buttons}>

@@ -36,18 +36,32 @@ import { Button, fieldClass } from "../ui/Button";
 import { cx } from "../ui/cx";
 import { InlineConfirm } from "../ui/InlineConfirm";
 import { Page } from "../ui/Page";
-import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "../ui/PageState";
+import {
+  Banner,
+  ErrorState,
+  LoadingBlock,
+  NoPermission,
+  PageHeader,
+} from "../ui/PageState";
 import { Label } from "../ui/StatusLabel";
 import type { Tone } from "../ui/tone";
 import styles from "./Imports.module.css";
 
-const LIST_TONES: Record<ImportList, Tone> = { exact: "ok", approximated: "warn", not_movable: "neutral" };
+const LIST_TONES: Record<ImportList, Tone> = {
+  exact: "ok",
+  approximated: "warn",
+  not_movable: "neutral",
+};
 
 /** `/settings/import/`: moving from another monitoring tool (ADR-0146). Administrators only. */
 export function ImportPage() {
   const me = useMe();
   if (!isAdministrator(me)) {
-    return <NoPermission title={t("imports.noPermission")}>{t("imports.noPermissionNote")}</NoPermission>;
+    return (
+      <NoPermission title={t("imports.noPermission")}>
+        {t("imports.noPermissionNote")}
+      </NoPermission>
+    );
   }
   return <Imports />;
 }
@@ -72,10 +86,15 @@ function Imports() {
 }
 
 /** Reads a file as text, or as base64 when it is not UTF-8. */
-async function fileBody(file: File): Promise<{ name: string; content: string; base64?: boolean }> {
+async function fileBody(
+  file: File,
+): Promise<{ name: string; content: string; base64?: boolean }> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   try {
-    return { name: file.name, content: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
+    return {
+      name: file.name,
+      content: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    };
   } catch {
     let binary = "";
     for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -105,7 +124,10 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([api.importSources(controller.signal), api.sites(controller.signal)])
+    Promise.all([
+      api.importSources(controller.signal),
+      api.sites(controller.signal),
+    ])
       .then(([s, list]) => {
         setSources(s.sources);
         setSites(list.sites);
@@ -122,11 +144,23 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
 
   const source = sources?.find((s) => s.id === sourceId) ?? null;
   // A source that reads no files only connects, and the other way round.
-  const shownMode = source && source.extensions.length === 0 ? "connect" : source && source.connect.length === 0 ? "files" : mode;
+  const shownMode =
+    source && source.extensions.length === 0
+      ? "connect"
+      : source && source.connect.length === 0
+        ? "files"
+        : mode;
 
-  if (loadError) return <ErrorState what={t("imports.what.sources")} error={describeError(loadError)} />;
+  if (loadError)
+    return (
+      <ErrorState
+        what={t("imports.what.sources")}
+        error={describeError(loadError)}
+      />
+    );
   if (!sources) return <LoadingBlock />;
-  if (sources.length === 0) return <Banner tone="plain">{t("imports.noSources")}</Banner>;
+  if (sources.length === 0)
+    return <Banner tone="plain">{t("imports.noSources")}</Banner>;
 
   async function read() {
     if (!source) return;
@@ -136,24 +170,40 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
       const body =
         shownMode === "files"
           ? { files: await Promise.all(files.map(fileBody)) }
-          : { connection: Object.fromEntries(Object.entries(fields).filter(([, v]) => v.trim() !== "")) };
+          : {
+              connection: Object.fromEntries(
+                Object.entries(fields).filter(([, v]) => v.trim() !== ""),
+              ),
+            };
       const run = await api.previewImport({
         source: source.id,
         ...(multiSite(me) && siteId ? { site_id: siteId } : {}),
         ...body,
       });
       // The token is not kept once read.
-      setFields((current) => Object.fromEntries(Object.entries(current).filter(([k]) => !source.connect.find((f) => f.key === k)?.secret)));
+      setFields((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(
+            ([k]) => !source.connect.find((f) => f.key === k)?.secret,
+          ),
+        ),
+      );
       onPreview(run);
     } catch (e) {
-      setError(e instanceof ApiError && e.status < 500 ? e.message : describeError(e));
+      setError(
+        e instanceof ApiError && e.status < 500 ? e.message : describeError(e),
+      );
     } finally {
       setBusy(false);
     }
   }
 
   const ready =
-    shownMode === "files" ? files.length > 0 : source?.connect.every((f) => f.optional || (fields[f.key] ?? "").trim() !== "");
+    shownMode === "files"
+      ? files.length > 0
+      : source?.connect.every(
+          (f) => f.optional || (fields[f.key] ?? "").trim() !== "",
+        );
 
   return (
     <section className={styles.box} aria-labelledby={`${formId}-title`}>
@@ -164,8 +214,20 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
         <legend className={styles.legend}>{t("imports.start.source")}</legend>
         <div className={styles.sources}>
           {sources.map((s) => (
-            <label key={s.id} className={cx(styles.source, s.id === sourceId && styles.sourceChosen)}>
-              <input type="radio" name={`${formId}-source`} value={s.id} checked={s.id === sourceId} onChange={() => setSourceId(s.id)} />
+            <label
+              key={s.id}
+              className={cx(
+                styles.source,
+                s.id === sourceId && styles.sourceChosen,
+              )}
+            >
+              <input
+                type="radio"
+                name={`${formId}-source`}
+                value={s.id}
+                checked={s.id === sourceId}
+                onChange={() => setSourceId(s.id)}
+              />
               {s.name}
             </label>
           ))}
@@ -174,7 +236,11 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
       {multiSite(me) && (
         <label className={styles.field}>
           <span>{t("imports.start.site")}</span>
-          <select className={fieldClass} value={siteId} onChange={(e) => setSiteId(e.target.value)}>
+          <select
+            className={fieldClass}
+            value={siteId}
+            onChange={(e) => setSiteId(e.target.value)}
+          >
             {sites.map((site) => (
               <option key={site.id} value={site.id}>
                 {site.name}
@@ -184,11 +250,22 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
         </label>
       )}
       {source && source.extensions.length > 0 && source.connect.length > 0 && (
-        <div className={styles.modes} role="radiogroup" aria-label={t("imports.start.how")}>
+        <div
+          className={styles.modes}
+          role="radiogroup"
+          aria-label={t("imports.start.how")}
+        >
           {(["files", "connect"] as const).map((m) => (
             <label key={m} className={styles.check}>
-              <input type="radio" name={`${formId}-mode`} checked={mode === m} onChange={() => setMode(m)} />{" "}
-              {m === "files" ? t("imports.start.files") : t("imports.start.connect")}
+              <input
+                type="radio"
+                name={`${formId}-mode`}
+                checked={mode === m}
+                onChange={() => setMode(m)}
+              />{" "}
+              {m === "files"
+                ? t("imports.start.files")
+                : t("imports.start.connect")}
             </label>
           ))}
         </div>
@@ -215,7 +292,12 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
           {source.connect.map((field) => (
             <label key={field.key} className={styles.field}>
               <span>
-                {fieldLabel(field.key)} {field.optional && <span className={styles.note}>{t("imports.start.optional")}</span>}
+                {fieldLabel(field.key)}{" "}
+                {field.optional && (
+                  <span className={styles.note}>
+                    {t("imports.start.optional")}
+                  </span>
+                )}
               </span>
               <input
                 className={cx(fieldClass, styles.mono)}
@@ -224,7 +306,12 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
                 spellCheck={false}
                 placeholder={field.placeholder}
                 value={fields[field.key] ?? ""}
-                onChange={(e) => setFields((current) => ({ ...current, [field.key]: e.target.value }))}
+                onChange={(e) =>
+                  setFields((current) => ({
+                    ...current,
+                    [field.key]: e.target.value,
+                  }))
+                }
               />
             </label>
           ))}
@@ -237,7 +324,11 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
         </p>
       )}
       <div className={styles.buttons}>
-        <Button variant="k" disabled={!ready || busy} onClick={() => void read()}>
+        <Button
+          variant="k"
+          disabled={!ready || busy}
+          onClick={() => void read()}
+        >
           {busy ? t("imports.start.reading") : t("imports.start.read")}
         </Button>
       </div>
@@ -258,7 +349,13 @@ function History({ onOpen }: { onOpen: (run: ImportRun) => void }) {
       });
     return () => controller.abort();
   }, []);
-  if (error) return <ErrorState what={t("imports.what.history")} error={describeError(error)} />;
+  if (error)
+    return (
+      <ErrorState
+        what={t("imports.what.history")}
+        error={describeError(error)}
+      />
+    );
   if (!runs || runs.length === 0) return null;
   return (
     <section className={styles.box} aria-labelledby="imports-history">
@@ -269,7 +366,8 @@ function History({ onOpen }: { onOpen: (run: ImportRun) => void }) {
         {runs.map((run) => (
           <li key={run.id} className={styles.historyRow}>
             <span>
-              <strong>{run.source_name}</strong> · {run.input} · {formatDateTime(run.created_at)}
+              <strong>{run.source_name}</strong> · {run.input} ·{" "}
+              {formatDateTime(run.created_at)}
               {run.created_by ? ` · ${run.created_by}` : ""}
             </span>
             <StateLabel run={run} />
@@ -284,7 +382,12 @@ function History({ onOpen }: { onOpen: (run: ImportRun) => void }) {
 }
 
 function StateLabel({ run }: { run: ImportRun }) {
-  const tone: Tone = run.state === "confirmed" ? "ok" : run.state === "undone" ? "neutral" : "info";
+  const tone: Tone =
+    run.state === "confirmed"
+      ? "ok"
+      : run.state === "undone"
+        ? "neutral"
+        : "info";
   return (
     <Label tone={tone} small>
       {t(`imports.state.${run.state}`)}
@@ -322,10 +425,22 @@ function RunView({ id, onClose }: { id: string; onClose: () => void }) {
     );
   }
   if (!run) return <LoadingBlock />;
-  return run.state === "preview" ? <Preview run={run} onDone={setRun} onClose={onClose} /> : <Done run={run} onChanged={setRun} onClose={onClose} />;
+  return run.state === "preview" ? (
+    <Preview run={run} onDone={setRun} onClose={onClose} />
+  ) : (
+    <Done run={run} onChanged={setRun} onClose={onClose} />
+  );
 }
 
-function Preview({ run, onDone, onClose }: { run: ImportRun; onDone: (run: ImportRun) => void; onClose: () => void }) {
+function Preview({
+  run,
+  onDone,
+  onClose,
+}: {
+  run: ImportRun;
+  onDone: (run: ImportRun) => void;
+  onClose: () => void;
+}) {
   const me = useMe();
   const items = useMemo(() => run.items ?? [], [run.items]);
   const [unticked, setUnticked] = useState<Set<string>>(new Set());
@@ -349,7 +464,9 @@ function Preview({ run, onDone, onClose }: { run: ImportRun; onDone: (run: Impor
     try {
       onDone(await api.confirmImport(run.id, [...unticked]));
     } catch (e) {
-      setError(e instanceof ApiError && e.status < 500 ? e.message : describeError(e));
+      setError(
+        e instanceof ApiError && e.status < 500 ? e.message : describeError(e),
+      );
     } finally {
       setBusy(false);
     }
@@ -360,13 +477,20 @@ function Preview({ run, onDone, onClose }: { run: ImportRun; onDone: (run: Impor
       <section className={styles.box} aria-labelledby="import-preview">
         <div className={styles.boxHeader}>
           <h2 id="import-preview" className={styles.title}>
-            {t("imports.preview.title", { source: run.source_name, input: run.input })}
+            {t("imports.preview.title", {
+              source: run.source_name,
+              input: run.input,
+            })}
           </h2>
           <StateLabel run={run} />
         </div>
         <p className={styles.note}>
-          {multiSite(me) && `${t("imports.preview.where", { site: run.site_name })} `}
-          {run.expires_at && t("imports.preview.until", { when: formatDateTime(run.expires_at) })}
+          {multiSite(me) &&
+            `${t("imports.preview.where", { site: run.site_name })} `}
+          {run.expires_at &&
+            t("imports.preview.until", {
+              when: formatDateTime(run.expires_at),
+            })}
         </p>
         <ul className={styles.counts}>
           {LISTS.map((list) => (
@@ -385,15 +509,28 @@ function Preview({ run, onDone, onClose }: { run: ImportRun; onDone: (run: Impor
           </p>
         )}
         <div className={styles.buttons}>
-          <Button variant="k" disabled={busy || count === 0} onClick={() => void confirm()}>
-            {busy ? t("imports.preview.creating") : t("imports.preview.create", { count })}
+          <Button
+            variant="k"
+            disabled={busy || count === 0}
+            onClick={() => void confirm()}
+          >
+            {busy
+              ? t("imports.preview.creating")
+              : t("imports.preview.create", { count })}
           </Button>
           <Button onClick={onClose}>{t("imports.preview.cancel")}</Button>
         </div>
         <p className={styles.note}>{t("imports.preview.nothingYet")}</p>
       </section>
       {LISTS.map((list) => (
-        <ListSection key={list} list={list} items={items} out={out} unticked={unticked} onToggle={toggle} />
+        <ListSection
+          key={list}
+          list={list}
+          items={items}
+          out={out}
+          unticked={unticked}
+          onToggle={toggle}
+        />
       ))}
     </>
   );
@@ -421,26 +558,77 @@ function ListSection({
         <Label tone={LIST_TONES[list]}>{t(`imports.list.${list}`)}</Label>
       </h2>
       <p className={styles.note}>{t(`imports.listNote.${list}`)}</p>
-      {groups.map((group) => (
-        <div key={group.kind} className={styles.group}>
-          <h3 className={styles.groupTitle}>
-            {kindHeading(group.kind)} <span className={styles.note}>{group.items.length}</span>
-          </h3>
-          <ul className={styles.items}>
-            {group.items.map((item) => (
-              <ItemRow
-                key={item.id}
-                item={item}
-                items={items}
-                left={out?.has(item.id) ?? false}
-                ticked={!(unticked?.has(item.id) ?? false)}
-                onToggle={onToggle}
-              />
-            ))}
-          </ul>
-        </div>
-      ))}
+      {list === "not_movable" ? (
+        // What stays behind is often long: one line says how much, the list opens on demand.
+        <details className={styles.more}>
+          <summary>
+            {t("imports.showLines", {
+              count: groups.reduce((n, g) => n + g.items.length, 0),
+            })}
+          </summary>
+          {groups.map((group) => (
+            <Group
+              key={group.kind}
+              kind={group.kind}
+              groupItems={group.items}
+              items={items}
+              out={out}
+              unticked={unticked}
+              onToggle={onToggle}
+            />
+          ))}
+        </details>
+      ) : (
+        groups.map((group) => (
+          <Group
+            key={group.kind}
+            kind={group.kind}
+            groupItems={group.items}
+            items={items}
+            out={out}
+            unticked={unticked}
+            onToggle={onToggle}
+          />
+        ))
+      )}
     </section>
+  );
+}
+
+function Group({
+  kind,
+  groupItems,
+  items,
+  out,
+  unticked,
+  onToggle,
+}: {
+  kind: string;
+  groupItems: ImportItem[];
+  items: ImportItem[];
+  out?: ReadonlySet<string>;
+  unticked?: ReadonlySet<string>;
+  onToggle?: (item: ImportItem) => void;
+}) {
+  return (
+    <div className={styles.group}>
+      <h3 className={styles.groupTitle}>
+        {kindHeading(kind)}{" "}
+        <span className={styles.note}>{groupItems.length}</span>
+      </h3>
+      <ul className={styles.items}>
+        {groupItems.map((item) => (
+          <ItemRow
+            key={item.id}
+            item={item}
+            items={items}
+            left={out?.has(item.id) ?? false}
+            ticked={!(unticked?.has(item.id) ?? false)}
+            onToggle={onToggle}
+          />
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -465,7 +653,12 @@ function ItemRow({
     <li className={cx(styles.item, left && styles.itemOut)}>
       {canTick ? (
         <label className={styles.itemHead}>
-          <input type="checkbox" checked={ticked && !needsOut} disabled={needsOut} onChange={() => onToggle(item)} />
+          <input
+            type="checkbox"
+            checked={ticked && !needsOut}
+            disabled={needsOut}
+            onChange={() => onToggle(item)}
+          />
           <span className={styles.itemTitle}>{title}</span>
         </label>
       ) : (
@@ -480,25 +673,46 @@ function ItemRow({
           </Label>
         )}{" "}
         {originKind(item.origin.kind)}: {item.origin.name}
-        {item.hosts.length > 0 && ` · ${item.hosts.length > 3 ? t("imports.item.hosts", { count: item.hosts.length }) : item.hosts.join(", ")}`}
+        {item.kind !== "server" &&
+          item.hosts.length > 0 &&
+          ` · ${item.hosts.length > 3 ? t("imports.item.hosts", { count: item.hosts.length }) : item.hosts.join(", ")}`}
         {needsOut && ` · ${t("imports.item.needsOut")}`}
       </span>
-      {item.origin.detail && <code className={styles.detail}>{item.origin.detail}</code>}
-      {item.note && <span className={styles.itemNote}>{noteText(item.note)}</span>}
+      {item.origin.detail && (
+        <code className={styles.detail}>{item.origin.detail}</code>
+      )}
+      {item.note && (
+        <span className={styles.itemNote}>{noteText(item.note)}</span>
+      )}
     </li>
   );
 }
 
-function Done({ run, onChanged, onClose }: { run: ImportRun; onChanged: (run: ImportRun) => void; onClose: () => void }) {
+function Done({
+  run,
+  onChanged,
+  onClose,
+}: {
+  run: ImportRun;
+  onChanged: (run: ImportRun) => void;
+  onClose: () => void;
+}) {
   const result = run.result;
   const items = run.items ?? [];
   const servers = result?.created.server ?? 0;
   return (
     <>
-      <section className={styles.box} aria-labelledby="import-done" aria-live="polite">
+      <section
+        className={styles.box}
+        aria-labelledby="import-done"
+        aria-live="polite"
+      >
         <div className={styles.boxHeader}>
           <h2 id="import-done" className={styles.title}>
-            {t("imports.preview.title", { source: run.source_name, input: run.input })}
+            {t("imports.preview.title", {
+              source: run.source_name,
+              input: run.input,
+            })}
           </h2>
           <StateLabel run={run} />
         </div>
@@ -506,10 +720,14 @@ function Done({ run, onChanged, onClose }: { run: ImportRun; onChanged: (run: Im
           <>
             <p className={styles.note}>
               {createdAnything(result)
-                ? t("imports.done.created", { what: countsText(result.created) })
+                ? t("imports.done.created", {
+                    what: countsText(result.created),
+                  })
                 : t("imports.done.nothing")}{" "}
-              {result.present > 0 && t("imports.done.present", { count: result.present })}{" "}
-              {result.skipped > 0 && t("imports.done.skipped", { count: result.skipped })}
+              {result.present > 0 &&
+                t("imports.done.present", { count: result.present })}{" "}
+              {result.skipped > 0 &&
+                t("imports.done.skipped", { count: result.skipped })}
             </p>
             {result.failed.length > 0 && (
               <Banner tone="warn">
@@ -528,13 +746,19 @@ function Done({ run, onChanged, onClose }: { run: ImportRun; onChanged: (run: Im
             )}
             {run.state === "confirmed" && servers > 0 && (
               <Banner tone="info">
-                {t("imports.done.agents", { count: servers })} <Link href={TOKENS_PATH}>{t("imports.done.addServers")}</Link>
+                {t("imports.done.agents", { count: servers })}{" "}
+                <Link href={TOKENS_PATH}>{t("imports.done.addServers")}</Link>
               </Banner>
             )}
             {run.state === "undone" && (
               <p className={styles.note}>
-                {t("imports.done.removed", { what: countsText(result.removed) })}{" "}
-                {result.kept_servers.length > 0 && t("imports.done.kept", { names: result.kept_servers.join(", ") })}
+                {t("imports.done.removed", {
+                  what: countsText(result.removed),
+                })}{" "}
+                {result.kept_servers.length > 0 &&
+                  t("imports.done.kept", {
+                    names: result.kept_servers.join(", "),
+                  })}
               </p>
             )}
           </>
@@ -547,7 +771,11 @@ function Done({ run, onChanged, onClose }: { run: ImportRun; onChanged: (run: Im
               consequence={t("imports.undo.consequence")}
               confirmLabel={t("imports.undo.confirm")}
               onConfirm={async () => onChanged(await api.undoImport(run.id))}
-              describeError={(e) => (e instanceof ApiError && e.status < 500 ? e.message : describeError(e))}
+              describeError={(e) =>
+                e instanceof ApiError && e.status < 500
+                  ? e.message
+                  : describeError(e)
+              }
             />
           )}
           <Button onClick={onClose}>{t("imports.back")}</Button>

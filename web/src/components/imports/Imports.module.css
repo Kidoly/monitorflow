@@ -193,3 +193,12 @@
   color: var(--muted);
   white-space: pre-wrap;
 }
+
+.more > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.more[open] > summary {
+  margin-bottom: 8px;
+}

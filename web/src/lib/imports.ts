@@ -7,14 +7,32 @@
 import { type MessageKey, t } from "@/i18n";
 
 import { checkTitle, describeThreshold, shapeOf } from "./alerts";
-import type { EffectiveSensor, ImportItem, ImportList, ImportNote, ImportResult } from "./api";
+import type {
+  EffectiveSensor,
+  ImportItem,
+  ImportList,
+  ImportNote,
+  ImportResult,
+} from "./api";
 import { formatDateTime } from "./format";
 
 /** The lists of the preview, in the order shown. */
-export const LISTS: readonly ImportList[] = ["exact", "approximated", "not_movable"];
+export const LISTS: readonly ImportList[] = [
+  "exact",
+  "approximated",
+  "not_movable",
+];
 
 /** Kinds of item, in the order shown within a list. */
-export const KINDS = ["server", "check", "threshold", "silence", "channel", "builtin", "other"] as const;
+export const KINDS = [
+  "server",
+  "check",
+  "threshold",
+  "silence",
+  "channel",
+  "builtin",
+  "other",
+] as const;
 
 /** `t` for a key built at run time; the key itself when the catalog has none. */
 const lookup = t as (key: string, values?: Record<string, string>) => string;
@@ -84,7 +102,10 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
         duration_s: create.duration_s,
         hysteresis: create.hysteresis,
       } as const;
-      return describeThreshold(shapeOf(sensorsOf(items), create.metric, create.instance), rule);
+      return describeThreshold(
+        shapeOf(sensorsOf(items), create.metric, create.instance),
+        rule,
+      );
     }
     case "silence":
       return t("imports.item.silence", {
@@ -96,7 +117,10 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
       const settings = create.settings;
       const to = Array.isArray(settings.to) ? settings.to.join(", ") : "";
       const target = String(to || settings.url || settings.name || "");
-      return t("imports.item.channel", { kind: channelKind(create.kind), target });
+      return t("imports.item.channel", {
+        kind: channelKind(create.kind),
+        target,
+      });
     }
   }
 }
@@ -120,33 +144,48 @@ export function channelKind(kind: string): string {
 }
 
 /** Whether a person can tick or untick the item: it would create something. */
-export const tickable = (item: ImportItem): boolean => item.create !== undefined && !item.present && item.list !== "not_movable";
+export const tickable = (item: ImportItem): boolean =>
+  item.create !== undefined && !item.present && item.list !== "not_movable";
 
 /**
  * The items left out: those unticked, and those that need one left out,
  * as the server decides. Items come in the order they are created, so one
  * pass sees each need before what needs it.
  */
-export function leftOut(items: ImportItem[], unticked: ReadonlySet<string>): Set<string> {
+export function leftOut(
+  items: ImportItem[],
+  unticked: ReadonlySet<string>,
+): Set<string> {
   const out = new Set<string>();
   for (const item of items) {
-    if (unticked.has(item.id) || item.needs.some((need) => out.has(need))) out.add(item.id);
+    if (unticked.has(item.id) || item.needs.some((need) => out.has(need)))
+      out.add(item.id);
   }
   return out;
 }
 
 /** How many items a confirmation creates once `out` is left out. */
-export function toCreate(items: ImportItem[], out: ReadonlySet<string>): number {
+export function toCreate(
+  items: ImportItem[],
+  out: ReadonlySet<string>,
+): number {
   return items.filter((item) => tickable(item) && !out.has(item.id)).length;
 }
 
 /** The items of `list`, grouped by kind in the order shown. */
-export function grouped(items: ImportItem[], list: ImportList): { kind: string; items: ImportItem[] }[] {
+export function grouped(
+  items: ImportItem[],
+  list: ImportList,
+): { kind: string; items: ImportItem[] }[] {
   const inList = items.filter((item) => item.list === list);
   const kinds: string[] = [...KINDS];
-  for (const item of inList) if (!kinds.includes(item.kind)) kinds.push(item.kind);
+  for (const item of inList)
+    if (!kinds.includes(item.kind)) kinds.push(item.kind);
   return kinds
-    .map((kind) => ({ kind, items: inList.filter((item) => item.kind === kind) }))
+    .map((kind) => ({
+      kind,
+      items: inList.filter((item) => item.kind === kind),
+    }))
     .filter((group) => group.items.length > 0);
 }
 
@@ -163,10 +202,13 @@ export function countsText(counts: Record<string, number>): string {
     const count = counts[kind] ?? 0;
     if (count === 0) return [];
     const key = `imports.count.${kind}` as MessageKey;
-    return [(t as (key: string, values: { count: number }) => string)(key, { count })];
+    return [
+      (t as (key: string, values: { count: number }) => string)(key, { count }),
+    ];
   });
   return parts.length > 0 ? parts.join(", ") : t("imports.count.nothing");
 }
 
 /** Whether the result created anything. */
-export const createdAnything = (result: ImportResult): boolean => Object.values(result.created).some((n) => n > 0);
+export const createdAnything = (result: ImportResult): boolean =>
+  Object.values(result.created).some((n) => n > 0);
