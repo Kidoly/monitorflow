@@ -74,6 +74,7 @@ pub const ORIGIN_KINDS: &[&str] = &[
     "notification",
     "device",
     "group",
+    "probe",
 ];
 
 /// Every note, in English. Shared notes first, then one block per reader.
@@ -280,6 +281,75 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "routes",
         "MonitorFlow sends every alert to every channel of its site; the source's routing by labels is not moved.",
+    ),
+    // PRTG.
+    (
+        "prtg_ping",
+        "PRTG pinged it from a probe; MonitorFlow's offline alert tells when its agent stops answering. Ping times are not measured.",
+    ),
+    (
+        "prtg_from_server",
+        "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
+    ),
+    (
+        "prtg_certificate",
+        "MonitorFlow checks that port {port} answers; the certificate and its expiry are not checked.",
+    ),
+    (
+        "prtg_sensor_type",
+        "MonitorFlow has no check like this PRTG sensor ({type}).",
+    ),
+    (
+        "prtg_no_setting",
+        "The sensor's settings do not say what it checks.",
+    ),
+    (
+        "prtg_limit",
+        "MonitorFlow has no threshold for the limits of the channel {channel}.",
+    ),
+    (
+        "prtg_every_disk",
+        "No drive or mount point in its name: the threshold applies to every disk of the server.",
+    ),
+    (
+        "prtg_event_levels",
+        "No event type could be read: MonitorFlow counts critical events and errors.",
+    ),
+    (
+        "prtg_event_filter",
+        "A filter on the message or on event IDs could not be moved: more events may match.",
+    ),
+    (
+        "prtg_event_count",
+        "MonitorFlow alerts on the first matching event; PRTG alerted above {count}.",
+    ),
+    (
+        "prtg_same_port",
+        "Another sensor of this device checks port {port} already.",
+    ),
+    (
+        "prtg_not_on_device",
+        "It belongs to a probe or a group, not to a device.",
+    ),
+    (
+        "prtg_paused",
+        "Paused in PRTG with no end: the silence lasts 30 days, the longest MonitorFlow allows.",
+    ),
+    (
+        "prtg_paused_by_rule",
+        "Paused by a schedule or a dependency in PRTG, which MonitorFlow does not have.",
+    ),
+    (
+        "prtg_paused_sensor",
+        "A paused sensor: MonitorFlow silences whole servers, not one check, so its check runs.",
+    ),
+    (
+        "prtg_local_time",
+        "The file does not say PRTG's time zone: the window is read as UTC.",
+    ),
+    (
+        "prtg_triggers",
+        "MonitorFlow sends it every incident; PRTG used it only where a notification trigger named it.",
     ),
 ];
 

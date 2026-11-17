@@ -15,6 +15,7 @@ Guides are also available [in French](fr/README.md).
 ## Moving to MonitorFlow
 
 - [How to move from Zabbix or Prometheus to MonitorFlow](move-from-another-tool.md): Import your hosts, checks, thresholds, maintenance windows and notification channels from Zabbix or Prometheus, preview what moves, then install the agent.
+- [How to move from PRTG to MonitorFlow](move-from-prtg.md): Read your PRTG devices, sensors, limits, maintenance windows and notifications, preview what moves, and create the matching servers, checks, thresholds, silences and channels in one click.
 
 ## Servers
 

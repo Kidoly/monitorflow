@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<prtg>
+  <options><data><name>PRTG</name></data></options>
+  <nodes>
+    <group id="0">
+      <data><name>Root</name><active>1</active></data>
+      <nodes>
+        <probenode id="1">
+          <data><name>Local Probe</name><active>1</active></data>
+          <nodes>
+            <group id="50">
+              <data><name>Servers &amp; storage</name><active>1</active><maintenable>1</maintenable><maintstart>2026-11-18-20-00-00</maintstart><maintend>2026-11-18-21-00-00</maintend></data>
+              <nodes>
+                <device id="2001">
+                  <data><name>fs01</name><host>192.0.2.30</host><active>1</active></data>
+                  <nodes>
+                    <sensor id="2101">
+                      <data><name>Ping</name><sensortype>ping</sensortype><interval><cell>30</cell><cell>30 seconds</cell></interval></data>
+                    </sensor>
+                    <sensor id="2102">
+                      <data><name>Disk Free E:</name><sensortype>wmivolume</sensortype><interval>120</interval></data>
+                      <channels>
+                        <channel id="0"><data><name>Free Space</name><unit>%</unit><limitmode>1</limitmode><limitminwarning>20</limitminwarning><limitminerror>10</limitminerror></data></channel>
+                        <channel id="1"><data><name>Free Bytes</name><unit>GByte</unit><limitmode>0</limitmode></data></channel>
+                      </channels>
+                    </sensor>
+                    <sensor id="2103">
+                      <data><name>Print Spooler</name><sensortype>wmiservice</sensortype><service>Spooler</service><password>not-read</password></data>
+                    </sensor>
+                    <sensor id="2104">
+                      <data><name>Application errors</name><sensortype>wineventlog</sensortype><logfile>Application</logfile><eventsource>MSSQLSERVER</eventsource><eventid>17,18</eventid></data>
+                    </sensor>
+                  </nodes>
+                </device>
+                <device id="2002">
+                  <data><name>old-app</name><host>192.0.2.31</host><active>0</active></data>
+                </device>
+              </nodes>
+            </group>
+          </nodes>
+        </probenode>
+      </nodes>
+    </group>
+  </nodes>
+  <notifications>
+    <notification id="300">
+      <data><name>Admins</name><active>1</active><email><address>admins@example.com</address></email></data>
+    </notification>
+    <notification id="301">
+      <data><name>Teams</name><active>1</active><http><url>https://example.webhook.office.com/webhookb2/xyz</url></http></data>
+    </notification>
+  </notifications>
+</prtg>

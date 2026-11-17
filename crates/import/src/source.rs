@@ -149,6 +149,7 @@ pub fn sources() -> Vec<Box<dyn Source>> {
     vec![
         Box::new(crate::zabbix::Zabbix),
         Box::new(crate::prometheus::Prometheus),
+        Box::new(crate::prtg::Prtg),
     ]
 }
 

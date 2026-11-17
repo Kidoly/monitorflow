@@ -763,3 +763,68 @@ fn the_same_check_twice_is_one_check_with_the_more_severe_alert() {
     };
     assert_eq!((*warning, *critical), (None, Some(1.0)));
 }
+
+#[test]
+fn event_logs_become_eventlog_checks() {
+    let inventory = Inventory {
+        hosts: vec![host("w", "win", Os::Windows)],
+        checks: vec![
+            check(
+                "w",
+                Watch::EventLog {
+                    channel: "System".into(),
+                    levels: vec!["critical".into(), "error".into()],
+                    providers: vec!["Disk".into()],
+                    event_ids: vec![7, 51],
+                },
+                Some(Severity::Warning),
+            ),
+            check(
+                "w",
+                Watch::EventLog {
+                    channel: "Application".into(),
+                    levels: vec![],
+                    providers: vec![],
+                    event_ids: vec![],
+                },
+                None,
+            ),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let system = by_id(&planned, "check:win:eventlog_system");
+    let Some(Create::Check { kind, params, .. }) = &system.create else {
+        panic!("{system:?}")
+    };
+    assert_eq!(kind, "eventlog");
+    assert_eq!(
+        Value::Object(params.clone()),
+        json!({"channel": "System", "levels": "critical,error", "providers": "Disk", "event_ids": "7,51"})
+    );
+    let alert = by_id(
+        &planned,
+        "threshold:win:monitorflow_eventlog_system_matches",
+    );
+    let Some(Create::Threshold {
+        comparison,
+        warning,
+        critical,
+        ..
+    }) = &alert.create
+    else {
+        panic!("{alert:?}")
+    };
+    assert_eq!(
+        (comparison.as_str(), *warning, *critical),
+        (">", Some(0.0), None)
+    );
+    let application = by_id(&planned, "check:win:eventlog_application");
+    let Some(Create::Check { params, .. }) = &application.create else {
+        panic!("{application:?}")
+    };
+    assert_eq!(
+        Value::Object(params.clone()),
+        json!({"channel": "Application"})
+    );
+}

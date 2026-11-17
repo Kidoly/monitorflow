@@ -15,6 +15,7 @@ Les guides existent aussi [en anglais](../README.md).
 ## Passer à MonitorFlow
 
 - [Passer de Zabbix ou Prometheus à MonitorFlow](venir-d-un-autre-outil.md) : Importez vos hôtes, vérifications, seuils, maintenances et canaux de notification depuis Zabbix ou Prometheus, prévisualisez ce qui est repris, puis installez l'agent.
+- [Comment migrer de PRTG vers MonitorFlow](migrer-depuis-prtg.md) : Lisez vos équipements, capteurs, limites, fenêtres de maintenance et notifications PRTG, voyez ce qui sera repris, et créez en un clic les serveurs, contrôles, seuils, silences et canaux correspondants.
 
 ## Serveurs
 

@@ -1,0 +1,641 @@
+{
+ "/api/getobjectproperty.htm?id=0&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=1&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=2001&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=2002&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=2002&name=maintend&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>2026-11-21-02-00-00</result></prtg>",
+ "/api/getobjectproperty.htm?id=2002&name=maintstart&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>2026-11-20-22-00-00</result></prtg>",
+ "/api/getobjectproperty.htm?id=2003&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=2004&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=0&name=limitmaxerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>95</result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=0&name=limitmaxwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>80</result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=0&name=limitminerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=0&name=limitminwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=0&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=1&name=limitmaxerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=1&name=limitmaxwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>99</result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=1&name=limitminerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=1&name=limitminwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2102&subtype=channel&subid=1&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=2103&subtype=channel&subid=0&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=2103&subtype=channel&subid=1&name=limitmaxerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2103&subtype=channel&subid=1&name=limitmaxwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2103&subtype=channel&subid=1&name=limitminerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>10</result></prtg>",
+ "/api/getobjectproperty.htm?id=2103&subtype=channel&subid=1&name=limitminwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>20</result></prtg>",
+ "/api/getobjectproperty.htm?id=2103&subtype=channel&subid=1&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=0&name=limitmaxerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=0&name=limitmaxwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=0&name=limitminerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>5</result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=0&name=limitminwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>15</result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=0&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=1&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=2&name=limitmaxerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=2&name=limitmaxwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=2&name=limitminerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>5000</result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=2&name=limitminwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2104&subtype=channel&subid=2&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=2105&name=service&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>W32Time</result></prtg>",
+ "/api/getobjectproperty.htm?id=2106&name=eventtype&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>Error</result></prtg>",
+ "/api/getobjectproperty.htm?id=2106&name=wmilogfile&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>System</result></prtg>",
+ "/api/getobjectproperty.htm?id=2106&subtype=channel&subid=0&name=limitmaxerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>5</result></prtg>",
+ "/api/getobjectproperty.htm?id=2106&subtype=channel&subid=0&name=limitmaxwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2106&subtype=channel&subid=0&name=limitminerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2106&subtype=channel&subid=0&name=limitminwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2106&subtype=channel&subid=0&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=2202&name=httpurl&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>https://web01.example.net/health</result></prtg>",
+ "/api/getobjectproperty.htm?id=2202&subtype=channel&subid=0&name=limitmaxerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2202&subtype=channel&subid=0&name=limitmaxwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>500</result></prtg>",
+ "/api/getobjectproperty.htm?id=2202&subtype=channel&subid=0&name=limitminerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2202&subtype=channel&subid=0&name=limitminwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2202&subtype=channel&subid=0&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=2202&subtype=channel&subid=1&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=2203&name=port&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>443</result></prtg>",
+ "/api/getobjectproperty.htm?id=2203&subtype=channel&subid=0&name=limitmaxerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2203&subtype=channel&subid=0&name=limitmaxwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2203&subtype=channel&subid=0&name=limitminerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>7</result></prtg>",
+ "/api/getobjectproperty.htm?id=2203&subtype=channel&subid=0&name=limitminwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>30</result></prtg>",
+ "/api/getobjectproperty.htm?id=2203&subtype=channel&subid=0&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=2204&name=port&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>22</result></prtg>",
+ "/api/getobjectproperty.htm?id=2204&subtype=channel&subid=0&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=2207&subtype=channel&subid=0&name=limitmaxerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2207&subtype=channel&subid=0&name=limitmaxwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2207&subtype=channel&subid=0&name=limitminerror&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result></result></prtg>",
+ "/api/getobjectproperty.htm?id=2207&subtype=channel&subid=0&name=limitminwarning&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>10</result></prtg>",
+ "/api/getobjectproperty.htm?id=2207&subtype=channel&subid=0&name=limitmode&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=50&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=51&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getobjectproperty.htm?id=52&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>1</result></prtg>",
+ "/api/getobjectproperty.htm?id=52&name=maintend&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>2026-10-02-02-00-00</result></prtg>",
+ "/api/getobjectproperty.htm?id=52&name=maintstart&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>2026-10-01-22-00-00</result></prtg>",
+ "/api/getobjectproperty.htm?id=60&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
+ "/api/getstatus.json": {
+  "Clock": "11/17/2026 1:00:00 PM",
+  "Version": "24.1.92.1554"
+ },
+ "/api/table.json?content=channels&id=2102&columns=objid,name,lastvalue": {
+  "channels": [
+   {
+    "lastvalue": "12 %",
+    "lastvalue_raw": 0,
+    "name": "Total",
+    "name_raw": "Total",
+    "objid": 0,
+    "objid_raw": 0
+   },
+   {
+    "lastvalue": "10 %",
+    "lastvalue_raw": 0,
+    "name": "CPU 1",
+    "name_raw": "CPU 1",
+    "objid": 1,
+    "objid_raw": 1
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 2
+ },
+ "/api/table.json?content=channels&id=2103&columns=objid,name,lastvalue": {
+  "channels": [
+   {
+    "lastvalue": "2.048 MByte",
+    "lastvalue_raw": 0,
+    "name": "Available Memory",
+    "name_raw": "Available Memory",
+    "objid": 0,
+    "objid_raw": 0
+   },
+   {
+    "lastvalue": "40 %",
+    "lastvalue_raw": 0,
+    "name": "Percent Available Memory",
+    "name_raw": "Percent Available Memory",
+    "objid": 1,
+    "objid_raw": 1
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 2
+ },
+ "/api/table.json?content=channels&id=2104&columns=objid,name,lastvalue": {
+  "channels": [
+   {
+    "lastvalue": "35 %",
+    "lastvalue_raw": 0,
+    "name": "C:\\ Free Space",
+    "name_raw": "C:\\ Free Space",
+    "objid": 0,
+    "objid_raw": 0
+   },
+   {
+    "lastvalue": "60 %",
+    "lastvalue_raw": 0,
+    "name": "D:\\ Free Space",
+    "name_raw": "D:\\ Free Space",
+    "objid": 1,
+    "objid_raw": 1
+   },
+   {
+    "lastvalue": "40.000 MByte",
+    "lastvalue_raw": 0,
+    "name": "C:\\ Free Bytes",
+    "name_raw": "C:\\ Free Bytes",
+    "objid": 2,
+    "objid_raw": 2
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 3
+ },
+ "/api/table.json?content=channels&id=2106&columns=objid,name,lastvalue": {
+  "channels": [
+   {
+    "lastvalue": "0 #",
+    "lastvalue_raw": 0,
+    "name": "New Records",
+    "name_raw": "New Records",
+    "objid": 0,
+    "objid_raw": 0
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 1
+ },
+ "/api/table.json?content=channels&id=2202&columns=objid,name,lastvalue": {
+  "channels": [
+   {
+    "lastvalue": "120 msec",
+    "lastvalue_raw": 0,
+    "name": "Response Time",
+    "name_raw": "Response Time",
+    "objid": 0,
+    "objid_raw": 0
+   },
+   {
+    "lastvalue": "0 %",
+    "lastvalue_raw": 0,
+    "name": "Downtime",
+    "name_raw": "Downtime",
+    "objid": 1,
+    "objid_raw": 1
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 2
+ },
+ "/api/table.json?content=channels&id=2203&columns=objid,name,lastvalue": {
+  "channels": [
+   {
+    "lastvalue": "80 #",
+    "lastvalue_raw": 0,
+    "name": "Days to Expiration",
+    "name_raw": "Days to Expiration",
+    "objid": 0,
+    "objid_raw": 0
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 1
+ },
+ "/api/table.json?content=channels&id=2204&columns=objid,name,lastvalue": {
+  "channels": [
+   {
+    "lastvalue": "3 msec",
+    "lastvalue_raw": 0,
+    "name": "Available",
+    "name_raw": "Available",
+    "objid": 0,
+    "objid_raw": 0
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 1
+ },
+ "/api/table.json?content=channels&id=2207&columns=objid,name,lastvalue": {
+  "channels": [
+   {
+    "lastvalue": "50 %",
+    "lastvalue_raw": 0,
+    "name": "Free Space /var",
+    "name_raw": "Free Space /var",
+    "objid": 0,
+    "objid_raw": 0
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 1
+ },
+ "/api/table.json?content=devices&columns=objid,name,parentid,host,status&count=*": {
+  "devices": [
+   {
+    "host": "192.0.2.10",
+    "host_raw": "192.0.2.10",
+    "name": "dc01",
+    "name_raw": "dc01",
+    "objid": 2001,
+    "objid_raw": 2001,
+    "parentid": 50,
+    "parentid_raw": 50,
+    "status": 3,
+    "status_raw": 3
+   },
+   {
+    "host": "web01.example.net",
+    "host_raw": "web01.example.net",
+    "name": "web01",
+    "name_raw": "web01",
+    "objid": 2002,
+    "objid_raw": 2002,
+    "parentid": 51,
+    "parentid_raw": 51,
+    "status": 3,
+    "status_raw": 3
+   },
+   {
+    "host": "192.0.2.2",
+    "host_raw": "192.0.2.2",
+    "name": "switch01",
+    "name_raw": "switch01",
+    "objid": 2003,
+    "objid_raw": 2003,
+    "parentid": 52,
+    "parentid_raw": 52,
+    "status": 3,
+    "status_raw": 3
+   },
+   {
+    "host": "198.51.100.20",
+    "host_raw": "198.51.100.20",
+    "name": "branch-fs",
+    "name_raw": "branch-fs",
+    "objid": 2004,
+    "objid_raw": 2004,
+    "parentid": 60,
+    "parentid_raw": 60,
+    "status": 7,
+    "status_raw": 7
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 4
+ },
+ "/api/table.json?content=groups&columns=objid,name,parentid,status&count=*": {
+  "groups": [
+   {
+    "name": "Root",
+    "name_raw": "Root",
+    "objid": 0,
+    "objid_raw": 0,
+    "parentid": -1000,
+    "parentid_raw": -1000,
+    "status": 3,
+    "status_raw": 3
+   },
+   {
+    "name": "Local Probe",
+    "name_raw": "Local Probe",
+    "objid": 1,
+    "objid_raw": 1,
+    "parentid": 0,
+    "parentid_raw": 0,
+    "status": 3,
+    "status_raw": 3
+   },
+   {
+    "name": "Servers",
+    "name_raw": "Servers",
+    "objid": 50,
+    "objid_raw": 50,
+    "parentid": 1,
+    "parentid_raw": 1,
+    "status": 3,
+    "status_raw": 3
+   },
+   {
+    "name": "Web",
+    "name_raw": "Web",
+    "objid": 51,
+    "objid_raw": 51,
+    "parentid": 50,
+    "parentid_raw": 50,
+    "status": 3,
+    "status_raw": 3
+   },
+   {
+    "name": "Network",
+    "name_raw": "Network",
+    "objid": 52,
+    "objid_raw": 52,
+    "parentid": 1,
+    "parentid_raw": 1,
+    "status": 3,
+    "status_raw": 3
+   },
+   {
+    "name": "Branch Probe",
+    "name_raw": "Branch Probe",
+    "objid": 60,
+    "objid_raw": 60,
+    "parentid": 0,
+    "parentid_raw": 0,
+    "status": 3,
+    "status_raw": 3
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 6
+ },
+ "/api/table.json?content=notifications&columns=objid,name,active": {
+  "notifications": [
+   {
+    "active": true,
+    "active_raw": true,
+    "name": "Email ops",
+    "name_raw": "Email ops",
+    "objid": 300,
+    "objid_raw": 300
+   },
+   {
+    "active": true,
+    "active_raw": true,
+    "name": "Chat",
+    "name_raw": "Chat",
+    "objid": 301,
+    "objid_raw": 301
+   },
+   {
+    "active": true,
+    "active_raw": true,
+    "name": "SMS on call",
+    "name_raw": "SMS on call",
+    "objid": 302,
+    "objid_raw": 302
+   },
+   {
+    "active": false,
+    "active_raw": false,
+    "name": "Old email",
+    "name_raw": "Old email",
+    "objid": 303,
+    "objid_raw": 303
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 4
+ },
+ "/api/table.json?content=probenodes&columns=objid,name,status&count=*": {
+  "probenodes": [
+   {
+    "name": "Local Probe",
+    "name_raw": "Local Probe",
+    "objid": 1,
+    "objid_raw": 1,
+    "status": 3,
+    "status_raw": 3
+   },
+   {
+    "name": "Branch Probe",
+    "name_raw": "Branch Probe",
+    "objid": 60,
+    "objid_raw": 60,
+    "status": 3,
+    "status_raw": 3
+   }
+  ],
+  "prtg-version": "24.1.92.1554",
+  "treesize": 2
+ },
+ "/api/table.json?content=sensors&columns=objid,name,parentid,type,interval,status&count=*": {
+  "prtg-version": "24.1.92.1554",
+  "sensors": [
+   {
+    "interval": 30,
+    "interval_raw": 30,
+    "name": "Ping",
+    "name_raw": "Ping",
+    "objid": 2101,
+    "objid_raw": 2101,
+    "parentid": 2001,
+    "parentid_raw": 2001,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Ping",
+    "type_raw": "ping"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "CPU Load",
+    "name_raw": "CPU Load",
+    "objid": 2102,
+    "objid_raw": 2102,
+    "parentid": 2001,
+    "parentid_raw": 2001,
+    "status": 3,
+    "status_raw": 3,
+    "type": "CPU Load",
+    "type_raw": "wmiprocessor"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Memory",
+    "name_raw": "Memory",
+    "objid": 2103,
+    "objid_raw": 2103,
+    "parentid": 2001,
+    "parentid_raw": 2001,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Memory",
+    "type_raw": "wmimemory"
+   },
+   {
+    "interval": 300,
+    "interval_raw": 300,
+    "name": "Disk Free",
+    "name_raw": "Disk Free",
+    "objid": 2104,
+    "objid_raw": 2104,
+    "parentid": 2001,
+    "parentid_raw": 2001,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Disk Free",
+    "type_raw": "wmidiskspace"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Windows Time",
+    "name_raw": "Windows Time",
+    "objid": 2105,
+    "objid_raw": 2105,
+    "parentid": 2001,
+    "parentid_raw": 2001,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Windows Time",
+    "type_raw": "wmiservice"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "System errors",
+    "name_raw": "System errors",
+    "objid": 2106,
+    "objid_raw": 2106,
+    "parentid": 2001,
+    "parentid_raw": 2001,
+    "status": 3,
+    "status_raw": 3,
+    "type": "System errors",
+    "type_raw": "wmilogfile"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Ping",
+    "name_raw": "Ping",
+    "objid": 2201,
+    "objid_raw": 2201,
+    "parentid": 2002,
+    "parentid_raw": 2002,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Ping",
+    "type_raw": "ping"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Health page",
+    "name_raw": "Health page",
+    "objid": 2202,
+    "objid_raw": 2202,
+    "parentid": 2002,
+    "parentid_raw": 2002,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Health page",
+    "type_raw": "httpadvanced"
+   },
+   {
+    "interval": 3600,
+    "interval_raw": 3600,
+    "name": "Certificate",
+    "name_raw": "Certificate",
+    "objid": 2203,
+    "objid_raw": 2203,
+    "parentid": 2002,
+    "parentid_raw": 2002,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Certificate",
+    "type_raw": "sslcertificate"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "SSH",
+    "name_raw": "SSH",
+    "objid": 2204,
+    "objid_raw": 2204,
+    "parentid": 2002,
+    "parentid_raw": 2002,
+    "status": 3,
+    "status_raw": 3,
+    "type": "SSH",
+    "type_raw": "port"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Traffic eth0",
+    "name_raw": "Traffic eth0",
+    "objid": 2205,
+    "objid_raw": 2205,
+    "parentid": 2002,
+    "parentid_raw": 2002,
+    "status": 9,
+    "status_raw": 9,
+    "type": "Traffic eth0",
+    "type_raw": "snmptraffic"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Login flow",
+    "name_raw": "Login flow",
+    "objid": 2206,
+    "objid_raw": 2206,
+    "parentid": 2002,
+    "parentid_raw": 2002,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Login flow",
+    "type_raw": "httptransaction"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Disk /var",
+    "name_raw": "Disk /var",
+    "objid": 2207,
+    "objid_raw": 2207,
+    "parentid": 2002,
+    "parentid_raw": 2002,
+    "status": 12,
+    "status_raw": 12,
+    "type": "Disk /var",
+    "type_raw": "sshdiskfree"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Ping",
+    "name_raw": "Ping",
+    "objid": 2301,
+    "objid_raw": 2301,
+    "parentid": 2003,
+    "parentid_raw": 2003,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Ping",
+    "type_raw": "ping"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Port 1",
+    "name_raw": "Port 1",
+    "objid": 2302,
+    "objid_raw": 2302,
+    "parentid": 2003,
+    "parentid_raw": 2003,
+    "status": 9,
+    "status_raw": 9,
+    "type": "Port 1",
+    "type_raw": "snmptraffic"
+   },
+   {
+    "interval": 60,
+    "interval_raw": 60,
+    "name": "Ping",
+    "name_raw": "Ping",
+    "objid": 2401,
+    "objid_raw": 2401,
+    "parentid": 2004,
+    "parentid_raw": 2004,
+    "status": 3,
+    "status_raw": 3,
+    "type": "Ping",
+    "type_raw": "ping"
+   }
+  ],
+  "treesize": 16
+ },
+ "/controls/editnotification.htm?id=300": "<form><input type=\"text\" name=\"name_\" value=\"Email ops\"><input type=\"checkbox\" name=\"active_10\" value=\"1\" checked><input type=\"text\" name=\"email_address_10\" value=\"ops@example.com, oncall@example.com\"><input type=\"text\" name=\"subject_10\" value=\"[%sitename] %device %name\"></form>",
+ "/controls/editnotification.htm?id=301": "<form><input type=\"text\" name=\"name_\" value=\"Chat\"><input type=\"text\" name=\"url_13\" value=\"https://hooks.slack.com/services/T0000/B0000/abcdefghij\"><textarea name=\"postdata_13\">text=%message</textarea></form>",
+ "/controls/editnotification.htm?id=302": "<form><input type=\"text\" name=\"name_\" value=\"SMS on call\"><input type=\"text\" name=\"phone_11\" value=\"+10000000000\"></form>",
+ "/controls/editnotification.htm?id=303": "<form><input type=\"text\" name=\"email_address_10\" value=\"old@example.com\"></form>"
+}
