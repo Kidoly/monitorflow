@@ -366,6 +366,33 @@ impl Planner<'_> {
                     }
                     ("log", params, ("log".into(), path.clone()))
                 }
+                Watch::EventLog {
+                    channel,
+                    levels,
+                    providers,
+                    event_ids,
+                } => {
+                    let mut params = Map::new();
+                    params.insert("channel".into(), json!(channel));
+                    let lists = [
+                        ("levels", levels.join(",")),
+                        ("providers", providers.join(",")),
+                        (
+                            "event_ids",
+                            event_ids
+                                .iter()
+                                .map(u32::to_string)
+                                .collect::<Vec<_>>()
+                                .join(","),
+                        ),
+                    ];
+                    for (key, list) in lists {
+                        if !list.is_empty() {
+                            params.insert(key.into(), json!(list));
+                        }
+                    }
+                    ("eventlog", params, ("eventlog".into(), channel.clone()))
+                }
                 Watch::Web { url } => {
                     let host = monitorflow_import::text::host_of(url);
                     let Some(port) = monitorflow_import::text::port_of(url) else {

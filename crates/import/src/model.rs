@@ -188,6 +188,14 @@ pub enum Watch {
     },
     /// Lines of a log file matching a pattern (a regular expression).
     Log { path: String, pattern: String },
+    /// Events of a Windows Event Log channel, filtered by level, provider
+    /// and event ID (empty lists: any).
+    EventLog {
+        channel: String,
+        levels: Vec<String>,
+        providers: Vec<String>,
+        event_ids: Vec<u32>,
+    },
     /// A web page or API answering. MonitorFlow checks that its port
     /// answers, which the preview says.
     Web { url: String },
