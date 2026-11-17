@@ -660,6 +660,27 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             // Another customer's existence shows nowhere (ADR-0104).
             assert_eq!(body["multi_customer"], false);
         }
+        // Server-wide: only global administrators manage sign-in providers.
+        ("GET", "/api/identity-providers")
+        | ("POST", "/api/identity-providers")
+        | ("POST", "/api/identity-providers/test")
+        | ("GET", "/api/identity-providers/{id}")
+        | ("PUT", "/api/identity-providers/{id}")
+        | ("DELETE", "/api/identity-providers/{id}")
+        | ("GET", "/api/identity-providers/{id}/groups")
+        | ("PUT", "/api/identity-providers/{id}/groups") => {
+            let settings =
+                json!({ "kind": "oidc", "issuer": "https://id.example.com", "client_id": "mf" });
+            let body = match method {
+                "POST" | "PUT" if path.ends_with("groups") => Some(json!({ "mappings": [] })),
+                "POST" | "PUT" => Some(json!({ "name": "x", "settings": settings })),
+                _ => None,
+            };
+            assert_eq!(
+                ctx.status(method, &concrete(path), body).await,
+                StatusCode::FORBIDDEN
+            );
+        }
         // Personal (ADR-0137): only the signed-in person's own preferences,
         // no customer or site in them.
         ("GET", "/api/me/preferences") => {

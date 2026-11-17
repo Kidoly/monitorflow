@@ -23,6 +23,14 @@
 //! | GET | `/api/setup` | none | [`setup::Status`]: `{"pending"}`, true while no user exists (ADR-0071) |
 //! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}], "multi_customer", "multi_site"}`; `multi_customer` is whether the user sees more than one customer (ADR-0104), `multi_site` more than one site |
+//! | GET | `/api/identity-providers` | global administrator | [`identity_providers::ProviderList`]: the sign-in providers without secrets, the `redirect_uri` and how many `local_administrators` keep a password |
+//! | POST | `/api/identity-providers` | global administrator | body [`identity_providers::ProviderRequest`]; 201 [`identity_providers::ProviderView`]; `enabled` tests it first, 400 with the reason; 409 for a name taken; audited |
+//! | GET | `/api/identity-providers/{id}` | global administrator | [`identity_providers::ProviderView`] |
+//! | PUT | `/api/identity-providers/{id}` | global administrator | body [`identity_providers::ProviderRequest`], an empty secret keeps the stored one for the same address; tested when on; turning it off ends its accounts' sessions; audited |
+//! | DELETE | `/api/identity-providers/{id}` | global administrator | 204; its accounts stay without roles or a way to sign in; audited |
+//! | POST | `/api/identity-providers/test` | global administrator | body [`identity_providers::TestRequest`]; 200 [`identity_providers::TestResult`] `{"ok", "error", "oidc", "ldap", "roles"}`; saves nothing |
+//! | GET | `/api/identity-providers/{id}/groups` | global administrator | [`identity_providers::Mappings`]: which role each group gives, where |
+//! | PUT | `/api/identity-providers/{id}/groups` | global administrator | body [`identity_providers::Mappings`], replacing them; the provider's accounts get their new roles at once, and those left without any lose their sessions; audited |
 //! | GET | `/api/me/preferences` | session | [`preferences::Preferences`]: the signed-in person's own `{"theme", "language", "sidebar": {"collapsed", "hidden", "order"}}`, every key optional, `{}` when never saved (ADR-0137); never through an API key |
 //! | PUT | `/api/me/preferences` | session | body [`preferences::Preferences`], replacing the stored one; 400 for an unknown key or value, a list over 64 items, an item identifier out of form or a body over 16 KiB. Not audited |
 //! | POST | `/api/me/password` | session | body [`own_password::ChangeRequest`] `{"current_password", "new_password"}`; 204, the person's other sessions ended and this one kept; 400 for a short or unchanged new password or a wrong current one, 429 `rate_limited` within the sign-in limits; audited; never through an API key (ADR-0141) |
@@ -658,6 +666,7 @@ mod error;
 pub mod follow_up;
 mod health;
 pub mod idempotency;
+pub mod identity_providers;
 pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
@@ -679,6 +688,7 @@ mod openapi_dashboards;
 mod openapi_plugins;
 pub mod openapi_remediation;
 mod openapi_settings;
+mod openapi_sso;
 mod openapi_system;
 mod openapi_users;
 pub mod own_password;
@@ -879,6 +889,8 @@ pub struct ApiState {
     pub login_limits: Arc<login_limit::LoginLimits>,
     /// Tests of a personal contact, per user.
     pub contact_tests: Arc<on_call::TestLimit>,
+    /// Discovery and keys of OpenID Connect providers (ADR-0145).
+    pub oidc: crate::sso::oidc::Cache,
 }
 
 impl ApiState {
@@ -902,6 +914,7 @@ impl ApiState {
             api_key_limits: Arc::default(),
             login_limits: Arc::default(),
             contact_tests: Arc::new(on_call::test_limit()),
+            oidc: crate::sso::oidc::Cache::default(),
         }
     }
 
@@ -976,6 +989,24 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route(
+            "/api/identity-providers",
+            get(identity_providers::list).post(identity_providers::create),
+        )
+        .route(
+            "/api/identity-providers/test",
+            post(identity_providers::test),
+        )
+        .route(
+            "/api/identity-providers/{id}",
+            get(identity_providers::detail)
+                .put(identity_providers::update)
+                .delete(identity_providers::delete),
+        )
+        .route(
+            "/api/identity-providers/{id}/groups",
+            get(identity_providers::groups).put(identity_providers::set_groups),
+        )
         .route("/api/me/password", post(own_password::change))
         .route(
             "/api/me/preferences",
