@@ -12,6 +12,10 @@ Each guide explains what can go wrong, what MonitorFlow checks, how to add the c
 
 Guides are also available [in French](fr/README.md).
 
+## Moving to MonitorFlow
+
+- [How to move from Zabbix or Prometheus to MonitorFlow](move-from-another-tool.md): Import your hosts, checks, thresholds, maintenance windows and notification channels from Zabbix or Prometheus, preview what moves, then install the agent.
+
 ## Servers
 
 - [How to get alerted when a server goes down](server-down-alerts.md): Know within minutes when a Linux or Windows server stops reporting, without setting anything up, and get told by email or chat.
@@ -51,3 +55,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor Active Directory domain controllers](monitor-active-directory.md): Watch your domain controllers: Active Directory, DNS Server, LDAP on port 389, Windows Time and System event log errors, with alerts.
 - [How to monitor the Windows event log for errors](monitor-windows-event-log.md): Get an alert when Windows writes a critical or error event to the System or Application log, on one server or a whole site.
 - [How to monitor Remote Desktop (RDP)](monitor-remote-desktop.md): Get an alert when Remote Desktop stops answering on port 3389 or its service stops, on your Windows servers.
+
+## Administration
+
+- [How to sign in to MonitorFlow with your own identity provider](sign-in-with-your-identity-provider.md): Let your colleagues sign in with the accounts and second factor they already have: OpenID Connect (Entra ID, Google, Keycloak, authentik) or an LDAP directory over TLS.
