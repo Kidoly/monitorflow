@@ -55,7 +55,7 @@ if [ -z "$key" ] || [ -z "$customer" ] || [ -z "$expires" ]; then usage; fi
 case $format in
     1)
         [ -z "$tier" ] || [ "$tier" = enterprise ] || fail "--format 1 is for Enterprise keys only"
-        [ -z "$managed" ] && [ -z "$support" ] || fail "--format 1 says no managed servers or support contact"
+        if [ -n "$managed" ] || [ -n "$support" ]; then fail "--format 1 says no managed servers or support contact"; fi
         tier=enterprise
         ;;
     2)
