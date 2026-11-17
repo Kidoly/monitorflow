@@ -51,3 +51,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor Active Directory domain controllers](monitor-active-directory.md): Watch your domain controllers: Active Directory, DNS Server, LDAP on port 389, Windows Time and System event log errors, with alerts.
 - [How to monitor the Windows event log for errors](monitor-windows-event-log.md): Get an alert when Windows writes a critical or error event to the System or Application log, on one server or a whole site.
 - [How to monitor Remote Desktop (RDP)](monitor-remote-desktop.md): Get an alert when Remote Desktop stops answering on port 3389 or its service stops, on your Windows servers.
+
+## Moving to MonitorFlow
+
+- [How to move from PRTG to MonitorFlow](move-from-prtg.md): Read your PRTG devices, sensors, limits, maintenance windows and notifications, preview what moves, and create the matching servers, checks, thresholds, silences and channels in one click.
