@@ -412,6 +412,7 @@ describe("AppShell", () => {
         "MonitorFlow",
         "Back",
         "Settings",
+        "Sign-in",
         "API keys",
         "AI",
         "License",

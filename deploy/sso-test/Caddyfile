@@ -1,0 +1,41 @@
+# The web interface as deploy/caddy/Caddyfile serves it (same headers, same
+# Content-Security-Policy, so the sign-in is tested under them), and TLS in
+# front of authentik. Certificates come from the test's throwaway CA.
+{
+	admin off
+	auto_https off
+}
+
+https://localhost:28443 {
+	tls /certs/leaf.pem /certs/leaf-key.pem
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:27444
+	}
+
+	handle {
+		root * /srv/web
+		try_files {path} {path}/
+		file_server
+	}
+
+	handle_errors 404 {
+		root * /srv/web
+		rewrite * /404.html
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+}
+
+https://localhost:28643 {
+	tls /certs/leaf.pem /certs/leaf-key.pem
+	reverse_proxy 127.0.0.1:29000 {
+		header_up X-Forwarded-Proto https
+	}
+}
