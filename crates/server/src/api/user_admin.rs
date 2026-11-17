@@ -50,6 +50,18 @@ pub struct UserView {
     pub roles: Vec<RoleGrant>,
     /// Expiry of the user's unused password link, if any.
     pub link_expires_at: Option<DateTime<Utc>>,
+    /// The sign-in provider the account signs in through, whose groups
+    /// give its roles; `null` for an account with a password kept by
+    /// MonitorFlow (ADR-0145).
+    pub provider: Option<AccountProvider>,
+}
+
+/// The sign-in provider of an account.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct AccountProvider {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: crate::sso::config::Kind,
 }
 
 /// Body of `GET /api/users`, sorted by username.
@@ -120,13 +132,17 @@ type Row = (
     bool,
     DateTime<Utc>,
     Option<DateTime<Utc>>,
+    Option<Uuid>,
+    Option<String>,
+    Option<String>,
 );
 
 async fn fetch_users(db: &mut PgConnection, id: Option<Uuid>) -> Result<Vec<UserView>, ApiError> {
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT u.id, u.username, u.disabled_at IS NOT NULL, u.password_hash IS NULL,
-                u.created_at, l.expires_at
+                u.created_at, l.expires_at, p.id, p.name, p.kind
          FROM users u LEFT JOIN password_links l ON l.user_id = u.id AND l.expires_at > now()
+              LEFT JOIN identity_providers p ON p.id = u.identity_provider_id
          WHERE $1::uuid IS NULL OR u.id = $1
          ORDER BY lower(u.username)",
     )
@@ -144,29 +160,52 @@ async fn fetch_users(db: &mut PgConnection, id: Option<Uuid>) -> Result<Vec<User
     Ok(rows
         .into_iter()
         .map(
-            |(id, username, disabled, invited, created_at, link_expires_at)| UserView {
+            |(
                 id,
                 username,
-                state: if disabled {
-                    "disabled"
-                } else if invited {
-                    "invited"
-                } else {
-                    "active"
-                },
+                disabled,
+                no_password,
                 created_at,
-                roles: grants
-                    .iter()
-                    .filter(|g| g.0 == id)
-                    .filter_map(|(_, role, customer_id, site_id)| {
-                        Some(RoleGrant {
-                            role: role.parse().ok()?,
-                            customer_id: *customer_id,
-                            site_id: *site_id,
-                        })
-                    })
-                    .collect(),
                 link_expires_at,
+                provider_id,
+                name,
+                kind,
+            )| {
+                let provider = provider_id.zip(name).map(|(id, name)| AccountProvider {
+                    id,
+                    name,
+                    kind: if kind.as_deref() == Some("ldap") {
+                        crate::sso::config::Kind::Ldap
+                    } else {
+                        crate::sso::config::Kind::Oidc
+                    },
+                });
+                let invited = no_password && provider.is_none();
+                UserView {
+                    id,
+                    username,
+                    state: if disabled {
+                        "disabled"
+                    } else if invited {
+                        "invited"
+                    } else {
+                        "active"
+                    },
+                    created_at,
+                    roles: grants
+                        .iter()
+                        .filter(|g| g.0 == id)
+                        .filter_map(|(_, role, customer_id, site_id)| {
+                            Some(RoleGrant {
+                                role: role.parse().ok()?,
+                                customer_id: *customer_id,
+                                site_id: *site_id,
+                            })
+                        })
+                        .collect(),
+                    link_expires_at,
+                    provider,
+                }
             },
         )
         .collect())
@@ -177,6 +216,50 @@ async fn fetch_user(db: &mut PgConnection, id: Uuid) -> Result<UserView, ApiErro
         .await?
         .pop()
         .ok_or(ApiError::NotFound)
+}
+
+/// The sign-in provider `user` signs in through, if any.
+pub(super) async fn account_provider(
+    db: impl sqlx::PgExecutor<'_>,
+    user: Uuid,
+) -> Result<Option<AccountProvider>, sqlx::Error> {
+    let row: Option<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT p.id, p.name, p.kind FROM users u JOIN identity_providers p ON p.id = u.identity_provider_id
+         WHERE u.id = $1",
+    )
+    .bind(user)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|(id, name, kind)| AccountProvider {
+        id,
+        name,
+        kind: if kind == "ldap" {
+            crate::sso::config::Kind::Ldap
+        } else {
+            crate::sso::config::Kind::Oidc
+        },
+    }))
+}
+
+/// The name of the sign-in provider `user` signs in through, if any.
+async fn provider_of(db: &mut PgConnection, user: Uuid) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT p.name FROM users u JOIN identity_providers p ON p.id = u.identity_provider_id
+         WHERE u.id = $1",
+    )
+    .bind(user)
+    .fetch_optional(db)
+    .await
+}
+
+/// 409 for an account whose roles come from its provider's groups.
+async fn refuse_external(db: &mut PgConnection, user: Uuid, what: &str) -> Result<(), ApiError> {
+    match provider_of(db, user).await? {
+        Some(name) => Err(ApiError::Conflict(format!(
+            "this account signs in through {name}: {what}"
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// Active global administrators: enabled, with a password, and an
@@ -376,6 +459,7 @@ pub async fn link(
         }
         Some(false) => {}
     }
+    refuse_external(&mut tx, id, "its password is kept by the provider").await?;
     let link = issue_link(&mut tx, &user, id).await?;
     tx.commit().await?;
     tracing::info!(user = %user.id, target = %id, "password link issued");
@@ -483,6 +567,12 @@ pub async fn grant(
     let request = body(request)?;
     let mut tx = state.pool.begin().await?;
     let view = fetch_user(&mut tx, id).await?;
+    refuse_external(
+        &mut tx,
+        id,
+        "its roles follow its groups under Settings › Sign-in",
+    )
+    .await?;
     let scope = scope_of(&mut tx, &request).await?;
     let (customer_id, site_id) = scope.columns();
     let added = sqlx::query(
@@ -528,6 +618,12 @@ pub async fn revoke(
         })?;
     let (customer_id, site_id) = scope.columns();
     let (mut tx, before) = guarded(&state).await?;
+    refuse_external(
+        &mut tx,
+        id,
+        "its roles follow its groups under Settings › Sign-in",
+    )
+    .await?;
     let removed = sqlx::query(
         "DELETE FROM user_roles WHERE user_id = $1 AND role = $2
            AND customer_id IS NOT DISTINCT FROM $3 AND site_id IS NOT DISTINCT FROM $4",
