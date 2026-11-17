@@ -23,6 +23,9 @@
 //! | GET | `/api/setup` | none | [`setup::Status`]: `{"pending"}`, true while no user exists (ADR-0071) |
 //! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}], "multi_customer", "multi_site"}`; `multi_customer` is whether the user sees more than one customer (ADR-0104), `multi_site` more than one site |
+//! | GET | `/api/auth/providers` | none | [`sso_login::LoginProviders`]: the sign-in providers turned on, `{"providers": [{"id", "name", "kind"}]}`, for the login page (ADR-0145) |
+//! | GET | `/api/auth/oidc/{id}/start` | none | 303 to the OpenID Connect provider, with state, nonce and the PKCE verifier sealed in a `SameSite=Lax` cookie for ten minutes; 303 to `/login/?sso=unavailable` or `provider_error` |
+//! | GET | `/api/auth/oidc/callback` | the cookie of `start` | `code` and `state` from the provider; 303 to `/` with the session cookie, or to `/login/?sso=<reason>`: `expired`, `cancelled`, `unavailable`, `provider_error`, `no_group`, `username_taken`, `disabled`; audited |
 //! | GET | `/api/identity-providers` | global administrator | [`identity_providers::ProviderList`]: the sign-in providers without secrets, the `redirect_uri` and how many `local_administrators` keep a password |
 //! | POST | `/api/identity-providers` | global administrator | body [`identity_providers::ProviderRequest`]; 201 [`identity_providers::ProviderView`]; `enabled` tests it first, 400 with the reason; 409 for a name taken; audited |
 //! | GET | `/api/identity-providers/{id}` | global administrator | [`identity_providers::ProviderView`] |
@@ -227,6 +230,17 @@
 //! Every request other than GET, HEAD, OPTIONS and TRACE, login included,
 //! must carry the header `X-MonitorFlow-CSRF: 1` and must not be marked
 //! cross-site by `Sec-Fetch-Site`; otherwise 403.
+//!
+//! # Sign-in providers
+//!
+//! People may sign in through an OpenID Connect provider (authorization
+//! code with PKCE) or an LDAP directory over LDAPS or StartTLS only
+//! (ADR-0145, [`crate::sso`]). The login form tries a directory for its
+//! accounts and for names no account has; a directory that took the
+//! password while no mapped group gives access answers 403 `no_access`.
+//! Accounts of a provider have no password, follow its groups, and are
+//! never joined to an existing account by name. One global administrator
+//! with a password always remains.
 //!
 //! # Public API
 //!
@@ -719,6 +733,7 @@ pub mod setup;
 pub mod silences;
 pub mod sites;
 pub mod sources;
+pub mod sso_login;
 pub mod third_party;
 pub mod thresholds;
 pub mod tokens;
@@ -989,6 +1004,9 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/providers", get(sso_login::providers))
+        .route("/api/auth/oidc/{id}/start", get(sso_login::start))
+        .route("/api/auth/oidc/callback", get(sso_login::callback))
         .route(
             "/api/identity-providers",
             get(identity_providers::list).post(identity_providers::create),
