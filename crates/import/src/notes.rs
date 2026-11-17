@@ -203,6 +203,35 @@ pub const NOTES: &[(&str, &str)] = &[
         "unresolved_macro",
         "It uses a value that is not in the source: {macro}.",
     ),
+    // Zabbix.
+    (
+        "zabbix_stock_template",
+        "Read from the defaults of the stock template {template}, which the export does not include: export it too if it was changed.",
+    ),
+    (
+        "zabbix_template_missing",
+        "The template {template} is not among the uploaded files: export it too, or connect to the Zabbix API.",
+    ),
+    (
+        "zabbix_partial",
+        "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
+    ),
+    (
+        "zabbix_no_measure",
+        "MonitorFlow has no threshold on this measure ({key}).",
+    ),
+    (
+        "zabbix_bytes",
+        "MonitorFlow compares shares of memory and disk space, not amounts such as {value}.",
+    ),
+    (
+        "zabbix_no_recipients",
+        "An export has no users' media, so no recipients: connect to the Zabbix API to read them, or add the channel by hand.",
+    ),
+    (
+        "zabbix_not_set",
+        "Its setting {setting} has no usable address in the source.",
+    ),
     // Prometheus.
     (
         "scrape_as_port",

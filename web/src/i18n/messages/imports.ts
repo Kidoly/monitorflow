@@ -59,6 +59,20 @@ export const en = {
   "note.disabled": "Turned off in the source.",
   "note.unresolved_macro":
     "It uses a value that is not in the source: {macro}.",
+  "note.zabbix_stock_template":
+    "Read from the defaults of the stock template {template}, which the export does not include: export it too if it was changed.",
+  "note.zabbix_template_missing":
+    "The template {template} is not among the uploaded files: export it too, or connect to the Zabbix API.",
+  "note.zabbix_partial":
+    "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
+  "note.zabbix_no_measure":
+    "MonitorFlow has no threshold on this measure ({key}).",
+  "note.zabbix_bytes":
+    "MonitorFlow compares shares of memory and disk space, not amounts such as {value}.",
+  "note.zabbix_no_recipients":
+    "An export has no users' media, so no recipients: connect to the Zabbix API to read them, or add the channel by hand.",
+  "note.zabbix_not_set":
+    "Its setting {setting} has no usable address in the source.",
   "note.scrape_as_port":
     "MonitorFlow checks that port {port} answers; it does not read the exporter's metrics.",
   "note.ping_as_offline":
@@ -266,6 +280,20 @@ export const fr: Translation<typeof en> = {
   "note.disabled": "Désactivé dans la source.",
   "note.unresolved_macro":
     "Il utilise une valeur absente de la source : {macro}.",
+  "note.zabbix_stock_template":
+    "Lu dans les valeurs par défaut du modèle fourni {template}, absent de l’export : exportez-le aussi s’il a été modifié.",
+  "note.zabbix_template_missing":
+    "Le modèle {template} n’est pas parmi les fichiers envoyés : exportez-le aussi, ou connectez-vous à l’API de Zabbix.",
+  "note.zabbix_partial":
+    "Seule la condition {kept} est reprise ; MonitorFlow ne vérifie pas le reste de l’expression.",
+  "note.zabbix_no_measure":
+    "MonitorFlow n’a pas de seuil sur cette mesure ({key}).",
+  "note.zabbix_bytes":
+    "MonitorFlow compare des parts de mémoire et d’espace disque, pas des quantités comme {value}.",
+  "note.zabbix_no_recipients":
+    "Un export ne contient pas les médias des utilisateurs, donc aucun destinataire : connectez-vous à l’API de Zabbix pour les lire, ou ajoutez le canal à la main.",
+  "note.zabbix_not_set":
+    "Son paramètre {setting} n’a pas d’adresse utilisable dans la source.",
   "note.scrape_as_port":
     "MonitorFlow vérifie que le port {port} répond ; il ne lit pas les métriques de l’exportateur.",
   "note.ping_as_offline":
