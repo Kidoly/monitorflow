@@ -53,6 +53,13 @@ pub async fn change(
     // Display links act for their maker without a session: they change nothing here.
     let current_session = user.session().ok_or(ApiError::Forbidden)?.clone();
     let Json(request) = request.map_err(|_| ApiError::BadRequest)?;
+    // A provider's account has no password here (ADR-0145).
+    if let Some(provider) = super::user_admin::account_provider(&state.pool, user.id).await? {
+        return Err(ApiError::Conflict(format!(
+            "Your password is kept by {}: change it there.",
+            provider.name
+        )));
+    }
     // Cheap checks first: neither costs an argon2 run nor an attempt.
     users::validate_password(&request.new_password).map_err(invalid)?;
     if request.new_password.expose() == request.current_password.expose() {

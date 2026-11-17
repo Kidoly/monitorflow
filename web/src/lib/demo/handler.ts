@@ -125,6 +125,12 @@ const ROUTES: [RegExp, Handler][] = [
   [/^\/api\/health$/, () => ({ status: "ok" })],
   [/^\/api\/setup$/, () => ({ pending: false })],
   [/^\/api\/auth\/me$/, () => DEMO_USER],
+  [/^\/api\/auth\/providers$/, () => ({ providers: [] })],
+  [/^\/api\/identity-providers$/, () => ({
+    providers: [],
+    redirect_uri: "https://monitor.example.com/api/auth/oidc/callback",
+    local_administrators: 1,
+  })],
   [/^\/api\/me\/preferences$/, () => preferences],
 
   // Fleet

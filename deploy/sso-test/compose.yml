@@ -1,0 +1,91 @@
+# Real sign-in providers for deploy/sso-test.sh (ADR-0145), on loopback
+# ports only: Keycloak and authentik over HTTPS, OpenLDAP over LDAPS and
+# StartTLS, all with certificates of a throwaway CA the script makes. The
+# MonitorFlow server runs on the host; Caddy, on the host's network, serves
+# its web interface over HTTPS and terminates TLS for authentik.
+name: monitorflow-sso-test
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: monitorflow
+      POSTGRES_PASSWORD: ${MF_DB_PASSWORD:?}
+      POSTGRES_DB: monitorflow
+    ports: ["127.0.0.1:25432:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command:
+      - start-dev
+      - --https-port=8443
+      - --http-enabled=false
+      - --https-certificate-file=/certs/leaf.pem
+      - --https-certificate-key-file=/certs/leaf-key.pem
+      - --hostname=https://localhost:28543
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?}
+    volumes: ["${MF_SSO_CERTS:?}:/certs:ro"]
+    ports: ["127.0.0.1:28543:8443"]
+
+  authentik-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AK_DB_PASSWORD:?}
+      POSTGRES_DB: authentik
+    tmpfs: [/var/lib/postgresql/data]
+
+  authentik-server: &authentik
+    image: ghcr.io/goauthentik/server:2025.10
+    command: server
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${AK_SECRET_KEY:?}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AK_DB_PASSWORD:?}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AK_ADMIN_PASSWORD:?}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AK_TOKEN:?}
+      AUTHENTIK_BOOTSTRAP_EMAIL: akadmin@example.org
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+    ports: ["127.0.0.1:29000:9000"]
+    depends_on: [authentik-db]
+
+  authentik-worker:
+    <<: *authentik
+    command: worker
+    ports: []
+
+  openldap:
+    image: osixia/openldap:1.5.0
+    command: --copy-service
+    environment:
+      LDAP_ORGANISATION: Example
+      LDAP_DOMAIN: example.org
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD:?}
+      LDAP_READONLY_USER: "true"
+      LDAP_READONLY_USER_USERNAME: monitorflow
+      LDAP_READONLY_USER_PASSWORD: ${LDAP_SERVICE_PASSWORD:?}
+      LDAP_TLS: "true"
+      LDAP_TLS_CRT_FILENAME: leaf.pem
+      LDAP_TLS_KEY_FILENAME: leaf-key.pem
+      LDAP_TLS_CA_CRT_FILENAME: ca.pem
+      LDAP_TLS_VERIFY_CLIENT: never
+      # StartTLS is offered on 389; plain binds stay possible so the test
+      # shows MonitorFlow refuses them itself.
+      LDAP_TLS_ENFORCE: "false"
+    volumes: ["${MF_SSO_CERTS:?}:/container/service/slapd/assets/certs:ro"]
+    ports: ["127.0.0.1:28389:389", "127.0.0.1:28636:636"]
+
+  caddy:
+    image: caddy:2.10
+    network_mode: host
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${MF_SSO_CERTS:?}:/certs:ro
+      - ${MF_WEB_OUT:?}:/srv/web:ro
