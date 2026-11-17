@@ -19,7 +19,6 @@ serde_json.workspace = true
 # maintained fork of serde_yaml.
 serde_norway = "0.9"
 thiserror.workspace = true
-tracing.workspace = true
-
-[dev-dependencies]
+# Reads PRTG's objects a few at a time.
 tokio.workspace = true
+tracing.workspace = true

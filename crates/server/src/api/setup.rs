@@ -275,6 +275,8 @@ pub async fn complete(
         // A global administrator sees every customer (ADR-0104).
         multi_customer: super::customers::several(&state.pool).await?,
         multi_site: super::auth::several_sites(&state.pool, &super::access::Scope::All).await?,
+        // The first administrator always has a password (ADR-0145).
+        provider: None,
     };
     Ok(([(SET_COOKIE, cookie)], Json(me)).into_response())
 }

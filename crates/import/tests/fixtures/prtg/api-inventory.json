@@ -1,0 +1,555 @@
+{
+  "hosts": [
+    {
+      "key": "device:2001",
+      "name": "dc01",
+      "addresses": [
+        "192.0.2.10"
+      ],
+      "os": "windows",
+      "groups": [
+        "Local Probe",
+        "Servers"
+      ],
+      "origin": {
+        "kind": "device",
+        "name": "dc01"
+      }
+    },
+    {
+      "key": "device:2002",
+      "name": "web01",
+      "addresses": [
+        "web01.example.net"
+      ],
+      "os": "linux",
+      "groups": [
+        "Local Probe",
+        "Servers",
+        "Web"
+      ],
+      "origin": {
+        "kind": "device",
+        "name": "web01"
+      }
+    },
+    {
+      "key": "device:2004",
+      "name": "branch-fs",
+      "addresses": [
+        "198.51.100.20"
+      ],
+      "os": "unknown",
+      "groups": [
+        "Branch Probe"
+      ],
+      "origin": {
+        "kind": "device",
+        "name": "branch-fs"
+      }
+    }
+  ],
+  "checks": [
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "agent"
+      },
+      "interval_s": 30,
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_ping"
+      }
+    },
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "cpu"
+      },
+      "interval_s": 60,
+      "origin": {
+        "kind": "sensor",
+        "name": "CPU Load",
+        "detail": "wmiprocessor"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "memory"
+      },
+      "interval_s": 60,
+      "origin": {
+        "kind": "sensor",
+        "name": "Memory",
+        "detail": "wmimemory"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "disk"
+      },
+      "interval_s": 300,
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk Free",
+        "detail": "wmidiskspace"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "service",
+        "name": "W32Time"
+      },
+      "interval_s": 60,
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Windows Time",
+        "detail": "wmiservice"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "event_log",
+        "channel": "System",
+        "levels": [
+          "error"
+        ],
+        "providers": [],
+        "event_ids": []
+      },
+      "interval_s": 60,
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "System errors",
+        "detail": "wmilogfile"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_event_count",
+        "args": {
+          "count": "5"
+        }
+      }
+    },
+    {
+      "host": "device:2002",
+      "watch": {
+        "kind": "agent"
+      },
+      "interval_s": 60,
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_ping"
+      }
+    },
+    {
+      "host": "device:2002",
+      "watch": {
+        "kind": "web",
+        "url": "https://web01.example.net/health"
+      },
+      "interval_s": 60,
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Health page",
+        "detail": "httpadvanced"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2002",
+      "watch": {
+        "kind": "port",
+        "address": "web01.example.net",
+        "port": 22
+      },
+      "interval_s": 60,
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "SSH",
+        "detail": "port"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_from_server"
+      }
+    },
+    {
+      "host": "device:2002",
+      "watch": {
+        "kind": "disk"
+      },
+      "interval_s": 60,
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk /var",
+        "detail": "sshdiskfree"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2004",
+      "watch": {
+        "kind": "agent"
+      },
+      "interval_s": 60,
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_ping"
+      }
+    }
+  ],
+  "thresholds": [
+    {
+      "hosts": [
+        "device:2001"
+      ],
+      "measure": {
+        "kind": "cpu_usage"
+      },
+      "direction": "above",
+      "warning": 0.8,
+      "critical": 0.95,
+      "for_s": 0,
+      "origin": {
+        "kind": "sensor",
+        "name": "CPU Load",
+        "detail": "Total"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "hosts": [
+        "device:2001"
+      ],
+      "measure": {
+        "kind": "memory_available"
+      },
+      "direction": "below",
+      "warning": 0.2,
+      "critical": 0.1,
+      "for_s": 0,
+      "origin": {
+        "kind": "sensor",
+        "name": "Memory",
+        "detail": "Percent Available Memory"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "hosts": [
+        "device:2001"
+      ],
+      "measure": {
+        "kind": "disk_used",
+        "mount": "C:\\"
+      },
+      "direction": "above",
+      "warning": 0.85,
+      "critical": 0.95,
+      "for_s": 0,
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk Free",
+        "detail": "C:\\ Free Space"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "disk_free_as_used"
+      }
+    },
+    {
+      "hosts": [
+        "device:2002"
+      ],
+      "measure": {
+        "kind": "disk_used",
+        "mount": "/var"
+      },
+      "direction": "above",
+      "warning": 0.9,
+      "for_s": 0,
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk /var",
+        "detail": "Free Space /var"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "disk_free_as_used"
+      }
+    }
+  ],
+  "silences": [
+    {
+      "scope": {
+        "kind": "hosts",
+        "hosts": []
+      },
+      "starts_at": "2026-10-01T21:00:00Z",
+      "ends_at": "2026-10-02T01:00:00Z",
+      "reason": "Maintenance window from PRTG",
+      "origin": {
+        "kind": "group",
+        "name": "Network"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "scope": {
+        "kind": "hosts",
+        "hosts": [
+          "device:2002"
+        ]
+      },
+      "starts_at": "2026-11-20T21:00:00Z",
+      "ends_at": "2026-11-21T01:00:00Z",
+      "reason": "Maintenance window from PRTG",
+      "origin": {
+        "kind": "device",
+        "name": "web01"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "scope": {
+        "kind": "hosts",
+        "hosts": [
+          "device:2004"
+        ]
+      },
+      "starts_at": "2026-11-17T12:00:00Z",
+      "ends_at": "2026-12-17T12:00:00Z",
+      "reason": "Paused in PRTG",
+      "origin": {
+        "kind": "device",
+        "name": "branch-fs"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_paused"
+      }
+    }
+  ],
+  "channels": [
+    {
+      "name": "Email ops",
+      "target": {
+        "kind": "email",
+        "to": [
+          "ops@example.com",
+          "oncall@example.com"
+        ]
+      },
+      "origin": {
+        "kind": "notification",
+        "name": "Email ops"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_triggers"
+      }
+    },
+    {
+      "name": "Chat",
+      "target": {
+        "kind": "slack"
+      },
+      "origin": {
+        "kind": "notification",
+        "name": "Chat"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_triggers"
+      }
+    }
+  ],
+  "unmovable": [
+    {
+      "hosts": [],
+      "origin": {
+        "kind": "device",
+        "name": "switch01"
+      },
+      "why": {
+        "code": "snmp"
+      }
+    },
+    {
+      "hosts": [
+        "device:2001"
+      ],
+      "origin": {
+        "kind": "sensor",
+        "name": "CPU Load",
+        "detail": "CPU 1"
+      },
+      "why": {
+        "code": "prtg_limit",
+        "args": {
+          "channel": "CPU 1"
+        }
+      }
+    },
+    {
+      "hosts": [
+        "device:2001"
+      ],
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk Free",
+        "detail": "C:\\ Free Bytes"
+      },
+      "why": {
+        "code": "prtg_limit",
+        "args": {
+          "channel": "C:\\ Free Bytes"
+        }
+      }
+    },
+    {
+      "hosts": [
+        "device:2002"
+      ],
+      "origin": {
+        "kind": "sensor",
+        "name": "Health page",
+        "detail": "Response Time"
+      },
+      "why": {
+        "code": "prtg_limit",
+        "args": {
+          "channel": "Response Time"
+        }
+      }
+    },
+    {
+      "hosts": [
+        "device:2002"
+      ],
+      "origin": {
+        "kind": "sensor",
+        "name": "Certificate",
+        "detail": "sslcertificate"
+      },
+      "why": {
+        "code": "prtg_same_port",
+        "args": {
+          "port": "443"
+        }
+      }
+    },
+    {
+      "hosts": [
+        "device:2002"
+      ],
+      "origin": {
+        "kind": "sensor",
+        "name": "Traffic eth0",
+        "detail": "snmptraffic"
+      },
+      "why": {
+        "code": "network_traffic"
+      }
+    },
+    {
+      "hosts": [
+        "device:2002"
+      ],
+      "origin": {
+        "kind": "sensor",
+        "name": "Login flow",
+        "detail": "httptransaction"
+      },
+      "why": {
+        "code": "prtg_sensor_type",
+        "args": {
+          "type": "httptransaction"
+        }
+      }
+    },
+    {
+      "hosts": [],
+      "origin": {
+        "kind": "sensor",
+        "name": "Traffic eth0",
+        "detail": "snmptraffic"
+      },
+      "why": {
+        "code": "prtg_paused_by_rule"
+      }
+    },
+    {
+      "hosts": [],
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk /var",
+        "detail": "sshdiskfree"
+      },
+      "why": {
+        "code": "prtg_paused_sensor"
+      }
+    },
+    {
+      "hosts": [],
+      "origin": {
+        "kind": "notification",
+        "name": "SMS on call",
+        "detail": "SMS"
+      },
+      "why": {
+        "code": "no_target"
+      }
+    },
+    {
+      "hosts": [],
+      "origin": {
+        "kind": "notification",
+        "name": "Old email"
+      },
+      "why": {
+        "code": "disabled"
+      }
+    }
+  ]
+}

@@ -139,8 +139,9 @@ psql() { compose 1 exec -T postgres psql -U monitorflow -d monitorflow -tAc "$1"
 env_value() { on "$1" sed -n "s/^$2=//p" /opt/monitorflow/deploy/.env; }
 api() { on "$1" curl -fsSk -b /tmp/cookies "https://monitor.internal/api/$2"; }
 healthy() { [ "$(on "$1" docker inspect --format '{{.State.Health.Status}}' "$(compose "$1" ps -q server)")" = healthy ]; }
-license() { # servers expires
-    "$repo/scripts/license-sign.sh" --key "$license_key" --customer "Join test" --servers "$1" --expires "$2"
+license() { # central-servers expires
+    "$repo/scripts/license-sign.sh" --key "$license_key" --customer "Join test" --tier enterprise \
+        --managed-servers 25 --central-servers "$1" --expires "$2"
 }
 
 echo "== the first central server"

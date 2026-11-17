@@ -253,6 +253,34 @@ jobs:
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
           MF_TEST_LICENSE_KEY: ${{ runner.temp }}/e2e-license.pem
+  # Signing in through real identity providers (ADR-0145): Keycloak,
+  # authentik and OpenLDAP (LDAPS and StartTLS) in containers with a
+  # throwaway CA, the server and web interface of this commit, every sign-in
+  # driven in Chrome.
+  sso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: deploy/sso-test.sh
+        env:
+          MF_TEST_CHROMIUM: /usr/bin/google-chrome
+          MF_SSO_ARTIFACTS: ${{ runner.temp }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: sso-test-failure
+          path: ${{ runner.temp }}/sso-test-failure.png
+          if-no-files-found: ignore
   # The installer is piped to sh, so it must stay POSIX (ADR-0052).
   shellcheck:
     runs-on: ubuntu-latest

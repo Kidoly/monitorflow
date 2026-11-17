@@ -312,7 +312,9 @@ export function UsersAdmin({ me }: { me: Me }) {
           sub={
             user.id === me.id
               ? t("users.you")
-              : user.state === "invited"
+              : user.provider
+                ? t("signIn.through", { name: user.provider.name })
+                : user.state === "invited"
                 ? user.link_expires_at
                   ? t("users.notOpened")
                   : t("users.expired")
@@ -346,14 +348,17 @@ export function UsersAdmin({ me }: { me: Me }) {
             return (
               <span key={text} className={styles.grant}>
                 {text}
-                <button
-                  type="button"
-                  className={styles.grantRemove}
-                  aria-label={t("users.revoke", { grant: text, username: user.username })}
-                  onClick={() => void act(user, () => api.revokeRole(user.id, toRequest(grant)))}
-                >
-                  ×
-                </button>
+                {/* A provider's account follows its groups (ADR-0145). */}
+                {!user.provider && (
+                  <button
+                    type="button"
+                    className={styles.grantRemove}
+                    aria-label={t("users.revoke", { grant: text, username: user.username })}
+                    onClick={() => void act(user, () => api.revokeRole(user.id, toRequest(grant)))}
+                  >
+                    ×
+                  </button>
+                )}
               </span>
             );
           })
@@ -385,7 +390,10 @@ export function UsersAdmin({ me }: { me: Me }) {
                   {rowError.text}
                 </span>
               );
-              if (open?.id !== user.id) return error || null;
+              const follows = user.provider && (
+                <span className={styles.hint}>{t("signIn.rolesFollow", { name: user.provider.name })}</span>
+              );
+              if (open?.id !== user.id) return error || follows || null;
               return (
                 <>
                   {open.kind === "role" ? (
@@ -406,14 +414,16 @@ export function UsersAdmin({ me }: { me: Me }) {
             }}
             rowActions={(user) => (
               <span className={styles.buttons}>
-                <Button
-                  size="small"
-                  aria-expanded={open?.id === user.id && open.kind === "role"}
-                  onClick={() => setOpen(open?.id === user.id && open.kind === "role" ? null : { id: user.id, kind: "role" })}
-                >
-                  {t("users.addRole")}
-                </Button>
-                {user.state !== "disabled" && user.id !== me.id && (
+                {!user.provider && (
+                  <Button
+                    size="small"
+                    aria-expanded={open?.id === user.id && open.kind === "role"}
+                    onClick={() => setOpen(open?.id === user.id && open.kind === "role" ? null : { id: user.id, kind: "role" })}
+                  >
+                    {t("users.addRole")}
+                  </Button>
+                )}
+                {user.state !== "disabled" && user.id !== me.id && !user.provider && (
                   <Button size="small" onClick={() => void issueLink(user)}>
                     {user.state === "invited" ? t("users.newInvitation") : t("users.resetPassword")}
                   </Button>

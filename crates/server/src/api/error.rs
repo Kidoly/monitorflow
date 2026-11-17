@@ -40,6 +40,10 @@ pub enum ApiError {
     /// Authenticated, but no role allows the request.
     #[error("forbidden")]
     Forbidden,
+    /// A directory took the password, but none of the person's groups gives
+    /// access to MonitorFlow (ADR-0145).
+    #[error("Your account is in none of the groups that give access to MonitorFlow. Ask your administrator.")]
+    NoAccess,
     /// An API key used outside the areas it was made for (ADR-0101).
     #[error("This API key may not use this part of MonitorFlow. Make one for it under Admin › API keys.")]
     KeyScope,
@@ -84,7 +88,9 @@ impl ApiError {
             Self::Gone(_) => StatusCode::GONE,
             Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
-            Self::Forbidden | Self::CrossSite | Self::KeyScope => StatusCode::FORBIDDEN,
+            Self::Forbidden | Self::CrossSite | Self::KeyScope | Self::NoAccess => {
+                StatusCode::FORBIDDEN
+            }
             Self::IdempotencyKeyReused => StatusCode::UNPROCESSABLE_ENTITY,
             Self::IdempotencyInProgress => StatusCode::CONFLICT,
             Self::MetricsUnavailable(_) => StatusCode::BAD_GATEWAY,
@@ -107,6 +113,7 @@ impl ApiError {
             Self::Unauthorized => "unauthenticated",
             Self::InvalidCredentials => "invalid_credentials",
             Self::Forbidden => "forbidden",
+            Self::NoAccess => "no_access",
             Self::KeyScope => "api_key_scope",
             Self::IdempotencyKeyReused => "idempotency_key_reused",
             Self::IdempotencyInProgress => "idempotency_in_progress",
@@ -121,7 +128,7 @@ impl ApiError {
 }
 
 /// Every code [`ApiError::code`] can give, for the OpenAPI document.
-pub const CODES: [&str; 18] = [
+pub const CODES: [&str; 19] = [
     "invalid_request",
     "invalid",
     "not_found",
@@ -130,6 +137,7 @@ pub const CODES: [&str; 18] = [
     "unauthenticated",
     "invalid_credentials",
     "forbidden",
+    "no_access",
     "api_key_scope",
     "cross_site",
     "rate_limited",
@@ -211,6 +219,7 @@ mod tests {
             ApiError::Unauthorized,
             ApiError::InvalidCredentials,
             ApiError::Forbidden,
+            ApiError::NoAccess,
             ApiError::KeyScope,
             ApiError::IdempotencyKeyReused,
             ApiError::IdempotencyInProgress,
