@@ -672,6 +672,38 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             // Another customer's existence shows nowhere (ADR-0104).
             assert_eq!(body["multi_customer"], false);
         }
+        // Sign-in providers on the login page (ADR-0145): no customer or
+        // site in them, and the sign-in itself only redirects.
+        ("GET", "/api/auth/providers") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
+        ("GET", "/api/auth/oidc/{id}/start") | ("GET", "/api/auth/oidc/callback") => {
+            let (status, _) = ctx.call(method, &concrete(path), None).await;
+            assert_eq!(status, StatusCode::SEE_OTHER);
+        }
+        // Server-wide: only global administrators manage sign-in providers.
+        ("GET", "/api/identity-providers")
+        | ("POST", "/api/identity-providers")
+        | ("POST", "/api/identity-providers/test")
+        | ("GET", "/api/identity-providers/{id}")
+        | ("PUT", "/api/identity-providers/{id}")
+        | ("DELETE", "/api/identity-providers/{id}")
+        | ("GET", "/api/identity-providers/{id}/groups")
+        | ("PUT", "/api/identity-providers/{id}/groups") => {
+            let settings =
+                json!({ "kind": "oidc", "issuer": "https://id.example.com", "client_id": "mf" });
+            let body = match method {
+                "POST" | "PUT" if path.ends_with("groups") => Some(json!({ "mappings": [] })),
+                "POST" | "PUT" => Some(json!({ "name": "x", "settings": settings })),
+                _ => None,
+            };
+            assert_eq!(
+                ctx.status(method, &concrete(path), body).await,
+                StatusCode::FORBIDDEN
+            );
+        }
         // Personal (ADR-0137): only the signed-in person's own preferences,
         // no customer or site in them.
         ("GET", "/api/me/preferences") => {

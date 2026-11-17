@@ -1,0 +1,30 @@
+# Blackbox exporter alerts, in the style of awesome-prometheus-alerts.
+groups:
+  - name: blackbox
+    rules:
+      - alert: BlackboxProbeFailed
+        expr: probe_success == 0
+        labels:
+          severity: critical
+
+      - alert: BlackboxExporterDown
+        expr: up{job=~"blackbox.*"} == 0
+        for: 5m
+        labels:
+          severity: warning
+
+      - alert: BlackboxSlowProbe
+        expr: avg_over_time(probe_duration_seconds[1m]) > 1
+        for: 1m
+        labels:
+          severity: warning
+
+      - alert: BlackboxProbeHttpFailure
+        expr: probe_http_status_code <= 199 OR probe_http_status_code >= 400
+        labels:
+          severity: critical
+
+      - alert: BlackboxSslCertificateWillExpireSoon
+        expr: 3 <= round((last_over_time(probe_ssl_earliest_cert_expiry[10m]) - time()) / 86400, 0.1) < 20
+        labels:
+          severity: warning

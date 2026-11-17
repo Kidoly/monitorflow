@@ -39,7 +39,9 @@ export function StatusStrip() {
     <nav aria-label={t("shell.status.label")} className={styles.strip}>
       <ul className={styles.list}>
         {SERVER_STATES.map((state) => {
-          const count = data[state];
+          const count = data[state] ?? 0;
+          // Only an import makes servers that wait for their agent (ADR-0146).
+          if (state === "waiting" && count === 0) return null;
           const tone = STATE_TONES[state];
           const active = current === state;
           const tinted = count > 0 && state !== "ok";

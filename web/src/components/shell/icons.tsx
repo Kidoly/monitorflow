@@ -50,6 +50,7 @@ const PATHS = {
     </>
   ),
   update: <path d="M8 13V3M4 7l4-4 4 4M3 13h10" />,
+  signIn: <path d="M9 2h4v12H9M2 8h8M7 5l3 3-3 3" />,
   ai: <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />,
   bell: <path d="M4 11V7a4 4 0 0 1 8 0v4l1 1H3zM7 14h2" />,
   dashboards: <path d="M2 2h5v6H2zM9 2h5v3H9zM9 7h5v7H9zM2 10h5v4H2z" />,

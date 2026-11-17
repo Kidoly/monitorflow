@@ -1,9 +1,11 @@
-//! The PRTG reader, through its HTTP API with an API token or a user and
-//! passhash. It gives a [`tree::Tree`] of probes, groups, devices and
-//! sensors, which [`mapping`] turns into the inventory. Nothing is ever written to PRTG:
+//! The PRTG reader: through its HTTP API, with an API token or a user and
+//! passhash, or from its configuration file (`PRTG Configuration.dat`).
+//! Both give a [`tree::Tree`] of probes, groups, devices and sensors, which
+//! [`mapping`] turns into the inventory. Nothing is ever written to PRTG:
 //! the API reader sends only GET requests to reading endpoints.
 
 pub mod api;
+pub mod export;
 pub mod mapping;
 pub mod sensors;
 pub mod tree;
@@ -14,6 +16,7 @@ mod tests;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::Duration;
 use reqwest::header::HeaderMap;
 use reqwest::{Client, Method, Url};
 
@@ -73,7 +76,7 @@ impl Source for Prtg {
         SourceInfo {
             id: "prtg",
             name: "PRTG",
-            extensions: &[],
+            extensions: &["dat", "xml"],
             many_files: false,
             connect: vec![
                 field("url", false, false, "https://prtg.example.com"),
@@ -86,10 +89,16 @@ impl Source for Prtg {
 
     async fn read(&self, input: Input, context: &Context) -> Result<Inventory, ReadError> {
         let tree = match input {
-            Input::Files(_) => {
-                return Err(ReadError::Input(
-                    "PRTG is read through its API: connect to it instead.".into(),
-                ))
+            Input::Files(files) => {
+                let file = files
+                    .first()
+                    .ok_or_else(|| ReadError::Input("Choose a file to read.".into()))?;
+                let text = String::from_utf8_lossy(&file.content);
+                // The file does not say PRTG's time zone: read as UTC, and
+                // the windows say so.
+                let mut tree = export::read(&file.name, &text, Duration::zero())?;
+                tree.local_times = true;
+                tree
             }
             Input::Connect(connection) => {
                 let base = http::base_url(connection.get("url").unwrap_or_default(), "url")?;

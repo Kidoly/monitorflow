@@ -1,0 +1,212 @@
+{
+  "hosts": [
+    {
+      "key": "device:2001",
+      "name": "fs01",
+      "addresses": [
+        "192.0.2.30"
+      ],
+      "os": "windows",
+      "groups": [
+        "Servers & storage"
+      ],
+      "origin": {
+        "kind": "device",
+        "name": "fs01"
+      }
+    },
+    {
+      "key": "device:2002",
+      "name": "old-app",
+      "addresses": [
+        "192.0.2.31"
+      ],
+      "os": "unknown",
+      "groups": [
+        "Servers & storage"
+      ],
+      "origin": {
+        "kind": "device",
+        "name": "old-app"
+      }
+    }
+  ],
+  "checks": [
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "agent"
+      },
+      "interval_s": 30,
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_ping"
+      }
+    },
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "disk"
+      },
+      "interval_s": 120,
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk Free E:",
+        "detail": "wmivolume"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "service",
+        "name": "Spooler"
+      },
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Print Spooler",
+        "detail": "wmiservice"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2001",
+      "watch": {
+        "kind": "event_log",
+        "channel": "Application",
+        "levels": [
+          "critical",
+          "error"
+        ],
+        "providers": [
+          "MSSQLSERVER"
+        ],
+        "event_ids": [
+          17,
+          18
+        ]
+      },
+      "alert": {
+        "severity": "warning",
+        "for_s": 0
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Application errors",
+        "detail": "wineventlog"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_event_levels"
+      }
+    }
+  ],
+  "thresholds": [
+    {
+      "hosts": [
+        "device:2001"
+      ],
+      "measure": {
+        "kind": "disk_used",
+        "mount": "E:\\"
+      },
+      "direction": "above",
+      "warning": 0.8,
+      "critical": 0.9,
+      "for_s": 0,
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk Free E:",
+        "detail": "Free Space"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "disk_free_as_used"
+      }
+    }
+  ],
+  "silences": [
+    {
+      "scope": {
+        "kind": "hosts",
+        "hosts": [
+          "device:2001",
+          "device:2002"
+        ]
+      },
+      "starts_at": "2026-11-18T20:00:00Z",
+      "ends_at": "2026-11-18T21:00:00Z",
+      "reason": "Maintenance window from PRTG",
+      "origin": {
+        "kind": "group",
+        "name": "Servers & storage"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_local_time"
+      }
+    },
+    {
+      "scope": {
+        "kind": "hosts",
+        "hosts": [
+          "device:2002"
+        ]
+      },
+      "starts_at": "2026-11-17T12:00:00Z",
+      "ends_at": "2026-12-17T12:00:00Z",
+      "reason": "Paused in PRTG",
+      "origin": {
+        "kind": "device",
+        "name": "old-app"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_paused"
+      }
+    }
+  ],
+  "channels": [
+    {
+      "name": "Admins",
+      "target": {
+        "kind": "email",
+        "to": [
+          "admins@example.com"
+        ]
+      },
+      "origin": {
+        "kind": "notification",
+        "name": "Admins"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_triggers"
+      }
+    },
+    {
+      "name": "Teams",
+      "target": {
+        "kind": "teams"
+      },
+      "origin": {
+        "kind": "notification",
+        "name": "Teams"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_triggers"
+      }
+    }
+  ],
+  "unmovable": []
+}

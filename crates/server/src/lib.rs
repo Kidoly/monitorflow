@@ -30,5 +30,6 @@ pub mod remediation;
 pub mod renew;
 pub mod secrets;
 pub mod sensor_config;
+pub mod sso;
 pub mod storage_tls;
 pub mod vm_query;

@@ -1,0 +1,101 @@
+# Node exporter alerts, in the style of awesome-prometheus-alerts and the
+# kube-prometheus node rules.
+groups:
+  - name: node-recording
+    rules:
+      - record: instance:node_cpu_utilisation:rate5m
+        expr: 1 - avg without (cpu) (sum without (mode) (rate(node_cpu_seconds_total{job="node", mode=~"idle|iowait|steal"}[5m])))
+
+  - name: node
+    rules:
+      - alert: HostDown
+        expr: up{job="node"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Host {{ $labels.instance }} is down"
+
+      - alert: HostHighCpuLoad
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU load is over 80% on {{ $labels.instance }}"
+
+      - alert: HostCpuSaturated
+        expr: (1 - avg without (cpu) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) * 100 > 95
+        for: 2m
+        labels:
+          severity: page
+
+      - alert: HostHighLoad
+        expr: node_load15 > 4
+        for: 15m
+        labels:
+          severity: minor
+
+      - alert: HostSystemSaturated
+        expr: node_load1 / count without (cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 2
+        for: 15m
+        labels:
+          severity: warning
+
+      - alert: HostOutOfMemory
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100 < 10
+        for: 2m
+        labels:
+          severity: warning
+
+      - alert: HostMemoryUnderPressure
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
+        for: 5m
+        labels:
+          severity: critical
+
+      - alert: HostOutOfDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/", fstype!="tmpfs"} * 100) / node_filesystem_size_bytes{mountpoint="/", fstype!="tmpfs"} < 10 and ON (instance, device, mountpoint) node_filesystem_readonly == 0
+        for: 2m
+        labels:
+          severity: critical
+
+      - alert: HostDiskMayFillIn24Hours
+        expr: predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs"}[1h], 86400) <= 0 and node_filesystem_avail_bytes > 0
+        for: 2m
+        labels:
+          severity: warning
+
+      - alert: HostOutOfInodes
+        expr: node_filesystem_files_free / node_filesystem_files * 100 < 10
+        for: 2m
+        labels:
+          severity: warning
+
+      - alert: HostUnusualDiskReadLatency
+        expr: rate(node_disk_read_time_seconds_total{device="sda"}[1m]) / rate(node_disk_reads_completed_total{device="sda"}[1m]) > 0.1 and rate(node_disk_reads_completed_total[1m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+
+      - alert: HostUnusualNetworkThroughputIn
+        expr: (rate(node_network_receive_bytes_total[2m]) / node_network_speed_bytes) > .80
+        for: 5m
+        labels:
+          severity: warning
+
+      - alert: HostOomKillDetected
+        expr: increase(node_vmstat_oom_kill[1m]) > 0
+        labels:
+          severity: warning
+
+      - alert: HostSystemdServiceCrashed
+        expr: node_systemd_unit_state{state="failed"} == 1
+        labels:
+          severity: warning
+
+      - alert: NginxDown
+        expr: node_systemd_unit_state{job="node", instance=~"web-.*", name="nginx.service", state="active"} == 0
+        for: 1m
+        labels:
+          severity: critical

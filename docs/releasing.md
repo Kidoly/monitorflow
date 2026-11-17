@@ -66,11 +66,66 @@ gh secret delete RELEASE_SIGNING_KEY --repo Kidoly/monitorflow
 
 Do this before `release.yml` asks for the environment, or the next tag fails at signing.
 
+## The license key pair
+
+License keys (ADR-0100, ADR-0147) are signed with a key pair of their own, never the release key: whoever holds one must not be able to sign the other. The private key stays on the owner's machine. It never goes to GitHub, CI, a server or anyone else.
+
+Once, on that machine, with OpenSSL 3:
+
+```
+scripts/license-keypair.sh ~/monitorflow-license
+```
+
+It writes `~/monitorflow-license/license-signing.pem`, readable by you only, and prints the public key. Append that block to `ee/license-keys.pem` and merge it like any change: releases built from that commit accept the licenses it signs. Keep the private key offline with a backup, encrypted as for the release key.
+
+### Issuing a license key
+
+For each subscription, on the same machine, with OpenSSL 3 and jq:
+
+```
+scripts/license-sign.sh --key ~/monitorflow-license/license-signing.pem \
+  --customer "Example Corp" --tier standard --managed-servers 100 \
+  --support support@example.com --expires 2027-11-30 --out example-corp.license
+```
+
+- `--tier`: `basic`, `standard`, `premium` or `enterprise`.
+- `--managed-servers`: the servers the subscription covers. Above it, nothing stops: the License page shows a calm note.
+- `--central-servers N`: Enterprise only, the central servers allowed, the first one included (2 allows one additional server). 1 by default.
+- `--support`: an email address or an `https://` address, shown on the License page.
+- `--expires`: the last day it is valid, in UTC. Monitoring never stops after it: the server goes back to the regular update channel and no central server can be added.
+- `--format 1`: an Enterprise key in the format of ADR-0100, for a customer whose servers are older than ADR-0147 and say "this license needs a newer version of MonitorFlow".
+
+The script reads the private key, never copies it, and checks the signature with its public half before writing. Send the file: the customer pastes or uploads it under Administration › License, or installs it with `PUT /api/v1/license`.
+
+### Rotating it
+
+Append the new public key to `ee/license-keys.pem`, keep the old one, and release. Issue new licenses with the new key. Remove the old public key once every license it signed has expired and every customer runs a release that trusts the new one: a server stops accepting a license whose key it no longer has.
+
 ## Publishing
 
 1. Set `version` in `[workspace.package]` of `Cargo.toml` and merge it.
 2. Tag the merge commit `v<version>` and push the tag: `git tag v0.2.0 && git push origin v0.2.0`. Use a lightweight tag, not `git tag -a`: the release page then shows the merge commit's verified signature, which an unsigned annotated tag hides. Only an admin can push it.
 3. `release.yml` checks that the tag matches `Cargo.toml`, builds the files and the images, pushes the images to GHCR and writes `images.json`. The `release` job then waits for approval: open the run in the Actions tab, Review deployments, tick `release`, Approve. It signs `SHA256SUMS` with `RELEASE_SIGNING_KEY` and publishes the GitHub Release. It fails without the secret in the environment, or when the secret's public half is not in `deploy/release-keys.pem`.
+
+## The tested channel
+
+Central servers with a valid license key follow the tested channel (ADR-0147): they are offered the release the owner promoted, not the latest one. Promote a release once it has run long enough without a regression, typically a few weeks on reference servers:
+
+```
+gh workflow run release.yml --repo Kidoly/monitorflow --ref v0.7.0 -f promote=true
+```
+
+Run it on the tag of the release to promote. The `promote` job waits for approval in the `release` environment like a release: open the run, Review deployments, tick `release`, Approve. It builds nothing. It writes `tested.json` (`{"channel": "tested", "version": "0.7.0", "promoted": "<today>"}`), signs it with `RELEASE_SIGNING_KEY` into `tested.json.sig`, checks the signature against `deploy/release-keys.pem`, and uploads both to the promoted release and to the latest release, replacing older ones. Servers read `releases/latest/download/tested.json`; each new release copies the current file forward from the release that was latest, so promoting is needed only when the tested channel should move.
+
+A pre-release or a draft is never promoted. Check what the channel offers:
+
+```
+base=https://github.com/Kidoly/monitorflow/releases/latest/download
+curl -fsSLO "$base/tested.json" -O "$base/tested.json.sig" && cat tested.json
+mkdir channel && mv tested.json tested.json.sig channel/ && deploy/channel-file.sh verify channel
+```
+
+Until the first promotion there is no `tested.json`: servers on the tested channel find nothing to install and their check says so. A self-hosted release directory (`release_url`) needs the two files copied next to the release they name.
 
 ## Images
 

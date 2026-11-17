@@ -9,11 +9,12 @@ use serde_json::Value;
 use super::api::{self, Fetch};
 use super::mapping::inventory;
 use super::tree::{Kind, Paused};
-use super::Prtg;
+use super::{export, Prtg};
 use crate::model::{Direction, Fidelity, Inventory, Measure, SilenceScope, Target, Watch};
-use crate::source::{Connection, Context, Input, ReadError, Source};
+use crate::source::{Connection, Context, File, Input, ReadError, Source};
 
 const API: &str = include_str!("../../tests/fixtures/prtg/api.json");
+const FILE: &str = include_str!("../../tests/fixtures/prtg/configuration.dat");
 
 /// Answers recorded from a PRTG installation, by path and query.
 struct Recorded(BTreeMap<String, Value>);
@@ -216,6 +217,68 @@ async fn channels_from_notifications() {
     assert!(!serde_json::to_string(&inv)
         .unwrap()
         .contains("hooks.slack.com"));
+}
+
+#[tokio::test]
+async fn the_configuration_file() {
+    let input = Input::Files(vec![File {
+        name: "PRTG Configuration.dat".into(),
+        content: FILE.as_bytes().to_vec(),
+    }]);
+    let inv = Prtg.read(input, &Context::new(now())).await.unwrap();
+    golden(
+        &inv,
+        "configuration-inventory.json",
+        include_str!("../../tests/fixtures/prtg/configuration-inventory.json"),
+    );
+    let used = inv
+        .thresholds
+        .iter()
+        .find(|t| matches!(t.measure, Measure::DiskUsed { .. }))
+        .unwrap();
+    assert_eq!(
+        used.measure,
+        Measure::DiskUsed {
+            mount: Some("E:\\".into())
+        }
+    );
+    assert_eq!((used.warning, used.critical), (Some(0.8), Some(0.9)));
+    assert!(inv.checks.iter().any(|c| c.watch
+        == Watch::EventLog {
+            channel: "Application".into(),
+            levels: vec!["critical".into(), "error".into()],
+            providers: vec!["MSSQLSERVER".into()],
+            event_ids: vec![17, 18],
+        }));
+    assert!(matches!(inv.channels[1].target, Target::Teams { .. }));
+    let window = inv
+        .silences
+        .iter()
+        .find(|s| s.reason.starts_with("Maintenance"))
+        .unwrap();
+    assert!(matches!(&window.fidelity, Fidelity::Approximated(n) if n.code == "prtg_local_time"));
+}
+
+#[test]
+fn a_file_that_is_not_prtg_is_refused() {
+    let read = |xml: &str| export::read("x.dat", xml, chrono::Duration::zero());
+    assert!(read("<html><body/></html>").is_err());
+    assert!(read("<prtg><nodes>").is_err());
+    assert!(read("<a></a></b>").is_err());
+}
+
+#[test]
+fn the_file_keeps_only_what_is_read() {
+    let tree = export::read("x.dat", FILE, chrono::Duration::hours(1)).unwrap();
+    let group = tree.get(50).unwrap();
+    assert_eq!(group.name, "Servers & storage");
+    assert_eq!(group.parent, Some(1));
+    // The sensor's password is never kept.
+    assert_eq!(
+        tree.get(2103).unwrap().settings.keys().collect::<Vec<_>>(),
+        ["service"]
+    );
+    assert_eq!(tree.get(2101).unwrap().interval_s, Some(30));
 }
 
 #[tokio::test]
