@@ -8477,7 +8477,7 @@
           "license"
         ],
         "summary": "Read the license",
-        "description": "Whether this build includes the Enterprise edition, the installed\nlicense key's state and terms, and the central servers added under it.\nWithout the Enterprise edition only `available: false` is answered.",
+        "description": "Whether this build includes the Enterprise edition, the installed\nlicense key's state and terms (tier, customer, servers covered,\nsupport contact, dates), the central servers added under it and the\nmanaged servers now. No key means the free Community tier.\nWithout the Enterprise edition only `available: false` is answered.",
         "operationId": "get_license",
         "responses": {
           "200": {
@@ -8502,11 +8502,15 @@
                     "customer": "Acme",
                     "edition": "enterprise",
                     "expires": "2027-09-30",
-                    "format": 1,
+                    "format": 2,
                     "id": "0b6e4c1a-7f3d-4e2b-9a8c-5d1f0e2b3c4a",
                     "issued": "2026-10-01",
-                    "server_instances": 3
+                    "managed_servers": 250,
+                    "server_instances": 3,
+                    "support": "support@example.com",
+                    "tier": "enterprise"
                   },
+                  "managed_servers_in_use": 212,
                   "problem": null,
                   "state": "valid"
                 }
@@ -8588,7 +8592,7 @@
           "license"
         ],
         "summary": "Install a license key",
-        "description": "Installs the key in place of any other and answers the new state. A key\nthat does not verify with this build's public keys, or has expired, is\nrefused. Audited as `license.install` with the licensee, the number of\ncentral servers and the expiry. Safe to repeat with the same key.\n\nErrors: 400 `invalid` for a key that does not verify or has expired;\n409 `conflict` when the build has no Enterprise edition.",
+        "description": "Installs the key in place of any other and answers the new state. A key\nthat does not verify with this build's public keys, or has expired, is\nrefused. Audited as `license.install` with the licensee, the tier, the\nnumbers of managed and central servers and the expiry. Safe to repeat\nwith the same key.\n\nErrors: 400 `invalid` for a key that does not verify or has expired;\n409 `conflict` when the build has no Enterprise edition.",
         "operationId": "install_license",
         "parameters": [
           {
@@ -8650,11 +8654,15 @@
                     "customer": "Acme",
                     "edition": "enterprise",
                     "expires": "2027-09-30",
-                    "format": 1,
+                    "format": 2,
                     "id": "0b6e4c1a-7f3d-4e2b-9a8c-5d1f0e2b3c4a",
                     "issued": "2026-10-01",
-                    "server_instances": 3
+                    "managed_servers": 250,
+                    "server_instances": 3,
+                    "support": "support@example.com",
+                    "tier": "enterprise"
                   },
+                  "managed_servers_in_use": 212,
                   "problem": null,
                   "state": "valid"
                 }
@@ -34203,6 +34211,7 @@
           "id",
           "customer",
           "edition",
+          "tier",
           "server_instances",
           "issued",
           "expires"
@@ -34214,7 +34223,7 @@
           },
           "edition": {
             "type": "string",
-            "description": "`enterprise`."
+            "description": "`enterprise` when the key includes the Enterprise edition, `core`\notherwise."
           },
           "expires": {
             "type": "string",
@@ -34224,7 +34233,7 @@
           "format": {
             "type": "integer",
             "format": "int32",
-            "description": "Format of the key, 1.",
+            "description": "Format of the key: 2, or 1 for a key of ADR-0100.",
             "minimum": 0
           },
           "id": {
@@ -34235,13 +34244,42 @@
             "type": "string",
             "format": "date"
           },
+          "managed_servers": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Managed servers the subscription covers; `null` for a format 1 key,\nwhich does not say.",
+            "minimum": 0
+          },
           "server_instances": {
             "type": "integer",
             "format": "int32",
-            "description": "Central servers allowed on the database, the first one included.",
+            "description": "Central servers allowed on the database, the first one included.\nAbove 1 only for `enterprise`.",
             "minimum": 0
+          },
+          "support": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where to ask for support: an email address or an `https://` URL."
+          },
+          "tier": {
+            "$ref": "#/components/schemas/LicenseTier"
           }
         }
+      },
+      "LicenseTier": {
+        "type": "string",
+        "description": "A paid subscription. Community, the free tier, has no key.",
+        "enum": [
+          "basic",
+          "standard",
+          "premium",
+          "enterprise"
+        ]
       },
       "LicenseView": {
         "type": "object",
@@ -34249,7 +34287,8 @@
         "required": [
           "available",
           "state",
-          "added"
+          "added",
+          "managed_servers_in_use"
         ],
         "properties": {
           "added": {
@@ -34288,6 +34327,11 @@
                 "type": "null"
               }
             ]
+          },
+          "managed_servers_in_use": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Managed servers now, whose agent is not revoked, to compare with\n`license.managed_servers`. Above it nothing changes but a note on\nthe License page."
           },
           "problem": {
             "type": [
@@ -41096,7 +41140,7 @@
     },
     {
       "name": "license",
-      "description": "The Enterprise license key, which allows additional central servers on one database. A single central server needs none. A global administrator's; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area."
+      "description": "The subscription's license key: its tier (Basic, Standard, Premium or Enterprise), the managed and central servers it covers and its dates, checked offline. Without one the install is on the free Community tier, with every feature. A valid key moves the central server to the tested update channel; an Enterprise key allows additional central servers on one database. A global administrator's; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area."
     },
     {
       "name": "dashboards",

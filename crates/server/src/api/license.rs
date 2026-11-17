@@ -1,6 +1,7 @@
-//! Administration › License (ADR-0100): the Enterprise license key, pasted
-//! or uploaded, and where it stands in plain words. Global administrators
-//! only. A single central server never needs one.
+//! Administration › License (ADR-0100, ADR-0147): the subscription's
+//! license key, pasted or uploaded, and where it stands in plain words.
+//! Global administrators only. Nothing ever needs one but adding central
+//! servers.
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -25,6 +26,10 @@ pub struct LicenseView {
     /// Central servers added under a license, oldest first.
     #[cfg(feature = "enterprise")]
     pub added: Vec<crate::edition::Added>,
+    /// Managed servers now, whose agent is not revoked, to compare with
+    /// what the license covers (ADR-0147).
+    #[cfg(feature = "enterprise")]
+    pub managed_servers_in_use: i64,
 }
 
 /// Body of `PUT /api/license`.
@@ -48,10 +53,15 @@ pub async fn get(
 async fn view(state: &ApiState) -> Result<LicenseView, ApiError> {
     let installed = store::read(&state.pool).await?;
     let added = crate::edition::admission::added(&mut *state.pool.acquire().await?).await?;
+    let managed_servers_in_use =
+        sqlx::query_scalar("SELECT count(*) FROM servers WHERE revoked_at IS NULL")
+            .fetch_one(&state.pool)
+            .await?;
     Ok(LicenseView {
         available: true,
         status: Status::of(installed, &state.settings.license_keys, store::today()),
         added,
+        managed_servers_in_use,
     })
 }
 
@@ -90,6 +100,8 @@ pub async fn install(
             target: Some(("license", &license.id.to_string())),
             details: json!({
                 "customer": license.customer,
+                "tier": license.tier,
+                "managed_servers": license.managed_servers,
                 "server_instances": license.server_instances,
                 "expires": license.expires,
             }),

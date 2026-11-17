@@ -66,6 +66,41 @@ gh secret delete RELEASE_SIGNING_KEY --repo Kidoly/monitorflow
 
 Do this before `release.yml` asks for the environment, or the next tag fails at signing.
 
+## The license key pair
+
+License keys (ADR-0100, ADR-0147) are signed with a key pair of their own, never the release key: whoever holds one must not be able to sign the other. The private key stays on the owner's machine. It never goes to GitHub, CI, a server or anyone else.
+
+Once, on that machine, with OpenSSL 3:
+
+```
+scripts/license-keypair.sh ~/monitorflow-license
+```
+
+It writes `~/monitorflow-license/license-signing.pem`, readable by you only, and prints the public key. Append that block to `ee/license-keys.pem` and merge it like any change: releases built from that commit accept the licenses it signs. Keep the private key offline with a backup, encrypted as for the release key.
+
+### Issuing a license key
+
+For each subscription, on the same machine, with OpenSSL 3 and jq:
+
+```
+scripts/license-sign.sh --key ~/monitorflow-license/license-signing.pem \
+  --customer "Example Corp" --tier standard --managed-servers 100 \
+  --support support@example.com --expires 2027-11-30 --out example-corp.license
+```
+
+- `--tier`: `basic`, `standard`, `premium` or `enterprise`.
+- `--managed-servers`: the servers the subscription covers. Above it, nothing stops: the License page shows a calm note.
+- `--central-servers N`: Enterprise only, the central servers allowed, the first one included (2 allows one additional server). 1 by default.
+- `--support`: an email address or an `https://` address, shown on the License page.
+- `--expires`: the last day it is valid, in UTC. Monitoring never stops after it: the server goes back to the regular update channel and no central server can be added.
+- `--format 1`: an Enterprise key in the format of ADR-0100, for a customer whose servers are older than ADR-0147 and say "this license needs a newer version of MonitorFlow".
+
+The script reads the private key, never copies it, and checks the signature with its public half before writing. Send the file: the customer pastes or uploads it under Administration › License, or installs it with `PUT /api/v1/license`.
+
+### Rotating it
+
+Append the new public key to `ee/license-keys.pem`, keep the old one, and release. Issue new licenses with the new key. Remove the old public key once every license it signed has expired and every customer runs a release that trusts the new one: a server stops accepting a license whose key it no longer has.
+
 ## Publishing
 
 1. Set `version` in `[workspace.package]` of `Cargo.toml` and merge it.
