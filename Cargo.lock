@@ -1755,6 +1755,7 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
+ "webpki-roots",
  "x509-parser",
 ]
 

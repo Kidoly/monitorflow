@@ -69,6 +69,9 @@ lettre.workspace = true
 async-trait.workspace = true
 # Secret redaction of AI context (ADR-0040).
 regex.workspace = true
+# The public certificate authorities sign-in providers are checked
+# with (ADR-0145).
+webpki-roots.workspace = true
 # Kills a timed-out mirror tool with the programs it started.
 rustix = { workspace = true, features = ["process"] }
 

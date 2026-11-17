@@ -98,6 +98,7 @@ quick-xml = "0.42"
 crc = "3"
 # Linear-time matching for the log sensor's patterns, set by the server.
 regex = "1"
+webpki-roots = "1"
 # Safe syscall wrappers (statvfs, clock_gettime) for the sensors, instead
 # of raw libc.
 rustix = { version = "1", features = ["fs", "time"] }
