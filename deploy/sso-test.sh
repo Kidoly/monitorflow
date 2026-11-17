@@ -157,9 +157,9 @@ npm install --silent --no-audit --no-fund --prefix "$work/pw" playwright-core@1.
 echo "starting the providers"
 compose up -d --quiet-pull >/dev/null 2>&1
 wait_for() {
-    local what=$1 i
+    local what=$1
     shift
-    for i in $(seq 1 120); do
+    for _ in $(seq 1 120); do
         "$@" >/dev/null 2>&1 && return 0
         sleep 2
     done
