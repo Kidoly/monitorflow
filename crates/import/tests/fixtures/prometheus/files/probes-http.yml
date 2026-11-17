@@ -1,0 +1,5 @@
+# Web sites probed by the blackbox-http job.
+- targets:
+    - http://shop/
+  labels:
+    team: web

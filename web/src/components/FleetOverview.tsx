@@ -46,7 +46,7 @@ interface Row extends TreeRow {
  * "Problems first": what needs a look, then a late certificate on a server
  * otherwise fine, then what someone is on or silenced, then the rest.
  */
-const RANK: Record<ServerState, number> = { critical: 0, warning: 1, offline: 2, acknowledged: 4, silenced: 5, ok: 6 };
+const RANK: Record<ServerState, number> = { critical: 0, warning: 1, offline: 2, acknowledged: 4, silenced: 5, ok: 6, waiting: 7 };
 const CERTIFICATE_RANK = 3;
 const HEALTHY = RANK.ok;
 

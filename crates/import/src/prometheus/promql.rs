@@ -1,0 +1,1536 @@
+//! Just enough PromQL to read the usual alerting rules: a tokenizer, a
+//! parser into a small syntax tree, and a reading of a comparison as a
+//! condition on one known measure.
+//!
+//! The reading does not match strings. It turns both sides of a
+//! comparison into a sum of terms, each a constant times a product of
+//! known series ([`Leaf`]): `100 - avail / total * 100 > 90` and
+//! `(1 - avail / total) * 100 > 90` both become `avail / total < 0.1`.
+//! Grouping clauses (`by`, `without`, `on`, `group_left`) and the order of
+//! label matchers make no difference. Anything it does not know, such as
+//! `predict_linear`, `absent` or a series it has no name for, makes the
+//! whole expression unreadable rather than guessed.
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+/// A token of an expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    Ident(String),
+    Number(f64),
+    Str(String),
+    /// The text between `[` and `]`: a range or a subquery.
+    Range(String),
+    /// An operator or punctuation: `+ - * / % ^ == != > < >= <= =~ !~ =
+    /// ( ) { } , @`.
+    Op(&'static str),
+}
+
+/// Why an expression could not be parsed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct SyntaxError(String);
+
+const OPS: &[&str] = &[
+    "==", "!=", ">=", "<=", "=~", "!~", "+", "-", "*", "/", "%", "^", ">", "<", "=", "(", ")", "{",
+    "}", ",", "@",
+];
+
+/// The tokens of `text`.
+pub fn tokenize(text: &str) -> Result<Vec<Token>, SyntaxError> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if c == '#' {
+            // A comment runs to the end of the line.
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == '"' || c == '\'' || c == '`' {
+            let mut value = String::new();
+            i += 1;
+            loop {
+                let Some(&next) = chars.get(i) else {
+                    return Err(SyntaxError("a string is not closed".into()));
+                };
+                i += 1;
+                if next == c {
+                    break;
+                }
+                if next == '\\' && c != '`' {
+                    let escaped = chars
+                        .get(i)
+                        .ok_or_else(|| SyntaxError("a string is not closed".into()))?;
+                    i += 1;
+                    value.push(match escaped {
+                        'n' => '\n',
+                        't' => '\t',
+                        other => *other,
+                    });
+                } else {
+                    value.push(next);
+                }
+            }
+            tokens.push(Token::Str(value));
+            continue;
+        }
+        if c == '[' {
+            let start = i + 1;
+            while i < chars.len() && chars[i] != ']' {
+                i += 1;
+            }
+            if i == chars.len() {
+                return Err(SyntaxError("a range is not closed".into()));
+            }
+            tokens.push(Token::Range(chars[start..i].iter().collect()));
+            i += 1;
+            continue;
+        }
+        if c.is_ascii_digit() || (c == '.' && chars.get(i + 1).is_some_and(char::is_ascii_digit)) {
+            let start = i;
+            while let Some(&next) = chars.get(i) {
+                // A sign belongs to the number only as an exponent's:
+                // `1e-3`, not `5m-1` nor `2-1`.
+                let exponent_sign = (next == '+' || next == '-')
+                    && matches!(chars[i - 1], 'e' | 'E')
+                    && chars[start..i - 1]
+                        .iter()
+                        .all(|c| c.is_ascii_digit() || *c == '.');
+                if next.is_ascii_alphanumeric() || next == '.' || exponent_sign {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            let word: String = chars[start..i].iter().collect();
+            let value = word
+                .parse::<f64>()
+                .ok()
+                .or_else(|| crate::text::seconds(&word).map(|s| s as f64))
+                .ok_or_else(|| SyntaxError(format!("{word} is not a number")))?;
+            tokens.push(Token::Number(value));
+            continue;
+        }
+        if c.is_ascii_alphabetic() || c == '_' || c == ':' {
+            let start = i;
+            while i < chars.len()
+                && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == ':')
+            {
+                i += 1;
+            }
+            tokens.push(Token::Ident(chars[start..i].iter().collect()));
+            continue;
+        }
+        let rest: String = chars[i..chars.len().min(i + 2)].iter().collect();
+        let Some(op) = OPS.iter().find(|op| rest.starts_with(**op)) else {
+            return Err(SyntaxError(format!("unexpected {c}")));
+        };
+        tokens.push(Token::Op(op));
+        i += op.chars().count();
+    }
+    Ok(tokens)
+}
+
+/// How a label matcher compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MatchOp {
+    Eq,
+    Ne,
+    Re,
+    Nre,
+}
+
+/// A label matcher such as `mountpoint="/"`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Matcher {
+    pub label: String,
+    pub op: MatchOp,
+    pub value: String,
+}
+
+impl Matcher {
+    /// Whether `value` passes this matcher, as Prometheus anchors regular
+    /// expressions. An invalid regular expression matches nothing.
+    pub fn matches(&self, value: &str) -> bool {
+        match self.op {
+            MatchOp::Eq => value == self.value,
+            MatchOp::Ne => value != self.value,
+            MatchOp::Re | MatchOp::Nre => {
+                let found = regex::Regex::new(&format!("^(?:{})$", self.value))
+                    .is_ok_and(|re| re.is_match(value));
+                found == (self.op == MatchOp::Re)
+            }
+        }
+    }
+
+    /// The literal values a positive matcher accepts: one for `=`, the
+    /// alternatives of a regular expression made of plain words only
+    /// (`nginx.service|sshd.service`). `None` otherwise.
+    pub fn literals(&self) -> Option<Vec<String>> {
+        match self.op {
+            MatchOp::Eq => Some(vec![self.value.clone()]),
+            MatchOp::Re => {
+                let parts: Vec<String> = self
+                    .value
+                    .split('|')
+                    .map(|p| p.replace("\\.", "."))
+                    .collect();
+                let plain = parts.iter().all(|p| {
+                    !p.is_empty()
+                        && p.chars()
+                            .all(|c| c.is_ascii_alphanumeric() || "._-@:".contains(c))
+                });
+                // An unescaped dot in a regex matches any character; a
+                // unit name read with it as a dot is what the author meant.
+                plain.then_some(parts)
+            }
+            MatchOp::Ne | MatchOp::Nre => None,
+        }
+    }
+}
+
+impl fmt::Display for Matcher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let op = match self.op {
+            MatchOp::Eq => "=",
+            MatchOp::Ne => "!=",
+            MatchOp::Re => "=~",
+            MatchOp::Nre => "!~",
+        };
+        write!(f, "{}{op}{:?}", self.label, self.value)
+    }
+}
+
+/// A binary operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    Eq,
+    Ne,
+    Gt,
+    Lt,
+    Ge,
+    Le,
+    And,
+    Or,
+    Unless,
+    Atan2,
+}
+
+impl BinOp {
+    fn is_comparison(self) -> bool {
+        matches!(
+            self,
+            Self::Eq | Self::Ne | Self::Gt | Self::Lt | Self::Ge | Self::Le
+        )
+    }
+
+    /// Binding power: higher binds tighter.
+    fn power(self) -> u8 {
+        match self {
+            Self::Or => 1,
+            Self::And | Self::Unless => 2,
+            Self::Eq | Self::Ne | Self::Gt | Self::Lt | Self::Ge | Self::Le => 3,
+            Self::Add | Self::Sub => 4,
+            Self::Mul | Self::Div | Self::Mod | Self::Atan2 => 5,
+            Self::Pow => 6,
+        }
+    }
+}
+
+/// An expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Number(f64),
+    Str(String),
+    /// A series selector, with its range when it has one. `exotic` is set
+    /// by `offset`, `@` and subqueries, which the reading refuses.
+    Selector {
+        metric: Option<String>,
+        matchers: Vec<Matcher>,
+        range: Option<String>,
+        exotic: bool,
+    },
+    Call {
+        func: String,
+        args: Vec<Expr>,
+    },
+    /// An aggregation; its grouping is kept only as `by` or `without`.
+    Agg {
+        op: String,
+        without: bool,
+        labels: Vec<String>,
+        param: Option<Box<Expr>>,
+        expr: Box<Expr>,
+    },
+    Binary {
+        op: BinOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+        /// The `bool` modifier of a comparison.
+        bool_modifier: bool,
+    },
+    Neg(Box<Expr>),
+}
+
+const AGGREGATIONS: &[&str] = &[
+    "sum",
+    "avg",
+    "min",
+    "max",
+    "count",
+    "stddev",
+    "stdvar",
+    "group",
+    "topk",
+    "bottomk",
+    "quantile",
+    "count_values",
+    "limitk",
+    "limit_ratio",
+];
+
+/// Parses an expression.
+pub fn parse(text: &str) -> Result<Expr, SyntaxError> {
+    let tokens = tokenize(text)?;
+    let mut parser = Parser { tokens, at: 0 };
+    let expr = parser.expr(0)?;
+    if parser.at != parser.tokens.len() {
+        return Err(SyntaxError(format!(
+            "unexpected {:?}",
+            parser.tokens[parser.at]
+        )));
+    }
+    Ok(expr)
+}
+
+struct Parser {
+    tokens: Vec<Token>,
+    at: usize,
+}
+
+impl Parser {
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.at)
+    }
+
+    fn next(&mut self) -> Option<Token> {
+        let token = self.tokens.get(self.at).cloned();
+        self.at += 1;
+        token
+    }
+
+    fn eat_op(&mut self, op: &str) -> bool {
+        if matches!(self.peek(), Some(Token::Op(o)) if *o == op) {
+            self.at += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_op(&mut self, op: &str) -> Result<(), SyntaxError> {
+        if self.eat_op(op) {
+            Ok(())
+        } else {
+            Err(SyntaxError(format!("expected {op}")))
+        }
+    }
+
+    fn eat_word(&mut self, word: &str) -> bool {
+        if matches!(self.peek(), Some(Token::Ident(w)) if w.eq_ignore_ascii_case(word)) {
+            self.at += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The binary operator at the cursor, without moving.
+    fn binary_op(&self) -> Option<BinOp> {
+        Some(match self.peek()? {
+            Token::Op("+") => BinOp::Add,
+            Token::Op("-") => BinOp::Sub,
+            Token::Op("*") => BinOp::Mul,
+            Token::Op("/") => BinOp::Div,
+            Token::Op("%") => BinOp::Mod,
+            Token::Op("^") => BinOp::Pow,
+            Token::Op("==") => BinOp::Eq,
+            Token::Op("!=") => BinOp::Ne,
+            Token::Op(">") => BinOp::Gt,
+            Token::Op("<") => BinOp::Lt,
+            Token::Op(">=") => BinOp::Ge,
+            Token::Op("<=") => BinOp::Le,
+            Token::Ident(w) => match w.to_ascii_lowercase().as_str() {
+                "and" => BinOp::And,
+                "or" => BinOp::Or,
+                "unless" => BinOp::Unless,
+                "atan2" => BinOp::Atan2,
+                _ => return None,
+            },
+            _ => return None,
+        })
+    }
+
+    /// A label list `(a, b)`, possibly empty.
+    fn labels(&mut self) -> Result<Vec<String>, SyntaxError> {
+        self.expect_op("(")?;
+        let mut labels = Vec::new();
+        loop {
+            if self.eat_op(")") {
+                return Ok(labels);
+            }
+            match self.next() {
+                Some(Token::Ident(l)) => labels.push(l),
+                _ => return Err(SyntaxError("expected a label name".into())),
+            }
+            if !self.eat_op(",") {
+                self.expect_op(")")?;
+                return Ok(labels);
+            }
+        }
+    }
+
+    fn expr(&mut self, min_power: u8) -> Result<Expr, SyntaxError> {
+        let mut lhs = self.unary()?;
+        while let Some(op) = self.binary_op() {
+            let power = op.power();
+            if power < min_power {
+                break;
+            }
+            self.at += 1;
+            let bool_modifier = self.eat_word("bool");
+            // Vector matching changes nothing for one series per host.
+            if self.eat_word("on") || self.eat_word("ignoring") {
+                self.labels()?;
+            }
+            if (self.eat_word("group_left") || self.eat_word("group_right"))
+                && matches!(self.peek(), Some(Token::Op("(")))
+            {
+                self.labels()?;
+            }
+            // `^` is right-associative: the right side may hold another.
+            let next = if op == BinOp::Pow { power } else { power + 1 };
+            let rhs = self.expr(next)?;
+            lhs = Expr::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                bool_modifier,
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn unary(&mut self) -> Result<Expr, SyntaxError> {
+        if self.eat_op("-") {
+            // `-a ^ b` is `-(a ^ b)`.
+            let inner = self.power()?;
+            return Ok(Expr::Neg(Box::new(inner)));
+        }
+        if self.eat_op("+") {
+            return self.power();
+        }
+        self.power()
+    }
+
+    fn power(&mut self) -> Result<Expr, SyntaxError> {
+        let base = self.postfix()?;
+        if matches!(self.peek(), Some(Token::Op("^"))) {
+            self.at += 1;
+            let exponent = self.unary()?;
+            return Ok(Expr::Binary {
+                op: BinOp::Pow,
+                lhs: Box::new(base),
+                rhs: Box::new(exponent),
+                bool_modifier: false,
+            });
+        }
+        Ok(base)
+    }
+
+    /// A primary with what may follow it: a range, a subquery, `offset`
+    /// or `@`.
+    fn postfix(&mut self) -> Result<Expr, SyntaxError> {
+        let mut expr = self.primary()?;
+        loop {
+            match self.peek() {
+                Some(Token::Range(range)) => {
+                    let range = range.clone();
+                    self.at += 1;
+                    expr = match expr {
+                        Expr::Selector {
+                            metric,
+                            matchers,
+                            range: None,
+                            exotic,
+                        } => Expr::Selector {
+                            metric,
+                            matchers,
+                            exotic: exotic || range.contains(':'),
+                            range: Some(range),
+                        },
+                        // A subquery: kept as an unknown call.
+                        other => Expr::Call {
+                            func: "subquery".into(),
+                            args: vec![other],
+                        },
+                    };
+                }
+                Some(Token::Ident(w)) if w.eq_ignore_ascii_case("offset") => {
+                    self.at += 1;
+                    self.eat_op("-");
+                    match self.next() {
+                        Some(Token::Number(_)) => {}
+                        _ => return Err(SyntaxError("expected a duration after offset".into())),
+                    }
+                    expr = mark_exotic(expr);
+                }
+                Some(Token::Op("@")) => {
+                    self.at += 1;
+                    match self.next() {
+                        Some(Token::Number(_)) => {}
+                        Some(Token::Ident(_)) => {
+                            self.expect_op("(")?;
+                            self.expect_op(")")?;
+                        }
+                        _ => return Err(SyntaxError("expected a time after @".into())),
+                    }
+                    expr = mark_exotic(expr);
+                }
+                _ => return Ok(expr),
+            }
+        }
+    }
+
+    fn primary(&mut self) -> Result<Expr, SyntaxError> {
+        match self.next() {
+            Some(Token::Number(n)) => Ok(Expr::Number(n)),
+            Some(Token::Str(s)) => Ok(Expr::Str(s)),
+            Some(Token::Op("(")) => {
+                let inner = self.expr(0)?;
+                self.expect_op(")")?;
+                Ok(inner)
+            }
+            Some(Token::Op("{")) => {
+                let matchers = self.matchers()?;
+                let metric = matchers
+                    .iter()
+                    .find(|m| m.label == "__name__" && m.op == MatchOp::Eq)
+                    .map(|m| m.value.clone());
+                Ok(Expr::Selector {
+                    metric,
+                    matchers: matchers
+                        .into_iter()
+                        .filter(|m| !(m.label == "__name__" && m.op == MatchOp::Eq))
+                        .collect(),
+                    range: None,
+                    exotic: false,
+                })
+            }
+            Some(Token::Ident(name)) => {
+                let lower = name.to_ascii_lowercase();
+                if lower == "inf" || lower == "nan" {
+                    return Ok(Expr::Number(if lower == "inf" {
+                        f64::INFINITY
+                    } else {
+                        f64::NAN
+                    }));
+                }
+                if AGGREGATIONS.contains(&lower.as_str()) && self.is_aggregation_ahead() {
+                    return self.aggregation(lower);
+                }
+                if matches!(self.peek(), Some(Token::Op("("))) {
+                    self.at += 1;
+                    let mut args = Vec::new();
+                    if !self.eat_op(")") {
+                        loop {
+                            args.push(self.expr(0)?);
+                            if self.eat_op(")") {
+                                break;
+                            }
+                            self.expect_op(",")?;
+                        }
+                    }
+                    return Ok(Expr::Call { func: lower, args });
+                }
+                let matchers = if self.eat_op("{") {
+                    self.matchers()?
+                } else {
+                    Vec::new()
+                };
+                Ok(Expr::Selector {
+                    metric: Some(name),
+                    matchers,
+                    range: None,
+                    exotic: false,
+                })
+            }
+            Some(other) => Err(SyntaxError(format!("unexpected {other:?}"))),
+            None => Err(SyntaxError("the expression ends too early".into())),
+        }
+    }
+
+    /// Whether the word just read starts an aggregation: followed by `(`,
+    /// `by` or `without`.
+    fn is_aggregation_ahead(&self) -> bool {
+        match self.peek() {
+            Some(Token::Op("(")) => true,
+            Some(Token::Ident(w)) => {
+                w.eq_ignore_ascii_case("by") || w.eq_ignore_ascii_case("without")
+            }
+            _ => false,
+        }
+    }
+
+    fn aggregation(&mut self, op: String) -> Result<Expr, SyntaxError> {
+        let mut without = false;
+        let mut labels = Vec::new();
+        let mut grouping = |parser: &mut Self| -> Result<(), SyntaxError> {
+            if parser.eat_word("by") {
+                labels = parser.labels()?;
+            } else if parser.eat_word("without") {
+                without = true;
+                labels = parser.labels()?;
+            }
+            Ok(())
+        };
+        grouping(self)?;
+        self.expect_op("(")?;
+        let mut args = vec![self.expr(0)?];
+        while self.eat_op(",") {
+            args.push(self.expr(0)?);
+        }
+        self.expect_op(")")?;
+        grouping(self)?;
+        let expr = args.pop().unwrap_or(Expr::Number(0.0));
+        let param = args.pop().map(Box::new);
+        Ok(Expr::Agg {
+            op,
+            without,
+            labels,
+            param,
+            expr: Box::new(expr),
+        })
+    }
+
+    /// Label matchers after `{`, up to and with `}`.
+    fn matchers(&mut self) -> Result<Vec<Matcher>, SyntaxError> {
+        let mut matchers = Vec::new();
+        loop {
+            if self.eat_op("}") {
+                return Ok(matchers);
+            }
+            let label = match self.next() {
+                Some(Token::Ident(l)) => l,
+                // A quoted metric name, as Prometheus 3 allows.
+                Some(Token::Str(s))
+                    if matches!(self.peek(), Some(Token::Op(",") | Token::Op("}"))) =>
+                {
+                    matchers.push(Matcher {
+                        label: "__name__".into(),
+                        op: MatchOp::Eq,
+                        value: s,
+                    });
+                    if !self.eat_op(",") {
+                        self.expect_op("}")?;
+                        return Ok(matchers);
+                    }
+                    continue;
+                }
+                Some(Token::Str(l)) => l,
+                _ => return Err(SyntaxError("expected a label matcher".into())),
+            };
+            let op = match self.next() {
+                Some(Token::Op("=")) | Some(Token::Op("==")) => MatchOp::Eq,
+                Some(Token::Op("!=")) => MatchOp::Ne,
+                Some(Token::Op("=~")) => MatchOp::Re,
+                Some(Token::Op("!~")) => MatchOp::Nre,
+                _ => return Err(SyntaxError(format!("expected an operator after {label}"))),
+            };
+            let Some(Token::Str(value)) = self.next() else {
+                return Err(SyntaxError(format!("expected a string after {label}")));
+            };
+            matchers.push(Matcher { label, op, value });
+            if !self.eat_op(",") {
+                self.expect_op("}")?;
+                return Ok(matchers);
+            }
+        }
+    }
+}
+
+fn mark_exotic(expr: Expr) -> Expr {
+    match expr {
+        Expr::Selector {
+            metric,
+            matchers,
+            range,
+            ..
+        } => Expr::Selector {
+            metric,
+            matchers,
+            range,
+            exotic: true,
+        },
+        other => Expr::Call {
+            func: "offset".into(),
+            args: vec![other],
+        },
+    }
+}
+
+/// A series the reading knows, with the matchers of its selector. Two
+/// leaves are the same factor when their kinds are the same: the matchers
+/// tell which hosts, mounts or devices, not what is measured.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LeafKind {
+    MemAvailable,
+    MemTotal,
+    /// Space left for unprivileged users, or free space (`free_bytes`).
+    FsAvail,
+    FsSize,
+    Load(u8),
+    /// Average share of idle time of the processors, 0 to 1.
+    CpuIdle,
+    /// Share of busy time of the processors, 0 to 1; `exact` is false
+    /// when some busy modes (such as iowait) are left out.
+    CpuBusy {
+        exact: bool,
+    },
+    /// The number of processors.
+    CpuCount,
+    DiskReadTime,
+    DiskReads,
+    DiskWriteTime,
+    DiskWrites,
+    DiskIoTimeWeighted,
+    DiskIoTime,
+    Up,
+    ProbeSuccess,
+    SystemdUnit,
+}
+
+/// A known series in an expression.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Leaf {
+    pub kind: LeafKind,
+    pub matchers: Vec<Matcher>,
+}
+
+/// A product of leaves with their exponents, keyed by kind.
+type Monomial = BTreeMap<LeafKind, i32>;
+
+/// A sum of constant times product of leaves.
+#[derive(Debug, Clone, Default)]
+struct Poly {
+    terms: Vec<(f64, Monomial)>,
+}
+
+impl Poly {
+    fn constant(value: f64) -> Self {
+        Self {
+            terms: vec![(value, Monomial::new())],
+        }
+    }
+
+    fn leaf(kind: LeafKind) -> Self {
+        Self {
+            terms: vec![(1.0, Monomial::from([(kind, 1)]))],
+        }
+    }
+
+    /// Adds like terms and drops zero ones.
+    fn normalized(mut self) -> Self {
+        let mut out: Vec<(f64, Monomial)> = Vec::new();
+        for (c, m) in self.terms.drain(..) {
+            let m: Monomial = m.into_iter().filter(|(_, e)| *e != 0).collect();
+            match out.iter_mut().find(|(_, o)| *o == m) {
+                Some((oc, _)) => *oc += c,
+                None => out.push((c, m)),
+            }
+        }
+        out.retain(|(c, _)| c.abs() > 1e-12);
+        Self { terms: out }
+    }
+
+    fn add(mut self, other: Self) -> Self {
+        self.terms.extend(other.terms);
+        self.normalized()
+    }
+
+    fn scale(mut self, k: f64) -> Self {
+        for (c, _) in &mut self.terms {
+            *c *= k;
+        }
+        self.normalized()
+    }
+
+    fn mul(self, other: &Self) -> Self {
+        let mut terms = Vec::new();
+        for (c1, m1) in &self.terms {
+            for (c2, m2) in &other.terms {
+                let mut m = m1.clone();
+                for (k, e) in m2 {
+                    *m.entry(k.clone()).or_default() += e;
+                }
+                terms.push((c1 * c2, m));
+            }
+        }
+        Self { terms }.normalized()
+    }
+
+    /// Division by a single term only: `(a - b) / c` distributes, `a / (b
+    /// + c)` does not.
+    fn div(self, other: &Self) -> Option<Self> {
+        let [(c, m)] = other.terms.as_slice() else {
+            return None;
+        };
+        if c.abs() < 1e-12 {
+            return None;
+        }
+        let inverse = Self {
+            terms: vec![(1.0 / c, m.iter().map(|(k, e)| (k.clone(), -e)).collect())],
+        };
+        Some(self.mul(&inverse))
+    }
+
+    #[cfg(test)]
+    fn as_constant(&self) -> Option<f64> {
+        match self.terms.as_slice() {
+            [] => Some(0.0),
+            [(c, m)] if m.is_empty() => Some(*c),
+            _ => None,
+        }
+    }
+}
+
+/// A comparison operator read as on its measure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cmp {
+    Gt,
+    Ge,
+    Lt,
+    Le,
+    Eq,
+    Ne,
+}
+
+impl Cmp {
+    fn flipped(self) -> Self {
+        match self {
+            Self::Gt => Self::Lt,
+            Self::Ge => Self::Le,
+            Self::Lt => Self::Gt,
+            Self::Le => Self::Ge,
+            other => other,
+        }
+    }
+
+    fn holds(self, value: f64, threshold: f64) -> bool {
+        match self {
+            Self::Gt => value > threshold,
+            Self::Ge => value >= threshold,
+            Self::Lt => value < threshold,
+            Self::Le => value <= threshold,
+            Self::Eq => (value - threshold).abs() < 1e-9,
+            Self::Ne => (value - threshold).abs() >= 1e-9,
+        }
+    }
+}
+
+/// A condition on one product of known series: `monomial cmp value`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Condition {
+    /// The factors and their exponents, `{MemAvailable: 1, MemTotal: -1}`.
+    pub factors: Vec<(LeafKind, i32)>,
+    pub cmp: Cmp,
+    pub value: f64,
+}
+
+impl Condition {
+    /// The factors, if they are exactly `kinds` with exponents.
+    pub fn is(&self, kinds: &[(LeafKind, i32)]) -> bool {
+        self.factors.len() == kinds.len() && kinds.iter().all(|k| self.factors.contains(k))
+    }
+
+    /// Whether the condition holds when a 0-or-1 series is 0 and not when
+    /// it is 1: `up == 0`, `up < 1`, `probe_success != 1`.
+    pub fn is_false_check(&self) -> bool {
+        self.cmp.holds(0.0, self.value) && !self.cmp.holds(1.0, self.value)
+    }
+
+    /// The opposite: holds at 1, not at 0 (`state="failed"} == 1`).
+    pub fn is_true_check(&self) -> bool {
+        self.cmp.holds(1.0, self.value) && !self.cmp.holds(0.0, self.value)
+    }
+}
+
+/// What an alerting rule's expression says.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reading {
+    pub condition: Condition,
+    /// Every known series of the condition, with its matchers.
+    pub leaves: Vec<Leaf>,
+    /// Whether the expression adds a condition the reading dropped (an
+    /// `and` with more than a harmless filter).
+    pub extra_condition: bool,
+}
+
+impl Reading {
+    /// The matchers on `label`, from every series of the condition.
+    pub fn matchers(&self, label: &str) -> Vec<&Matcher> {
+        let mut out: Vec<&Matcher> = Vec::new();
+        for leaf in &self.leaves {
+            for m in &leaf.matchers {
+                if m.label == label && !out.contains(&m) {
+                    out.push(m);
+                }
+            }
+        }
+        out
+    }
+
+    /// The value of an exact matcher on `label`, if one series has one.
+    pub fn exact(&self, label: &str) -> Option<String> {
+        self.matchers(label)
+            .into_iter()
+            .find(|m| m.op == MatchOp::Eq)
+            .map(|m| m.value.clone())
+    }
+}
+
+/// Reads `text` as a condition on one known measure, or `None`.
+pub fn read(text: &str) -> Option<Reading> {
+    let expr = parse(text).ok()?;
+    read_expr(&expr)
+}
+
+fn read_expr(expr: &Expr) -> Option<Reading> {
+    // `(...) * on(instance) group_left(nodename) node_uname_info` only adds
+    // the host name to the alert: the value is the left side's.
+    if let Expr::Binary {
+        op: BinOp::Mul,
+        lhs,
+        rhs,
+        ..
+    } = expr
+    {
+        if is_uname(rhs) {
+            return read_expr(lhs);
+        }
+        if is_uname(lhs) {
+            return read_expr(rhs);
+        }
+    }
+    if let Expr::Binary {
+        op: BinOp::And,
+        lhs,
+        rhs,
+        ..
+    } = expr
+    {
+        let mut reading = read_expr(lhs)?;
+        reading.extra_condition |= !is_harmless_filter(rhs);
+        return Some(reading);
+    }
+    let Expr::Binary {
+        op,
+        lhs,
+        rhs,
+        bool_modifier: false,
+    } = expr
+    else {
+        return None;
+    };
+    if !op.is_comparison() {
+        return None;
+    }
+    let mut leaves = Vec::new();
+    let left = poly(lhs, &mut leaves)?;
+    let right = poly(rhs, &mut leaves)?;
+    let difference = left.add(right.scale(-1.0));
+    // One product of series plus a constant.
+    let (variable, constant): (Vec<_>, Vec<_>) =
+        difference.terms.iter().partition(|(_, m)| !m.is_empty());
+    let [(coefficient, monomial)] = variable.as_slice() else {
+        return None;
+    };
+    let constant: f64 = constant.iter().map(|(c, _)| c).sum();
+    let mut cmp = match op {
+        BinOp::Gt => Cmp::Gt,
+        BinOp::Ge => Cmp::Ge,
+        BinOp::Lt => Cmp::Lt,
+        BinOp::Le => Cmp::Le,
+        BinOp::Eq => Cmp::Eq,
+        BinOp::Ne => Cmp::Ne,
+        _ => return None,
+    };
+    if *coefficient < 0.0 {
+        cmp = cmp.flipped();
+    }
+    let value = round(-constant / coefficient);
+    Some(Reading {
+        condition: Condition {
+            factors: monomial.iter().map(|(k, e)| (k.clone(), *e)).collect(),
+            cmp,
+            value,
+        },
+        leaves,
+        extra_condition: false,
+    })
+}
+
+/// A value without the noise of floating point arithmetic.
+pub fn round(value: f64) -> f64 {
+    (value * 1e9).round() / 1e9
+}
+
+fn is_uname(expr: &Expr) -> bool {
+    matches!(expr, Expr::Selector { metric: Some(m), .. } if m == "node_uname_info")
+}
+
+/// A filter of an `and` that changes nothing worth saying: a file system
+/// not read-only, or a guard that some activity exists (`rate(...) > 0`).
+fn is_harmless_filter(expr: &Expr) -> bool {
+    let Expr::Binary { op, lhs, rhs, .. } = expr else {
+        return false;
+    };
+    let zero = matches!(**rhs, Expr::Number(n) if n == 0.0);
+    match op {
+        BinOp::Eq => {
+            zero && matches!(&**lhs, Expr::Selector { metric: Some(m), .. } if m == "node_filesystem_readonly")
+        }
+        BinOp::Gt => zero,
+        _ => false,
+    }
+}
+
+/// `expr` as a polynomial of known series, collecting the leaves.
+fn poly(expr: &Expr, leaves: &mut Vec<Leaf>) -> Option<Poly> {
+    match expr {
+        Expr::Number(n) if n.is_finite() => Some(Poly::constant(*n)),
+        Expr::Neg(inner) => Some(poly(inner, leaves)?.scale(-1.0)),
+        Expr::Binary {
+            op,
+            lhs,
+            rhs,
+            bool_modifier: false,
+        } => {
+            let l = poly(lhs, leaves)?;
+            let r = poly(rhs, leaves)?;
+            match op {
+                BinOp::Add => Some(l.add(r)),
+                BinOp::Sub => Some(l.add(r.scale(-1.0))),
+                BinOp::Mul => Some(l.mul(&r)),
+                BinOp::Div => l.div(&r),
+                _ => None,
+            }
+        }
+        _ => {
+            let leaf = leaf(expr)?;
+            let kind = leaf.kind.clone();
+            leaves.push(leaf);
+            Some(Poly::leaf(kind))
+        }
+    }
+}
+
+/// The matchers of a selector other than its metric name.
+fn selector(expr: &Expr) -> Option<(&str, &[Matcher])> {
+    match expr {
+        Expr::Selector {
+            metric: Some(m),
+            matchers,
+            exotic: false,
+            ..
+        } => Some((m.as_str(), matchers.as_slice())),
+        _ => None,
+    }
+}
+
+/// The selector inside `rate(...)` or `irate(...)` over a range.
+fn rate_of(expr: &Expr) -> Option<(&str, &[Matcher])> {
+    let Expr::Call { func, args } = expr else {
+        return None;
+    };
+    if func != "rate" && func != "irate" {
+        return None;
+    }
+    let [arg] = args.as_slice() else { return None };
+    match arg {
+        Expr::Selector { range: Some(_), .. } => selector(arg),
+        _ => None,
+    }
+}
+
+/// Whether an aggregation keeps one series per host: grouping by labels
+/// that include the instance (or nothing, where one host is selected), or
+/// without the labels of `inner` that tell processors or modes apart.
+fn per_host(without: bool, labels: &[String], inner: &[&str]) -> bool {
+    if without {
+        labels.iter().all(|l| inner.contains(&l.as_str()))
+    } else {
+        labels.is_empty() || labels.iter().any(|l| l == "instance")
+    }
+}
+
+fn has(matchers: &[Matcher], label: &str, op: MatchOp, value: &str) -> bool {
+    matchers
+        .iter()
+        .any(|m| m.label == label && m.op == op && m.value == value)
+}
+
+fn leaf(expr: &Expr) -> Option<Leaf> {
+    let make = |kind: LeafKind, matchers: &[Matcher]| {
+        let mut matchers = matchers.to_vec();
+        matchers.sort();
+        Some(Leaf { kind, matchers })
+    };
+    if let Some((metric, matchers)) = selector(expr) {
+        let kind = match metric {
+            "node_memory_MemAvailable_bytes" => LeafKind::MemAvailable,
+            "node_memory_MemTotal_bytes" => LeafKind::MemTotal,
+            "node_filesystem_avail_bytes" | "node_filesystem_free_bytes" => LeafKind::FsAvail,
+            "node_filesystem_size_bytes" => LeafKind::FsSize,
+            "node_load1" => LeafKind::Load(1),
+            "node_load5" => LeafKind::Load(5),
+            "node_load15" => LeafKind::Load(15),
+            "up" => LeafKind::Up,
+            "probe_success" => LeafKind::ProbeSuccess,
+            "node_systemd_unit_state" => LeafKind::SystemdUnit,
+            _ => return None,
+        };
+        return make(kind, matchers);
+    }
+    if let Some((metric, matchers)) = rate_of(expr) {
+        let kind = match metric {
+            "node_disk_read_time_seconds_total" => LeafKind::DiskReadTime,
+            "node_disk_reads_completed_total" => LeafKind::DiskReads,
+            "node_disk_write_time_seconds_total" => LeafKind::DiskWriteTime,
+            "node_disk_writes_completed_total" => LeafKind::DiskWrites,
+            "node_disk_io_time_weighted_seconds_total" => LeafKind::DiskIoTimeWeighted,
+            "node_disk_io_time_seconds_total" => LeafKind::DiskIoTime,
+            _ => return None,
+        };
+        return make(kind, matchers);
+    }
+    let Expr::Agg {
+        op,
+        without,
+        labels,
+        param: None,
+        expr: inner,
+    } = expr
+    else {
+        return None;
+    };
+    let cpu = |m: &str| m == "node_cpu_seconds_total";
+    match op.as_str() {
+        // avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))
+        "avg" => {
+            let (metric, matchers) = rate_of(inner)?;
+            if cpu(metric)
+                && has(matchers, "mode", MatchOp::Eq, "idle")
+                && per_host(*without, labels, &["cpu", "mode"])
+            {
+                return make(LeafKind::CpuIdle, matchers);
+            }
+            None
+        }
+        // count(node_cpu_seconds_total{mode="idle"}), or the count of
+        // processors as kube-prometheus writes it: count without (cpu)
+        // (count without (mode) (node_cpu_seconds_total)).
+        "count" => {
+            if let Some((metric, matchers)) = selector(inner) {
+                if cpu(metric)
+                    && has(matchers, "mode", MatchOp::Eq, "idle")
+                    && per_host(*without, labels, &["cpu", "mode"])
+                {
+                    return make(LeafKind::CpuCount, matchers);
+                }
+            }
+            if let Expr::Agg {
+                op: inner_op,
+                without: true,
+                labels: inner_labels,
+                expr: innermost,
+                ..
+            } = &**inner
+            {
+                let (metric, matchers) = selector(innermost)?;
+                if inner_op == "count"
+                    && cpu(metric)
+                    && inner_labels.iter().all(|l| l == "mode")
+                    && *without
+                    && labels.iter().all(|l| l == "cpu")
+                {
+                    return make(LeafKind::CpuCount, matchers);
+                }
+            }
+            None
+        }
+        // sum without (mode) (avg without (cpu) (rate(...{mode!="idle"})))
+        "sum" => {
+            let Expr::Agg {
+                op: inner_op,
+                without: inner_without,
+                labels: inner_labels,
+                param: None,
+                expr: innermost,
+            } = &**inner
+            else {
+                return None;
+            };
+            let (metric, matchers) = rate_of(innermost)?;
+            let sums_modes = if *without {
+                labels.iter().any(|l| l == "mode")
+            } else {
+                !labels.iter().any(|l| l == "mode")
+            };
+            let averages_cpus = inner_op == "avg"
+                && per_host(*inner_without, inner_labels, &["cpu"])
+                && (*inner_without || !inner_labels.iter().any(|l| l == "cpu"));
+            if !cpu(metric) || !sums_modes || !averages_cpus {
+                return None;
+            }
+            if has(matchers, "mode", MatchOp::Ne, "idle") {
+                return make(LeafKind::CpuBusy { exact: true }, matchers);
+            }
+            let leaves_out_idle = matchers.iter().any(|m| {
+                m.label == "mode" && m.op == MatchOp::Nre && m.value.split('|').any(|v| v == "idle")
+            });
+            leaves_out_idle.then(|| make(LeafKind::CpuBusy { exact: false }, matchers))?
+        }
+        // max/min/avg by (instance) of a series with one value per host.
+        "max" | "min" => {
+            let inner_leaf = leaf(inner)?;
+            matches!(
+                inner_leaf.kind,
+                LeafKind::MemAvailable
+                    | LeafKind::MemTotal
+                    | LeafKind::Load(_)
+                    | LeafKind::Up
+                    | LeafKind::ProbeSuccess
+            )
+            .then_some(inner_leaf)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LeafKind::*;
+    use super::*;
+
+    fn cond(text: &str) -> Condition {
+        read(text)
+            .unwrap_or_else(|| panic!("{text} should be read"))
+            .condition
+    }
+
+    #[test]
+    fn tokens() {
+        let tokens = tokenize(r#"rate(x{a="b\"c"}[5m]) >= 1e3 # note"#).unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Ident("rate".into()),
+                Token::Op("("),
+                Token::Ident("x".into()),
+                Token::Op("{"),
+                Token::Ident("a".into()),
+                Token::Op("="),
+                Token::Str("b\"c".into()),
+                Token::Op("}"),
+                Token::Range("5m".into()),
+                Token::Op(")"),
+                Token::Op(">="),
+                Token::Number(1000.0),
+            ]
+        );
+        assert_eq!(tokenize(".8").unwrap(), vec![Token::Number(0.8)]);
+        assert!(tokenize("x{a=\"b}").is_err());
+    }
+
+    #[test]
+    fn precedence() {
+        // 1 + 2 * 3 is 7, and comparison binds weaker than arithmetic.
+        let expr = parse("1 + 2 * 3 > 4").unwrap();
+        let Expr::Binary {
+            op: BinOp::Gt, lhs, ..
+        } = expr
+        else {
+            panic!("{expr:?}")
+        };
+        let mut leaves = vec![];
+        assert_eq!(poly(&lhs, &mut leaves).unwrap().as_constant(), Some(7.0));
+        // `^` is right-associative: 2 ^ (3 ^ 2).
+        let Expr::Binary {
+            op: BinOp::Pow,
+            lhs,
+            rhs,
+            ..
+        } = parse("2 ^ 3 ^ 2").unwrap()
+        else {
+            panic!("a power");
+        };
+        assert_eq!(*lhs, Expr::Number(2.0));
+        assert!(matches!(*rhs, Expr::Binary { op: BinOp::Pow, .. }));
+        // `-` binds weaker than `^`: -(2 ^ 2).
+        assert!(matches!(parse("-2 ^ 2").unwrap(), Expr::Neg(_)));
+        // Powers are not read as measures.
+        assert!(read("node_load1 ^ 2 > 4").is_none());
+        let expr = parse("-2 * 3").unwrap();
+        assert_eq!(poly(&expr, &mut leaves).unwrap().as_constant(), Some(-6.0));
+        assert!(parse("sum(x) by (a").is_err());
+        assert!(parse("x >").is_err());
+    }
+
+    #[test]
+    fn matchers_compare_as_prometheus_does() {
+        let m = |op, value: &str| Matcher {
+            label: "job".into(),
+            op,
+            value: value.into(),
+        };
+        assert!(m(MatchOp::Re, "node.*").matches("node-exporter"));
+        assert!(!m(MatchOp::Re, "node").matches("node-exporter"));
+        assert!(m(MatchOp::Nre, "node").matches("node-exporter"));
+        assert!(m(MatchOp::Ne, "a").matches("b"));
+        assert_eq!(
+            m(MatchOp::Re, "nginx\\.service|sshd.service").literals(),
+            Some(vec!["nginx.service".into(), "sshd.service".into()])
+        );
+        assert_eq!(m(MatchOp::Re, "ng.*").literals(), None);
+    }
+
+    #[test]
+    fn processor_usage_forms() {
+        for text in [
+            r#"100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80"#,
+            r#"100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 80"#,
+            r#"(1 - avg without (cpu) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) * 100 > 80"#,
+            r#"1 - avg(rate(node_cpu_seconds_total{mode="idle",job="node"}[5m])) by (instance) > 0.8"#,
+            r#"1 - (avg without (cpu, mode) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > .80"#,
+        ] {
+            let c = cond(text);
+            assert!(c.is(&[(CpuIdle, 1)]), "{text}: {c:?}");
+            assert_eq!((c.cmp, c.value), (Cmp::Lt, 0.2), "{text}");
+        }
+        let c = cond(
+            r#"sum without(mode) (avg without (cpu) (rate(node_cpu_seconds_total{job="node", mode!="idle"}[2m]))) * 100 > 90"#,
+        );
+        assert!(c.is(&[(CpuBusy { exact: true }, 1)]));
+        assert_eq!((c.cmp, c.value), (Cmp::Gt, 0.9));
+        let c = cond(
+            r#"sum without(mode) (avg without (cpu) (rate(node_cpu_seconds_total{mode!~"idle|iowait"}[2m]))) * 100 > 90"#,
+        );
+        assert!(c.is(&[(CpuBusy { exact: false }, 1)]));
+    }
+
+    #[test]
+    fn processor_usage_near_misses() {
+        // An average over processors and modes is no usage.
+        assert!(
+            read(r#"avg by (instance) (rate(node_cpu_seconds_total{mode!="idle"}[2m])) > .8"#)
+                .is_none()
+        );
+        // A sum over processors grows with their number.
+        assert!(
+            read(r#"sum by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) < 0.2"#)
+                .is_none()
+        );
+        // The iowait share alone.
+        assert!(read(
+            r#"avg by (instance) (rate(node_cpu_seconds_total{mode="iowait"}[5m])) * 100 > 10"#
+        )
+        .is_none());
+        // Grouped by processor: one value per processor.
+        assert!(
+            read(r#"1 - avg by (cpu) (rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.8"#)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn load_forms() {
+        let c = cond("node_load1 > 4");
+        assert!(c.is(&[(Load(1), 1)]));
+        assert_eq!((c.cmp, c.value), (Cmp::Gt, 4.0));
+        let c = cond(r#"max by (instance) (node_load15{job="node"}) >= 2.5"#);
+        assert!(c.is(&[(Load(15), 1)]));
+        assert_eq!((c.cmp, c.value), (Cmp::Ge, 2.5));
+        // Per processor, as kube-prometheus and awesome-prometheus-alerts
+        // compare it.
+        let c = cond(
+            r#"node_load5 / count without (cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 2"#,
+        );
+        assert!(c.is(&[(Load(5), 1), (CpuCount, -1)]));
+        let c = cond(
+            r#"node_load1 / on(instance) count without(cpu) (count without(mode) (node_cpu_seconds_total)) > 1"#,
+        );
+        assert!(c.is(&[(Load(1), 1), (CpuCount, -1)]));
+        // A load against another load reads as nothing.
+        assert!(read("node_load1 > node_load15 * 2").is_none());
+    }
+
+    #[test]
+    fn memory_forms() {
+        for (text, cmp, value) in [
+            (
+                "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100 < 10",
+                Cmp::Lt,
+                0.1,
+            ),
+            (
+                "(node_memory_MemAvailable_bytes * 100) / node_memory_MemTotal_bytes < 10",
+                Cmp::Lt,
+                0.1,
+            ),
+            (
+                "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90",
+                Cmp::Lt,
+                0.1,
+            ),
+            (
+                "100 - (node_memory_MemAvailable_bytes{job=\"node\"} / node_memory_MemTotal_bytes{job=\"node\"} * 100) > 85",
+                Cmp::Lt,
+                0.15,
+            ),
+            (
+                "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.95",
+                Cmp::Lt,
+                0.05,
+            ),
+            (
+                "(node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < .10) * on(instance) group_left (nodename) node_uname_info{nodename=~\".+\"}",
+                Cmp::Lt,
+                0.1,
+            ),
+        ] {
+            let c = cond(text);
+            assert!(c.is(&[(MemAvailable, 1), (MemTotal, -1)]), "{text}: {c:?}");
+            assert_eq!((c.cmp, c.value), (cmp, value), "{text}");
+        }
+        // Bytes, not a share.
+        assert!(read("node_memory_MemAvailable_bytes < 100000000")
+            .unwrap()
+            .condition
+            .is(&[(MemAvailable, 1)]));
+        // A sum of two products is no single measure.
+        assert!(read(
+            "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes + node_load1 > 1"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn filesystem_forms() {
+        let r = read(
+            r#"(node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"} * 100) / node_filesystem_size_bytes{fstype!="tmpfs",mountpoint="/"} < 10 and ON (instance, device, mountpoint) node_filesystem_readonly == 0"#,
+        )
+        .unwrap();
+        assert!(r.condition.is(&[(FsAvail, 1), (FsSize, -1)]));
+        assert_eq!((r.condition.cmp, r.condition.value), (Cmp::Lt, 0.1));
+        assert_eq!(r.exact("mountpoint").as_deref(), Some("/"));
+        assert!(!r.extra_condition);
+        let r = read(
+            r#"node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"} < 0.2 and predict_linear(node_filesystem_avail_bytes[6h], 86400) < 0"#,
+        )
+        .unwrap();
+        assert_eq!(r.condition.value, 0.2);
+        assert_eq!(r.exact("mountpoint"), None);
+        assert!(r.extra_condition);
+        // Prediction alone cannot be read.
+        assert!(read("predict_linear(node_filesystem_avail_bytes[6h], 4 * 3600) < 0").is_none());
+        // Inodes are another measure.
+        assert!(read("node_filesystem_files_free / node_filesystem_files * 100 < 10").is_none());
+    }
+
+    #[test]
+    fn disk_wait_forms() {
+        let r = read(
+            r#"rate(node_disk_read_time_seconds_total{device="sda"}[1m]) / rate(node_disk_reads_completed_total{device="sda"}[1m]) > 0.1 and rate(node_disk_reads_completed_total[1m]) > 0"#,
+        )
+        .unwrap();
+        assert!(r.condition.is(&[(DiskReadTime, 1), (DiskReads, -1)]));
+        assert_eq!(r.condition.value, 0.1);
+        assert_eq!(r.exact("device").as_deref(), Some("sda"));
+        assert!(!r.extra_condition);
+        let c = cond(
+            "rate(node_disk_io_time_weighted_seconds_total[5m]) / rate(node_disk_io_time_seconds_total[5m]) > 0.5",
+        );
+        assert!(c.is(&[(DiskIoTimeWeighted, 1), (DiskIoTime, -1)]));
+        // The queue length alone is not a wait.
+        assert!(
+            cond("rate(node_disk_io_time_weighted_seconds_total[5m]) > 10")
+                .is(&[(DiskIoTimeWeighted, 1)])
+        );
+    }
+
+    #[test]
+    fn up_and_probes() {
+        for text in [
+            "up == 0",
+            "up{job=\"node\"} < 1",
+            "up != 1",
+            "max by (instance) (up) == 0",
+        ] {
+            let c = cond(text);
+            assert!(c.is(&[(Up, 1)]) && c.is_false_check(), "{text}");
+        }
+        let r = read(r#"probe_success{job="blackbox"} == 0"#).unwrap();
+        assert!(r.condition.is(&[(ProbeSuccess, 1)]) && r.condition.is_false_check());
+        assert_eq!(r.exact("job").as_deref(), Some("blackbox"));
+        assert!(!cond("up == 1").is_false_check());
+        assert!(!cond("up > 0").is_false_check());
+        // An absent target is not a down one.
+        assert!(read("absent(up{job=\"node\"})").is_none());
+        // `bool` gives 0 or 1 for every series: no condition.
+        assert!(read("up == bool 0").is_none());
+    }
+
+    #[test]
+    fn systemd_units() {
+        let r =
+            read(r#"node_systemd_unit_state{state="active",name="nginx.service"} == 0"#).unwrap();
+        assert!(r.condition.is(&[(SystemdUnit, 1)]) && r.condition.is_false_check());
+        assert_eq!(r.exact("name").as_deref(), Some("nginx.service"));
+        let r = read(r#"node_systemd_unit_state{state="failed"} == 1"#).unwrap();
+        assert!(r.condition.is_true_check());
+    }
+
+    #[test]
+    fn unknown_expressions() {
+        for text in [
+            "probe_ssl_earliest_cert_expiry - time() < 86400 * 7",
+            "probe_http_status_code <= 199 OR probe_http_status_code >= 400",
+            "rate(node_network_receive_bytes_total[5m]) > 1e8",
+            "increase(node_vmstat_oom_kill[1m]) > 0",
+            "node_load1 offset 1h > 4",
+            "max_over_time(node_load1[5m:1m]) > 4",
+            "kube_pod_container_status_restarts_total > 3",
+            "node_textfile_scrape_error != 0",
+            "1 > 0",
+            "node_load1",
+        ] {
+            assert!(read(text).is_none(), "{text}");
+        }
+    }
+}
