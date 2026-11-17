@@ -107,6 +107,26 @@ Append the new public key to `ee/license-keys.pem`, keep the old one, and releas
 2. Tag the merge commit `v<version>` and push the tag: `git tag v0.2.0 && git push origin v0.2.0`. Use a lightweight tag, not `git tag -a`: the release page then shows the merge commit's verified signature, which an unsigned annotated tag hides. Only an admin can push it.
 3. `release.yml` checks that the tag matches `Cargo.toml`, builds the files and the images, pushes the images to GHCR and writes `images.json`. The `release` job then waits for approval: open the run in the Actions tab, Review deployments, tick `release`, Approve. It signs `SHA256SUMS` with `RELEASE_SIGNING_KEY` and publishes the GitHub Release. It fails without the secret in the environment, or when the secret's public half is not in `deploy/release-keys.pem`.
 
+## The tested channel
+
+Central servers with a valid license key follow the tested channel (ADR-0147): they are offered the release the owner promoted, not the latest one. Promote a release once it has run long enough without a regression, typically a few weeks on reference servers:
+
+```
+gh workflow run release.yml --repo Kidoly/monitorflow --ref v0.7.0 -f promote=true
+```
+
+Run it on the tag of the release to promote. The `promote` job waits for approval in the `release` environment like a release: open the run, Review deployments, tick `release`, Approve. It builds nothing. It writes `tested.json` (`{"channel": "tested", "version": "0.7.0", "promoted": "<today>"}`), signs it with `RELEASE_SIGNING_KEY` into `tested.json.sig`, checks the signature against `deploy/release-keys.pem`, and uploads both to the promoted release and to the latest release, replacing older ones. Servers read `releases/latest/download/tested.json`; each new release copies the current file forward from the release that was latest, so promoting is needed only when the tested channel should move.
+
+A pre-release or a draft is never promoted. Check what the channel offers:
+
+```
+base=https://github.com/Kidoly/monitorflow/releases/latest/download
+curl -fsSLO "$base/tested.json" -O "$base/tested.json.sig" && cat tested.json
+mkdir channel && mv tested.json tested.json.sig channel/ && deploy/channel-file.sh verify channel
+```
+
+Until the first promotion there is no `tested.json`: servers on the tested channel find nothing to install and their check says so. A self-hosted release directory (`release_url`) needs the two files copied next to the release they name.
+
 ## Images
 
 Each release pushes `ghcr.io/kidoly/monitorflow-server`, `monitorflow-web`, `monitorflow-updater` and `monitorflow-mirror`, tagged with the version, each a multi-platform index for `linux/amd64` and `linux/arm64` built on native runners. `images.json`, a release file listed in `SHA256SUMS`, names them by the digest of that index:
