@@ -12,6 +12,10 @@ Chaque guide explique ce qui peut mal tourner, ce que MonitorFlow vérifie, comm
 
 Les guides existent aussi [en anglais](../README.md).
 
+## Passer à MonitorFlow
+
+- [Passer de Zabbix ou Prometheus à MonitorFlow](venir-d-un-autre-outil.md) : Importez vos hôtes, vérifications, seuils, maintenances et canaux de notification depuis Zabbix ou Prometheus, prévisualisez ce qui est repris, puis installez l'agent.
+
 ## Serveurs
 
 - [Comment être alerté quand un serveur tombe](alerte-serveur-hors-ligne.md) : Sachez en quelques minutes qu'un serveur Linux ou Windows ne répond plus, sans rien configurer, et soyez prévenu par e-mail ou messagerie.

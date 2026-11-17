@@ -12,6 +12,10 @@ Each guide explains what can go wrong, what MonitorFlow checks, how to add the c
 
 Guides are also available [in French](fr/README.md).
 
+## Moving to MonitorFlow
+
+- [How to move from Zabbix or Prometheus to MonitorFlow](move-from-another-tool.md): Import your hosts, checks, thresholds, maintenance windows and notification channels from Zabbix or Prometheus, preview what moves, then install the agent.
+
 ## Servers
 
 - [How to get alerted when a server goes down](server-down-alerts.md): Know within minutes when a Linux or Windows server stops reporting, without setting anything up, and get told by email or chat.
