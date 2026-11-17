@@ -66,7 +66,6 @@ function LicenseAdmin() {
     <div className={styles.page}>
       {header}
       <Status view={data} onRemoved={refresh} />
-      {data.license && data.state !== "none" && <Includes view={data} />}
       {(data.added?.length ?? 0) > 0 && <AddedServers view={data} onRemoved={refresh} />}
       <InstallForm replacing={data.state !== "none"} onInstalled={refresh} />
     </div>
@@ -149,6 +148,7 @@ function Status({ view, onRemoved }: { view: LicenseView; onRemoved: () => void 
           ]}
         />
       )}
+      <Includes view={view} />
       <div>
         <InlineConfirm
           trigger={t("license.remove.trigger")}
