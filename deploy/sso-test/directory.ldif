@@ -1,0 +1,43 @@
+# People and groups of the test directory. dave reaches mf-viewers only
+# through helpdesk, a group inside it: the nested groups case. groupOfNames
+# needs a member, so groups people leave keep a placeholder.
+dn: ou=people,dc=example,dc=org
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=example,dc=org
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=dave,ou=people,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: dave
+cn: Dave
+sn: Dave
+mail: dave@example.org
+userPassword: dave-directory-pw
+
+dn: uid=erin,ou=people,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: erin
+cn: Erin
+sn: Erin
+mail: erin@example.org
+userPassword: erin-directory-pw
+
+dn: cn=helpdesk,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: helpdesk
+member: cn=placeholder,dc=example,dc=org
+member: uid=dave,ou=people,dc=example,dc=org
+
+dn: cn=mf-viewers,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: mf-viewers
+member: cn=helpdesk,ou=groups,dc=example,dc=org
+
+dn: cn=mf-operators,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: mf-operators
+member: cn=placeholder,dc=example,dc=org
+member: uid=erin,ou=people,dc=example,dc=org
