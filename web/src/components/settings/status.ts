@@ -14,7 +14,7 @@ import type {
 } from "@/lib/api";
 import { t } from "@/i18n";
 import { authorityStatus } from "@/lib/certificateAuthority";
-import { formatDay as formatLicenseDay } from "@/lib/license";
+import { formatDay as formatLicenseDay, tierName, tierOf } from "@/lib/license";
 import { inProgress } from "@/lib/serverUpdate";
 import { formatDay } from "@/components/ui/time";
 import type { Tone } from "@/components/ui/tone";
@@ -178,7 +178,13 @@ export function licenseStatus(view: LicenseView): SettingsStatus | undefined {
   const expires = view.license ? formatLicenseDay(view.license.expires) : null;
   switch (view.state) {
     case "valid":
-      return { text: expires ? t("settings.status.validUntil", { day: expires }) : t("settings.status.valid"), tone: "ok" };
+      return {
+        text:
+          view.license && expires
+            ? t("settings.status.planUntil", { plan: tierName(tierOf(view.license)), day: expires })
+            : t("settings.status.valid"),
+        tone: "ok",
+      };
     case "expires_soon":
       return {
         text: expires ? t("settings.status.expiresOn", { day: expires }) : t("settings.status.expiresSoon"),
@@ -192,6 +198,7 @@ export function licenseStatus(view: LicenseView): SettingsStatus | undefined {
     case "invalid":
       return { text: t("settings.status.keyInvalid"), tone: added ? "bad" : "neutral" };
     default:
-      return { text: t("settings.status.noLicense"), tone: added ? "bad" : "neutral" };
+      // Without a key and nothing added: the free edition, said calmly (ADR-0147).
+      return added ? { text: t("settings.status.noLicense"), tone: "bad" } : { text: t("settings.status.community"), tone: "neutral" };
   }
 }
