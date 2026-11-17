@@ -14,14 +14,25 @@
 # (ADR-0056); a tag pushes them to GHCR and lists their digests in
 # images.json, a release file covered by the signature. Other runs build
 # them without pushing.
+# A manual run with `promote` on the tag of a published release promotes it
+# to the tested channel (ADR-0147): it signs tested.json with the release
+# key, after the maintainer's approval, and uploads it to that release and
+# to the latest one; each new release carries the current file forward.
+#   gh workflow run release.yml --ref v0.7.0 -f promote=true
 name: Release
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      promote:
+        description: Promote the release of this tag to the tested channel, building nothing
+        type: boolean
+        default: false
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - deploy/channel-file.sh
       - .github/actions/build-agent-linux/**
       - deploy/install.sh
       - deploy/install-server.sh
@@ -37,6 +48,8 @@ permissions:
   contents: read
 jobs:
   version:
+    # Every build job needs this one, so a promotion skips them all.
+    if: ${{ !inputs.promote }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -284,5 +297,49 @@ jobs:
         run: |
           flags=()
           case $VERSION in *-*) flags+=(--prerelease) ;; esac
+          # Carry the tested channel's file forward from the release that
+          # was latest, so releases/latest/download/tested.json keeps
+          # naming the promoted release (ADR-0147). Not in SHA256SUMS: it
+          # has its own signature. None before the first promotion.
+          if [ -z "${flags[*]}" ] && gh release download --pattern 'tested.json*' --dir "$RUNNER_TEMP/channel" 2>/dev/null; then
+            deploy/channel-file.sh verify "$RUNNER_TEMP/channel"
+            cp "$RUNNER_TEMP/channel/tested.json" "$RUNNER_TEMP/channel/tested.json.sig" dist/
+          fi
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes \
             --title "MonitorFlow $VERSION" "${flags[@]}"
+  # Promotion to the tested channel (ADR-0147), on the tag of a published
+  # release. The release key is a secret of the `release` environment: only
+  # a `v*` tag reaches it, after the maintainer approves (ADR-0128).
+  promote:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.promote }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Sign and publish tested.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          case $GITHUB_REF in
+            refs/tags/v*) ;;
+            *) echo "::error::run it on the tag to promote: gh workflow run release.yml --ref v0.7.0 -f promote=true"; exit 1 ;;
+          esac
+          tag=$GITHUB_REF_NAME
+          state=$(gh release view "$tag" --json isDraft,isPrerelease -q '"\(.isDraft) \(.isPrerelease)"') ||
+            { echo "::error::$tag is not a published release"; exit 1; }
+          [ "$state" = "false false" ] || { echo "::error::$tag is a draft or a pre-release"; exit 1; }
+          [ -n "$RELEASE_SIGNING_KEY" ] ||
+            { echo "::error::the RELEASE_SIGNING_KEY secret is not set in the release environment; see docs/releasing.md"; exit 1; }
+          umask 077
+          key=$RUNNER_TEMP/release-signing.pem
+          printf '%s\n' "$RELEASE_SIGNING_KEY" >"$key"
+          MF_SIGNING_KEY=$key deploy/channel-file.sh sign "${tag#v}" "$RUNNER_TEMP/channel"
+          rm -f "$key"
+          latest=$(gh release view --json tagName -q .tagName)
+          for release in "$tag" "$latest"; do
+            gh release upload "$release" "$RUNNER_TEMP/channel/tested.json" "$RUNNER_TEMP/channel/tested.json.sig" --clobber
+          done
+          echo "$tag promoted to the tested channel; releases/latest ($latest) now names it"

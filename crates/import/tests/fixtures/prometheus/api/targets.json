@@ -1,0 +1,233 @@
+{
+  "status": "success",
+  "data": {
+    "activeTargets": [
+      {
+        "discoveredLabels": {
+          "__address__": "127.0.0.11",
+          "__metrics_path__": "/probe",
+          "__param_module": "dns_shop",
+          "__scheme__": "http",
+          "__scrape_interval__": "15s",
+          "__scrape_timeout__": "10s",
+          "job": "blackbox-dns"
+        },
+        "labels": {
+          "instance": "127.0.0.11",
+          "job": "blackbox-dns"
+        },
+        "scrapePool": "blackbox-dns",
+        "scrapeUrl": "http://monitor-01:9115/probe?module=dns_shop&target=127.0.0.11",
+        "globalUrl": "http://monitor-01:9115/probe?module=dns_shop&target=127.0.0.11",
+        "lastError": "",
+        "lastScrape": "2026-11-17T01:27:01.362471382Z",
+        "lastScrapeDuration": 0.000795864,
+        "health": "up",
+        "scrapeInterval": "15s",
+        "scrapeTimeout": "10s"
+      },
+      {
+        "discoveredLabels": {
+          "__address__": "monitor-01:9115",
+          "__metrics_path__": "/metrics",
+          "__scheme__": "http",
+          "__scrape_interval__": "30s",
+          "__scrape_timeout__": "10s",
+          "job": "blackbox-exporter"
+        },
+        "labels": {
+          "instance": "monitor-01:9115",
+          "job": "blackbox-exporter"
+        },
+        "scrapePool": "blackbox-exporter",
+        "scrapeUrl": "http://monitor-01:9115/metrics",
+        "globalUrl": "http://monitor-01:9115/metrics",
+        "lastError": "",
+        "lastScrape": "2026-11-17T01:27:01.864345597Z",
+        "lastScrapeDuration": 0.000731228,
+        "health": "up",
+        "scrapeInterval": "30s",
+        "scrapeTimeout": "10s"
+      },
+      {
+        "discoveredLabels": {
+          "__address__": "http://shop/",
+          "__meta_filepath": "/etc/prometheus/targets/probes-http.yml",
+          "__metrics_path__": "/probe",
+          "__param_module": "http_2xx",
+          "__scheme__": "http",
+          "__scrape_interval__": "15s",
+          "__scrape_timeout__": "10s",
+          "job": "blackbox-http",
+          "team": "web"
+        },
+        "labels": {
+          "instance": "http://shop/",
+          "job": "blackbox-http",
+          "team": "web"
+        },
+        "scrapePool": "blackbox-http",
+        "scrapeUrl": "http://monitor-01:9115/probe?module=http_2xx&target=http%3A%2F%2Fshop%2F",
+        "globalUrl": "http://monitor-01:9115/probe?module=http_2xx&target=http%3A%2F%2Fshop%2F",
+        "lastError": "",
+        "lastScrape": "2026-11-17T01:27:02.585697729Z",
+        "lastScrapeDuration": 0.001437399,
+        "health": "up",
+        "scrapeInterval": "15s",
+        "scrapeTimeout": "10s"
+      },
+      {
+        "discoveredLabels": {
+          "__address__": "db-01",
+          "__metrics_path__": "/probe",
+          "__param_module": "icmp",
+          "__scheme__": "http",
+          "__scrape_interval__": "15s",
+          "__scrape_timeout__": "10s",
+          "job": "blackbox-icmp"
+        },
+        "labels": {
+          "instance": "db-01",
+          "job": "blackbox-icmp"
+        },
+        "scrapePool": "blackbox-icmp",
+        "scrapeUrl": "http://monitor-01:9115/probe?module=icmp&target=db-01",
+        "globalUrl": "http://monitor-01:9115/probe?module=icmp&target=db-01",
+        "lastError": "",
+        "lastScrape": "2026-11-17T01:26:58.864094633Z",
+        "lastScrapeDuration": 0.000993828,
+        "health": "up",
+        "scrapeInterval": "15s",
+        "scrapeTimeout": "10s"
+      },
+      {
+        "discoveredLabels": {
+          "__address__": "shop:80",
+          "__metrics_path__": "/probe",
+          "__param_module": "tcp_connect",
+          "__scheme__": "http",
+          "__scrape_interval__": "15s",
+          "__scrape_timeout__": "10s",
+          "job": "blackbox-tcp"
+        },
+        "labels": {
+          "instance": "shop:80",
+          "job": "blackbox-tcp"
+        },
+        "scrapePool": "blackbox-tcp",
+        "scrapeUrl": "http://monitor-01:9115/probe?module=tcp_connect&target=shop%3A80",
+        "globalUrl": "http://monitor-01:9115/probe?module=tcp_connect&target=shop%3A80",
+        "lastError": "",
+        "lastScrape": "2026-11-17T01:26:59.586615875Z",
+        "lastScrapeDuration": 0.001138107,
+        "health": "up",
+        "scrapeInterval": "15s",
+        "scrapeTimeout": "10s"
+      },
+      {
+        "discoveredLabels": {
+          "__address__": "db-01:9100",
+          "__metrics_path__": "/probe",
+          "__param_module": "tcp_connect",
+          "__scheme__": "http",
+          "__scrape_interval__": "15s",
+          "__scrape_timeout__": "10s",
+          "job": "blackbox-tcp"
+        },
+        "labels": {
+          "instance": "db-01:9100",
+          "job": "blackbox-tcp"
+        },
+        "scrapePool": "blackbox-tcp",
+        "scrapeUrl": "http://monitor-01:9115/probe?module=tcp_connect&target=db-01%3A9100",
+        "globalUrl": "http://monitor-01:9115/probe?module=tcp_connect&target=db-01%3A9100",
+        "lastError": "",
+        "lastScrape": "2026-11-17T01:27:03.409564288Z",
+        "lastScrapeDuration": 0.002846915,
+        "health": "up",
+        "scrapeInterval": "15s",
+        "scrapeTimeout": "10s"
+      },
+      {
+        "discoveredLabels": {
+          "__address__": "db-01:9100",
+          "__meta_filepath": "/etc/prometheus/targets/nodes-db.json",
+          "__metrics_path__": "/metrics",
+          "__scheme__": "http",
+          "__scrape_interval__": "15s",
+          "__scrape_timeout__": "10s",
+          "env": "production",
+          "job": "node",
+          "role": "database"
+        },
+        "labels": {
+          "env": "production",
+          "instance": "db-01:9100",
+          "job": "node",
+          "role": "database"
+        },
+        "scrapePool": "node",
+        "scrapeUrl": "http://db-01:9100/metrics",
+        "globalUrl": "http://db-01:9100/metrics",
+        "lastError": "",
+        "lastScrape": "2026-11-17T01:27:01.360830395Z",
+        "lastScrapeDuration": 0.100181241,
+        "health": "up",
+        "scrapeInterval": "15s",
+        "scrapeTimeout": "10s"
+      },
+      {
+        "discoveredLabels": {
+          "__address__": "web-01:9100",
+          "__metrics_path__": "/metrics",
+          "__scheme__": "http",
+          "__scrape_interval__": "15s",
+          "__scrape_timeout__": "10s",
+          "env": "production",
+          "job": "node",
+          "role": "web"
+        },
+        "labels": {
+          "env": "production",
+          "instance": "web-01:9100",
+          "job": "node",
+          "role": "web"
+        },
+        "scrapePool": "node",
+        "scrapeUrl": "http://web-01:9100/metrics",
+        "globalUrl": "http://web-01:9100/metrics",
+        "lastError": "",
+        "lastScrape": "2026-11-17T01:27:05.011608703Z",
+        "lastScrapeDuration": 0.135897258,
+        "health": "up",
+        "scrapeInterval": "15s",
+        "scrapeTimeout": "10s"
+      },
+      {
+        "discoveredLabels": {
+          "__address__": "localhost:9090",
+          "__metrics_path__": "/metrics",
+          "__scheme__": "http",
+          "__scrape_interval__": "15s",
+          "__scrape_timeout__": "10s",
+          "job": "prometheus"
+        },
+        "labels": {
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        "scrapePool": "prometheus",
+        "scrapeUrl": "http://localhost:9090/metrics",
+        "globalUrl": "http://ff6f4c3b4299:9090/metrics",
+        "lastError": "",
+        "lastScrape": "2026-11-17T01:26:54.537727632Z",
+        "lastScrapeDuration": 0.005902397,
+        "health": "up",
+        "scrapeInterval": "15s",
+        "scrapeTimeout": "10s"
+      }
+    ],
+    "droppedTargets": [],
+    "droppedTargetCounts": null
+  }
+}

@@ -11,9 +11,11 @@
 pub mod http;
 pub mod model;
 pub mod notes;
+pub mod prometheus;
 pub mod source;
 pub mod text;
 pub mod xml;
+pub mod zabbix;
 
 pub use model::Inventory;
 pub use notes::Note;

@@ -12,6 +12,7 @@ use monitorflow_common::release::{sha256, PublicKey};
 use monitorflow_common::server_update::backup::{
     file_name, BackupFile, BackupKind, BackupRun, BackupState, Backups,
 };
+use monitorflow_common::server_update::channel::Channel;
 use monitorflow_common::server_update::{Running, Status, UpdateRun, UpdateState};
 use monitorflow_server::agent_releases::ReleaseCache;
 use monitorflow_server::api::auth::CSRF_HEADER;
@@ -541,7 +542,7 @@ db_tests! {
         let (_, body) = h.call("GET", "/api/server-update", &admin, None).await;
         assert_eq!(body["available"], Value::Null);
 
-        assert!(release_check::check(&pool, settings, &running).await);
+        assert!(release_check::check(&pool, settings, Channel::Regular, &running).await);
         let events = told().await;
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["release"]["version"], NEWER);
@@ -552,7 +553,7 @@ db_tests! {
         // Once per version, even after the outbox forgot it or from a
         // check by hand.
         sqlx::query("DELETE FROM notification_outbox").execute(&pool).await.unwrap();
-        assert!(release_check::check(&pool, settings, &running).await);
+        assert!(release_check::check(&pool, settings, Channel::Regular, &running).await);
         let (status, _) = h.call("POST", "/api/server-update/check", &admin, None).await;
         assert_eq!(status, StatusCode::OK);
         assert!(told().await.is_empty());
@@ -566,7 +567,7 @@ db_tests! {
         let (files, key) = release(monitorflow_common::VERSION);
         let url = serve(files.path().to_owned()).await;
         let current = Harness::new(&pool, &url, vec![key]);
-        assert!(release_check::check(&pool, &current.settings.server_update, &running).await);
+        assert!(release_check::check(&pool, &current.settings.server_update, Channel::Regular, &running).await);
         assert!(told().await.is_empty());
         let (_, body) = h.call("GET", "/api/server-update", &admin, None).await;
         assert_eq!(body["available"], Value::Null);
@@ -582,7 +583,7 @@ db_tests! {
             Harness::new(&pool, "http://127.0.0.1:9/mf", vec![other.clone()]),
             Harness::new(&pool, &url, vec![other.clone()]),
         ] {
-            assert!(!release_check::check(&pool, &h.settings.server_update, &running).await);
+            assert!(!release_check::check(&pool, &h.settings.server_update, Channel::Regular, &running).await);
         }
         assert_eq!(release_check::available(&pool, &running).await.unwrap(), None);
         let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM notification_outbox")

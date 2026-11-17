@@ -59,6 +59,44 @@ export const en = {
   "note.disabled": "Turned off in the source.",
   "note.unresolved_macro":
     "It uses a value that is not in the source: {macro}.",
+  "note.zabbix_stock_template":
+    "Read from the defaults of the stock template {template}, which the export does not include: export it too if it was changed.",
+  "note.zabbix_template_missing":
+    "The template {template} is not among the uploaded files: export it too, or connect to the Zabbix API.",
+  "note.zabbix_partial":
+    "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
+  "note.zabbix_no_measure":
+    "MonitorFlow has no threshold on this measure ({key}).",
+  "note.zabbix_bytes":
+    "MonitorFlow compares shares of memory and disk space, not amounts such as {value}.",
+  "note.zabbix_no_recipients":
+    "An export has no users' media, so no recipients: connect to the Zabbix API to read them, or add the channel by hand.",
+  "note.zabbix_not_set":
+    "Its setting {setting} has no usable address in the source.",
+  "note.scrape_as_port":
+    "MonitorFlow checks that port {port} answers; it does not read the exporter's metrics.",
+  "note.ping_as_offline":
+    "The source pings the host; MonitorFlow's offline alert tells when its agent stops answering.",
+  "note.ping":
+    "MonitorFlow does not ping addresses; it watches servers through their agent.",
+  "note.disk_wait":
+    "MonitorFlow compares the average wait of the disk's operations, reads and writes together, which differs from what the source measures.",
+  "note.cpu_busy_modes":
+    "MonitorFlow counts every busy mode of the processors, also the ones the source leaves out.",
+  "note.extra_condition":
+    "The source adds a condition MonitorFlow does not check; only the threshold is moved.",
+  "note.service_failed":
+    "MonitorFlow alerts when the service is not active, not only when it failed.",
+  "note.service_discovery":
+    "The targets come from {kind}, which only a running Prometheus resolves: connect to it to read them.",
+  "note.file_missing":
+    "The configuration refers to {file}, which is not among the uploaded files.",
+  "note.secret_hidden":
+    "The source's API does not show this secret: upload its configuration file to move it, or add the channel by hand.",
+  "note.secret_in_file":
+    "The source reads this secret from {file}, which is not part of the import: add the channel by hand.",
+  "note.routes":
+    "MonitorFlow sends every alert to every channel of its site; the source's routing by labels is not moved.",
 
   "origin.host": "Host",
   "origin.item": "Item",
@@ -242,6 +280,44 @@ export const fr: Translation<typeof en> = {
   "note.disabled": "Désactivé dans la source.",
   "note.unresolved_macro":
     "Il utilise une valeur absente de la source : {macro}.",
+  "note.zabbix_stock_template":
+    "Lu dans les valeurs par défaut du modèle fourni {template}, absent de l’export : exportez-le aussi s’il a été modifié.",
+  "note.zabbix_template_missing":
+    "Le modèle {template} n’est pas parmi les fichiers envoyés : exportez-le aussi, ou connectez-vous à l’API de Zabbix.",
+  "note.zabbix_partial":
+    "Seule la condition {kept} est reprise ; MonitorFlow ne vérifie pas le reste de l’expression.",
+  "note.zabbix_no_measure":
+    "MonitorFlow n’a pas de seuil sur cette mesure ({key}).",
+  "note.zabbix_bytes":
+    "MonitorFlow compare des parts de mémoire et d’espace disque, pas des quantités comme {value}.",
+  "note.zabbix_no_recipients":
+    "Un export ne contient pas les médias des utilisateurs, donc aucun destinataire : connectez-vous à l’API de Zabbix pour les lire, ou ajoutez le canal à la main.",
+  "note.zabbix_not_set":
+    "Son paramètre {setting} n’a pas d’adresse utilisable dans la source.",
+  "note.scrape_as_port":
+    "MonitorFlow vérifie que le port {port} répond ; il ne lit pas les métriques de l’exportateur.",
+  "note.ping_as_offline":
+    "La source envoie un ping à l’hôte ; l’alerte hors ligne de MonitorFlow prévient quand son agent ne répond plus.",
+  "note.ping":
+    "MonitorFlow n’envoie pas de ping à des adresses ; il surveille les serveurs par leur agent.",
+  "note.disk_wait":
+    "MonitorFlow compare l’attente moyenne des opérations du disque, lectures et écritures ensemble, ce qui diffère de ce que mesure la source.",
+  "note.cpu_busy_modes":
+    "MonitorFlow compte tous les modes occupés des processeurs, y compris ceux que la source laisse de côté.",
+  "note.extra_condition":
+    "La source ajoute une condition que MonitorFlow ne vérifie pas ; seul le seuil est repris.",
+  "note.service_failed":
+    "MonitorFlow alerte quand le service n’est pas actif, pas seulement quand il a échoué.",
+  "note.service_discovery":
+    "Les cibles viennent de {kind}, que seul un Prometheus en marche résout : connectez-vous à lui pour les lire.",
+  "note.file_missing":
+    "La configuration désigne {file}, qui ne fait pas partie des fichiers envoyés.",
+  "note.secret_hidden":
+    "L’API de la source ne montre pas ce secret : envoyez son fichier de configuration pour le reprendre, ou ajoutez le canal à la main.",
+  "note.secret_in_file":
+    "La source lit ce secret dans {file}, qui ne fait pas partie de l’import : ajoutez le canal à la main.",
+  "note.routes":
+    "MonitorFlow envoie chaque alerte à chaque canal de son site ; le routage par étiquettes de la source n’est pas repris.",
 
   "origin.host": "Hôte",
   "origin.item": "Élément",
