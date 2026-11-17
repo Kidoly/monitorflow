@@ -1,0 +1,1575 @@
+# Stock templates of Zabbix 7.0, trimmed to what the import reads: items,
+# triggers and macros with their default values. Exported from a stock
+# Zabbix 7.0 by configuration.export; see stock.rs.
+zabbix_export:
+  version: '7.0'
+  templates:
+  - template: ICMP Ping
+    name: ICMP Ping
+    items:
+    - name: ICMP ping
+      type: SIMPLE
+      key: icmpping
+      triggers:
+      - expression: max(/ICMP Ping/icmpping,#3)=0
+        name: 'ICMP Ping: Unavailable by ICMP ping'
+        priority: HIGH
+    - name: ICMP loss
+      type: SIMPLE
+      key: icmppingloss
+      triggers:
+      - expression: min(/ICMP Ping/icmppingloss,5m)>{$ICMP_LOSS_WARN} and min(/ICMP Ping/icmppingloss,5m)<100
+        name: 'ICMP Ping: High ICMP ping loss'
+        priority: WARNING
+    - name: ICMP response time
+      type: SIMPLE
+      key: icmppingsec
+      triggers:
+      - expression: avg(/ICMP Ping/icmppingsec,5m)>{$ICMP_RESPONSE_TIME_WARN}
+        name: 'ICMP Ping: High ICMP ping response time'
+        priority: WARNING
+    macros:
+    - macro: '{$ICMP_LOSS_WARN}'
+      value: '20'
+    - macro: '{$ICMP_RESPONSE_TIME_WARN}'
+      value: '0.15'
+  - template: Linux by Zabbix agent
+    name: Linux by Zabbix agent
+    items:
+    - name: Host name of Zabbix agent running
+      key: agent.hostname
+      delay: 1h
+    - name: Zabbix agent ping
+      key: agent.ping
+    - name: Version of Zabbix agent running
+      key: agent.version
+      delay: 1h
+    - name: Maximum number of open file descriptors
+      key: kernel.maxfiles
+      delay: 1h
+      triggers:
+      - expression: last(/Linux by Zabbix agent/kernel.maxfiles)<{$KERNEL.MAXFILES.MIN}
+        name: 'Linux: Configured max number of open filedescriptors is too low'
+        priority: INFO
+    - name: Maximum number of processes
+      key: kernel.maxproc
+      delay: 1h
+      triggers:
+      - expression: last(/Linux by Zabbix agent/kernel.maxproc)<{$KERNEL.MAXPROC.MIN}
+        name: 'Linux: Configured max number of processes is too low'
+        priority: INFO
+    - name: Number of processes
+      key: proc.num
+    - name: Number of running processes
+      key: proc.num[,,run]
+    - name: System boot time
+      key: system.boottime
+      delay: 15m
+    - name: Interrupts per second
+      key: system.cpu.intr
+    - name: Load average (1m avg)
+      key: system.cpu.load[all,avg1]
+    - name: Load average (5m avg)
+      key: system.cpu.load[all,avg5]
+    - name: Load average (15m avg)
+      key: system.cpu.load[all,avg15]
+    - name: Number of CPUs
+      key: system.cpu.num
+    - name: Context switches per second
+      key: system.cpu.switches
+    - name: CPU utilization
+      type: DEPENDENT
+      key: system.cpu.util
+      delay: '0'
+      triggers:
+      - expression: min(/Linux by Zabbix agent/system.cpu.util,5m)>{$CPU.UTIL.CRIT}
+        name: 'Linux: High CPU utilization'
+        priority: WARNING
+    - name: CPU guest time
+      key: system.cpu.util[,guest]
+    - name: CPU guest nice time
+      key: system.cpu.util[,guest_nice]
+    - name: CPU idle time
+      key: system.cpu.util[,idle]
+    - name: CPU interrupt time
+      key: system.cpu.util[,interrupt]
+    - name: CPU iowait time
+      key: system.cpu.util[,iowait]
+    - name: CPU nice time
+      key: system.cpu.util[,nice]
+    - name: CPU softirq time
+      key: system.cpu.util[,softirq]
+    - name: CPU steal time
+      key: system.cpu.util[,steal]
+    - name: CPU system time
+      key: system.cpu.util[,system]
+    - name: CPU user time
+      key: system.cpu.util[,user]
+    - name: System name
+      key: system.hostname
+      delay: 1h
+      triggers:
+      - expression: change(/Linux by Zabbix agent/system.hostname) and length(last(/Linux by Zabbix agent/system.hostname))>0
+        name: 'Linux: System name has changed'
+        priority: INFO
+    - name: System local time
+      key: system.localtime
+      triggers:
+      - expression: fuzzytime(/Linux by Zabbix agent/system.localtime,{$SYSTEM.FUZZYTIME.MAX})=0
+        name: 'Linux: System time is out of sync'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: fuzzytime(/Linux by Zabbix agent/system.localtime,{$SYSTEM.FUZZYTIME.MIN})=1
+    - name: Operating system architecture
+      key: system.sw.arch
+      delay: 1h
+    - name: Operating system
+      key: system.sw.os
+      delay: 1h
+      triggers:
+      - expression: change(/Linux by Zabbix agent/system.sw.os) and length(last(/Linux by Zabbix agent/system.sw.os))>0
+        name: 'Linux: Operating system description has changed'
+        priority: INFO
+    - name: Number of installed packages
+      key: system.sw.packages.get
+      delay: 1h
+      triggers:
+      - expression: change(/Linux by Zabbix agent/system.sw.packages.get)<>0
+        name: 'Linux: Number of installed packages has been changed'
+        priority: WARNING
+    - name: Free swap space
+      key: system.swap.size[,free]
+    - name: Free swap space in %
+      key: system.swap.size[,pfree]
+    - name: Total swap space
+      key: system.swap.size[,total]
+    - name: System description
+      key: system.uname
+      delay: 15m
+    - name: System uptime
+      key: system.uptime
+      delay: 30s
+      triggers:
+      - expression: last(/Linux by Zabbix agent/system.uptime)<10m
+        name: 'Linux: {HOST.NAME} has been restarted'
+        priority: WARNING
+    - name: Number of logged in users
+      key: system.users.num
+    - name: Checksum of /etc/passwd
+      key: vfs.file.cksum[/etc/passwd,sha256]
+      delay: 15m
+      triggers:
+      - expression: last(/Linux by Zabbix agent/vfs.file.cksum[/etc/passwd,sha256],#1)<>last(/Linux by Zabbix agent/vfs.file.cksum[/etc/passwd,sha256],#2)
+        name: 'Linux: /etc/passwd has been changed'
+        priority: INFO
+    - name: Get filesystems
+      key: vfs.fs.get
+    - name: Available memory
+      key: vm.memory.size[available]
+    - name: Available memory in %
+      key: vm.memory.size[pavailable]
+    - name: Total memory
+      key: vm.memory.size[total]
+    - name: Memory utilization
+      type: DEPENDENT
+      key: vm.memory.util
+      delay: '0'
+      triggers:
+      - expression: min(/Linux by Zabbix agent/vm.memory.util,5m)>{$MEMORY.UTIL.MAX}
+        name: 'Linux: High memory utilization'
+        priority: AVERAGE
+    - name: Zabbix agent availability
+      type: INTERNAL
+      key: zabbix[host,agent,available]
+      triggers:
+      - expression: max(/Linux by Zabbix agent/zabbix[host,agent,available],{$AGENT.TIMEOUT})=0
+        name: 'Linux: Zabbix agent is not available'
+        priority: AVERAGE
+    discovery_rules:
+    - name: Network interface discovery
+      key: net.if.discovery
+      item_prototypes:
+      - name: 'Interface {#IFNAME}: Inbound packets discarded'
+        key: net.if.in["{#IFNAME}",dropped]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Inbound packets with errors'
+        key: net.if.in["{#IFNAME}",errors]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Bits received'
+        key: net.if.in["{#IFNAME}"]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Outbound packets discarded'
+        key: net.if.out["{#IFNAME}",dropped]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Outbound packets with errors'
+        key: net.if.out["{#IFNAME}",errors]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Bits sent'
+        key: net.if.out["{#IFNAME}"]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Operational status'
+        key: vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"]
+        trigger_prototypes:
+        - expression: '{$IFCONTROL:"{#IFNAME}"}=1 and last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"])=2 and (last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"],#1)<>last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"],#2))'
+          name: 'Linux: Interface {#IFNAME}: Link down'
+          priority: AVERAGE
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"])<>2 or {$IFCONTROL:"{#IFNAME}"}=0
+      - name: 'Interface {#IFNAME}: Speed'
+        key: vfs.file.contents["/sys/class/net/{#IFNAME}/speed"]
+        delay: 5m
+      - name: 'Interface {#IFNAME}: Interface type'
+        key: vfs.file.contents["/sys/class/net/{#IFNAME}/type"]
+        delay: 1h
+      trigger_prototypes:
+      - expression: |
+          change(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])<0 and last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])>0
+          and
+          (last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/type"])=6 or last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/type"])=1)
+          and
+          (last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"])<>2)
+        name: 'Linux: Interface {#IFNAME}: Ethernet has changed to lower speed than it was before'
+        priority: INFO
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          (change(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])>0 and last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"],#2)>0) or
+          (last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"])=2)
+      - expression: |
+          (avg(/Linux by Zabbix agent/net.if.in["{#IFNAME}"],15m)>({$IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"]) or
+          avg(/Linux by Zabbix agent/net.if.out["{#IFNAME}"],15m)>({$IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])) and
+          last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])>0
+        name: 'Linux: Interface {#IFNAME}: High bandwidth usage'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          avg(/Linux by Zabbix agent/net.if.in["{#IFNAME}"],15m)<(({$IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"]) and
+          avg(/Linux by Zabbix agent/net.if.out["{#IFNAME}"],15m)<(({$IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/Linux by Zabbix agent/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])
+      - expression: |
+          min(/Linux by Zabbix agent/net.if.in["{#IFNAME}",errors],5m)>{$IF.ERRORS.WARN:"{#IFNAME}"}
+          or min(/Linux by Zabbix agent/net.if.out["{#IFNAME}",errors],5m)>{$IF.ERRORS.WARN:"{#IFNAME}"}
+        name: 'Linux: Interface {#IFNAME}: High error rate'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          max(/Linux by Zabbix agent/net.if.in["{#IFNAME}",errors],5m)<{$IF.ERRORS.WARN:"{#IFNAME}"}*0.8
+          and max(/Linux by Zabbix agent/net.if.out["{#IFNAME}",errors],5m)<{$IF.ERRORS.WARN:"{#IFNAME}"}*0.8
+    - name: Block devices discovery
+      key: vfs.dev.discovery
+      item_prototypes:
+      - name: '{#DEVNAME}: Disk average queue size (avgqu-sz)'
+        type: DEPENDENT
+        key: vfs.dev.queue_size[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk read request avg waiting time (r_await)'
+        type: CALCULATED
+        key: vfs.dev.read.await[{#DEVNAME}]
+      - name: '{#DEVNAME}: Disk read rate'
+        type: DEPENDENT
+        key: vfs.dev.read.rate[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk read time (rate)'
+        type: DEPENDENT
+        key: vfs.dev.read.time.rate[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk utilization'
+        type: DEPENDENT
+        key: vfs.dev.util[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk write request avg waiting time (w_await)'
+        type: CALCULATED
+        key: vfs.dev.write.await[{#DEVNAME}]
+      - name: '{#DEVNAME}: Disk write rate'
+        type: DEPENDENT
+        key: vfs.dev.write.rate[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk write time (rate)'
+        type: DEPENDENT
+        key: vfs.dev.write.time.rate[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Get stats'
+        key: vfs.file.contents[/sys/block/{#DEVNAME}/stat]
+      trigger_prototypes:
+      - expression: min(/Linux by Zabbix agent/vfs.dev.read.await[{#DEVNAME}],15m) > {$VFS.DEV.READ.AWAIT.WARN:"{#DEVNAME}"} or min(/Linux by Zabbix agent/vfs.dev.write.await[{#DEVNAME}],15m) > {$VFS.DEV.WRITE.AWAIT.WARN:"{#DEVNAME}"}
+        name: 'Linux: {#DEVNAME}: Disk read/write request responses are too high'
+        priority: WARNING
+    - name: Mounted filesystem discovery
+      key: vfs.fs.dependent.discovery
+      item_prototypes:
+      - name: 'FS [{#FSNAME}]: Inodes: Free, in %'
+        type: DEPENDENT
+        key: vfs.fs.dependent.inode[{#FSNAME},pfree]
+        delay: '0'
+        trigger_prototypes:
+        - expression: min(/Linux by Zabbix agent/vfs.fs.dependent.inode[{#FSNAME},pfree],5m)<{$VFS.FS.INODE.PFREE.MIN.CRIT:"{#FSNAME}"}
+          name: 'Linux: FS [{#FSNAME}]: Running out of free inodes'
+          priority: AVERAGE
+        - expression: min(/Linux by Zabbix agent/vfs.fs.dependent.inode[{#FSNAME},pfree],5m)<{$VFS.FS.INODE.PFREE.MIN.WARN:"{#FSNAME}"}
+          name: 'Linux: FS [{#FSNAME}]: Running out of free inodes'
+          priority: WARNING
+      - name: 'FS [{#FSNAME}]: Space: Available'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},free]
+        delay: '0'
+      - name: 'FS [{#FSNAME}]: Space: Used, in %'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},pused]
+        delay: '0'
+        trigger_prototypes:
+        - expression: min(/Linux by Zabbix agent/vfs.fs.dependent.size[{#FSNAME},pused],5m)>{$VFS.FS.PUSED.MAX.CRIT:"{#FSNAME}"}
+          name: 'Linux: FS [{#FSNAME}]: Space is critically low'
+          priority: AVERAGE
+        - expression: min(/Linux by Zabbix agent/vfs.fs.dependent.size[{#FSNAME},pused],5m)>{$VFS.FS.PUSED.MAX.WARN:"{#FSNAME}"}
+          name: 'Linux: FS [{#FSNAME}]: Space is low'
+          priority: WARNING
+      - name: 'FS [{#FSNAME}]: Space: Total'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},total]
+        delay: '0'
+      - name: 'FS [{#FSNAME}]: Space: Used'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},used]
+        delay: '0'
+      - name: 'FS [{#FSNAME}]: Get data'
+        type: DEPENDENT
+        key: vfs.fs.dependent[{#FSNAME},data]
+        delay: '0'
+      - name: 'FS [{#FSNAME}]: Option: Read-only'
+        type: DEPENDENT
+        key: vfs.fs.dependent[{#FSNAME},readonly]
+        delay: '0'
+        trigger_prototypes:
+        - expression: last(/Linux by Zabbix agent/vfs.fs.dependent[{#FSNAME},readonly],#2)=0 and last(/Linux by Zabbix agent/vfs.fs.dependent[{#FSNAME},readonly])=1
+          name: 'Linux: FS [{#FSNAME}]: Filesystem has become read-only'
+          priority: AVERAGE
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: last(/Linux by Zabbix agent/vfs.fs.dependent[{#FSNAME},readonly])=0
+    macros:
+    - macro: '{$AGENT.TIMEOUT}'
+      value: 3m
+    - macro: '{$CPU.UTIL.CRIT}'
+      value: '90'
+    - macro: '{$IF.ERRORS.WARN}'
+      value: '2'
+    - macro: '{$IF.UTIL.MAX}'
+      value: '90'
+    - macro: '{$IFCONTROL}'
+      value: '1'
+    - macro: '{$KERNEL.MAXFILES.MIN}'
+      value: '256'
+    - macro: '{$KERNEL.MAXPROC.MIN}'
+      value: '1024'
+    - macro: '{$LOAD_AVG_PER_CPU.MAX.WARN}'
+      value: '1.5'
+    - macro: '{$MEMORY.AVAILABLE.MIN}'
+      value: 20M
+    - macro: '{$MEMORY.UTIL.MAX}'
+      value: '90'
+    - macro: '{$NET.IF.IFNAME.MATCHES}'
+      value: ^.*$
+    - macro: '{$NET.IF.IFNAME.NOT_MATCHES}'
+      value: (^Software Loopback Interface|^NULL[0-9.]*$|^[Ll]o[0-9.]*$|^[Ss]ystem$|^Nu[0-9.]*$|^veth[0-9A-z]+$|docker[0-9]+|br-[a-z0-9]{12})
+    - macro: '{$SWAP.PFREE.MIN.WARN}'
+      value: '50'
+    - macro: '{$SYSTEM.FUZZYTIME.MAX}'
+      value: 60s
+    - macro: '{$SYSTEM.FUZZYTIME.MIN}'
+      value: 10s
+    - macro: '{$VFS.DEV.DEVNAME.MATCHES}'
+      value: .+
+    - macro: '{$VFS.DEV.DEVNAME.NOT_MATCHES}'
+      value: ^(loop[0-9]*|sd[a-z][0-9]+|nbd[0-9]+|sr[0-9]+|fd[0-9]+|dm-[0-9]+|ram[0-9]+|ploop[a-z0-9]+|md[0-9]*|hcp[0-9]*|zram[0-9]*)
+    - macro: '{$VFS.DEV.READ.AWAIT.WARN}'
+      value: '20'
+    - macro: '{$VFS.DEV.WRITE.AWAIT.WARN}'
+      value: '20'
+    - macro: '{$VFS.FS.FSNAME.MATCHES}'
+      value: .+
+    - macro: '{$VFS.FS.FSNAME.NOT_MATCHES}'
+      value: ^(/dev|/sys|/run|/proc|.+/shm$)
+    - macro: '{$VFS.FS.FSTYPE.MATCHES}'
+      value: ^(btrfs|ext2|ext3|ext4|reiser|xfs|ffs|ufs|jfs|jfs2|vxfs|hfs|apfs|refs|ntfs|fat32|zfs)$
+    - macro: '{$VFS.FS.FSTYPE.NOT_MATCHES}'
+      value: ^\s$
+    - macro: '{$VFS.FS.INODE.PFREE.MIN.CRIT}'
+      value: '10'
+    - macro: '{$VFS.FS.INODE.PFREE.MIN.WARN}'
+      value: '20'
+    - macro: '{$VFS.FS.PUSED.MAX.CRIT}'
+      value: '90'
+    - macro: '{$VFS.FS.PUSED.MAX.WARN}'
+      value: '80'
+  - template: Linux by Zabbix agent active
+    name: Linux by Zabbix agent active
+    items:
+    - name: Host name of Zabbix agent running
+      type: ZABBIX_ACTIVE
+      key: agent.hostname
+      delay: 1h
+    - name: Zabbix agent ping
+      type: ZABBIX_ACTIVE
+      key: agent.ping
+      triggers:
+      - expression: nodata(/Linux by Zabbix agent active/agent.ping,{$AGENT.NODATA_TIMEOUT})=1
+        name: 'Linux: Zabbix agent is not available'
+        priority: AVERAGE
+    - name: Version of Zabbix agent running
+      type: ZABBIX_ACTIVE
+      key: agent.version
+      delay: 1h
+    - name: Maximum number of open file descriptors
+      type: ZABBIX_ACTIVE
+      key: kernel.maxfiles
+      delay: 1h
+      triggers:
+      - expression: last(/Linux by Zabbix agent active/kernel.maxfiles)<{$KERNEL.MAXFILES.MIN}
+        name: 'Linux: Configured max number of open filedescriptors is too low'
+        priority: INFO
+    - name: Maximum number of processes
+      type: ZABBIX_ACTIVE
+      key: kernel.maxproc
+      delay: 1h
+      triggers:
+      - expression: last(/Linux by Zabbix agent active/kernel.maxproc)<{$KERNEL.MAXPROC.MIN}
+        name: 'Linux: Configured max number of processes is too low'
+        priority: INFO
+    - name: Number of processes
+      type: ZABBIX_ACTIVE
+      key: proc.num
+    - name: Number of running processes
+      type: ZABBIX_ACTIVE
+      key: proc.num[,,run]
+    - name: System boot time
+      type: ZABBIX_ACTIVE
+      key: system.boottime
+      delay: 15m
+    - name: Interrupts per second
+      type: ZABBIX_ACTIVE
+      key: system.cpu.intr
+    - name: Load average (1m avg)
+      type: ZABBIX_ACTIVE
+      key: system.cpu.load[all,avg1]
+    - name: Load average (5m avg)
+      type: ZABBIX_ACTIVE
+      key: system.cpu.load[all,avg5]
+    - name: Load average (15m avg)
+      type: ZABBIX_ACTIVE
+      key: system.cpu.load[all,avg15]
+    - name: Number of CPUs
+      type: ZABBIX_ACTIVE
+      key: system.cpu.num
+    - name: Context switches per second
+      type: ZABBIX_ACTIVE
+      key: system.cpu.switches
+    - name: CPU utilization
+      type: DEPENDENT
+      key: system.cpu.util
+      delay: '0'
+      triggers:
+      - expression: min(/Linux by Zabbix agent active/system.cpu.util,5m)>{$CPU.UTIL.CRIT}
+        name: 'Linux: High CPU utilization'
+        priority: WARNING
+    - name: CPU guest time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,guest]
+    - name: CPU guest nice time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,guest_nice]
+    - name: CPU idle time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,idle]
+    - name: CPU interrupt time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,interrupt]
+    - name: CPU iowait time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,iowait]
+    - name: CPU nice time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,nice]
+    - name: CPU softirq time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,softirq]
+    - name: CPU steal time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,steal]
+    - name: CPU system time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,system]
+    - name: CPU user time
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util[,user]
+    - name: System name
+      type: ZABBIX_ACTIVE
+      key: system.hostname
+      delay: 1h
+      triggers:
+      - expression: change(/Linux by Zabbix agent active/system.hostname) and length(last(/Linux by Zabbix agent active/system.hostname))>0
+        name: 'Linux: System name has changed'
+        priority: INFO
+    - name: System local time
+      type: ZABBIX_ACTIVE
+      key: system.localtime
+    - name: Operating system architecture
+      type: ZABBIX_ACTIVE
+      key: system.sw.arch
+      delay: 1h
+    - name: Operating system
+      type: ZABBIX_ACTIVE
+      key: system.sw.os
+      delay: 1h
+      triggers:
+      - expression: change(/Linux by Zabbix agent active/system.sw.os) and length(last(/Linux by Zabbix agent active/system.sw.os))>0
+        name: 'Linux: Operating system description has changed'
+        priority: INFO
+    - name: Number of installed packages
+      type: ZABBIX_ACTIVE
+      key: system.sw.packages.get
+      delay: 1h
+      triggers:
+      - expression: change(/Linux by Zabbix agent active/system.sw.packages.get)<>0
+        name: 'Linux: Number of installed packages has been changed'
+        priority: WARNING
+    - name: Free swap space
+      type: ZABBIX_ACTIVE
+      key: system.swap.size[,free]
+    - name: Free swap space in %
+      type: ZABBIX_ACTIVE
+      key: system.swap.size[,pfree]
+    - name: Total swap space
+      type: ZABBIX_ACTIVE
+      key: system.swap.size[,total]
+    - name: System description
+      type: ZABBIX_ACTIVE
+      key: system.uname
+      delay: 15m
+    - name: System uptime
+      type: ZABBIX_ACTIVE
+      key: system.uptime
+      delay: 30s
+      triggers:
+      - expression: last(/Linux by Zabbix agent active/system.uptime)<10m
+        name: 'Linux: {HOST.NAME} has been restarted'
+        priority: WARNING
+    - name: Number of logged in users
+      type: ZABBIX_ACTIVE
+      key: system.users.num
+    - name: Checksum of /etc/passwd
+      type: ZABBIX_ACTIVE
+      key: vfs.file.cksum[/etc/passwd,sha256]
+      delay: 15m
+      triggers:
+      - expression: last(/Linux by Zabbix agent active/vfs.file.cksum[/etc/passwd,sha256],#1)<>last(/Linux by Zabbix agent active/vfs.file.cksum[/etc/passwd,sha256],#2)
+        name: 'Linux: /etc/passwd has been changed'
+        priority: INFO
+    - name: Get filesystems
+      type: ZABBIX_ACTIVE
+      key: vfs.fs.get
+    - name: Available memory
+      type: ZABBIX_ACTIVE
+      key: vm.memory.size[available]
+    - name: Available memory in %
+      type: ZABBIX_ACTIVE
+      key: vm.memory.size[pavailable]
+    - name: Total memory
+      type: ZABBIX_ACTIVE
+      key: vm.memory.size[total]
+    - name: Memory utilization
+      type: DEPENDENT
+      key: vm.memory.util
+      delay: '0'
+      triggers:
+      - expression: min(/Linux by Zabbix agent active/vm.memory.util,5m)>{$MEMORY.UTIL.MAX}
+        name: 'Linux: High memory utilization'
+        priority: AVERAGE
+    - name: Active agent availability
+      type: INTERNAL
+      key: zabbix[host,active_agent,available]
+      triggers:
+      - expression: min(/Linux by Zabbix agent active/zabbix[host,active_agent,available],{$AGENT.TIMEOUT})=2
+        name: 'Linux: Active checks are not available'
+        priority: HIGH
+    discovery_rules:
+    - name: Network interface discovery
+      key: net.if.discovery
+      item_prototypes:
+      - name: 'Interface {#IFNAME}: Inbound packets discarded'
+        type: ZABBIX_ACTIVE
+        key: net.if.in["{#IFNAME}",dropped]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Inbound packets with errors'
+        type: ZABBIX_ACTIVE
+        key: net.if.in["{#IFNAME}",errors]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Bits received'
+        type: ZABBIX_ACTIVE
+        key: net.if.in["{#IFNAME}"]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Outbound packets discarded'
+        type: ZABBIX_ACTIVE
+        key: net.if.out["{#IFNAME}",dropped]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Outbound packets with errors'
+        type: ZABBIX_ACTIVE
+        key: net.if.out["{#IFNAME}",errors]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Bits sent'
+        type: ZABBIX_ACTIVE
+        key: net.if.out["{#IFNAME}"]
+        delay: 3m
+      - name: 'Interface {#IFNAME}: Operational status'
+        type: ZABBIX_ACTIVE
+        key: vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"]
+        trigger_prototypes:
+        - expression: '{$IFCONTROL:"{#IFNAME}"}=1 and last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"])=2 and (last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"],#1)<>last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"],#2))'
+          name: 'Linux: Interface {#IFNAME}: Link down'
+          priority: AVERAGE
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"])<>2 or {$IFCONTROL:"{#IFNAME}"}=0
+      - name: 'Interface {#IFNAME}: Speed'
+        type: ZABBIX_ACTIVE
+        key: vfs.file.contents["/sys/class/net/{#IFNAME}/speed"]
+        delay: 5m
+      - name: 'Interface {#IFNAME}: Interface type'
+        type: ZABBIX_ACTIVE
+        key: vfs.file.contents["/sys/class/net/{#IFNAME}/type"]
+        delay: 1h
+      trigger_prototypes:
+      - expression: |
+          change(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])<0 and last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])>0
+          and
+          (last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/type"])=6 or last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/type"])=1)
+          and
+          (last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"])<>2)
+        name: 'Linux: Interface {#IFNAME}: Ethernet has changed to lower speed than it was before'
+        priority: INFO
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          (change(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])>0 and last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"],#2)>0) or
+          (last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/operstate"])=2)
+      - expression: |
+          (avg(/Linux by Zabbix agent active/net.if.in["{#IFNAME}"],15m)>({$IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"]) or
+          avg(/Linux by Zabbix agent active/net.if.out["{#IFNAME}"],15m)>({$IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])) and
+          last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])>0
+        name: 'Linux: Interface {#IFNAME}: High bandwidth usage'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          avg(/Linux by Zabbix agent active/net.if.in["{#IFNAME}"],15m)<(({$IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"]) and
+          avg(/Linux by Zabbix agent active/net.if.out["{#IFNAME}"],15m)<(({$IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/Linux by Zabbix agent active/vfs.file.contents["/sys/class/net/{#IFNAME}/speed"])
+      - expression: |
+          min(/Linux by Zabbix agent active/net.if.in["{#IFNAME}",errors],5m)>{$IF.ERRORS.WARN:"{#IFNAME}"}
+          or min(/Linux by Zabbix agent active/net.if.out["{#IFNAME}",errors],5m)>{$IF.ERRORS.WARN:"{#IFNAME}"}
+        name: 'Linux: Interface {#IFNAME}: High error rate'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          max(/Linux by Zabbix agent active/net.if.in["{#IFNAME}",errors],5m)<{$IF.ERRORS.WARN:"{#IFNAME}"}*0.8
+          and max(/Linux by Zabbix agent active/net.if.out["{#IFNAME}",errors],5m)<{$IF.ERRORS.WARN:"{#IFNAME}"}*0.8
+    - name: Block devices discovery
+      key: vfs.dev.discovery
+      item_prototypes:
+      - name: '{#DEVNAME}: Disk average queue size (avgqu-sz)'
+        type: DEPENDENT
+        key: vfs.dev.queue_size[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk read request avg waiting time (r_await)'
+        type: CALCULATED
+        key: vfs.dev.read.await[{#DEVNAME}]
+      - name: '{#DEVNAME}: Disk read rate'
+        type: DEPENDENT
+        key: vfs.dev.read.rate[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk read time (rate)'
+        type: DEPENDENT
+        key: vfs.dev.read.time.rate[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk utilization'
+        type: DEPENDENT
+        key: vfs.dev.util[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk write request avg waiting time (w_await)'
+        type: CALCULATED
+        key: vfs.dev.write.await[{#DEVNAME}]
+      - name: '{#DEVNAME}: Disk write rate'
+        type: DEPENDENT
+        key: vfs.dev.write.rate[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Disk write time (rate)'
+        type: DEPENDENT
+        key: vfs.dev.write.time.rate[{#DEVNAME}]
+        delay: '0'
+      - name: '{#DEVNAME}: Get stats'
+        type: ZABBIX_ACTIVE
+        key: vfs.file.contents[/sys/block/{#DEVNAME}/stat]
+      trigger_prototypes:
+      - expression: min(/Linux by Zabbix agent active/vfs.dev.read.await[{#DEVNAME}],15m) > {$VFS.DEV.READ.AWAIT.WARN:"{#DEVNAME}"} or min(/Linux by Zabbix agent active/vfs.dev.write.await[{#DEVNAME}],15m) > {$VFS.DEV.WRITE.AWAIT.WARN:"{#DEVNAME}"}
+        name: 'Linux: {#DEVNAME}: Disk read/write request responses are too high'
+        priority: WARNING
+    - name: Mounted filesystem discovery
+      key: vfs.fs.dependent.discovery
+      item_prototypes:
+      - name: 'FS [{#FSNAME}]: Inodes: Free, in %'
+        type: DEPENDENT
+        key: vfs.fs.dependent.inode[{#FSNAME},pfree]
+        delay: '0'
+        trigger_prototypes:
+        - expression: min(/Linux by Zabbix agent active/vfs.fs.dependent.inode[{#FSNAME},pfree],5m)<{$VFS.FS.INODE.PFREE.MIN.CRIT:"{#FSNAME}"}
+          name: 'Linux: FS [{#FSNAME}]: Running out of free inodes'
+          priority: AVERAGE
+        - expression: min(/Linux by Zabbix agent active/vfs.fs.dependent.inode[{#FSNAME},pfree],5m)<{$VFS.FS.INODE.PFREE.MIN.WARN:"{#FSNAME}"}
+          name: 'Linux: FS [{#FSNAME}]: Running out of free inodes'
+          priority: WARNING
+      - name: 'FS [{#FSNAME}]: Space: Available'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},free]
+        delay: '0'
+      - name: 'FS [{#FSNAME}]: Space: Used, in %'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},pused]
+        delay: '0'
+        trigger_prototypes:
+        - expression: min(/Linux by Zabbix agent active/vfs.fs.dependent.size[{#FSNAME},pused],5m)>{$VFS.FS.PUSED.MAX.CRIT:"{#FSNAME}"}
+          name: 'Linux: FS [{#FSNAME}]: Space is critically low'
+          priority: AVERAGE
+        - expression: min(/Linux by Zabbix agent active/vfs.fs.dependent.size[{#FSNAME},pused],5m)>{$VFS.FS.PUSED.MAX.WARN:"{#FSNAME}"}
+          name: 'Linux: FS [{#FSNAME}]: Space is low'
+          priority: WARNING
+      - name: 'FS [{#FSNAME}]: Space: Total'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},total]
+        delay: '0'
+      - name: 'FS [{#FSNAME}]: Space: Used'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},used]
+        delay: '0'
+      - name: 'FS [{#FSNAME}]: Get data'
+        type: DEPENDENT
+        key: vfs.fs.dependent[{#FSNAME},data]
+        delay: '0'
+      - name: 'FS [{#FSNAME}]: Option: Read-only'
+        type: DEPENDENT
+        key: vfs.fs.dependent[{#FSNAME},readonly]
+        delay: '0'
+        trigger_prototypes:
+        - expression: last(/Linux by Zabbix agent active/vfs.fs.dependent[{#FSNAME},readonly],#2)=0 and last(/Linux by Zabbix agent active/vfs.fs.dependent[{#FSNAME},readonly])=1
+          name: 'Linux: FS [{#FSNAME}]: Filesystem has become read-only'
+          priority: AVERAGE
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: last(/Linux by Zabbix agent active/vfs.fs.dependent[{#FSNAME},readonly])=0
+    macros:
+    - macro: '{$AGENT.NODATA_TIMEOUT}'
+      value: 30m
+    - macro: '{$AGENT.TIMEOUT}'
+      value: 5m
+    - macro: '{$CPU.UTIL.CRIT}'
+      value: '90'
+    - macro: '{$IF.ERRORS.WARN}'
+      value: '2'
+    - macro: '{$IF.UTIL.MAX}'
+      value: '90'
+    - macro: '{$IFCONTROL}'
+      value: '1'
+    - macro: '{$KERNEL.MAXFILES.MIN}'
+      value: '256'
+    - macro: '{$KERNEL.MAXPROC.MIN}'
+      value: '1024'
+    - macro: '{$LOAD_AVG_PER_CPU.MAX.WARN}'
+      value: '1.5'
+    - macro: '{$MEMORY.AVAILABLE.MIN}'
+      value: 20M
+    - macro: '{$MEMORY.UTIL.MAX}'
+      value: '90'
+    - macro: '{$NET.IF.IFNAME.MATCHES}'
+      value: ^.*$
+    - macro: '{$NET.IF.IFNAME.NOT_MATCHES}'
+      value: (^Software Loopback Interface|^NULL[0-9.]*$|^[Ll]o[0-9.]*$|^[Ss]ystem$|^Nu[0-9.]*$|^veth[0-9A-z]+$|docker[0-9]+|br-[a-z0-9]{12})
+    - macro: '{$SWAP.PFREE.MIN.WARN}'
+      value: '50'
+    - macro: '{$VFS.DEV.DEVNAME.MATCHES}'
+      value: .+
+    - macro: '{$VFS.DEV.DEVNAME.NOT_MATCHES}'
+      value: ^(loop[0-9]*|sd[a-z][0-9]+|nbd[0-9]+|sr[0-9]+|fd[0-9]+|dm-[0-9]+|ram[0-9]+|ploop[a-z0-9]+|md[0-9]*|hcp[0-9]*|zram[0-9]*)
+    - macro: '{$VFS.DEV.READ.AWAIT.WARN}'
+      value: '20'
+    - macro: '{$VFS.DEV.WRITE.AWAIT.WARN}'
+      value: '20'
+    - macro: '{$VFS.FS.FSNAME.MATCHES}'
+      value: .+
+    - macro: '{$VFS.FS.FSNAME.NOT_MATCHES}'
+      value: ^(/dev|/sys|/run|/proc|.+/shm$)
+    - macro: '{$VFS.FS.FSTYPE.MATCHES}'
+      value: ^(btrfs|ext2|ext3|ext4|reiser|xfs|ffs|ufs|jfs|jfs2|vxfs|hfs|apfs|refs|ntfs|fat32|zfs)$
+    - macro: '{$VFS.FS.FSTYPE.NOT_MATCHES}'
+      value: ^\s$
+    - macro: '{$VFS.FS.INODE.PFREE.MIN.CRIT}'
+      value: '10'
+    - macro: '{$VFS.FS.INODE.PFREE.MIN.WARN}'
+      value: '20'
+    - macro: '{$VFS.FS.PUSED.MAX.CRIT}'
+      value: '90'
+    - macro: '{$VFS.FS.PUSED.MAX.WARN}'
+      value: '80'
+  - template: Windows by Zabbix agent
+    name: Windows by Zabbix agent
+    items:
+    - name: Host name of Zabbix agent running
+      key: agent.hostname
+      delay: 1h
+    - name: Zabbix agent ping
+      key: agent.ping
+    - name: Version of Zabbix agent running
+      key: agent.version
+      delay: 1h
+    - name: Cache bytes
+      key: perf_counter_en["\Memory\Cache Bytes"]
+    - name: Free system page table entries
+      key: perf_counter_en["\Memory\Free System Page Table Entries"]
+      triggers:
+      - expression: max(/Windows by Zabbix agent/perf_counter_en["\Memory\Free System Page Table Entries"],5m)<{$MEM.PAGE_TABLE_CRIT.MIN}
+        name: 'Windows: Number of free system page table entries is too low'
+        priority: WARNING
+    - name: Memory page faults per second
+      key: perf_counter_en["\Memory\Page Faults/sec"]
+    - name: Memory pages per second
+      key: perf_counter_en["\Memory\Pages/sec"]
+      triggers:
+      - expression: min(/Windows by Zabbix agent/perf_counter_en["\Memory\Pages/sec"],5m)>{$MEM.PAGE_SEC.CRIT.MAX}
+        name: 'Windows: The Memory Pages/sec is too high'
+        priority: WARNING
+    - name: Memory pool non-paged
+      key: perf_counter_en["\Memory\Pool Nonpaged Bytes"]
+    - name: Used swap space in %
+      key: perf_counter_en["\Paging file(_Total)\% Usage"]
+    - name: CPU DPC time
+      key: perf_counter_en["\Processor Information(_total)\% DPC Time"]
+    - name: CPU interrupt time
+      key: perf_counter_en["\Processor Information(_total)\% Interrupt Time"]
+      triggers:
+      - expression: min(/Windows by Zabbix agent/perf_counter_en["\Processor Information(_total)\% Interrupt Time"],5m)>{$CPU.INTERRUPT.CRIT.MAX}
+        name: 'Windows: CPU interrupt time is too high'
+        priority: WARNING
+    - name: CPU privileged time
+      key: perf_counter_en["\Processor Information(_total)\% Privileged Time"]
+      triggers:
+      - expression: min(/Windows by Zabbix agent/perf_counter_en["\Processor Information(_total)\% Privileged Time"],5m)>{$CPU.PRIV.CRIT.MAX}
+        name: 'Windows: CPU privileged time is too high'
+        priority: WARNING
+    - name: CPU user time
+      key: perf_counter_en["\Processor Information(_total)\% User Time"]
+    - name: Context switches per second
+      key: perf_counter_en["\System\Context Switches/sec"]
+    - name: CPU queue length
+      key: perf_counter_en["\System\Processor Queue Length"]
+    - name: Number of threads
+      key: perf_counter_en["\System\Threads"]
+    - name: Number of processes
+      key: proc.num[]
+    - name: CPU utilization
+      key: system.cpu.util
+      triggers:
+      - expression: min(/Windows by Zabbix agent/system.cpu.util,5m)>{$CPU.UTIL.CRIT}
+        name: 'Windows: High CPU utilization'
+        priority: WARNING
+    - name: System name
+      key: system.hostname
+      delay: 1h
+      triggers:
+      - expression: change(/Windows by Zabbix agent/system.hostname) and length(last(/Windows by Zabbix agent/system.hostname))>0
+        name: 'Windows: System name has changed'
+        priority: INFO
+    - name: System local time
+      key: system.localtime
+      triggers:
+      - expression: fuzzytime(/Windows by Zabbix agent/system.localtime,{$SYSTEM.FUZZYTIME.MAX})=0
+        name: 'Windows: System time is out of sync'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: fuzzytime(/Windows by Zabbix agent/system.localtime,{$SYSTEM.FUZZYTIME.MIN})=1
+    - name: Operating system architecture
+      key: system.sw.arch
+      delay: 1h
+    - name: Operating system
+      key: system.sw.os
+      delay: 1h
+      triggers:
+      - expression: change(/Windows by Zabbix agent/system.sw.os) and length(last(/Windows by Zabbix agent/system.sw.os))>0
+        name: 'Windows: Operating system description has changed'
+        priority: INFO
+    - name: Free swap space
+      type: CALCULATED
+      key: system.swap.free
+    - name: Free swap space in %
+      type: DEPENDENT
+      key: system.swap.pfree
+      delay: '0'
+    - name: Total swap space
+      key: system.swap.size[,total]
+    - name: System description
+      key: system.uname
+      delay: 15m
+    - name: Uptime
+      key: system.uptime
+      delay: 30s
+      triggers:
+      - expression: last(/Windows by Zabbix agent/system.uptime)<10m
+        name: 'Windows: Host has been restarted'
+        priority: WARNING
+    - name: Get filesystems
+      key: vfs.fs.get
+    - name: Total memory
+      key: vm.memory.size[total]
+    - name: Used memory
+      key: vm.memory.size[used]
+    - name: Memory utilization
+      type: CALCULATED
+      key: vm.memory.util
+      triggers:
+      - expression: min(/Windows by Zabbix agent/vm.memory.util,5m)>{$MEMORY.UTIL.MAX}
+        name: 'Windows: High memory utilization'
+        priority: AVERAGE
+    - name: 'Windows: Network interfaces WMI get'
+      key: wmi.getall[root\cimv2,"select Name,Description,NetConnectionID,Speed,AdapterTypeId,NetConnectionStatus,GUID from win32_networkadapter where PhysicalAdapter=True and NetConnectionStatus>0"]
+    - name: Number of cores
+      key: wmi.get[root/cimv2,"Select NumberOfLogicalProcessors from Win32_ComputerSystem"]
+    - name: Zabbix agent availability
+      type: INTERNAL
+      key: zabbix[host,agent,available]
+      triggers:
+      - expression: max(/Windows by Zabbix agent/zabbix[host,agent,available],{$AGENT.TIMEOUT})=0
+        name: 'Windows: Zabbix agent is not available'
+        priority: AVERAGE
+    discovery_rules:
+    - name: Network interfaces discovery
+      key: net.if.discovery
+      item_prototypes:
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Inbound packets discarded'
+        key: net.if.in["{#IFGUID}",dropped]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Inbound packets with errors'
+        key: net.if.in["{#IFGUID}",errors]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Bits received'
+        key: net.if.in["{#IFGUID}"]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Outbound packets discarded'
+        key: net.if.out["{#IFGUID}",dropped]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Outbound packets with errors'
+        key: net.if.out["{#IFGUID}",errors]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Bits sent'
+        key: net.if.out["{#IFGUID}"]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Speed'
+        type: DEPENDENT
+        key: net.if.speed["{#IFGUID}"]
+        delay: '0'
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Operational status'
+        type: DEPENDENT
+        key: net.if.status["{#IFGUID}"]
+        delay: '0'
+        trigger_prototypes:
+        - expression: '{$IFCONTROL:"{#IFNAME}"}=1 and last(/Windows by Zabbix agent/net.if.status["{#IFGUID}"])<>2 and (last(/Windows by Zabbix agent/net.if.status["{#IFGUID}"],#1)<>last(/Windows by Zabbix agent/net.if.status["{#IFGUID}"],#2))'
+          name: 'Windows: Interface {#IFNAME}({#IFALIAS}): Link down'
+          priority: AVERAGE
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: last(/Windows by Zabbix agent/net.if.status["{#IFGUID}"])=2 or {$IFCONTROL:"{#IFNAME}"}=0
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Interface type'
+        type: DEPENDENT
+        key: net.if.type["{#IFGUID}"]
+        delay: '0'
+      trigger_prototypes:
+      - expression: |
+          change(/Windows by Zabbix agent/net.if.speed["{#IFGUID}"])<0 and
+          last(/Windows by Zabbix agent/net.if.speed["{#IFGUID}"])>0 and
+          last(/Windows by Zabbix agent/net.if.status["{#IFGUID}"])=2
+        name: 'Windows: Interface {#IFNAME}({#IFALIAS}): Ethernet has changed to lower speed than it was before'
+        priority: INFO
+      - expression: |
+          (avg(/Windows by Zabbix agent/net.if.in["{#IFGUID}"],15m)>({$IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/Windows by Zabbix agent/net.if.speed["{#IFGUID}"]) or
+          avg(/Windows by Zabbix agent/net.if.out["{#IFGUID}"],15m)>({$IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/Windows by Zabbix agent/net.if.speed["{#IFGUID}"])) and
+          last(/Windows by Zabbix agent/net.if.speed["{#IFGUID}"])>0
+        name: 'Windows: Interface {#IFNAME}({#IFALIAS}): High bandwidth usage'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          avg(/Windows by Zabbix agent/net.if.in["{#IFGUID}"],15m)<(({$IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/Windows by Zabbix agent/net.if.speed["{#IFGUID}"]) and
+          avg(/Windows by Zabbix agent/net.if.out["{#IFGUID}"],15m)<(({$IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/Windows by Zabbix agent/net.if.speed["{#IFGUID}"])
+      - expression: |
+          min(/Windows by Zabbix agent/net.if.in["{#IFGUID}",errors],5m)>{$IF.ERRORS.WARN:"{#IFNAME}"}
+          or min(/Windows by Zabbix agent/net.if.out["{#IFGUID}",errors],5m)>{$IF.ERRORS.WARN:"{#IFNAME}"}
+        name: 'Windows: Interface {#IFNAME}({#IFALIAS}): High error rate'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          max(/Windows by Zabbix agent/net.if.in["{#IFGUID}",errors],5m)<{$IF.ERRORS.WARN:"{#IFNAME}"}*0.8
+          and max(/Windows by Zabbix agent/net.if.out["{#IFGUID}",errors],5m)<{$IF.ERRORS.WARN:"{#IFNAME}"}*0.8
+    - name: Physical disks discovery
+      key: perf_instance_en.discovery[PhysicalDisk]
+      item_prototypes:
+      - name: '{#DEVNAME}: Disk utilization by idle time'
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\% Idle Time",60]
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent/perf_counter_en["\PhysicalDisk({#DEVNAME})\% Idle Time",60],15m)>{$VFS.DEV.UTIL.MAX.WARN}
+          name: 'Windows: {#DEVNAME}: Disk is overloaded'
+          priority: WARNING
+      - name: '{#DEVNAME}: Average disk read queue length'
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk Read Queue Length",60]
+      - name: '{#DEVNAME}: Disk read request avg waiting time'
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk sec/Read",60]
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent/perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk sec/Read",60],15m) > {$VFS.DEV.READ.AWAIT.WARN:"{#DEVNAME}"}
+          name: 'Windows: {#DEVNAME}: Disk read request responses are too high'
+          priority: WARNING
+      - name: '{#DEVNAME}: Disk write request avg waiting time'
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk sec/Write",60]
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent/perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk sec/Write",60],15m) > {$VFS.DEV.WRITE.AWAIT.WARN:"{#DEVNAME}"}
+          name: 'Windows: {#DEVNAME}: Disk write request responses are too high'
+          priority: WARNING
+      - name: '{#DEVNAME}: Average disk write queue length'
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk Write Queue Length",60]
+      - name: '{#DEVNAME}: Disk average queue size (avgqu-sz)'
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Current Disk Queue Length",60]
+      - name: '{#DEVNAME}: Disk read rate'
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Disk Reads/sec",60]
+      - name: '{#DEVNAME}: Disk write rate'
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Disk Writes/sec",60]
+    - name: Windows services discovery
+      key: service.discovery
+      item_prototypes:
+      - name: State of service "{#SERVICE.NAME}" ({#SERVICE.DISPLAYNAME})
+        key: service.info["{#SERVICE.NAME}",state]
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent/service.info["{#SERVICE.NAME}",state],#3)<>0
+          name: 'Windows: "{#SERVICE.NAME}" ({#SERVICE.DISPLAYNAME}) is not running'
+          priority: AVERAGE
+    - name: Mounted filesystem discovery
+      key: vfs.fs.dependent.discovery
+      item_prototypes:
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Space: Available'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},free]
+        delay: '0'
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Space: Used, in %'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},pused]
+        delay: '0'
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent/vfs.fs.dependent.size[{#FSNAME},pused],5m)>{$VFS.FS.PUSED.MAX.CRIT:"{#FSLABEL}({#FSNAME})"}
+          name: 'Windows: FS [{#FSLABEL}({#FSNAME})]: Space is critically low'
+          priority: AVERAGE
+        - expression: min(/Windows by Zabbix agent/vfs.fs.dependent.size[{#FSNAME},pused],5m)>{$VFS.FS.PUSED.MAX.WARN:"{#FSLABEL}({#FSNAME})"}
+          name: 'Windows: FS [{#FSLABEL}({#FSNAME})]: Space is low'
+          priority: WARNING
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Space: Total'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},total]
+        delay: '0'
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Space: Used'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},used]
+        delay: '0'
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Get data'
+        type: DEPENDENT
+        key: vfs.fs.dependent[{#FSNAME},data]
+        delay: '0'
+    macros:
+    - macro: '{$AGENT.TIMEOUT}'
+      value: 3m
+    - macro: '{$CPU.INTERRUPT.CRIT.MAX}'
+      value: '50'
+    - macro: '{$CPU.PRIV.CRIT.MAX}'
+      value: '30'
+    - macro: '{$CPU.QUEUE.CRIT.MAX}'
+      value: '3'
+    - macro: '{$CPU.UTIL.CRIT}'
+      value: '90'
+    - macro: '{$IF.ERRORS.WARN}'
+      value: '2'
+    - macro: '{$IF.UTIL.MAX}'
+      value: '90'
+    - macro: '{$IFCONTROL}'
+      value: '1'
+    - macro: '{$MEM.PAGE_SEC.CRIT.MAX}'
+      value: '1000'
+    - macro: '{$MEM.PAGE_TABLE_CRIT.MIN}'
+      value: '5000'
+    - macro: '{$MEMORY.UTIL.MAX}'
+      value: '90'
+    - macro: '{$NET.IF.IFALIAS.MATCHES}'
+      value: .*
+    - macro: '{$NET.IF.IFALIAS.NOT_MATCHES}'
+      value: CHANGE_THIS
+    - macro: '{$NET.IF.IFDESCR.MATCHES}'
+      value: .*
+    - macro: '{$NET.IF.IFDESCR.NOT_MATCHES}'
+      value: CHANGE_THIS
+    - macro: '{$NET.IF.IFNAME.MATCHES}'
+      value: .*
+    - macro: '{$NET.IF.IFNAME.NOT_MATCHES}'
+      value: Miniport|Virtual|Teredo|Kernel|Loopback|Bluetooth|HTTPS|6to4|QoS|Layer
+    - macro: '{$SERVICE.NAME.MATCHES}'
+      value: ^.*$
+    - macro: '{$SERVICE.NAME.NOT_MATCHES}'
+      value: ^(?:RemoteRegistry|MMCSS|gupdate|SysmonLog|clr_optimization_v.+|sppsvc|gpsvc|Pml Driver HPZ12|Net Driver HPZ12|MapsBroker|IntelAudioService|Intel\(R\) TPM Provisioning Service|dbupdate|DoSvc|CDPUserSvc_.+|WpnUserService_.+|OneSyncSvc_.+|WbioSrvc|BITS|tiledatamodelsvc|GISvc|ShellHWDetection|TrustedInstaller|TabletInputService|CDPSvc|wuauserv|edgeupdate|cbdhsvc_.+)$
+    - macro: '{$SERVICE.STARTUPNAME.MATCHES}'
+      value: ^(?:automatic|automatic delayed)$
+    - macro: '{$SERVICE.STARTUPNAME.NOT_MATCHES}'
+      value: ^(?:manual|disabled)$
+    - macro: '{$SWAP.PFREE.MIN.WARN}'
+      value: '20'
+    - macro: '{$SYSTEM.FUZZYTIME.MAX}'
+      value: 60s
+    - macro: '{$SYSTEM.FUZZYTIME.MIN}'
+      value: 10s
+    - macro: '{$VFS.DEV.DEVNAME.MATCHES}'
+      value: .*
+    - macro: '{$VFS.DEV.DEVNAME.NOT_MATCHES}'
+      value: _Total
+    - macro: '{$VFS.DEV.READ.AWAIT.WARN}'
+      value: '0.02'
+    - macro: '{$VFS.DEV.UTIL.MAX.WARN}'
+      value: '95'
+    - macro: '{$VFS.DEV.WRITE.AWAIT.WARN}'
+      value: '0.02'
+    - macro: '{$VFS.FS.FSDRIVETYPE.MATCHES}'
+      value: fixed
+    - macro: '{$VFS.FS.FSDRIVETYPE.NOT_MATCHES}'
+      value: ^\s$
+    - macro: '{$VFS.FS.FSNAME.MATCHES}'
+      value: .*
+    - macro: '{$VFS.FS.FSNAME.NOT_MATCHES}'
+      value: ^(?:/dev|/sys|/run|/proc|.+/shm$)
+    - macro: '{$VFS.FS.FSTYPE.MATCHES}'
+      value: .*
+    - macro: '{$VFS.FS.FSTYPE.NOT_MATCHES}'
+      value: ^\s$
+    - macro: '{$VFS.FS.PUSED.MAX.CRIT}'
+      value: '90'
+    - macro: '{$VFS.FS.PUSED.MAX.WARN}'
+      value: '80'
+  - template: Windows by Zabbix agent active
+    name: Windows by Zabbix agent active
+    items:
+    - name: Host name of Zabbix agent running
+      type: ZABBIX_ACTIVE
+      key: agent.hostname
+      delay: 1h
+    - name: Zabbix agent ping
+      type: ZABBIX_ACTIVE
+      key: agent.ping
+      triggers:
+      - expression: nodata(/Windows by Zabbix agent active/agent.ping,{$AGENT.NODATA_TIMEOUT})=1
+        name: 'Windows: Zabbix agent is not available'
+        priority: AVERAGE
+    - name: Version of Zabbix agent running
+      type: ZABBIX_ACTIVE
+      key: agent.version
+      delay: 1h
+    - name: Cache bytes
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Memory\Cache Bytes"]
+    - name: Free system page table entries
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Memory\Free System Page Table Entries"]
+      triggers:
+      - expression: max(/Windows by Zabbix agent active/perf_counter_en["\Memory\Free System Page Table Entries"],5m)<{$MEM.PAGE_TABLE_CRIT.MIN}
+        name: 'Windows: Number of free system page table entries is too low'
+        priority: WARNING
+    - name: Memory page faults per second
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Memory\Page Faults/sec"]
+    - name: Memory pages per second
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Memory\Pages/sec"]
+      triggers:
+      - expression: min(/Windows by Zabbix agent active/perf_counter_en["\Memory\Pages/sec"],5m)>{$MEM.PAGE_SEC.CRIT.MAX}
+        name: 'Windows: The Memory Pages/sec is too high'
+        priority: WARNING
+    - name: Memory pool non-paged
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Memory\Pool Nonpaged Bytes"]
+    - name: Used swap space in %
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Paging file(_Total)\% Usage"]
+    - name: CPU DPC time
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Processor Information(_total)\% DPC Time"]
+    - name: CPU interrupt time
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Processor Information(_total)\% Interrupt Time"]
+      triggers:
+      - expression: min(/Windows by Zabbix agent active/perf_counter_en["\Processor Information(_total)\% Interrupt Time"],5m)>{$CPU.INTERRUPT.CRIT.MAX}
+        name: 'Windows: CPU interrupt time is too high'
+        priority: WARNING
+    - name: CPU privileged time
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Processor Information(_total)\% Privileged Time"]
+      triggers:
+      - expression: min(/Windows by Zabbix agent active/perf_counter_en["\Processor Information(_total)\% Privileged Time"],5m)>{$CPU.PRIV.CRIT.MAX}
+        name: 'Windows: CPU privileged time is too high'
+        priority: WARNING
+    - name: CPU user time
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\Processor Information(_total)\% User Time"]
+    - name: Context switches per second
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\System\Context Switches/sec"]
+    - name: CPU queue length
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\System\Processor Queue Length"]
+    - name: Number of threads
+      type: ZABBIX_ACTIVE
+      key: perf_counter_en["\System\Threads"]
+    - name: Number of processes
+      type: ZABBIX_ACTIVE
+      key: proc.num[]
+    - name: CPU utilization
+      type: ZABBIX_ACTIVE
+      key: system.cpu.util
+      triggers:
+      - expression: min(/Windows by Zabbix agent active/system.cpu.util,5m)>{$CPU.UTIL.CRIT}
+        name: 'Windows: High CPU utilization'
+        priority: WARNING
+    - name: System name
+      type: ZABBIX_ACTIVE
+      key: system.hostname
+      delay: 1h
+      triggers:
+      - expression: change(/Windows by Zabbix agent active/system.hostname) and length(last(/Windows by Zabbix agent active/system.hostname))>0
+        name: 'Windows: System name has changed'
+        priority: INFO
+    - name: System local time
+      type: ZABBIX_ACTIVE
+      key: system.localtime
+    - name: Operating system architecture
+      type: ZABBIX_ACTIVE
+      key: system.sw.arch
+      delay: 1h
+    - name: Operating system
+      type: ZABBIX_ACTIVE
+      key: system.sw.os
+      delay: 1h
+      triggers:
+      - expression: change(/Windows by Zabbix agent active/system.sw.os) and length(last(/Windows by Zabbix agent active/system.sw.os))>0
+        name: 'Windows: Operating system description has changed'
+        priority: INFO
+    - name: Free swap space
+      type: CALCULATED
+      key: system.swap.free
+    - name: Free swap space in %
+      type: DEPENDENT
+      key: system.swap.pfree
+      delay: '0'
+    - name: Total swap space
+      type: ZABBIX_ACTIVE
+      key: system.swap.size[,total]
+    - name: System description
+      type: ZABBIX_ACTIVE
+      key: system.uname
+      delay: 15m
+    - name: Uptime
+      type: ZABBIX_ACTIVE
+      key: system.uptime
+      delay: 30s
+      triggers:
+      - expression: last(/Windows by Zabbix agent active/system.uptime)<10m
+        name: 'Windows: Host has been restarted'
+        priority: WARNING
+    - name: Get filesystems
+      type: ZABBIX_ACTIVE
+      key: vfs.fs.get
+    - name: Total memory
+      type: ZABBIX_ACTIVE
+      key: vm.memory.size[total]
+    - name: Used memory
+      type: ZABBIX_ACTIVE
+      key: vm.memory.size[used]
+    - name: Memory utilization
+      type: CALCULATED
+      key: vm.memory.util
+      triggers:
+      - expression: min(/Windows by Zabbix agent active/vm.memory.util,5m)>{$MEMORY.UTIL.MAX}
+        name: 'Windows: High memory utilization'
+        priority: AVERAGE
+    - name: 'Windows: Network interfaces WMI get'
+      type: ZABBIX_ACTIVE
+      key: wmi.getall[root\cimv2,"select Name,Description,NetConnectionID,Speed,AdapterTypeId,NetConnectionStatus,GUID from win32_networkadapter where PhysicalAdapter=True and NetConnectionStatus>0"]
+    - name: Number of cores
+      type: ZABBIX_ACTIVE
+      key: wmi.get[root/cimv2,"Select NumberOfLogicalProcessors from Win32_ComputerSystem"]
+    - name: Active agent availability
+      type: INTERNAL
+      key: zabbix[host,active_agent,available]
+      triggers:
+      - expression: min(/Windows by Zabbix agent active/zabbix[host,active_agent,available],{$AGENT.TIMEOUT})=2
+        name: 'Windows: Active checks are not available'
+        priority: HIGH
+    discovery_rules:
+    - name: Network interfaces discovery
+      key: net.if.discovery
+      item_prototypes:
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Inbound packets discarded'
+        type: ZABBIX_ACTIVE
+        key: net.if.in["{#IFGUID}",dropped]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Inbound packets with errors'
+        type: ZABBIX_ACTIVE
+        key: net.if.in["{#IFGUID}",errors]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Bits received'
+        type: ZABBIX_ACTIVE
+        key: net.if.in["{#IFGUID}"]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Outbound packets discarded'
+        type: ZABBIX_ACTIVE
+        key: net.if.out["{#IFGUID}",dropped]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Outbound packets with errors'
+        type: ZABBIX_ACTIVE
+        key: net.if.out["{#IFGUID}",errors]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Bits sent'
+        type: ZABBIX_ACTIVE
+        key: net.if.out["{#IFGUID}"]
+        delay: 3m
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Speed'
+        type: DEPENDENT
+        key: net.if.speed["{#IFGUID}"]
+        delay: '0'
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Operational status'
+        type: DEPENDENT
+        key: net.if.status["{#IFGUID}"]
+        delay: '0'
+        trigger_prototypes:
+        - expression: '{$IFCONTROL:"{#IFNAME}"}=1 and last(/Windows by Zabbix agent active/net.if.status["{#IFGUID}"])<>2 and (last(/Windows by Zabbix agent active/net.if.status["{#IFGUID}"],#1)<>last(/Windows by Zabbix agent active/net.if.status["{#IFGUID}"],#2))'
+          name: 'Windows: Interface {#IFNAME}({#IFALIAS}): Link down'
+          priority: AVERAGE
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: last(/Windows by Zabbix agent active/net.if.status["{#IFGUID}"])=2 or {$IFCONTROL:"{#IFNAME}"}=0
+      - name: 'Interface {#IFNAME}({#IFALIAS}): Interface type'
+        type: DEPENDENT
+        key: net.if.type["{#IFGUID}"]
+        delay: '0'
+      trigger_prototypes:
+      - expression: |
+          change(/Windows by Zabbix agent active/net.if.speed["{#IFGUID}"])<0 and
+          last(/Windows by Zabbix agent active/net.if.speed["{#IFGUID}"])>0 and
+          last(/Windows by Zabbix agent active/net.if.status["{#IFGUID}"])=2
+        name: 'Windows: Interface {#IFNAME}({#IFALIAS}): Ethernet has changed to lower speed than it was before'
+        priority: INFO
+      - expression: |
+          (avg(/Windows by Zabbix agent active/net.if.in["{#IFGUID}"],15m)>({$IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/Windows by Zabbix agent active/net.if.speed["{#IFGUID}"]) or
+          avg(/Windows by Zabbix agent active/net.if.out["{#IFGUID}"],15m)>({$IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/Windows by Zabbix agent active/net.if.speed["{#IFGUID}"])) and
+          last(/Windows by Zabbix agent active/net.if.speed["{#IFGUID}"])>0
+        name: 'Windows: Interface {#IFNAME}({#IFALIAS}): High bandwidth usage'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          avg(/Windows by Zabbix agent active/net.if.in["{#IFGUID}"],15m)<(({$IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/Windows by Zabbix agent active/net.if.speed["{#IFGUID}"]) and
+          avg(/Windows by Zabbix agent active/net.if.out["{#IFGUID}"],15m)<(({$IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/Windows by Zabbix agent active/net.if.speed["{#IFGUID}"])
+      - expression: |
+          min(/Windows by Zabbix agent active/net.if.in["{#IFGUID}",errors],5m)>{$IF.ERRORS.WARN:"{#IFNAME}"}
+          or min(/Windows by Zabbix agent active/net.if.out["{#IFGUID}",errors],5m)>{$IF.ERRORS.WARN:"{#IFNAME}"}
+        name: 'Windows: Interface {#IFNAME}({#IFALIAS}): High error rate'
+        priority: WARNING
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: |
+          max(/Windows by Zabbix agent active/net.if.in["{#IFGUID}",errors],5m)<{$IF.ERRORS.WARN:"{#IFNAME}"}*0.8
+          and max(/Windows by Zabbix agent active/net.if.out["{#IFGUID}",errors],5m)<{$IF.ERRORS.WARN:"{#IFNAME}"}*0.8
+    - name: Physical disks discovery
+      key: perf_instance_en.discovery[PhysicalDisk]
+      item_prototypes:
+      - name: '{#DEVNAME}: Disk utilization by idle time'
+        type: ZABBIX_ACTIVE
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\% Idle Time",60]
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent active/perf_counter_en["\PhysicalDisk({#DEVNAME})\% Idle Time",60],15m)>{$VFS.DEV.UTIL.MAX.WARN}
+          name: 'Windows: {#DEVNAME}: Disk is overloaded'
+          priority: WARNING
+      - name: '{#DEVNAME}: Average disk read queue length'
+        type: ZABBIX_ACTIVE
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk Read Queue Length",60]
+      - name: '{#DEVNAME}: Disk read request avg waiting time'
+        type: ZABBIX_ACTIVE
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk sec/Read",60]
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent active/perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk sec/Read",60],15m) > {$VFS.DEV.READ.AWAIT.WARN:"{#DEVNAME}"}
+          name: 'Windows: {#DEVNAME}: Disk read request responses are too high'
+          priority: WARNING
+      - name: '{#DEVNAME}: Disk write request avg waiting time'
+        type: ZABBIX_ACTIVE
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk sec/Write",60]
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent active/perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk sec/Write",60],15m) > {$VFS.DEV.WRITE.AWAIT.WARN:"{#DEVNAME}"}
+          name: 'Windows: {#DEVNAME}: Disk write request responses are too high'
+          priority: WARNING
+      - name: '{#DEVNAME}: Average disk write queue length'
+        type: ZABBIX_ACTIVE
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Avg. Disk Write Queue Length",60]
+      - name: '{#DEVNAME}: Disk average queue size (avgqu-sz)'
+        type: ZABBIX_ACTIVE
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Current Disk Queue Length",60]
+      - name: '{#DEVNAME}: Disk read rate'
+        type: ZABBIX_ACTIVE
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Disk Reads/sec",60]
+      - name: '{#DEVNAME}: Disk write rate'
+        type: ZABBIX_ACTIVE
+        key: perf_counter_en["\PhysicalDisk({#DEVNAME})\Disk Writes/sec",60]
+    - name: Windows services discovery
+      key: service.discovery
+      item_prototypes:
+      - name: State of service "{#SERVICE.NAME}" ({#SERVICE.DISPLAYNAME})
+        type: ZABBIX_ACTIVE
+        key: service.info["{#SERVICE.NAME}",state]
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent active/service.info["{#SERVICE.NAME}",state],#3)<>0
+          name: 'Windows: "{#SERVICE.NAME}" ({#SERVICE.DISPLAYNAME}) is not running'
+          priority: AVERAGE
+    - name: Mounted filesystem discovery
+      key: vfs.fs.dependent.discovery
+      item_prototypes:
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Space: Available'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},free]
+        delay: '0'
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Space: Used, in %'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},pused]
+        delay: '0'
+        trigger_prototypes:
+        - expression: min(/Windows by Zabbix agent active/vfs.fs.dependent.size[{#FSNAME},pused],5m)>{$VFS.FS.PUSED.MAX.CRIT:"{#FSLABEL}({#FSNAME})"}
+          name: 'Windows: FS [{#FSLABEL}({#FSNAME})]: Space is critically low'
+          priority: AVERAGE
+        - expression: min(/Windows by Zabbix agent active/vfs.fs.dependent.size[{#FSNAME},pused],5m)>{$VFS.FS.PUSED.MAX.WARN:"{#FSLABEL}({#FSNAME})"}
+          name: 'Windows: FS [{#FSLABEL}({#FSNAME})]: Space is low'
+          priority: WARNING
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Space: Total'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},total]
+        delay: '0'
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Space: Used'
+        type: DEPENDENT
+        key: vfs.fs.dependent.size[{#FSNAME},used]
+        delay: '0'
+      - name: 'FS [{#FSLABEL}({#FSNAME})]: Get data'
+        type: DEPENDENT
+        key: vfs.fs.dependent[{#FSNAME},data]
+        delay: '0'
+    macros:
+    - macro: '{$AGENT.NODATA_TIMEOUT}'
+      value: 30m
+    - macro: '{$AGENT.TIMEOUT}'
+      value: 5m
+    - macro: '{$CPU.INTERRUPT.CRIT.MAX}'
+      value: '50'
+    - macro: '{$CPU.PRIV.CRIT.MAX}'
+      value: '30'
+    - macro: '{$CPU.QUEUE.CRIT.MAX}'
+      value: '3'
+    - macro: '{$CPU.UTIL.CRIT}'
+      value: '90'
+    - macro: '{$IF.ERRORS.WARN}'
+      value: '2'
+    - macro: '{$IF.UTIL.MAX}'
+      value: '90'
+    - macro: '{$IFCONTROL}'
+      value: '1'
+    - macro: '{$MEM.PAGE_SEC.CRIT.MAX}'
+      value: '1000'
+    - macro: '{$MEM.PAGE_TABLE_CRIT.MIN}'
+      value: '5000'
+    - macro: '{$MEMORY.UTIL.MAX}'
+      value: '90'
+    - macro: '{$NET.IF.IFALIAS.MATCHES}'
+      value: .*
+    - macro: '{$NET.IF.IFALIAS.NOT_MATCHES}'
+      value: CHANGE_THIS
+    - macro: '{$NET.IF.IFDESCR.MATCHES}'
+      value: .*
+    - macro: '{$NET.IF.IFDESCR.NOT_MATCHES}'
+      value: CHANGE_THIS
+    - macro: '{$NET.IF.IFNAME.MATCHES}'
+      value: .*
+    - macro: '{$NET.IF.IFNAME.NOT_MATCHES}'
+      value: Miniport|Virtual|Teredo|Kernel|Loopback|Bluetooth|HTTPS|6to4|QoS|Layer
+    - macro: '{$SERVICE.NAME.MATCHES}'
+      value: ^.*$
+    - macro: '{$SERVICE.NAME.NOT_MATCHES}'
+      value: ^(?:RemoteRegistry|MMCSS|gupdate|SysmonLog|clr_optimization_v.+|sppsvc|gpsvc|Pml Driver HPZ12|Net Driver HPZ12|MapsBroker|IntelAudioService|Intel\(R\) TPM Provisioning Service|dbupdate|DoSvc|CDPUserSvc_.+|WpnUserService_.+|OneSyncSvc_.+|WbioSrvc|BITS|tiledatamodelsvc|GISvc|ShellHWDetection|TrustedInstaller|TabletInputService|CDPSvc|wuauserv|edgeupdate|cbdhsvc_.+)$
+    - macro: '{$SERVICE.STARTUPNAME.MATCHES}'
+      value: ^(?:automatic|automatic delayed)$
+    - macro: '{$SERVICE.STARTUPNAME.NOT_MATCHES}'
+      value: ^(?:manual|disabled)$
+    - macro: '{$SWAP.PFREE.MIN.WARN}'
+      value: '20'
+    - macro: '{$VFS.DEV.DEVNAME.MATCHES}'
+      value: .*
+    - macro: '{$VFS.DEV.DEVNAME.NOT_MATCHES}'
+      value: _Total
+    - macro: '{$VFS.DEV.READ.AWAIT.WARN}'
+      value: '0.02'
+    - macro: '{$VFS.DEV.UTIL.MAX.WARN}'
+      value: '95'
+    - macro: '{$VFS.DEV.WRITE.AWAIT.WARN}'
+      value: '0.02'
+    - macro: '{$VFS.FS.FSDRIVETYPE.MATCHES}'
+      value: fixed
+    - macro: '{$VFS.FS.FSDRIVETYPE.NOT_MATCHES}'
+      value: ^\s$
+    - macro: '{$VFS.FS.FSNAME.MATCHES}'
+      value: .*
+    - macro: '{$VFS.FS.FSNAME.NOT_MATCHES}'
+      value: ^(?:/dev|/sys|/run|/proc|.+/shm$)
+    - macro: '{$VFS.FS.FSTYPE.MATCHES}'
+      value: .*
+    - macro: '{$VFS.FS.FSTYPE.NOT_MATCHES}'
+      value: ^\s$
+    - macro: '{$VFS.FS.PUSED.MAX.CRIT}'
+      value: '90'
+    - macro: '{$VFS.FS.PUSED.MAX.WARN}'
+      value: '80'
+  triggers:
+  - expression: last(/Linux by Zabbix agent/proc.num)/last(/Linux by Zabbix agent/kernel.maxproc)*100>80
+    name: 'Linux: Getting closer to process limit'
+    priority: WARNING
+  - expression: last(/Linux by Zabbix agent active/proc.num)/last(/Linux by Zabbix agent active/kernel.maxproc)*100>80
+    name: 'Linux: Getting closer to process limit'
+    priority: WARNING
+  - expression: max(/Linux by Zabbix agent/system.swap.size[,pfree],5m)<{$SWAP.PFREE.MIN.WARN} and last(/Linux by Zabbix agent/system.swap.size[,total])>0
+    name: 'Linux: High swap space usage'
+    priority: WARNING
+  - expression: max(/Linux by Zabbix agent active/system.swap.size[,pfree],5m)<{$SWAP.PFREE.MIN.WARN} and last(/Linux by Zabbix agent active/system.swap.size[,total])>0
+    name: 'Linux: High swap space usage'
+    priority: WARNING
+  - expression: max(/Linux by Zabbix agent/vm.memory.size[available],5m)<{$MEMORY.AVAILABLE.MIN} and last(/Linux by Zabbix agent/vm.memory.size[total])>0
+    name: 'Linux: Lack of available memory'
+    priority: AVERAGE
+  - expression: max(/Linux by Zabbix agent active/vm.memory.size[available],5m)<{$MEMORY.AVAILABLE.MIN} and last(/Linux by Zabbix agent active/vm.memory.size[total])>0
+    name: 'Linux: Lack of available memory'
+    priority: AVERAGE
+  - expression: |
+      min(/Linux by Zabbix agent/system.cpu.load[all,avg1],5m)/last(/Linux by Zabbix agent/system.cpu.num)>{$LOAD_AVG_PER_CPU.MAX.WARN}
+      and last(/Linux by Zabbix agent/system.cpu.load[all,avg5])>0
+      and last(/Linux by Zabbix agent/system.cpu.load[all,avg15])>0
+    name: 'Linux: Load average is too high'
+    priority: AVERAGE
+  - expression: |
+      min(/Linux by Zabbix agent active/system.cpu.load[all,avg1],5m)/last(/Linux by Zabbix agent active/system.cpu.num)>{$LOAD_AVG_PER_CPU.MAX.WARN}
+      and last(/Linux by Zabbix agent active/system.cpu.load[all,avg5])>0
+      and last(/Linux by Zabbix agent active/system.cpu.load[all,avg15])>0
+    name: 'Linux: Load average is too high'
+    priority: AVERAGE
+  - expression: min(/Windows by Zabbix agent/perf_counter_en["\System\Processor Queue Length"],5m) - last(/Windows by Zabbix agent/wmi.get[root/cimv2,"Select NumberOfLogicalProcessors from Win32_ComputerSystem"]) * 2 > {$CPU.QUEUE.CRIT.MAX}
+    name: 'Windows: CPU queue length is too high'
+    priority: WARNING
+  - expression: min(/Windows by Zabbix agent active/perf_counter_en["\System\Processor Queue Length"],5m) - last(/Windows by Zabbix agent active/wmi.get[root/cimv2,"Select NumberOfLogicalProcessors from Win32_ComputerSystem"]) * 2 > {$CPU.QUEUE.CRIT.MAX}
+    name: 'Windows: CPU queue length is too high'
+    priority: WARNING
+  - expression: max(/Windows by Zabbix agent/system.swap.pfree,5m)<{$SWAP.PFREE.MIN.WARN} and last(/Windows by Zabbix agent/system.swap.size[,total])>0
+    name: 'Windows: High swap space usage'
+    priority: WARNING
+  - expression: max(/Windows by Zabbix agent active/system.swap.pfree,5m)<{$SWAP.PFREE.MIN.WARN} and last(/Windows by Zabbix agent active/system.swap.size[,total])>0
+    name: 'Windows: High swap space usage'
+    priority: WARNING

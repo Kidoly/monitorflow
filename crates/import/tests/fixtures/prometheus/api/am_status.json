@@ -1,0 +1,24 @@
+{
+  "cluster": {
+    "name": "01M7KHRV7DXT2Y44RZB9N8EM33",
+    "peers": [
+      {
+        "address": "alertmanager:9094",
+        "name": "01M7KHRV7DXT2Y44RZB9N8EM33"
+      }
+    ],
+    "status": "ready"
+  },
+  "config": {
+    "original": "global:\n  resolve_timeout: 5m\n  http_config:\n    follow_redirects: true\n    enable_http2: true\n  smtp_from: alertmanager@example.com\n  smtp_hello: localhost\n  smtp_smarthost: mail.example.com:587\n  smtp_auth_username: alertmanager@example.com\n  smtp_auth_password: <secret>\n  smtp_require_tls: true\n  smtp_tls_config:\n    insecure_skip_verify: false\n  pagerduty_url: https://events.pagerduty.com/v2/enqueue\n  opsgenie_api_url: https://api.opsgenie.com/\n  wechat_api_url: https://qyapi.weixin.qq.com/cgi-bin/\n  victorops_api_url: https://alert.victorops.com/integrations/generic/20131114/alert/\n  telegram_api_url: https://api.telegram.org\n  webex_api_url: https://webexapis.com/v1/messages\n  rocketchat_api_url: https://open.rocket.chat/\nroute:\n  receiver: ops-email\n  group_by:\n  - alertname\n  - instance\n  continue: false\n  routes:\n  - receiver: on-call\n    matchers:\n    - severity=~\"critical|page\"\n    continue: true\n  - receiver: web-team\n    matchers:\n    - alertname=~\"Blackbox.*\"\n    continue: false\n  group_wait: 30s\n  group_interval: 5m\n  repeat_interval: 4h\nreceivers:\n- name: ops-email\n  email_configs:\n  - send_resolved: true\n    to: ops@example.com, admin@example.com\n    from: alertmanager@example.com\n    hello: localhost\n    smarthost: mail.example.com:587\n    auth_username: alertmanager@example.com\n    auth_password: <secret>\n    headers:\n      From: alertmanager@example.com\n      Subject: '{{ template \"email.default.subject\" . }}'\n      To: ops@example.com, admin@example.com\n    html: '{{ template \"email.default.html\" . }}'\n    require_tls: true\n    tls_config:\n      insecure_skip_verify: false\n- name: on-call\n  pagerduty_configs:\n  - send_resolved: true\n    http_config:\n      follow_redirects: true\n      enable_http2: true\n    routing_key: <secret>\n    url: https://events.pagerduty.com/v2/enqueue\n    client: '{{ template \"pagerduty.default.client\" . }}'\n    client_url: '{{ template \"pagerduty.default.clientURL\" . }}'\n    description: '{{ template \"pagerduty.default.description\" .}}'\n    details:\n      firing: '{{ template \"pagerduty.default.instances\" .Alerts.Firing }}'\n      num_firing: '{{ .Alerts.Firing | len }}'\n      num_resolved: '{{ .Alerts.Resolved | len }}'\n      resolved: '{{ template \"pagerduty.default.instances\" .Alerts.Resolved }}'\n    source: '{{ template \"pagerduty.default.client\" . }}'\n  slack_configs:\n  - send_resolved: true\n    http_config:\n      follow_redirects: true\n      enable_http2: true\n    api_url: <secret>\n    channel: '#alerts'\n    username: '{{ template \"slack.default.username\" . }}'\n    color: '{{ if eq .Status \"firing\" }}danger{{ else }}good{{ end }}'\n    title: '{{ template \"slack.default.title\" . }}'\n    title_link: '{{ template \"slack.default.titlelink\" . }}'\n    pretext: '{{ template \"slack.default.pretext\" . }}'\n    text: '{{ template \"slack.default.text\" . }}'\n    short_fields: false\n    footer: '{{ template \"slack.default.footer\" . }}'\n    fallback: '{{ template \"slack.default.fallback\" . }}'\n    callback_id: '{{ template \"slack.default.callbackid\" . }}'\n    icon_emoji: '{{ template \"slack.default.iconemoji\" . }}'\n    icon_url: '{{ template \"slack.default.iconurl\" . }}'\n    link_names: false\n- name: web-team\n  discord_configs:\n  - send_resolved: true\n    http_config:\n      follow_redirects: true\n      enable_http2: true\n    webhook_url: <secret>\n    title: '{{ template \"discord.default.title\" . }}'\n    message: '{{ template \"discord.default.message\" . }}'\n  msteams_configs:\n  - send_resolved: true\n    http_config:\n      follow_redirects: true\n      enable_http2: true\n    webhook_url: <secret>\n    title: '{{ template \"msteams.default.title\" . }}'\n    summary: '{{ template \"msteams.default.summary\" . }}'\n    text: '{{ template \"msteams.default.text\" . }}'\n- name: automation\n  webhook_configs:\n  - send_resolved: true\n    http_config:\n      follow_redirects: true\n      enable_http2: true\n    url: <secret>\n    url_file: \"\"\n    max_alerts: 0\n    timeout: 0s\ntemplates: []\n"
+  },
+  "uptime": "2026-11-17T01:26:02.223Z",
+  "versionInfo": {
+    "branch": "HEAD",
+    "buildDate": "20250307-15:05:18",
+    "buildUser": "root@fa3ca569dfe4",
+    "goVersion": "go1.23.7",
+    "revision": "b2099eaa2c9ebc25edb26517cb9c732738e93910",
+    "version": "0.28.1"
+  }
+}

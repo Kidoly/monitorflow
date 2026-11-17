@@ -23,6 +23,7 @@ export const en = {
   "state.acknowledged": "Acknowledged",
   "state.silenced": "Silenced",
   "state.ok": "OK",
+  "state.waiting": "Waiting for agent",
   loading: "Loading…",
 } as const satisfies Catalog;
 
@@ -48,5 +49,6 @@ export const fr: Translation<typeof en> = {
   "state.acknowledged": "Pris en charge",
   "state.silenced": "En silence",
   "state.ok": "OK",
+  "state.waiting": "En attente de l’agent",
   loading: "Chargement…",
 };
