@@ -146,7 +146,7 @@ pub trait Source: Send + Sync {
 
 /// Every reader, in the order the source picker shows them.
 pub fn sources() -> Vec<Box<dyn Source>> {
-    vec![]
+    vec![Box::new(crate::prtg::Prtg)]
 }
 
 /// The reader of `id`.
