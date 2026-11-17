@@ -21,9 +21,9 @@ describe("eventSummary", () => {
     const cases: [Partial<Parameters<typeof eventSummary>[0]>, string][] = [
       [
         { kind: "context_sent", payload: { model: "claude/opus", context: { redactions: { password: 2, token: 1 } } } },
-        "Context sent to claude/opus, 3 secrets redacted",
+        "claude/opus, 3 secrets redacted",
       ],
-      [{ kind: "ai_proposal", payload: { diagnosis: "disk full", command: "df -h" } }, "Proposed df -h · disk full"],
+      [{ kind: "ai_proposal", payload: { diagnosis: "disk full", command: "df -h" } }, "df -h · disk full"],
       [
         { kind: "ai_proposal", payload: { diagnosis: "fixed", command: null, stop: "resolved", reason: "usage dropped" } },
         "Stopped (considers it fixed): usage dropped",
@@ -32,18 +32,54 @@ describe("eventSummary", () => {
         { kind: "classification", payload: { tier: "low_impact", rule: { source: "builtin", id: "low.systemctl" }, reason: "restarts a unit" } },
         "Low-impact by rule low.systemctl: restarts a unit",
       ],
-      [{ kind: "approval", actor_kind: "system", payload: { command: "df -h" } }, "Approved by policy: df -h"],
-      [{ kind: "approval", actor_kind: "user", payload: { command: "df -h" } }, "Approved: df -h"],
-      [{ kind: "edit", payload: { original: "a", edited: "b" } }, "Edited a → b"],
-      [{ kind: "rejection", payload: { command: "reboot", reason: "not now" } }, "Rejected reboot · not now"],
-      [{ kind: "snapshot", payload: { method: "none", name: null, detail: "rollback is limited" } }, "No snapshot: rollback is limited"],
-      [{ kind: "snapshot", payload: { method: "proxmox", name: "mf-1-2", detail: "" } }, "Snapshot mf-1-2 (proxmox)"],
-      [{ kind: "command_queued", payload: { command: "df -h" } }, "Queued df -h"],
+      [
+        { kind: "classification", payload: { tier: "read_only", rule: { source: "builtin", id: "readonly.free" }, reason: "`free` only reports system state" } },
+        "Read-only by rule readonly.free: free only reports system state",
+      ],
+      [{ kind: "approval", actor_kind: "system", payload: { command: "df -h" } }, "df -h"],
+      [{ kind: "approval", actor_kind: "user", payload: { command: "df -h" } }, "df -h"],
+      [{ kind: "edit", payload: { original: "a", edited: "b" } }, "a → b"],
+      [{ kind: "rejection", payload: { command: "reboot", reason: "not now" } }, "reboot · not now"],
+      [{ kind: "rejection", payload: { command: "reboot", reason: null } }, "reboot"],
+      [{ kind: "snapshot", payload: { method: "none", name: null, detail: "rollback is limited" } }, "None: rollback is limited"],
+      [{ kind: "snapshot", payload: { method: "proxmox", name: "mf-1-2", detail: "" } }, "mf-1-2 (proxmox)"],
+      [{ kind: "command_queued", payload: { command: "df -h" } }, "df -h"],
       [{ kind: "command_result", payload: { exit_code: 0, duration_ms: 1500 } }, "Exit code 0, 1.5 s"],
       [{ kind: "command_result", payload: { exit_code: null, error: "expired", duration_ms: 20 } }, "Did not complete: expired, 20 ms"],
-      [{ kind: "escalation", payload: { reason: "limit" } }, "Escalated: limit"],
-      [{ kind: "state_change", payload: { from: "awaiting_approval", to: "running" } }, "State awaiting approval → running"],
+      // Written before closing codes (ADR-0144): the server's sentence, without the event's name again.
+      [{ kind: "escalation", payload: { reason: "limit" } }, "limit"],
+      [{ kind: "state_change", payload: { from: "awaiting_approval", to: "running" } }, "awaiting approval → running"],
       [{ kind: "note", payload: { text: "the sensor returned to normal" } }, "the sensor returned to normal"],
+      [
+        { kind: "note", payload: { text: "the sensor returned to normal", code: "sensor_normal", from: "running", to: "resolved" } },
+        "The sensor returned to normal",
+      ],
+      [
+        { kind: "escalation", payload: { reason: "the duration limit of 2 s was reached", code: "duration_limit", limit: 2, to: "escalated" } },
+        "The duration limit of 2 seconds was reached",
+      ],
+      [
+        { kind: "escalation", payload: { reason: "the AI provider failed: timeout", code: "ai_failed", detail: "timeout", to: "failed" } },
+        "Failed: The AI provider failed: timeout",
+      ],
+      // The result just before says why: the escalation does not quote it again.
+      [
+        { kind: "escalation", payload: { reason: "the command did not run to completion: refused", code: "incomplete", to: "escalated" } },
+        "The command did not complete",
+      ],
+      // A code this page does not know yet: the server's English.
+      [{ kind: "escalation", payload: { reason: "a new reason", code: "from_the_future" } }, "a new reason"],
+      [
+        { kind: "command_result", payload: { exit_code: null, error: "no result within 30 s", error_code: "no_result", limit: 30, duration_ms: 20 } },
+        "Did not complete: no result within 30 seconds, 20 ms",
+      ],
+      [
+        {
+          kind: "command_result",
+          payload: { exit_code: null, error: "shell commands are disabled on this agent (commands.shell); run the installer with MF_ALLOW_COMMANDS=1 to allow them" },
+        },
+        "Did not complete: AI commands are off on this agent. Run the installer with MF_ALLOW_COMMANDS=1 to allow them.",
+      ],
     ];
     for (const [overrides, want] of cases) {
       expect(eventSummary(event(overrides))).toBe(want);
@@ -56,8 +92,26 @@ describe("eventSummary", () => {
       "Code de sortie 0, 1,5 s",
     );
     expect(eventSummary(event({ kind: "state_change", payload: { from: "awaiting_approval", to: "running" } }))).toBe(
-      "État en attente d’approbation → en cours",
+      "en attente d’approbation → en cours",
     );
+    // MonitorFlow's own messages are translated from their codes, the AI's words kept as they are.
+    expect(eventSummary(event({ kind: "escalation", payload: { reason: "x", code: "commands_off", to: "escalated" } }))).toBe(
+      "Les commandes IA sont désactivées sur ce serveur. Relancez-y l’installateur avec MF_ALLOW_COMMANDS=1 pour les autoriser.",
+    );
+    expect(
+      eventSummary(event({ kind: "escalation", payload: { reason: "x", code: "ai_escalated", detail: "grow the volume", to: "escalated" } })),
+    ).toBe("L’IA passe la main\u00a0: grow the volume");
+    expect(
+      eventSummary(
+        event({
+          kind: "command_result",
+          payload: { exit_code: null, error: "shell commands are disabled on this agent (commands.shell); run `monitorflow-agent.exe ai-commands on`" },
+        }),
+      ),
+    ).toMatch(/^Inachevée\u00a0: Les commandes IA sont désactivées sur cet agent\. Lancez monitorflow-agent\.exe/);
+    expect(
+      eventSummary(event({ kind: "context_sent", payload: { model: "anthropic/model-1", context: { redactions: { token: 1 } } } })),
+    ).toBe("anthropic/model-1, 1 secret masqué");
     expect(timeLeft("2026-10-19T12:00:00Z", new Date("2026-10-19T11:59:15Z"))).toBe("reste 45 s");
     expect(chainSummary({ valid: true, events: 1, broken_at: null, reason: null, head_hash: null })).toBe(
       "Chaîne de hachage vérifiée\u00a0: 1 événement, tête aucune.",

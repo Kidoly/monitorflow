@@ -100,6 +100,8 @@ describe("SettingsIndex", () => {
   it("gives other roles their own preferences only", () => {
     open(viewer);
     expect(rowNames()).toEqual(["Preferences"]);
+    // The section is already "You": the description does not say "for you" again.
+    expect(screen.getByText("Language, theme, sidebar and password")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Preferences/ })).toHaveAttribute(
       "href",
       expect.stringMatching(/^\/settings\/preferences\/?$/),

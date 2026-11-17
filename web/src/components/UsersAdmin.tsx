@@ -1,12 +1,12 @@
 "use client";
 
-import { type FormEvent, type RefObject, useId, useRef, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 
 import { Button, fieldClass } from "@/components/ui/Button";
 import { type PlainKey, t } from "@/i18n";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
-import { Banner, EmptyState, ErrorState, LoadingBlock, PageHeader, StaleBanner } from "@/components/ui/PageState";
+import { Banner, ErrorState, LoadingBlock, PageHeader, StaleBanner } from "@/components/ui/PageState";
 import { SecretField } from "@/components/ui/SecretField";
 import { Label } from "@/components/ui/StatusLabel";
 import {
@@ -175,7 +175,7 @@ function LinkPanel({ username, link, invite }: { username: string; link: Passwor
   );
 }
 
-function InviteForm({ names, onInvited, inputRef }: { names: Names; onInvited: () => void; inputRef: RefObject<HTMLInputElement | null> }) {
+function InviteForm({ names, onInvited }: { names: Names; onInvited: () => void }) {
   const titleId = useId();
   const [username, setUsername] = useState("");
   const [role, setRole] = useState<Role>("viewer");
@@ -223,7 +223,6 @@ function InviteForm({ names, onInvited, inputRef }: { names: Names; onInvited: (
           <label className={styles.field}>
             {t("users.username")}
             <input
-              ref={inputRef}
               className={fieldClass}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -284,7 +283,6 @@ type Open = { id: string; kind: "role" } | { id: string; kind: "link"; link: Pas
 export function UsersAdmin({ me }: { me: Me }) {
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(load);
   const [open, setOpen] = useState<Open | null>(null);
-  const invite = useRef<HTMLInputElement>(null);
   const [rowError, setRowError] = useState<{ id: string; text: string } | null>(null);
 
   async function act(user: UserAccount, action: () => Promise<unknown>) {
@@ -363,7 +361,6 @@ export function UsersAdmin({ me }: { me: Me }) {
     },
   ];
 
-  const others = data?.users.filter((user) => user.id !== me.id).length ?? 0;
   return (
     <div className={styles.page}>
       <PageHeader title={t("settings.users.label")} meta={roleReach(multiCustomer(me))} />
@@ -374,7 +371,7 @@ export function UsersAdmin({ me }: { me: Me }) {
       {!data && !error && <LoadingBlock label={t("users.loading")} />}
       {data && (
         <>
-          <InviteForm names={data} onInvited={refresh} inputRef={invite} />
+          <InviteForm names={data} onInvited={refresh} />
           <DataTable
             dense
             label={t("users.tableLabel")}
@@ -450,18 +447,6 @@ export function UsersAdmin({ me }: { me: Me }) {
               </span>
             )}
           />
-          {others === 0 && (
-            <EmptyState
-              title={t("users.onlyYou")}
-              actions={
-                <Button variant="k" onClick={() => invite.current?.focus()}>
-                  {t("users.inviteColleague")}
-                </Button>
-              }
-            >
-              {t("users.onlyYouText")}
-            </EmptyState>
-          )}
         </>
       )}
     </div>

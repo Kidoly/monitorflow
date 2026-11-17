@@ -124,6 +124,8 @@ describe("NotificationsPage", () => {
     expect(
       await screen.findByText("No one is notified yet"),
     ).toBeInTheDocument();
+    // "This page" read as the Notifications page; the add buttons below say the rest.
+    expect(screen.getByText("Incidents only show in MonitorFlow.")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Add email" }),
     ).toBeInTheDocument();

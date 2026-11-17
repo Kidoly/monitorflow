@@ -53,6 +53,8 @@ describe("LicensePage", () => {
     renderPage();
     expect(await screen.findByText("No license key.")).toBeInTheDocument();
     expect(screen.getByText(/A single central server needs none/)).toBeInTheDocument();
+    // The form's own labels say where the key goes: no sentence repeats them.
+    expect(screen.queryByText(/goes here|Paste the text you received/)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Install a license key" })).toBeInTheDocument();
   });
 

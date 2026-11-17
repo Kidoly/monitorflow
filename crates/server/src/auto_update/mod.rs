@@ -26,6 +26,7 @@ use std::time::Duration;
 use monitorflow_common::command::SELF_UPDATE;
 use monitorflow_common::release::Version;
 use monitorflow_common::tls::PeerRole;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -99,16 +100,74 @@ impl Peer {
     }
 }
 
+/// Where a peer stands towards the target, as the totals of
+/// `GET /api/auto-update` count it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdatePeerState)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerState {
+    /// On the target or newer, or its automatic update to it succeeded.
+    UpToDate,
+    /// Older and not tried yet.
+    Waiting,
+    /// Its automatic update is queued and not finished.
+    Pending,
+    /// Its automatic update failed since the rollout started or was
+    /// resumed.
+    Failed,
+}
+
+/// The outcome of a peer's automatic update to the target, once tried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Attempt {
+    Pending,
+    Succeeded,
+    Failed,
+}
+
+impl Peer {
+    /// `None` when not tried, and for an update counted nowhere: expired,
+    /// cancelled, its command gone, or failed before the count started.
+    fn attempt(&self) -> Option<Attempt> {
+        match self.tried.as_deref() {
+            Some("queued" | "sent" | "running") => Some(Attempt::Pending),
+            Some("succeeded") => Some(Attempt::Succeeded),
+            Some("failed") if self.counted == Some(true) => Some(Attempt::Failed),
+            _ => None,
+        }
+    }
+
+    /// Where it stands towards `target`; `None` for a peer counted in no
+    /// total, like one of unknown version or a development build.
+    pub fn state(&self, target: &Version) -> Option<PeerState> {
+        if self.tried.is_some() {
+            return match self.attempt()? {
+                Attempt::Pending => Some(PeerState::Pending),
+                Attempt::Succeeded => Some(PeerState::UpToDate),
+                Attempt::Failed => Some(PeerState::Failed),
+            };
+        }
+        if self.needs(target) {
+            return Some(PeerState::Waiting);
+        }
+        self.version
+            .as_deref()
+            .and_then(|v| Version::from_str(v).ok())
+            .is_some_and(|v| v >= *target)
+            .then_some(PeerState::UpToDate)
+    }
+}
+
 /// The automatic updates of `peers`, per site.
 pub(crate) fn tries(peers: &[Peer]) -> BTreeMap<Uuid, Tries> {
     let mut sites: BTreeMap<Uuid, Tries> = BTreeMap::new();
     for peer in peers {
         let tries = sites.entry(peer.site_id).or_default();
-        match peer.tried.as_deref() {
-            Some("queued" | "sent" | "running") => tries.pending += 1,
-            Some("succeeded") => tries.succeeded += 1,
-            Some("failed") if peer.counted == Some(true) => tries.failed += 1,
-            _ => {}
+        match peer.attempt() {
+            Some(Attempt::Pending) => tries.pending += 1,
+            Some(Attempt::Succeeded) => tries.succeeded += 1,
+            Some(Attempt::Failed) => tries.failed += 1,
+            None => {}
         }
     }
     sites
@@ -453,6 +512,38 @@ mod tests {
         p.relay_busy = false;
         p.relay_version = Some("dev".into());
         assert!(!p.held_by_relay(&target), "a development build");
+    }
+
+    #[test]
+    fn each_peer_has_one_state_matching_the_tries() {
+        let target: Version = "0.2.0".parse().unwrap();
+        let mut current = peer(1, None, true);
+        current.version = Some("0.2.0".into());
+        let mut dev = peer(1, None, true);
+        dev.version = Some("dev".into());
+        let mut held = peer(1, None, true);
+        held.relay_version = Some("0.1.0".into());
+        let cases = [
+            (peer(1, None, true), Some(PeerState::Waiting)),
+            (held, Some(PeerState::Waiting)),
+            (current, Some(PeerState::UpToDate)),
+            (dev, None),
+            (peer(1, Some("queued"), true), Some(PeerState::Pending)),
+            (peer(1, Some("running"), false), Some(PeerState::Pending)),
+            (peer(1, Some("succeeded"), true), Some(PeerState::UpToDate)),
+            (peer(1, Some("failed"), true), Some(PeerState::Failed)),
+            (peer(1, Some("failed"), false), None),
+            (peer(1, Some("expired"), true), None),
+            (peer(1, Some("unknown"), true), None),
+        ];
+        for (p, state) in &cases {
+            assert_eq!(p.state(&target), *state, "{:?}", p.tried);
+        }
+        let peers: Vec<Peer> = cases.into_iter().map(|(p, _)| p).collect();
+        let t = tries(&peers)[&Uuid::from_u128(1)];
+        let count = |s| peers.iter().filter(|p| p.state(&target) == Some(s)).count();
+        assert_eq!(t.pending, count(PeerState::Pending));
+        assert_eq!(t.failed, count(PeerState::Failed));
     }
 
     #[test]

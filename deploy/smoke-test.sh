@@ -205,6 +205,9 @@ check "the mirror tools do not see the server's keys" not_mounted
 docker build -q -t monitorflow-mirror-fixture mirror-fixture >/dev/null
 docker run -d --name "$fixture" --network monitorflow-smoke_mirror --network-alias fixture \
     monitorflow-mirror-fixture >/dev/null
+# On demand, the server reads the upstream's indexes itself: the fixture is
+# on its network too, under the same name.
+docker network connect --alias fixture monitorflow-smoke_front "$fixture"
 fixture_up() { docker exec "$fixture" test -s /srv/upstream-key.gpg; }
 until_true() {
     local deadline=$((SECONDS + $1))

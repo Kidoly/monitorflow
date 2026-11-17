@@ -4,14 +4,14 @@ import Link from "next/link";
 import { type FormEvent, useId, useState } from "react";
 
 import { Button, fieldClass } from "@/components/ui/Button";
-import { t } from "@/i18n";
+import { rich, t } from "@/i18n";
 import { cx } from "@/components/ui/cx";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Label } from "@/components/ui/StatusLabel";
 import { Banner, ErrorState, LoadingBlock, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { ApiError, type Customer, type Me, type Relay, type Server, type Site, api, describeError } from "@/lib/api";
 import { administersCustomer, administersEverything, multiCustomer, useRefreshMe } from "@/lib/me";
-import { siteHref } from "@/lib/routes";
+import { AUTO_UPDATE_PATH, siteHref } from "@/lib/routes";
 import { scopedHref } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -73,7 +73,7 @@ export function SitesAdmin({ me }: { me: Me }) {
         {multi ? t("sites.permanentCustomers") : t("sites.permanent")}
       </Banner>
       <Banner tone="info">
-        {t("sites.autoUpdateNote")}
+        {rich("sites.autoUpdateNote", { link: <Link href={AUTO_UPDATE_PATH}>{t("sites.autoUpdateLink")}</Link> })}
       </Banner>
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
@@ -123,8 +123,6 @@ function CustomerSites({
   onChanged: () => void;
 }) {
   const titleId = useId();
-  const servers = rows.reduce((n, row) => n + row.server_count, 0);
-  const relays = rows.reduce((n, row) => n + row.relay_count, 0);
   const columns: Column<Row>[] = [
     {
       key: "site",
@@ -169,17 +167,20 @@ function CustomerSites({
     },
   ];
   return (
-    <section className={styles.section} aria-labelledby={titleId}>
-      <div className={styles.sectionHead}>
-        <h2 id={titleId} className={styles.sectionTitle}>
-          {multiCustomer ? customer.name : t("sites.yourSites")}
-        </h2>
-        <span className={styles.dim}>
-          {t("sites.sites", { count: rows.length })} · {t("sites.servers", { count: servers })} ·{" "}
-          {t("sites.relays", { count: relays })}
-        </span>
-        {canRename && <RenameCustomer customer={customer} onRenamed={onChanged} />}
-      </div>
+    // Without customers the page title already names the list: no second heading.
+    <section
+      className={styles.section}
+      aria-labelledby={multiCustomer ? titleId : undefined}
+      aria-label={multiCustomer ? undefined : t("settings.sites.label")}
+    >
+      {multiCustomer && (
+        <div className={styles.sectionHead}>
+          <h2 id={titleId} className={styles.sectionTitle}>
+            {customer.name}
+          </h2>
+          {canRename && <RenameCustomer customer={customer} onRenamed={onChanged} />}
+        </div>
+      )}
       {rows.length === 0 ? (
         <p className={styles.sectionNote}>{t("sites.none")}</p>
       ) : (
@@ -210,16 +211,14 @@ function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: bool
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const current = overrideOf(site.agent_auto_update);
-  // What applies now, first, then where it comes from.
-  const state = (
-    <>
+  // Without the select, what applies now; the select already says it otherwise.
+  if (!canChange) {
+    return (
       <Label tone={site.agent_auto_update_effective ? "ok" : "neutral"}>
         {site.agent_auto_update_effective ? t("sites.automatic") : t("sites.manual")}
-      </Label>{" "}
-      <span className={styles.dim}>{current === "inherit" ? t("sites.serverDefaultLower") : t("sites.setForSite")}</span>
-    </>
-  );
-  if (!canChange) return state;
+      </Label>
+    );
+  }
   async function change(next: Override) {
     setBusy(true);
     setError(null);
@@ -250,8 +249,7 @@ function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: bool
         </option>
         <option value="on">{t("sites.on")}</option>
         <option value="off">{t("sites.off")}</option>
-      </select>{" "}
-      {state}
+      </select>
       {error && <span role="alert"> {error}</span>}
     </>
   );

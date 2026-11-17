@@ -56,14 +56,14 @@ export function SitePage({ id }: { id: string | null }) {
     );
   }
   const fleet = scopedHref("/", { customerId: site.customer_id, siteId: site.id });
-  const servers = t("fleet.site.servers", { count: site.server_count });
   return (
     <Page>
       <Breadcrumb parents={[{ label: t("fleet.title"), href: "/" }]} />
       <PageHeader
         detail
         title={site.name}
-        meta={multiCustomer(me) ? `${site.customer_name} · ${servers}` : servers}
+        // The button names the server count; the customer is the only other fact.
+        meta={multiCustomer(me) ? site.customer_name : undefined}
         actions={<ButtonLink href={fleet}>{t("fleet.site.show", { count: site.server_count })}</ButtonLink>}
       />
       <SilenceBar target={{ scope: "site", id: site.id, name: site.name, customerId: site.customer_id, siteId: site.id }} />

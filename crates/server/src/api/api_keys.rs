@@ -111,7 +111,7 @@ impl Area {
             ("servers" | "relays" | "metrics", _) => Self::Servers,
             (
                 "incidents" | "silences" | "on-call" | "follow-up" | "sensor_configs"
-                | "thresholds" | "notifications",
+                | "thresholds" | "notifications" | "checks",
                 _,
             ) => Self::Alerts,
             (
@@ -771,11 +771,19 @@ mod tests {
             (&post, "/api/sites/{id}/thresholds", Some(Area::Alerts)),
             (&get, "/api/servers/{id}/sensor_configs", Some(Area::Alerts)),
             (&get, "/api/sites/{id}/sensors", Some(Area::Alerts)),
+            (&get, "/api/checks/usage", Some(Area::Alerts)),
+            (&get, "/api/servers/{id}/sensor-values", Some(Area::Servers)),
+            (
+                &post,
+                "/api/servers/{id}/recommendations/dismiss",
+                Some(Area::Servers),
+            ),
             (&post, "/api/relays/{id}/update", Some(Area::Updates)),
             (&post, "/api/servers/{id}/commands", Some(Area::Updates)),
             (&get, "/api/commands/{id}", Some(Area::Updates)),
             (&post, "/api/campaigns/{id}/start", Some(Area::Updates)),
             (&get, "/api/settings/auto-update", Some(Area::Updates)),
+            (&get, "/api/auto-update/{kind}/peers", Some(Area::Updates)),
             (
                 &post,
                 "/api/sites/{id}/ai-commands",

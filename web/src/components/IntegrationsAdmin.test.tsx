@@ -39,7 +39,7 @@ function endpoint(
 ): IntegrationEndpoint {
   return {
     id: "i1",
-    name: "HaloPSA",
+    name: "Ticketing",
     origin: "https://psa.example",
     events: EVENTS,
     customer_id: null,
@@ -126,13 +126,17 @@ describe("IntegrationsPage", () => {
     const user = userEvent.setup();
     page();
     expect(await screen.findByText("No integrations yet")).toBeInTheDocument();
+    // The intro says what integrations are for: no subtitle or empty state saying it again.
+    expect(screen.queryByText(/Signed events for your other tools/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/your own automation/)).toHaveLength(1);
+    expect(screen.getByText(/to ignore repeats; the/)).toHaveTextContent(/the receiver guide shows how\. To tell people/);
     await user.click(screen.getByRole("button", { name: "Add integration" }));
     // One customer: no customer choice, and every event by default.
     expect(
       screen.queryByLabelText("Send events about"),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "All events" })).toBeChecked();
-    await user.type(screen.getByLabelText("Name"), "HaloPSA");
+    await user.type(screen.getByLabelText("Name"), "Ticketing");
     await user.type(
       screen.getByLabelText(/^URL/),
       "https://psa.example/hooks/monitorflow",
@@ -143,7 +147,7 @@ describe("IntegrationsPage", () => {
     expect(await screen.findByDisplayValue("mfwh_abc")).toBeInTheDocument();
     expect(screen.getByText(/it is not shown again/)).toBeInTheDocument();
     expect(sent(fetchMock, "POST", ENDPOINTS)).toEqual({
-      name: "HaloPSA",
+      name: "Ticketing",
       url: "https://psa.example/hooks/monitorflow",
       events: EVENTS.filter((e) => e !== "incident.acknowledged"),
       customer_id: null,

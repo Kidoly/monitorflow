@@ -2,6 +2,7 @@
 
 Thanks for your interest. Before a first pull request can be merged, contributors sign a Contributor License Agreement; the text and process are not published yet and will be added here.
 
+- Everyone who takes part follows the [code of conduct](CODE_OF_CONDUCT.md).
 - Open an issue before large changes.
 - One pull request per change, under about 500 lines where possible.
 - Run `scripts/check.sh` before pushing.
@@ -34,6 +35,10 @@ npm run build      # static files in web/out
 ```
 
 `npm run dev` forwards `/api` to the server's API listener (`MONITORFLOW_API_URL`, default `http://127.0.0.1:7444`), so the session cookie stays same-origin. Over plain HTTP, set `api_cookie_secure = false` in the server configuration for development, and create a user with `monitorflow-server user add --username admin --role admin`. In production, a TLS reverse proxy serves `web/out` and forwards `/api`; see `deploy/caddy/Caddyfile`.
+
+### Static demo
+
+`npm run build:demo` builds a read-only demo of the web interface with made-up data and no server, in `web/out`. The website repository publishes it at `demo.<domain>`. See [docs/demo.md](docs/demo.md).
 
 ### Architecture diagram
 

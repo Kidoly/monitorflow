@@ -73,7 +73,8 @@ async fn call_with(
         .header("cookie", cookie)
         .body(Body::from(body.to_string()))
         .unwrap();
-    let response = api::router(state).oneshot(request).await.unwrap();
+    // As served: `/api` and the public `/api/v1`.
+    let response = api::v1::app(state).oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
         .await
@@ -346,6 +347,45 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn older_rollouts_end_superseded_and_the_target_finishes(pool: PgPool) {
+        let (_, paris, _) = sites(&pool).await;
+        server(&pool, "paris-1", paris, "debian", "0.0.1").await;
+        // The rollout of an older release, never halted.
+        sqlx::query(
+            "INSERT INTO auto_rollouts (kind, version, started_at, counted_from)
+             VALUES ('agent', '0.0.1', now() - interval '1 day', now() - interval '1 day')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let dir = TempDir::new().unwrap();
+        let sources = cache(&dir, &["0.0.2"]);
+        let updater = updater(&pool, &sources);
+        assert_eq!(tick(&updater).await, ["paris-1"]);
+
+        let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let settings = ApiSettings {
+            agent_releases: sources.clone(),
+            ..ApiSettings::default()
+        };
+        let (status, body) = call_with(&pool, settings.clone(), &global, "GET", "/api/auto-update", Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let history = &body["agents"]["history"];
+        assert_eq!(history[0]["version"], "0.0.2");
+        assert_eq!(history[0]["outcome"], "rolling");
+        assert_eq!(history[1]["version"], "0.0.1");
+        // The stored state is kept as it was; the outcome tells it ended.
+        assert_eq!(history[1]["state"], "rolling");
+        assert_eq!(history[1]["outcome"], "superseded");
+
+        finish(&pool, "paris-1", "succeeded").await;
+        let (status, body) = call_with(&pool, settings, &global, "GET", "/api/auto-update", Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["agents"]["history"][0]["outcome"], "finished");
+        assert_eq!(body["agents"]["history"][1]["outcome"], "superseded");
+    }
+
+    #[sqlx::test]
     async fn relays_update_first_and_their_agents_follow(pool: PgPool) {
         let (customer, paris, _) = sites(&pool).await;
         let relay = insert(
@@ -443,5 +483,128 @@ db_tests! {
         assert_eq!(detail["last_update"]["version"], "0.3.0");
         assert_eq!(detail["updates"].as_array().unwrap().len(), 1);
         assert_eq!(detail["relay_version"], Value::Null);
+    }
+
+    #[sqlx::test]
+    async fn the_peers_behind_each_total_are_listed(pool: PgPool) {
+        let (customer, paris, lyon) = sites(&pool).await;
+        let other = insert(&pool, "INSERT INTO customers (name) VALUES ('globex') RETURNING id", &[]).await;
+        let berlin = insert(
+            &pool,
+            "INSERT INTO sites (name, customer_id) VALUES ('berlin', $1::uuid) RETURNING id",
+            &[&other.to_string()],
+        )
+        .await;
+        for peer in ["paris-1", "paris-2", "lyon-1", "lyon-2"] {
+            let site = if peer.starts_with("paris") { paris } else { lyon };
+            server(&pool, peer, site, "debian", "0.0.1").await;
+        }
+        server(&pool, "paris-current", paris, "debian", "0.0.2").await;
+        server(&pool, "paris-dev", paris, "debian", "dev").await;
+        let relay = insert(
+            &pool,
+            "INSERT INTO relays (peer_id, site_id, name, relay_version)
+             VALUES ('relay-b', $1::uuid, 'gateway', '0.0.1') RETURNING id",
+            &[&berlin.to_string()],
+        )
+        .await;
+        let behind = server(&pool, "berlin-1", berlin, "debian", "0.0.1").await;
+        sqlx::query("UPDATE servers SET relay_id = $1 WHERE id = $2")
+            .bind(relay)
+            .bind(behind)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let dir = TempDir::new().unwrap();
+        let sources = cache(&dir, &["0.0.2"]);
+        assert_eq!(tick(&updater(&pool, &sources)).await, ["lyon-1", "paris-1"]);
+        finish(&pool, "paris-1", "failed").await;
+        sqlx::query("UPDATE commands SET error = 'did not connect' WHERE state = 'failed'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let settings = ApiSettings {
+            agent_releases: sources.clone(),
+            ..ApiSettings::default()
+        };
+        let get = |uri: String| {
+            let (pool, settings, global) = (pool.clone(), settings.clone(), global.clone());
+            async move { call_with(&pool, settings, &global, "GET", &uri, Value::Null).await }
+        };
+        let names = |body: &Value| -> Vec<String> {
+            body["peers"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_owned()).collect()
+        };
+        let (status, status_body) = get("/api/auto-update".into()).await;
+        assert_eq!(status, StatusCode::OK, "{status_body}");
+        let expected: [(&str, &[&str]); 4] = [
+            ("up_to_date", &["paris-current"]),
+            ("waiting", &["lyon-2", "paris-2", "berlin-1"]),
+            ("pending", &["lyon-1"]),
+            ("failed", &["paris-1"]),
+        ];
+        for (state, peers) in expected {
+            let (status, body) = get(format!("/api/auto-update/agent/peers?state={state}")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["target"], "0.0.2");
+            assert_eq!(names(&body), peers, "{state}, by customer, site and name");
+            assert_eq!(body["total"], status_body["agents"]["totals"][state], "{state}");
+            // Per site, the same counts as the site's totals.
+            for site in status_body["agents"]["sites"].as_array().unwrap() {
+                let uri = format!("/api/auto-update/agent/peers?state={state}&site_id={}", site["id"].as_str().unwrap());
+                let (_, body) = get(uri).await;
+                assert_eq!(body["total"], site["totals"][state], "{state} in {}", site["name"]);
+                assert!(body["peers"].as_array().unwrap().iter().all(|p| p["site_id"] == site["id"]));
+            }
+        }
+
+        let (_, body) = get("/api/auto-update/agent/peers?state=failed".into()).await;
+        let failed = &body["peers"][0];
+        assert_eq!(failed["error"], "did not connect");
+        assert!(failed["finished_at"].is_string());
+        assert_eq!(failed["version"], "0.0.1");
+        assert_eq!(failed["site_name"], "paris");
+        assert_eq!(failed["customer_name"], "acme");
+        assert_eq!(failed["customer_id"], customer.to_string());
+        let (_, body) = get("/api/auto-update/agent/peers?state=waiting".into()).await;
+        let waiting: Vec<(&str, bool)> = body["peers"].as_array().unwrap().iter()
+            .map(|p| (p["name"].as_str().unwrap(), p["waiting_for_relay"].as_bool().unwrap()))
+            .collect();
+        assert_eq!(waiting, [("lyon-2", false), ("paris-2", false), ("berlin-1", true)]);
+        assert_eq!(status_body["agents"]["totals"]["waiting_for_relay"], 1);
+        assert!(body["peers"].as_array().unwrap().iter().all(|p| p["error"].is_null()));
+
+        // The public API serves the same list (ADR-0101).
+        let (status, v1) = get("/api/v1/auto-update/agent/peers?state=waiting".into()).await;
+        assert_eq!(status, StatusCode::OK, "{v1}");
+        assert_eq!(v1, body);
+        // Bounded: a page and the total.
+        let (_, body) = get("/api/auto-update/agent/peers?state=waiting&limit=1&offset=1".into()).await;
+        assert_eq!(names(&body), ["paris-2"]);
+        assert_eq!(body["total"], 3);
+        // Relays: the relay in front of berlin-1 waits.
+        let (_, body) = get("/api/auto-update/relay/peers?state=waiting".into()).await;
+        assert_eq!(names(&body), ["gateway"]);
+        assert_eq!(body["peers"][0]["id"], relay.to_string());
+        assert_eq!(body["total"], status_body["relays"]["totals"]["waiting"]);
+
+        for (uri, expected) in [
+            ("/api/auto-update/agent/peers?state=succeeded", StatusCode::BAD_REQUEST),
+            ("/api/auto-update/agent/peers", StatusCode::BAD_REQUEST),
+            ("/api/auto-update/agent/peers?state=waiting&limit=501", StatusCode::BAD_REQUEST),
+            ("/api/auto-update/agent/peers?state=waiting&site_id=nope", StatusCode::BAD_REQUEST),
+            ("/api/auto-update/server/peers?state=waiting", StatusCode::NOT_FOUND),
+        ] {
+            assert_eq!(get(uri.into()).await.0, expected, "{uri}");
+        }
+        // Server-wide: a customer's administrator sees none of it.
+        let admin = login(&pool, "admin", Role::Administrator, GrantScope::Customer(customer)).await;
+        let uri = "/api/auto-update/agent/peers?state=waiting";
+        assert_eq!(call(&pool, &admin, "GET", uri, Value::Null).await.0, StatusCode::FORBIDDEN);
+        // Without a release to move to, nothing is listed.
+        let (status, body) = call(&pool, &global, "GET", uri, Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({ "target": null, "total": 0, "peers": [] }));
     }
 }

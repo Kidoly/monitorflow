@@ -58,11 +58,19 @@ function ServerUpdate() {
   const { data, error, stale, updatedAt, refresh } = usePolledData(fetcher, { intervalMs });
   // An update that ends after the page loaded may have replaced the web interface.
   const [loadedAt] = useState(() => new Date());
+  const check = useUpdateCheck(data?.available?.version);
 
   const header = (
     <PageHeader
       title={t("serverUpdate.title")}
       meta={updatedAt !== null || error !== null ? <RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={intervalMs} /> : undefined}
+      actions={
+        data?.enabled && (
+          <Button onClick={() => void check.run()} disabled={check.checking}>
+            {check.checking ? t("serverUpdate.checking") : t("serverUpdate.check")}
+          </Button>
+        )
+      }
     />
   );
   if (error instanceof ApiError && error.status === 403) {
@@ -99,7 +107,7 @@ function ServerUpdate() {
           {rich("serverUpdate.notSetUp", { guide: <code>{GUIDE}</code> })}
         </Banner>
       ) : (
-        <Check view={data} busy={busy} onStarted={refresh} />
+        <CheckResult view={data} check={check} busy={busy} onStarted={refresh} />
       )}
       {data.update && <LastUpdate run={data.update} requested={data.requested} loadedAt={loadedAt} />}
       {!data.update && data.requested && <Banner tone="info">{t("serverUpdate.waiting")}</Banner>}
@@ -139,8 +147,8 @@ function Summary({ view }: { view: ServerUpdateView }) {
   );
 }
 
-/** "Check for updates", then what the latest release changes and "Update". */
-function Check({ view, busy, onStarted }: { view: ServerUpdateView; busy: boolean; onStarted: () => void }) {
+/** "Check for updates" (a button of the page header) and what it found. */
+function useUpdateCheck(available: string | undefined) {
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<ServerUpdateCheck | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -160,7 +168,6 @@ function Check({ view, busy, onStarted }: { view: ServerUpdateView; busy: boolea
 
   // The daily check saw a release: go straight to what it changes and
   // "Update". A failure here says nothing; "Check for updates" would.
-  const available = view.available?.version;
   useEffect(() => {
     if (!available) return;
     let current = true;
@@ -175,24 +182,33 @@ function Check({ view, busy, onStarted }: { view: ServerUpdateView; busy: boolea
     };
   }, [available]);
 
+  return { checking, result, failure, run: check, clear: () => setResult(null) };
+}
+
+/** What "Check for updates" found: the latest release, what it changes, and "Update". */
+function CheckResult({
+  view,
+  check,
+  busy,
+  onStarted,
+}: {
+  view: ServerUpdateView;
+  check: ReturnType<typeof useUpdateCheck>;
+  busy: boolean;
+  onStarted: () => void;
+}) {
+  const { result, failure } = check;
   async function start(version: string) {
     await api.startServerUpdate(version);
-    setResult(null);
+    check.clear();
     onStarted();
   }
 
   const latest = result?.latest ?? null;
   const ready = view.updater?.alive === true && !busy;
+  if (!result && !failure) return null;
   return (
-    <section className={styles.box} aria-labelledby="check-title">
-      <div className={styles.boxHeader}>
-        <h2 id="check-title" className={styles.title}>
-          {t("serverUpdate.updates")}
-        </h2>
-        <Button onClick={() => void check()} disabled={checking}>
-          {checking ? t("serverUpdate.checking") : t("serverUpdate.check")}
-        </Button>
-      </div>
+    <section className={styles.box} aria-label={t("serverUpdate.updates")}>
       {failure && <Banner tone="bad">{failure}</Banner>}
       {result && !result.reachable && (
         <p className={styles.note}>{rich("serverUpdate.offline", { guide: <code>{GUIDE}</code> })}</p>
@@ -265,21 +281,16 @@ function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; reques
           </>
         )}
       </p>
-      {run.state === "succeeded" && (
+      {/* The version is the facts' and the heading's to tell; the box is only for a reload. */}
+      {reload && (
         <Banner tone="ok">
-          {t("serverUpdate.last.runs", { version: run.to })}
-          {reload && (
-            <>
-              {" "}
-              {rich("serverUpdate.last.reload", {
-                button: (
-                  <button type="button" className={styles.link} onClick={() => window.location.reload()}>
-                    {t("serverUpdate.last.reloadButton")}
-                  </button>
-                ),
-              })}
-            </>
-          )}
+          {rich("serverUpdate.last.reload", {
+            button: (
+              <button type="button" className={styles.link} onClick={() => window.location.reload()}>
+                {t("serverUpdate.last.reloadButton")}
+              </button>
+            ),
+          })}
         </Banner>
       )}
       {run.state === "failed" && <Banner tone="bad">{t("serverUpdate.last.nothingChanged", { error: run.error ?? "" })}</Banner>}
@@ -301,6 +312,8 @@ function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; reques
         </Banner>
       )}
       {requested && <p className={styles.note}>{t("serverUpdate.last.another")}</p>}
+      {/* The updater writes these lines itself, untranslated: shown as its raw log. */}
+      {run.steps.length > 0 && <p className={styles.note}>{t("serverUpdate.last.rawLog")}</p>}
       <ol className={styles.steps} aria-label={t("serverUpdate.last.steps")}>
         {run.steps.map((step, i) => (
           <li key={i}>

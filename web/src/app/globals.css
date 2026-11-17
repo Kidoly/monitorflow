@@ -4,6 +4,12 @@
  */
 :root {
   color-scheme: light dark;
+  /* Height of the static demo's banner (docs/demo.md). */
+  --demo-banner-h: 0px;
+}
+
+:root[data-demo] {
+  --demo-banner-h: 32px;
 }
 
 :root[data-theme="light"] {

@@ -84,6 +84,8 @@ describe("PreferencesPage", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Sidebar" })).toHaveAttribute("id", "sidebar");
     expect(screen.getByRole("checkbox", { name: "Fleet" })).toBeChecked();
     expect(screen.getByRole("button", { name: "Reset to default" })).toBeDisabled();
+    // Pages a role cannot open are not listed: saying so adds nothing.
+    expect(screen.getByText("Untick what you do not use.")).toBeInTheDocument();
   });
 
   it("says when a change could not be saved", async () => {
@@ -105,6 +107,8 @@ describe("PreferencesPage", () => {
       "Password",
     ]);
     expect(screen.getByText("Signed in as alice (viewer)")).toBeInTheDocument();
+    // No subtitle saying the page is "yours only": it is a person's own page.
+    expect(screen.queryByText(/Yours only/)).not.toBeInTheDocument();
   });
 
   it("signs out from the header", async () => {

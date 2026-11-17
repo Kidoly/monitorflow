@@ -112,7 +112,7 @@ export function MirrorPage({ id }: { id: string | null }) {
       <PageHeader
         detail
         title={mirror.name}
-        status={mirror.deleting_at ? <RemovalLabel mirror={mirror} /> : <Label tone={tone}>{t(`mirrors.lastRun.${lastRun}`)}</Label>}
+        status={mirror.deleting_at ? <RemovalLabel mirror={mirror} /> : undefined}
         meta={`${describeMirror(mirror, { distribution: true })} · ${intervalText(mirror.sync_interval_s)}`}
         actions={
           <>
@@ -373,28 +373,25 @@ function Runs({
           <Missing word="notYet" className={styles.dim} />
         ),
     },
-    { key: "trigger", header: t("mirrors.column.trigger"), cell: (r) => `${r.trigger} · ${r.kind}` },
+    { key: "trigger", header: t("mirrors.column.trigger"), cell: (r) => `${t(`mirrors.trigger.${r.trigger}`)} · ${t(`mirrors.kind.${r.kind}`)}` },
     { key: "summary", header: t("mirrors.column.summary"), className: styles.summary, cell: summary },
   ];
   return (
-    <>
-      <DataTable
-        dense
-        detailInset
-        label={t("mirrors.runs")}
-        columns={columns}
-        rows={mirror.runs}
-        rowKey={(r) => r.id}
-        rowActions={(r) => (
-          <Button size="small" aria-expanded={open.has(r.id)} onClick={() => onToggle(r.id)}>
-            {open.has(r.id) ? t("mirrors.hideLog") : t("mirrors.log")}{" "}
-            <span className="visually-hidden">{t("mirrors.ofRun", { time: minuteText(r.started_at) })}</span>
-          </Button>
-        )}
-        rowDetail={(r) => (open.has(r.id) ? <RunLog output={r.output} /> : null)}
-      />
-      <p className={styles.note}>{t("mirrors.newestRuns")}</p>
-    </>
+    <DataTable
+      dense
+      detailInset
+      label={t("mirrors.runs")}
+      columns={columns}
+      rows={mirror.runs}
+      rowKey={(r) => r.id}
+      rowActions={(r) => (
+        <Button size="small" aria-expanded={open.has(r.id)} onClick={() => onToggle(r.id)}>
+          {open.has(r.id) ? t("mirrors.hideLog") : t("mirrors.log")}{" "}
+          <span className="visually-hidden">{t("mirrors.ofRun", { time: minuteText(r.started_at) })}</span>
+        </Button>
+      )}
+      rowDetail={(r) => (open.has(r.id) ? <RunLog output={r.output} /> : null)}
+    />
   );
 }
 

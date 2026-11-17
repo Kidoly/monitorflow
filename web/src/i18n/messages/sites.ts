@@ -2,16 +2,14 @@ import type { Catalog, Translation } from "../catalog";
 
 /** The Sites settings page: sites, customers and their automatic updates. */
 export const en = {
-  sites: { one: "{count} site", other: "{count} sites" },
-  servers: { one: "{count} server", other: "{count} servers" },
-  relays: { one: "{count} relay", other: "{count} relays" },
   online: { one: "{count} online", other: "{count} online" },
   permanentCustomers:
     "Sites cannot be renamed or moved to another customer, because the site name labels every stored metric. Choose names that will still make sense in two years.",
   permanent:
     "Sites cannot be renamed, because the site name labels every stored metric. Choose names that will still make sense in two years.",
   autoUpdateNote:
-    "Agents and relays update themselves to each new release, a canary per site first. A site whose servers must not change on their own sets \"Automatic updates\" to Off; \"Server default\" follows the server-wide setting under Updates › Automatic updates.",
+    "A site follows the server-wide setting for automatic updates unless it is set here. How they roll out: {link}.",
+  autoUpdateLink: "Automatic updates",
   what: "sites",
   loading: "Loading sites",
   "column.site": "Site",
@@ -20,13 +18,10 @@ export const en = {
   "column.autoUpdate": "Automatic updates",
   "column.offlineAlerts": "Offline alerts",
   alertsAndChecks: "Alerts and checks",
-  yourSites: "Your sites",
   none: "No sites yet.",
   sitesOf: "Sites of {name}",
   automatic: "Automatic",
   manual: "Manual",
-  serverDefaultLower: "server default",
-  setForSite: "set for this site",
   autoUpdateFor: "Automatic updates for {name}",
   serverDefault: "Server default",
   serverDefaultOn: "Server default (on)",
@@ -41,7 +36,7 @@ export const en = {
   newSite: "New site",
   newSiteName: "New site name",
   namePlaceholder: "e.g. marseille-dc2",
-  nameHint: "Lowercase letters, digits and dashes. Permanent.",
+  nameHint: "Lowercase letters, digits and dashes.",
   create: "Create site",
   rename: "Rename",
   renameName: "Rename {name}",
@@ -66,16 +61,14 @@ export const en = {
 } as const satisfies Catalog;
 
 export const fr: Translation<typeof en> = {
-  sites: { one: "{count} site", other: "{count} sites" },
-  servers: { one: "{count} serveur", other: "{count} serveurs" },
-  relays: { one: "{count} relais", other: "{count} relais" },
   online: { one: "{count} en ligne", other: "{count} en ligne" },
   permanentCustomers:
     "Un site ne peut être ni renommé ni déplacé vers un autre client, car son nom étiquette chaque métrique stockée. Choisissez des noms qui auront encore du sens dans deux ans.",
   permanent:
     "Un site ne peut pas être renommé, car son nom étiquette chaque métrique stockée. Choisissez des noms qui auront encore du sens dans deux ans.",
   autoUpdateNote:
-    "Les agents et les relais se mettent à jour à chaque nouvelle version, d’abord un serveur test par site. Un site dont les serveurs ne doivent pas changer d’eux-mêmes règle « Mises à jour automatiques » sur Désactivées ; « Réglage du serveur » suit le réglage général sous Mises à jour › Mises à jour automatiques.",
+    "Un site suit le réglage général des mises à jour automatiques, sauf s’il est réglé ici. Leur déroulement : {link}.",
+  autoUpdateLink: "Mises à jour automatiques",
   what: "les sites",
   loading: "Chargement des sites",
   "column.site": "Site",
@@ -84,13 +77,10 @@ export const fr: Translation<typeof en> = {
   "column.autoUpdate": "Mises à jour automatiques",
   "column.offlineAlerts": "Alertes hors ligne",
   alertsAndChecks: "Alertes et contrôles",
-  yourSites: "Vos sites",
   none: "Aucun site pour l’instant.",
   sitesOf: "Sites de {name}",
   automatic: "Automatiques",
   manual: "Manuelles",
-  serverDefaultLower: "réglage du serveur",
-  setForSite: "réglé pour ce site",
   autoUpdateFor: "Mises à jour automatiques pour {name}",
   serverDefault: "Réglage du serveur",
   serverDefaultOn: "Réglage du serveur (activées)",
@@ -105,7 +95,7 @@ export const fr: Translation<typeof en> = {
   newSite: "Nouveau site",
   newSiteName: "Nom du nouveau site",
   namePlaceholder: "par ex. marseille-dc2",
-  nameHint: "Lettres minuscules, chiffres et tirets. Définitif.",
+  nameHint: "Lettres minuscules, chiffres et tirets.",
   create: "Créer le site",
   rename: "Renommer",
   renameName: "Renommer {name}",

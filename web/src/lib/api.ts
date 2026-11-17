@@ -607,6 +607,13 @@ export interface Rollout {
   counted_from: string;
 }
 
+/** Where a rollout of the history stands; `state` only tells whether it halted. */
+export type RolloutOutcome = "rolling" | "halted" | "finished" | "superseded";
+
+export interface HistoryRollout extends Rollout {
+  outcome: RolloutOutcome;
+}
+
 export interface AutoUpdateTotals {
   up_to_date: number;
   /** Older and not tried yet. */
@@ -639,7 +646,7 @@ export interface AutoUpdateKind {
   rollout: Rollout | null;
   totals: AutoUpdateTotals;
   sites: AutoUpdateSite[];
-  history: Rollout[];
+  history: HistoryRollout[];
 }
 
 /** `GET /api/auto-update`. */
@@ -650,6 +657,40 @@ export interface AutoUpdateStatus {
   /** Updated before the agents behind them. */
   relays: AutoUpdateKind;
 }
+
+/** One of the totals of `GET /api/auto-update`. */
+export type AutoUpdatePeerState = "up_to_date" | "waiting" | "pending" | "failed";
+
+/** One agent (a server) or relay of `GET /api/auto-update/{kind}/peers`. */
+export interface AutoUpdatePeer {
+  /** The server's ID for an agent, the relay's for a relay. */
+  id: string;
+  /** The server's hostname or the relay's name. */
+  name: string;
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  version: string | null;
+  state: AutoUpdatePeerState;
+  /** A waiting agent whose relay is older or being updated. */
+  waiting_for_relay: boolean;
+  /** Why its update failed, in the peer's words. */
+  error: string | null;
+  finished_at: string | null;
+}
+
+/** `GET /api/auto-update/{kind}/peers`: one page and the total. */
+export interface AutoUpdatePeerList {
+  target: string | null;
+  /** The matching total of `GET /api/auto-update`. */
+  total: number;
+  /** Failed ones newest first, the others by customer, site and name. */
+  peers: AutoUpdatePeer[];
+}
+
+/** The most peers one request lists. */
+export const AUTO_UPDATE_PEERS_MAX = 500;
 
 /** Fields of `PUT /api/settings/auto-update`; absent ones are unchanged. */
 export interface AutoUpdateChange {
@@ -2248,7 +2289,7 @@ export function setUnauthorizedHandler(handler: () => void): () => void {
   };
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   /** Sent as multipart, instead of `body`; the browser sets the content type. */
@@ -2650,7 +2691,10 @@ export interface ChannelTestResult {
 export interface AiModel {
   id: string;
   name: string;
+  /** When to pick it, in English. */
   note: string;
+  /** `note` as a stable code: `recommended`, `half_price` or `cheapest`; absent from older servers. */
+  fit?: string;
 }
 
 /** Who answers (ADR-0096): Anthropic, OpenAI, or any OpenAI-compatible server, local models included. */
@@ -2678,10 +2722,22 @@ export interface AiForm {
   model: string;
 }
 
+/**
+ * What a write answers in the static demo (docs/demo.md): an `ApiError`
+ * with this message, which `describeError` shows in the reader's language.
+ */
+export const DEMO_REFUSAL = "This is a demo: changes are not saved.";
+
 async function request<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
+  // Replaced at build time: without the flag, the branch and the made-up
+  // data it loads are left out of the bundle.
+  if (process.env.NEXT_PUBLIC_MONITORFLOW_DEMO === "1") {
+    const { demoRequest } = await import("./demo/handler");
+    return demoRequest<T>(path, options);
+  }
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
   if (method !== "GET") {
@@ -2755,6 +2811,9 @@ export function isAbortError(error: unknown): boolean {
 export function describeError(error: unknown): string {
   if (!(error instanceof ApiError)) {
     return t("common.error.unknown");
+  }
+  if (error.message === DEMO_REFUSAL) {
+    return t("common.error.demo");
   }
   switch (error.status) {
     case 0:
@@ -3465,6 +3524,18 @@ export const api = {
   /** Automatic updates: settings and rollouts; global administrators only (ADR-0055). */
   autoUpdate: (signal?: AbortSignal) =>
     request<AutoUpdateStatus>("/api/auto-update", { signal }),
+
+  /** The agents or relays in one of the totals of `autoUpdate`, at most 500; global administrators only. */
+  autoUpdatePeers: (
+    kind: RolloutKind,
+    state: AutoUpdatePeerState,
+    siteId: string | null,
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams({ state, limit: String(AUTO_UPDATE_PEERS_MAX) });
+    if (siteId) query.set("site_id", siteId);
+    return request<AutoUpdatePeerList>(`/api/auto-update/${kind}/peers?${query}`, { signal });
+  },
 
   /** Changes automatic update settings; global administrators only; audited. */
   setAutoUpdate: (change: AutoUpdateChange) =>

@@ -13,6 +13,7 @@ use serde_json::json;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
+use super::closing::CloseReason;
 use super::hook::Change;
 use super::progress::{self, head, Next, Progress};
 use super::store::{self, Incident};
@@ -69,7 +70,7 @@ async fn pass(shared: &Shared, incident: &Incident) -> Result<Pass, DriveError> 
                 shared,
                 incident,
                 IncidentState::Resolved,
-                "the sensor returned to normal",
+                CloseReason::SensorNormal,
             )
             .await;
         }
@@ -86,8 +87,8 @@ async fn pass(shared: &Shared, incident: &Incident) -> Result<Pass, DriveError> 
             proposal,
         } => {
             if progress.commands_queued >= incident.max_commands() {
-                let reason = format!("the command limit of {} was reached", incident.max_commands);
-                return finish(shared, incident, IncidentState::Escalated, &reason).await;
+                let reason = CloseReason::CommandLimit(incident.max_commands.into());
+                return finish(shared, incident, IncidentState::Escalated, reason).await;
             }
             route(
                 shared,
@@ -116,8 +117,8 @@ async fn pass(shared: &Shared, incident: &Incident) -> Result<Pass, DriveError> 
             reason,
             ..
         } => {
-            let reason = format!("the AI escalated: {reason}");
-            finish(shared, incident, IncidentState::Escalated, &reason).await
+            let reason = CloseReason::AiEscalated(reason);
+            finish(shared, incident, IncidentState::Escalated, reason).await
         }
         Next::Stopped {
             outcome: StopOutcome::Resolved,
@@ -135,15 +136,12 @@ async fn alert_resolved(shared: &Shared, incident: &Incident) -> Result<bool, Dr
 }
 
 async fn duration_limit(shared: &Shared, incident: &Incident) -> Result<Pass, DriveError> {
-    let reason = format!(
-        "the duration limit of {} s was reached",
-        incident.max_duration_s
-    );
+    let reason = CloseReason::DurationLimit(incident.max_duration_s.into());
     finish_as(
         shared,
         incident,
         IncidentState::Escalated,
-        &reason,
+        reason,
         Pending::Expire,
     )
     .await
@@ -160,7 +158,7 @@ async fn send_context(shared: &Shared, incident: &Incident) -> Result<Pass, Driv
             shared,
             incident,
             IncidentState::Failed,
-            "the alert that opened the incident is gone",
+            CloseReason::AlertGone,
         )
         .await;
     };
@@ -175,8 +173,8 @@ async fn send_context(shared: &Shared, incident: &Incident) -> Result<Pass, Driv
     let (rendered, redactions) = match gathered {
         Ok(gathered) => gathered,
         Err(error) => {
-            let reason = format!("the context could not be gathered: {error}");
-            return finish(shared, incident, IncidentState::Failed, &reason).await;
+            let reason = CloseReason::ContextFailed(error.to_string());
+            return finish(shared, incident, IncidentState::Failed, reason).await;
         }
     };
     let event = NewEvent::context_sent(
@@ -207,8 +205,8 @@ async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result
         // The next pass escalates.
         Err(_) => return Ok(Pass::Again),
         Ok(Err(error)) => {
-            let reason = format!("the AI provider failed: {error}");
-            return finish(shared, incident, IncidentState::Failed, &reason).await;
+            let reason = CloseReason::AiFailed(error.to_string());
+            return finish(shared, incident, IncidentState::Failed, reason).await;
         }
         Ok(Ok(step)) => step,
     };
@@ -289,7 +287,7 @@ async fn route(
         .await?;
         Pass::Again
     } else if decision.tier == Tier::Forbidden {
-        let reason = format!("the AI proposed a forbidden command ({})", decision.reason);
+        let reason = CloseReason::ForbiddenProposal(decision.reason.clone());
         close_in(
             &mut tx,
             incident.id,
@@ -341,15 +339,12 @@ async fn run(
     // that runs without one.
     let decision = risk::classify_for(incident.shell(), command, &rules(shared, incident).await?);
     if decision.tier == Tier::Forbidden {
-        let reason = format!("the approved command is forbidden ({})", decision.reason);
-        return finish(shared, incident, IncidentState::Escalated, &reason).await;
+        let reason = CloseReason::ApprovedForbidden(decision.reason);
+        return finish(shared, incident, IncidentState::Escalated, reason).await;
     }
     if by_system && !automatic(shared, incident, &decision).await? {
-        let reason = format!(
-            "the command now needs approval ({}); the rules changed",
-            decision.reason
-        );
-        return finish(shared, incident, IncidentState::Escalated, &reason).await;
+        let reason = CloseReason::NeedsApproval(decision.reason);
+        return finish(shared, incident, IncidentState::Escalated, reason).await;
     }
     // Before any snapshot: the agent would refuse the command anyway.
     if let Some(refusal) = acceptance::shell_refusal(&shared.pool, incident.server_id).await? {
@@ -357,7 +352,7 @@ async fn run(
             shared,
             incident,
             IncidentState::Escalated,
-            refusal.message(),
+            CloseReason::Refused(refusal),
         )
         .await;
     }
@@ -382,8 +377,8 @@ async fn run(
                 append(shared, incident, event).await
             }
             Ok(Err(error)) => {
-                let reason = format!("the snapshot before the change failed: {error}");
-                finish(shared, incident, IncidentState::Escalated, &reason).await
+                let reason = CloseReason::SnapshotFailed(error.to_string());
+                finish(shared, incident, IncidentState::Escalated, reason).await
             }
         };
     }
@@ -437,7 +432,7 @@ async fn wait(
             shared,
             incident,
             IncidentState::Failed,
-            "the queued command is gone",
+            CloseReason::CommandGone,
         )
         .await;
     };
@@ -453,14 +448,12 @@ async fn wait(
         row = store.get(command_id).await?.unwrap_or(row);
     }
     if !row.state.is_final() {
-        let reason = format!(
-            "no result within {} s",
-            (limit - row.issued_at).num_seconds()
-        );
+        let waited = (limit - row.issued_at).num_seconds();
+        let reason = format!("no result within {waited} s");
         if store::cancel_queued(&shared.pool, command_id, &reason).await? {
             tracing::info!(incident = %incident.id, command_id = %command_id, "cancelled an undelivered remediation command");
         }
-        let event = NewEvent::command_result(
+        let mut event = NewEvent::command_result(
             &incident.peer_id,
             command_id,
             None,
@@ -469,14 +462,17 @@ async fn wait(
             Some(&reason),
             elapsed(&row),
         );
+        // The server's own words, as a code for clients to translate.
+        event.payload["error_code"] = json!("no_result");
+        event.payload["limit"] = json!(waited);
         if let Pass::Done = append(shared, incident, event).await? {
             return Ok(Pass::Done);
         }
         if limit >= incident.deadline() {
             return duration_limit(shared, incident).await;
         }
-        let reason = format!("the command timed out: {command}");
-        return finish(shared, incident, IncidentState::Escalated, &reason).await;
+        let reason = CloseReason::TimedOut(command.to_owned());
+        return finish(shared, incident, IncidentState::Escalated, reason).await;
     }
     let mut redactor = Redactor::new();
     let stdout = redactor.redact(row.stdout.as_deref().unwrap_or_default());
@@ -500,8 +496,8 @@ async fn wait(
     }
     if !completed {
         let why = error.map_or_else(|| row.state.as_str().to_owned(), |e| e.to_string());
-        let reason = format!("the command did not run to completion: {why}");
-        return finish(shared, incident, IncidentState::Escalated, &reason).await;
+        let reason = CloseReason::Incomplete(why);
+        return finish(shared, incident, IncidentState::Escalated, reason).await;
     }
     Ok(Pass::Again)
 }
@@ -527,7 +523,7 @@ async fn confirm(
                 shared,
                 incident,
                 IncidentState::Resolved,
-                "the sensor returned to normal",
+                CloseReason::SensorNormal,
             )
             .await;
         }
@@ -536,7 +532,7 @@ async fn confirm(
                 shared,
                 incident,
                 IncidentState::Escalated,
-                "the AI considers the problem fixed, but the sensor still breaches its threshold",
+                CloseReason::NotFixed,
             )
             .await;
         }
@@ -577,7 +573,7 @@ async fn finish(
     shared: &Shared,
     incident: &Incident,
     to: IncidentState,
-    reason: &str,
+    reason: CloseReason,
 ) -> Result<Pass, DriveError> {
     finish_as(shared, incident, to, reason, Pending::Cancel).await
 }
@@ -586,13 +582,13 @@ async fn finish_as(
     shared: &Shared,
     incident: &Incident,
     to: IncidentState,
-    reason: &str,
+    reason: CloseReason,
     pending: Pending,
 ) -> Result<Pass, DriveError> {
     let Some(mut tx) = leased(shared, incident.id).await? else {
         return Ok(Pass::Done);
     };
-    close_in(&mut tx, incident.id, to, reason, pending).await?;
+    close_in(&mut tx, incident.id, to, &reason, pending).await?;
     store::release(&mut *tx, Some(incident.id), shared.holder).await?;
     tx.commit().await?;
     // The reason may quote the AI, untrusted text: it stays in the audit
@@ -616,7 +612,7 @@ pub(super) async fn close(
     pool: &sqlx::PgPool,
     incident: Uuid,
     to: IncidentState,
-    reason: &str,
+    reason: &CloseReason,
     pending: Pending,
 ) -> Result<(), DriveError> {
     let mut tx = pool.begin().await?;
@@ -625,31 +621,36 @@ pub(super) async fn close(
     Ok(())
 }
 
-/// [`close`] in `tx`: an `escalation` event for an incident handed over
-/// (escalated or failed), a `note` for one resolved, its pending command
-/// ended, then the state change.
+/// [`close`] in `tx`: one event, an `escalation` for an incident handed
+/// over (escalated or failed) or a `note` for one resolved, that also
+/// records the state change; then its pending command ended and its state
+/// set. A separate `state_change` would log the same moment twice.
 async fn close_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     incident: Uuid,
     to: IncidentState,
-    reason: &str,
+    reason: &CloseReason,
     pending: Pending,
 ) -> Result<(), DriveError> {
     let from = store::lock(tx, incident).await?;
     if from.is_closed() {
         return Ok(());
     }
-    let event = match to {
-        IncidentState::Resolved => NewEvent::note(Actor::System, reason),
-        _ => NewEvent::escalation(Actor::System, reason),
-    };
+    let event = NewEvent::closing(
+        from,
+        to,
+        &reason.text(),
+        reason.code(),
+        reason.detail(),
+        reason.limit(),
+    );
     audit::append_in(tx, incident, event).await?;
     let pending = match pending {
         Pending::Cancel => "cancelled",
         Pending::Expire => "expired",
     };
     store::close_pending(tx, incident, pending).await?;
-    store::transition(tx, incident, from, to).await?;
+    store::set_state(tx, incident, to).await?;
     Ok(())
 }
 

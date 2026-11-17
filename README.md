@@ -133,7 +133,7 @@ cargo build --workspace
 scripts/check.sh
 ```
 
-Start with [Architecture](docs/architecture.md), the [product](docs/product.md) and the [roadmap](docs/roadmap.md). [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build, test and work on the web interface.
+Start with [Architecture](docs/architecture.md), the [product](docs/product.md) and the [roadmap](docs/roadmap.md). [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build, test and work on the web interface. Everyone who takes part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Security
 

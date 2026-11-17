@@ -15,6 +15,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build && node scripts/csp-hashes.ts out",
+    "build:demo": "node scripts/build-demo.ts",
     "lint": "eslint --max-warnings 0 .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run"

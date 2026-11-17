@@ -34,8 +34,7 @@ export const en = {
   "intro.scoped":
     "MonitorFlow sends a message when an incident opens, becomes critical or resolves, when a command waits for approval, and when an update fails. This page shows the channels of what you administer.",
   "empty.title": "No one is notified yet",
-  "empty.body":
-    "Incidents only show while someone has this page open. Add an email address, a Slack, Teams or Discord channel, or a webhook for Mattermost or your own tools.",
+  "empty.body": "Incidents only show in MonitorFlow.",
   channels: "Channels",
   table: "Notification channels",
   sending: "Sending a test…",
@@ -121,8 +120,7 @@ export const fr: Translation<typeof en> = {
   "intro.scoped":
     "MonitorFlow envoie un message quand un incident s’ouvre, devient critique ou se résout, quand une commande attend une approbation, et quand une mise à jour échoue. Cette page montre les canaux de ce que vous administrez.",
   "empty.title": "Personne n’est encore notifié",
-  "empty.body":
-    "Les incidents ne s’affichent que tant que quelqu’un a cette page ouverte. Ajoutez une adresse e-mail, un canal Slack, Teams ou Discord, ou un webhook pour Mattermost ou vos propres outils.",
+  "empty.body": "Les incidents ne s’affichent que dans MonitorFlow.",
   channels: "Canaux",
   table: "Canaux de notification",
   sending: "Envoi d’un test…",

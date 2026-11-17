@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -38,7 +38,9 @@ describe("MirrorPage", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "debian-bookworm" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(/^Mirrors$/);
     expect(screen.getByText("apt · deb.debian.org/debian · bookworm · main contrib · amd64 arm64 · every 12 h")).toBeInTheDocument();
-    expect(screen.getByText("Last run succeeded")).toBeInTheDocument();
+    // The last run is told once, by its tile, not again next to the title.
+    expect(screen.queryByText("Last run succeeded")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Summary" })).toHaveTextContent("Last runSucceeded");
 
     const snapshots = screen.getByRole("table", { name: "Snapshots" });
     expect(within(snapshots).getByText("20261022T143000Z").closest("tr")).toHaveTextContent("Published current");
@@ -50,6 +52,8 @@ describe("MirrorPage", () => {
     expect(failed).toHaveTextContent("Failed");
     expect(failed).toHaveTextContent("11 min 40 s");
     expect(within(runs).getAllByRole("row")[2]).toHaveTextContent("Synced, snapshot 20261022T143000Z published");
+    expect(within(runs).getAllByRole("row")[2]).toHaveTextContent("scheduled · sync");
+    expect(screen.queryByText(/newest runs/)).not.toBeInTheDocument();
   });
 
   it("expands a run's log as plain text under its row", async () => {
@@ -86,7 +90,7 @@ describe("MirrorPage", () => {
       `/api/mirrors/${MIRROR_ID}/snapshots`,
       expect.objectContaining({ method: "POST", body: "{}" }),
     );
-    expect(await screen.findByText("Running", { selector: "span" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("group", { name: "Summary" })).toHaveTextContent("Last runRunning"));
     expect(screen.getByRole("button", { name: "Sync now" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Create snapshot" })).toBeDisabled();
   });

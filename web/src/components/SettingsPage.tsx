@@ -9,7 +9,7 @@ import { administersEverything, useMe } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./AdminPages.module.css";
-import { DefaultInstallSource, ServerAddress } from "./TokensAdmin";
+import { ServerAddress } from "./TokensAdmin";
 import { Button, fieldClass } from "./ui/Button";
 import { cx } from "./ui/cx";
 import { InlineConfirm } from "./ui/InlineConfirm";
@@ -43,7 +43,6 @@ function Settings() {
     <div className={styles.page}>
       <PageHeader title={t("settings.general.label")} meta={t("settings.page.meta")} />
       <AddressSection />
-      <DefaultInstallSource editable />
       {settings ? (
         <>
           <SessionsSection settings={settings} onSaved={refresh} />
@@ -68,13 +67,13 @@ function Locked({ name }: { name: string }) {
   );
 }
 
-function Section({ title, note, children }: { title: string; note: ReactNode; children: ReactNode }) {
+function Section({ title, note, children }: { title: string; note?: ReactNode; children: ReactNode }) {
   return (
     <section className={styles.section} aria-label={title}>
       <div className={styles.sectionHead}>
         <h2 className={styles.sectionTitle}>{title}</h2>
       </div>
-      <p className={styles.sectionNote}>{note}</p>
+      {note && <p className={styles.sectionNote}>{note}</p>}
       {children}
     </section>
   );
@@ -84,7 +83,8 @@ function AddressSection() {
   const fetcher = useCallback((signal: AbortSignal) => api.publicAddress(signal), []);
   const { data: address, error, refresh } = usePolledData(fetcher);
   return (
-    <Section title={t("settings.page.address")} note={t("settings.page.addressFieldNote")}>
+    // The field says what the address is used for; the section says it no second time.
+    <Section title={t("settings.page.address")}>
       <div className={styles.sectionBody}>
         {address ? (
           <ServerAddress value={address} editable onChange={refresh} note={t("settings.page.addressFieldNote")} />
@@ -225,7 +225,8 @@ function SessionsSection({ settings, onSaved }: { settings: ServerSettings; onSa
 
 function MirrorSection({ settings, onSaved }: { settings: ServerSettings; onSaved: () => void }) {
   const mirror = settings.mirror_public_url;
-  const [url, setUrl] = useState(mirror.value ?? "");
+  // The default is the placeholder: the field holds only an address set here.
+  const [url, setUrl] = useState(mirror.value === mirror.default ? "" : (mirror.value ?? ""));
   const { busy, error, saved, save } = useSave(t("settings.page.theMirror"), onSaved);
   const trimmed = url.trim();
   const valid = trimmed === "" || /^https?:\/\/[^\s/?#@]+(\/[^\s?#]*)?$/.test(trimmed);
@@ -245,7 +246,7 @@ function MirrorSection({ settings, onSaved }: { settings: ServerSettings; onSave
           <span>
             {t("settings.page.packagesField")}{" "}
             <span className={styles.fieldNote}>
-              {mirror.default ? t("settings.page.packagesDefault", { url: mirror.default }) : t("settings.page.packagesUrl")}
+              {t("settings.page.packagesUrl")}
             </span>
           </span>
           {mirror.locked ? (

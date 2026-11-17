@@ -1,0 +1,27 @@
+/* The static demo's banner (docs/demo.md): one slim line above every page. */
+.banner {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 16px;
+  min-height: var(--demo-banner-h);
+  padding: 4px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--info-bg);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.text {
+  font-weight: 600;
+}
+
+.banner a {
+  color: inherit;
+  text-decoration: underline;
+}

@@ -278,6 +278,39 @@ impl NewEvent {
         )
     }
 
+    /// The one event that closes an incident, from `from` to `to`: an
+    /// `escalation` with `reason` when handed over (escalated, failed), a
+    /// `note` with `text` when resolved. Its payload also holds the state
+    /// change (`from`, `to`), so no `state_change` follows (ADR-0043), and
+    /// a stable `code`, with `detail` and `limit` when the sentence has
+    /// them, for clients to word it.
+    pub fn closing(
+        from: IncidentState,
+        to: IncidentState,
+        text: &str,
+        code: &str,
+        detail: Option<&str>,
+        limit: Option<i64>,
+    ) -> Self {
+        let (kind, field) = match to {
+            IncidentState::Resolved => (EventKind::Note, "text"),
+            _ => (EventKind::Escalation, "reason"),
+        };
+        let mut payload = json!({
+            field: text,
+            "code": code,
+            "from": from.as_str(),
+            "to": to.as_str(),
+        });
+        if let Some(detail) = detail {
+            payload["detail"] = json!(detail);
+        }
+        if let Some(limit) = limit {
+            payload["limit"] = json!(limit);
+        }
+        Self::new(kind, Actor::System, payload)
+    }
+
     pub fn note(actor: Actor, text: &str) -> Self {
         Self::new(EventKind::Note, actor, json!({ "text": text }))
     }

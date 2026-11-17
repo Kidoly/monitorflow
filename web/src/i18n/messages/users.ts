@@ -63,9 +63,6 @@ export const en = {
   removeConsequence: "The account goes away. What they did stays in the history.",
   removeConfirm: "Remove user",
   removing: "Removing…",
-  onlyYou: "Only you so far",
-  inviteColleague: "Invite a colleague",
-  onlyYouText: "They get a link to choose their password, with the role you pick.",
   signedInNow: "Signed in now",
   onlyGlobal: "Only an administrator of everything invites users and changes roles. Ask one to add a colleague.",
 } as const satisfies Catalog;
@@ -132,9 +129,6 @@ export const fr: Translation<typeof en> = {
   removeConsequence: "Le compte disparaît. Ce que la personne a fait reste dans l’historique.",
   removeConfirm: "Retirer l’utilisateur",
   removing: "Retrait…",
-  onlyYou: "Vous seul pour l’instant",
-  inviteColleague: "Inviter un collègue",
-  onlyYouText: "La personne reçoit un lien pour choisir son mot de passe, avec le rôle que vous choisissez.",
   signedInNow: "Connecté maintenant",
   onlyGlobal:
     "Seul un administrateur de tout invite des utilisateurs et change les rôles. Demandez-lui d’ajouter un collègue.",

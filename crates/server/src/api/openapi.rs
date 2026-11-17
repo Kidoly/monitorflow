@@ -6,8 +6,9 @@
 //! `docs/api/openapi.json` is this document committed. The tests fail
 //! when it is out of date (`UPDATE_OPENAPI=1 cargo test -p
 //! monitorflow-server openapi` rewrites it), when a documented route does
-//! not exist, and when a v1 route is neither documented nor in
-//! [`NOT_YET_DOCUMENTED`].
+//! not exist, when a route is neither documented nor left out of v1 with
+//! a reason ([`super::v1::why_left_out`]), and when the web interface
+//! calls a path no route serves (`openapi_web_calls.rs`, ADR-0143).
 
 #![allow(dead_code)] // The functions exist for their `#[utoipa::path]`.
 
@@ -33,6 +34,9 @@ mod integrations;
 mod notifications;
 #[path = "openapi_on_call.rs"]
 mod on_call;
+#[cfg(test)]
+#[path = "openapi_web_calls.rs"]
+mod web_calls;
 
 /// Every error: a sentence to show and a stable code to branch on.
 #[derive(Serialize, ToSchema)]
@@ -66,6 +70,7 @@ pub fn build() -> Document {
     doc.merge(super::openapi_remediation::Doc::openapi());
     doc.merge(super::openapi_campaigns::Doc::openapi());
     doc.merge(super::openapi_auto_update::Doc::openapi());
+    doc.merge(super::openapi_checks::Doc::openapi());
     doc
 }
 
@@ -288,15 +293,6 @@ fn errors(operation: &mut Operation) {
         );
     }
 }
-
-// Routes reachable through v1 that the document does not describe yet,
-// in the order ADR-0101 gives. Moving one into the document is additive.
-pub const NOT_YET_DOCUMENTED: &[&str] = &["/api/checks"];
-
-// Sub-routes of servers, sites and relays not documented yet; those of
-// relays are under `/api/relays` above.
-pub const NOT_YET_DOCUMENTED_UNDER: &[&str] =
-    &["/sensor-values", "/offline-alerts", "/recommendations"];
 
 #[utoipa::path(get, path = "/api/v1/servers", tag = "servers",
     summary = "List servers",
@@ -821,7 +817,7 @@ mod tests {
     const ROUTER: &str = include_str!("mod.rs");
 
     /// `(METHOD, /api/… path)` of the router's `.route(...)` calls.
-    fn routes() -> BTreeSet<(String, String)> {
+    pub(super) fn routes() -> BTreeSet<(String, String)> {
         let mut routes = BTreeSet::new();
         for (start, _) in ROUTER.match_indices(".route(") {
             let call = &ROUTER[start + ".route(".len()..];
@@ -857,7 +853,8 @@ mod tests {
         routes
     }
 
-    fn documented() -> BTreeSet<(String, String)> {
+    /// `(METHOD, /api/… path)` of the operations in the document.
+    pub(super) fn documented() -> BTreeSet<(String, String)> {
         let doc = build();
         let mut ops = BTreeSet::new();
         for (path, item) in &doc.paths.paths {
@@ -885,25 +882,30 @@ mod tests {
         }
     }
 
+    /// Every route is in the public API and its document, or left out
+    /// of v1 with a reason; never both (ADR-0143).
     #[test]
-    fn every_v1_route_is_documented_or_listed() {
+    fn every_route_is_documented_or_left_out_with_a_reason() {
         let documented = documented();
         for (method, path) in routes() {
-            if !path.starts_with("/api/")
-                || v1::left_out(&method, &path)
-                || documented.contains(&(method.clone(), path.clone()))
-            {
+            if !path.starts_with("/api/") {
                 continue;
             }
-            let listed = NOT_YET_DOCUMENTED.iter().any(|p| path.starts_with(p))
-                || (["/api/servers/{id}", "/api/sites/{id}", "/api/relays/{id}"]
-                    .iter()
-                    .any(|p| path.starts_with(p))
-                    && NOT_YET_DOCUMENTED_UNDER.iter().any(|s| path.contains(s)));
-            assert!(
-                listed,
-                "{method} {path} is in v1 but neither documented in api/openapi.rs nor in NOT_YET_DOCUMENTED"
-            );
+            let op = (method.clone(), path.clone());
+            match v1::why_left_out(&method, &path) {
+                Some(why) => {
+                    assert!(!why.is_empty(), "{method} {path}: say why it is left out");
+                    assert!(
+                        !documented.contains(&op),
+                        "{method} {path} is left out of v1 but documented"
+                    );
+                }
+                None => assert!(
+                    documented.contains(&op),
+                    "{method} {path} is in the public API but not documented: describe it in \
+                     an api/openapi_*.rs file (everything the web interface does must be in the API)"
+                ),
+            }
         }
     }
 

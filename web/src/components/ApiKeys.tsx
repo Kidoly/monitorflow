@@ -119,9 +119,7 @@ function ApiKeys() {
         </>
       )}
       {data.keys.length === 0 ? (
-        <EmptyState title={t("apiKeys.emptyTitle")}>
-          {t("apiKeys.emptyBody")}
-        </EmptyState>
+        <EmptyState title={t("apiKeys.emptyTitle")} />
       ) : (
         <section className={admin.section} aria-label={t("apiKeys.title")}>
           <ul className={admin.linkList}>
@@ -263,7 +261,7 @@ function NewKey({
           required
           maxLength={MAX_NAME}
           value={name}
-          placeholder="HaloPSA"
+          placeholder={t("apiKeys.namePlaceholder")}
           onChange={(e) => setName(e.target.value)}
         />
       </label>

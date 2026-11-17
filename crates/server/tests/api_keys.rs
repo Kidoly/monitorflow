@@ -609,6 +609,37 @@ db_tests! {
         assert_eq!(status, StatusCode::CREATED);
     }
 
+    /// What only a global administrator does is open to their key of
+    /// reach "Everything" and access "Administer" (ADR-0143), and to no
+    /// narrower key of theirs.
+    #[sqlx::test]
+    async fn a_global_administrator_s_key_does_what_they_do(pool: PgPool) {
+        let w = world(&pool).await;
+        let (_, global) = w.make(&w.root, json!({ "name": "Admin", "role": "administrator" })).await;
+        let (_, operator) = w.make(&w.root, json!({ "name": "Op", "role": "operator" })).await;
+        let (_, customer) = w.make(&w.root, json!({ "name": "A", "customer_id": w.customer_a,
+            "role": "administrator" })).await;
+        let reads = ["/api/v1/users", "/api/v1/settings/server", "/api/v1/settings/auto-update",
+                     "/api/v1/mirrors", "/api/v1/plugins", "/api/v1/backups"];
+        for uri in reads {
+            let (status, body) = w.key("GET", uri, &global, None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            for (what, key) in [("operator", &operator), ("one customer", &customer)] {
+                let (status, body) = w.key("GET", uri, key, None).await;
+                assert_eq!(status, StatusCode::FORBIDDEN, "{what} {uri}: {body}");
+            }
+        }
+        let (status, body) = w.key("POST", "/api/v1/customers", &customer, Some(json!({ "name": "c" }))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let (status, body) = w.key("POST", "/api/v1/customers", &global, Some(json!({ "name": "c" }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        // Audited as the maker, with the key.
+        let key: Option<String> = sqlx::query_scalar(
+            "SELECT details->>'api_key' FROM audit_log WHERE action = 'customer.create'")
+            .fetch_one(&pool).await.unwrap();
+        assert!(key.is_some());
+    }
+
     #[sqlx::test]
     async fn the_document_is_served_without_a_key(pool: PgPool) {
         let w = world(&pool).await;

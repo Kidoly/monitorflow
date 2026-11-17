@@ -158,7 +158,13 @@ describe("TokensAdmin", () => {
     expect(await screen.findByText("None yet: create one above, then paste it on your servers.")).toBeInTheDocument();
     // Single-use tokens wait under Advanced.
     expect(screen.queryByRole("form", { name: "New token" })).not.toBeInTheDocument();
-    const form = screen.getByRole("form", { name: "Install command" });
+    // Its "How it works" sits in the section's heading line, not alone under it.
+    const advanced = screen.getByRole("region", { name: "Advanced" });
+    expect(within(advanced).getByRole("img", { name: "How it works" }).closest("div")).toHaveTextContent("Advanced");
+    const form = screen.getByRole("form", { name: "New command" });
+    // The page title's tooltip says how servers are named; the form says it no second time.
+    expect(form).not.toHaveTextContent("appears under its own name");
+    expect(within(form).getByText("(servers)")).toBeInTheDocument();
     await within(within(form).getByLabelText("Site")).findByRole("option");
     expect(within(form).getByLabelText("Works for")).toHaveValue("2592000");
     await user.click(within(form).getByRole("button", { name: "Create install command" }));
@@ -184,7 +190,7 @@ describe("TokensAdmin", () => {
     expect(document.body.textContent).not.toContain(SECRET);
     const row = await screen.findByRole("row", { name: /acme › paris/ });
     expect(row).toHaveTextContent(/0 servers\s*Active/);
-    expect(screen.getByRole("form", { name: "Install command" })).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "New command" })).toBeInTheDocument();
   });
 
   it("sends a host limit and approval when asked", async () => {
@@ -196,7 +202,7 @@ describe("TokensAdmin", () => {
       "POST /api/install-keys": { status: 400, body: { error: "the host limit must be between 1 and 100000" } },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    const form = await screen.findByRole("form", { name: "Install command" });
+    const form = await screen.findByRole("form", { name: "New command" });
     await within(within(form).getByLabelText("Site")).findByRole("option");
     await user.selectOptions(within(form).getByLabelText("Works for"), "604800");
     await user.type(within(form).getByLabelText(/^Up to/), "10");
@@ -238,7 +244,7 @@ describe("TokensAdmin", () => {
     const confirm = screen.getByRole("form", { name: "Reject this server?" });
     expect(confirm).toHaveTextContent("it can never connect as db-1");
     await user.click(within(confirm).getByRole("button", { name: "Reject server" }));
-    await screen.findByRole("region", { name: "Install commands" });
+    await screen.findByRole("region", { name: "Commands created" });
     expect(screen.queryByRole("region", { name: "Waiting for approval" })).not.toBeInTheDocument();
 
     const row = screen.getByRole("row", { name: /acme › paris/ });
@@ -279,7 +285,7 @@ describe("TokensAdmin", () => {
     });
     render(<TokensAdmin me={customerAdmin} />);
     const form = await newTokenForm(user);
-    expect(form).toHaveTextContent("Recorded in the audit log as alice.");
+    expect(form).not.toHaveTextContent("audit log");
     // Only sites of administered customers are offered.
     const site = within(form).getByLabelText("Site");
     await within(site).findByRole("option");
@@ -547,10 +553,13 @@ describe("TokensAdmin", () => {
     const section = await screen.findByRole("form", { name: "Default install source" });
     expect(await within(section).findByRole("radio", { name: "GitHub" })).toBeChecked();
     expect(section).toHaveTextContent("This server holds release 0.3.0.");
+    // The URL field shows only for a custom source.
+    expect(within(section).queryByRole("textbox", { name: /^URL/ })).not.toBeInTheDocument();
     await user.click(within(section).getByRole("radio", { name: "Custom URL" }));
     const save = within(section).getByRole("button", { name: "Save" });
     expect(save).toBeDisabled();
-    const url = within(section).getByRole("textbox", { name: /^Custom URL/ });
+    const url = within(section).getByRole("textbox", { name: /^URL/ });
+    expect(url).toHaveAttribute("placeholder", "https://files.example.com/monitorflow/");
     await user.type(url, "https://files.example/$(id)");
     expect(url).toHaveAttribute("aria-invalid", "true");
     expect(save).toBeDisabled();
@@ -655,7 +664,7 @@ describe("TokensAdmin", () => {
     expect(screen.getByRole("region", { name: "Jetons" })).toHaveTextContent("1 en attente");
     expect(screen.getByRole("button", { name: "Révoquer le jeton de web-01" })).toBeInTheDocument();
     expect(await screen.findByText("Source d’installation par défaut")).toBeInTheDocument();
-    expect(screen.getByRole("form", { name: "Commande d’installation" })).toHaveTextContent("Approuver les nouveaux serveurs");
+    expect(screen.getByRole("form", { name: "Nouvelle commande" })).toHaveTextContent("Approuver les nouveaux serveurs");
   });
 
   it("explains that site administrators cannot enroll", () => {

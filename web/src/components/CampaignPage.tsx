@@ -29,7 +29,6 @@ import { REFRESH_MS } from "./FleetOverview";
 import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, ButtonLink } from "./ui/Button";
 import { type Column, DataTable } from "./ui/DataTable";
-import { Missing } from "./ui/Missing";
 import { FactsBox } from "./ui/FactsBox";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, LoadingBlock, NoPermission, NotFound, PageHeader } from "./ui/PageState";
@@ -114,7 +113,15 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
         ]
       : []),
     { label: t("campaigns.fact.created"), value: formatDateTime(campaign.created_at) },
-    ...(campaign.started_at ? [{ label: t("campaigns.fact.started"), value: formatDateTime(campaign.started_at) }] : []),
+    // Start moves a campaign to Scheduled until its window opens: until a batch is queued, it is only requested.
+    ...(campaign.started_at
+      ? [
+          {
+            label: campaign.current_wave === null ? t("campaigns.fact.startRequested") : t("campaigns.fact.started"),
+            value: formatDateTime(campaign.started_at),
+          },
+        ]
+      : []),
     ...(campaign.finished_at
       ? [{ label: t("campaigns.fact.finished"), value: formatDateTime(campaign.finished_at) }]
       : []),
@@ -153,7 +160,12 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
         ]}
       />
       {campaign.waves.map((wave) => (
-        <Wave key={wave.index} wave={wave} current={wave.index === (campaign.current_wave ?? 0)} />
+        <Wave
+          key={wave.index}
+          wave={wave}
+          current={wave.index === (campaign.current_wave ?? 0)}
+          several={campaign.waves.length > 1}
+        />
       ))}
     </div>
   );
@@ -226,15 +238,20 @@ const serverColumns = (): Column<CampaignServer>[] => [
   {
     key: "finished",
     header: t("campaigns.column.finished"),
-    cell: (s) => (s.finished_at ? formatDateTime(s.finished_at) : <Missing word="notYet" className={own.dim} />),
+    // Empty until it is: the status column already says it is not done.
+    cell: (s) => (s.finished_at ? formatDateTime(s.finished_at) : null),
   },
   { key: "error", header: t("campaigns.column.error"), className: own.wrap, cell: (s) => s.error ?? "" },
 ];
 
 const WAVE_TONES = { pending: "neutral", running: "info", done: "ok" } as const;
 
-/** A batch as a `<details>` block: state, a `<progress>` with its percentage, then its servers. */
-function Wave({ wave, current }: { wave: CampaignWave; current: boolean }) {
+/**
+ * A batch as a `<details>` block: a `<progress>` with its percentage, when
+ * it ran, then its servers. The counters above tell the numbers; the
+ * batch's state shows only when there are several.
+ */
+function Wave({ wave, current, several }: { wave: CampaignWave; current: boolean; several: boolean }) {
   const number = wave.index + 1;
   const title = t("campaigns.wave.title", { number });
   const { total, succeeded, failed, cancelled } = wave.progress;
@@ -246,18 +263,15 @@ function Wave({ wave, current }: { wave: CampaignWave; current: boolean }) {
       <details className={own.wave} open={current || wave.state === "running"}>
         <summary>
           <strong>{title}</strong>
-          <Label tone={WAVE_TONES[wave.state]}>{t(`campaigns.wave.${wave.state}`)}</Label>
+          {several && <Label tone={WAVE_TONES[wave.state]}>{t(`campaigns.wave.${wave.state}`)}</Label>}
           <progress max={total} value={done} aria-label={t("campaigns.wave.progress", { number })} />
           <span>{percent} %</span>
-          <span className={own.dim}>
-            {failed > 0
-              ? t("campaigns.wave.succeededFailed", { succeeded, failed, total })
-              : t("campaigns.wave.succeeded", { succeeded, total })}
-            {wave.started_at
-              ? t("campaigns.wave.started", { time: formatDateTime(wave.started_at) })
-              : t("campaigns.wave.notStarted")}
-            {wave.finished_at && t("campaigns.wave.finished", { time: formatDateTime(wave.finished_at) })}
-          </span>
+          {wave.started_at && (
+            <span className={own.dim}>
+              {t("campaigns.wave.started", { time: formatDateTime(wave.started_at) })}
+              {wave.finished_at && t("campaigns.wave.finished", { time: formatDateTime(wave.finished_at) })}
+            </span>
+          )}
         </summary>
         <DataTable
           dense

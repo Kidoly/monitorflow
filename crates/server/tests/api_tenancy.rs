@@ -1262,8 +1262,10 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("GET", "/api/settings/server")
         | ("PUT", "/api/settings/server")
         | ("PUT", "/api/settings/retention")
+        | ("GET", "/api/auto-update/{kind}/peers")
         | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
             let uri = path
+                .replace("{kind}/peers", "agent/peers?state=waiting")
                 .replace("{kind}", "agent")
                 .replace("{version}", "0.1.0");
             let body = method.ne("GET").then(|| json!({}));

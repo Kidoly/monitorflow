@@ -68,6 +68,16 @@ impl Refusal {
         }
     }
 
+    /// Stable code of [`Self::message`], for clients to word it.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Off { windows: false } => "commands_off",
+            Self::Off { windows: true } => "commands_off_windows",
+            Self::Unsupported { windows: false } => "system_unsupported",
+            Self::Unsupported { windows: true } => "agent_too_old",
+        }
+    }
+
     pub fn message(self) -> &'static str {
         match self {
             Self::Off { windows: false } => {

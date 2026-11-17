@@ -11,7 +11,7 @@ import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./PackageSources.module.css";
 import admin from "./AdminPages.module.css";
-import { ButtonLink } from "./ui/Button";
+import { Button, ButtonLink } from "./ui/Button";
 import { type Column, DataTable } from "./ui/DataTable";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock } from "./ui/PageState";
@@ -189,6 +189,7 @@ export function SiteSources({ site }: { site: Site }) {
   const fetcher = useCallback((signal: AbortSignal) => api.siteSources(id, signal), [id]);
   const { data, error, refresh } = usePolledData(fetcher);
   const [change, setChange] = useState<SiteSourcesChange | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const canChange = administersCustomer(me, site.customer_id);
 
   if (!data) {
@@ -202,6 +203,15 @@ export function SiteSources({ site }: { site: Site }) {
   const free = (s: SiteRow) => s.changing_to === null && !s.campaign;
   const canUse = data.servers.filter((s) => s.using === "own" && !s.problem && free(s)).length;
   const canGoBack = data.servers.filter((s) => s.using === "mirror" && free(s)).length;
+  // Servers on their own sources with nothing else to say are counted, not listed one by one.
+  const ordinary = (s: SiteRow) =>
+    s.os_family !== "windows" && s.using === "own" && !s.problem && !s.failed && free(s) && s.distribution !== null;
+  const byDistribution = new Map<string, number>();
+  for (const s of data.servers.filter(ordinary)) {
+    byDistribution.set(s.distribution!, (byDistribution.get(s.distribution!) ?? 0) + 1);
+  }
+  const others = data.servers.filter((s) => !ordinary(s));
+  const rows = showAll ? data.servers : others;
   const columns: Column<SiteRow>[] = [
     {
       key: "server",
@@ -249,13 +259,19 @@ export function SiteSources({ site }: { site: Site }) {
       <div className={styles.body}>
         <p className={styles.note}>{t("mirrors.sources.site", { site: site.name })}</p>
         {change && <ChangeResult change={change} />}
-        <DataTable
-          dense
-          label={t("mirrors.sources.siteTable")}
-          columns={columns}
-          rows={data.servers}
-          rowKey={(s) => s.id}
-        />
+        {[...byDistribution].map(([distribution, n]) => (
+          <p key={distribution}>{t("mirrors.sources.canUseCount", { count: n, distribution })}</p>
+        ))}
+        {byDistribution.size > 0 && others.length < data.servers.length && (
+          <div>
+            <Button size="small" aria-pressed={showAll} onClick={() => setShowAll(!showAll)}>
+              {t("mirrors.sources.showAll")}
+            </Button>
+          </div>
+        )}
+        {rows.length > 0 && (
+          <DataTable dense label={t("mirrors.sources.siteTable")} columns={columns} rows={rows} rowKey={(s) => s.id} />
+        )}
         {canChange && (canUse > 0 || canGoBack > 0) && (
           <div className={styles.actions}>
             {canUse > 0 && (

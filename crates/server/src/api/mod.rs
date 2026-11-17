@@ -74,6 +74,7 @@
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
+//! | GET | `/api/auto-update/{kind}/peers` | global administrator | `state` (`up_to_date`, `waiting`, `pending` or `failed`), `site_id`, `limit`, `offset`; [`auto_update::PeerList`]: the agents or relays behind one total |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
 //! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
 //! | GET | `/api/settings/ai` | any session | [`ai::AiView`]: whether AI is on, its provider, whether a key is stored, the address, the model and Anthropic's models; never the key |
@@ -443,7 +444,10 @@
 //! `created_at`, `hash`) with its incident's customer, site, server,
 //! `metric` and `instance`. `payload` leaves out `context.rendered` and
 //! command `stdout`/`stderr`; the incident detail has them and verifies
-//! the chain.
+//! the chain. The `escalation` or `note` that closes an incident holds
+//! `from` and `to` in place of a `state_change`, and a stable `code` with
+//! `detail` and `limit` next to its English `reason` or `text`
+//! (ADR-0144).
 //!
 //! # Commands and packages
 //!
@@ -669,6 +673,7 @@ pub(crate) mod one_time;
 pub mod openapi;
 pub mod openapi_auto_update;
 pub mod openapi_campaigns;
+mod openapi_checks;
 pub mod openapi_core;
 mod openapi_dashboards;
 mod openapi_plugins;
@@ -1022,6 +1027,7 @@ pub fn router(state: ApiState) -> Router {
             put(offline_alerts::relay),
         )
         .route("/api/auto-update", get(auto_update::status))
+        .route("/api/auto-update/{kind}/peers", get(auto_update::peers))
         .route(
             "/api/settings/auto-update",
             get(auto_update::get_settings).put(auto_update::set_settings),

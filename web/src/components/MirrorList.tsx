@@ -6,7 +6,7 @@ import { useCallback, useState } from "react";
 import { t } from "@/i18n";
 import { ApiError, type Mirror, type MirrorRunSummary, api, describeError } from "@/lib/api";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
-import { describeMirror, intervalText, nextSync, retentionText, shortTime } from "@/lib/mirrors";
+import { describeMirror, intervalText, nextSync, shortTime } from "@/lib/mirrors";
 import { mirrorHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -248,16 +248,6 @@ function MirrorList() {
               { value: "dnf", label: "dnf" },
             ],
           },
-          {
-            name: "run",
-            label: t("mirrors.column.lastRun"),
-            options: [
-              { value: "succeeded", label: t("mirrors.run.succeeded") },
-              { value: "running", label: t("mirrors.run.running") },
-              { value: "failed", label: t("mirrors.run.failed") },
-              { value: "never", label: t("mirrors.neverRun") },
-            ],
-          },
         ]}
         search={{ name: "q", label: t("mirrors.search"), placeholder: t("mirrors.searchPlaceholder"), width: 200 }}
       />
@@ -281,8 +271,6 @@ function MirrorList() {
         />
       )}
       <MirrorCache />
-      <p className={styles.note}>{t("mirrors.openHint")}</p>
-      <p className={styles.note}>{retentionText(data.keep_snapshots)}</p>
     </div>
   );
 }

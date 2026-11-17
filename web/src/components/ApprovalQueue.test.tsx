@@ -275,10 +275,8 @@ describe("ApprovalQueue", () => {
     const rows = within(await table()).getAllByRole("row");
     expect(rows).toHaveLength(2);
     expect(rows[1]).toHaveTextContent(/on db-1/);
-    expect(screen.getByRole("link", { name: "Audit log" })).toHaveAttribute(
-      "href",
-      expect.stringMatching(new RegExp(`^/remediation/audit/?\\?customer=${CUSTOMER_ID}$`)),
-    );
+    // The sidebar links the audit log: the header does not repeat it.
+    expect(screen.queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
   });
 
   it("shows a load error, then the queue", async () => {
