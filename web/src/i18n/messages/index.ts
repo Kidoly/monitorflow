@@ -14,6 +14,7 @@ import * as display from "./display";
 import * as fleet from "./fleet";
 import * as followUp from "./followUp";
 import * as format from "./format";
+import * as imports from "./imports";
 import * as incidents from "./incidents";
 import * as install from "./install";
 import * as integrations from "./integrations";
@@ -53,6 +54,7 @@ export const en = {
   fleet: fleet.en,
   followUp: followUp.en,
   format: format.en,
+  imports: imports.en,
   incidents: incidents.en,
   install: install.en,
   integrations: integrations.en,
@@ -91,6 +93,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   fleet: fleet.fr,
   followUp: followUp.fr,
   format: format.fr,
+  imports: imports.fr,
   incidents: incidents.fr,
   install: install.fr,
   integrations: integrations.fr,

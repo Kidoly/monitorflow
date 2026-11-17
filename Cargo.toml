@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/common",
     "crates/sensors",
+    "crates/import",
     "crates/ai",
     "crates/agent",
     "crates/relay",
@@ -31,6 +32,7 @@ monitorflow-sensors = { path = "crates/sensors" }
 monitorflow-ai = { path = "crates/ai" }
 monitorflow-server-ee = { path = "ee/crates/server-ee" }
 monitorflow-plugin = { path = "crates/plugin" }
+monitorflow-import = { path = "crates/import" }
 
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.14", features = ["tls-ring"] }
