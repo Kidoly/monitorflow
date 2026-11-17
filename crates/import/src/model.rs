@@ -53,7 +53,7 @@ pub struct Origin {
     /// [`crate::notes::ORIGIN_KINDS`]): `host`, `item`, `trigger`,
     /// `template`, `web_scenario`, `maintenance`, `media_type`,
     /// `user_media`, `scrape_target`, `alerting_rule`, `receiver`,
-    /// `silence`, `sensor`, `notification`, `device`, `group`.
+    /// `silence`, `sensor`, `notification`, `device`, `group`, `probe`.
     pub kind: String,
     /// Its name there.
     pub name: String,

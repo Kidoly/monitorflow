@@ -16,6 +16,35 @@ pub const NOT_IN_THIS_BUILD: &str =
 #[cfg(feature = "enterprise")]
 pub use monitorflow_server_ee::{admission, Added};
 
+pub use monitorflow_common::server_update::channel::Channel;
+
+/// The update channel the installed license key puts this central server
+/// on (ADR-0147): tested while a key of any tier is valid, regular without
+/// one, after it expired, and in a build without the Enterprise edition.
+pub async fn update_channel(pool: &sqlx::PgPool) -> Result<Channel, sqlx::Error> {
+    #[cfg(feature = "enterprise")]
+    return update_channel_with(pool, &Verifier::built_in()).await;
+    #[cfg(not(feature = "enterprise"))]
+    {
+        let _ = pool;
+        Ok(Channel::Regular)
+    }
+}
+
+/// [`update_channel`] with the keys of `verifier`, for tests.
+#[cfg(feature = "enterprise")]
+pub async fn update_channel_with(
+    pool: &sqlx::PgPool,
+    verifier: &Verifier,
+) -> Result<Channel, sqlx::Error> {
+    let status = Status::of(store::read(pool).await?, verifier, store::today());
+    Ok(if status.usable().is_some() {
+        Channel::Tested
+    } else {
+        Channel::Regular
+    })
+}
+
 /// Why an additional central server may not start or be added.
 #[derive(Debug, thiserror::Error)]
 pub enum JoinError {

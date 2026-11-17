@@ -13,6 +13,7 @@ use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::config::ServerConfig;
 use monitorflow_common::release::{self, PublicKey, Version};
+use monitorflow_common::server_update::channel::{fetch_channel, Channel};
 use monitorflow_common::server_update::{
     self as update, read_small, write_atomic, Images, Request, Running, Status, UpdateError,
     UpdateRun, HEARTBEAT, MAX_STATE_FILE, REQUEST_FILE, STATUS_FILE,
@@ -84,6 +85,9 @@ pub struct UpdateView {
     pub requested: bool,
     /// A newer release the last check saw.
     pub available: Option<release_check::Available>,
+    /// The releases this server is offered: `tested` while a license key
+    /// is valid, `regular` otherwise (ADR-0147).
+    pub channel: Channel,
 }
 
 /// The updater service, as it last reported.
@@ -105,6 +109,9 @@ pub struct CheckResult {
     /// Base URL releases are fetched from.
     pub source: String,
     pub running_version: &'static str,
+    /// The channel checked: `tested` while a license key is valid,
+    /// `regular` otherwise (ADR-0147).
+    pub channel: Channel,
     /// Whether the source answered; `false` on an offline server.
     pub reachable: bool,
     /// Why there is no `latest`.
@@ -189,6 +196,7 @@ pub async fn get(
     let settings = &state.settings.server_update;
     let (status, requested) = read_state(settings.dir.clone()).await?;
     let available = release_check::available(&state.pool, &running_version()).await?;
+    let channel = channel(&state).await?;
     let (updater, update) = match status {
         None => (None, None),
         Some(status) => (
@@ -209,33 +217,50 @@ pub async fn get(
         update,
         requested,
         available,
+        channel,
     }))
 }
 
+/// The channel the installed license key puts this server on (ADR-0147),
+/// with the keys of `state`, so tests can use their own.
+async fn channel(state: &ApiState) -> Result<Channel, ApiError> {
+    #[cfg(feature = "enterprise")]
+    return Ok(
+        crate::edition::update_channel_with(&state.pool, &state.settings.license_keys).await?,
+    );
+    #[cfg(not(feature = "enterprise"))]
+    {
+        let _ = state;
+        Ok(Channel::Regular)
+    }
+}
+
 /// `POST /api/server-update/check`: fetches and verifies the latest
-/// release, as the updater will.
+/// release of the server's channel, as the updater will.
 pub async fn check(
     State(state): State<ApiState>,
     user: CurrentUser,
 ) -> Result<Json<CheckResult>, ApiError> {
     require_global_admin(&user)?;
     let settings = &state.settings.server_update;
-    let base = update::release_base(&settings.source, None);
+    let channel = channel(&state).await?;
     let mut result = CheckResult {
         source: settings.source.clone(),
         running_version: monitorflow_common::VERSION,
+        channel,
         reachable: true,
         error: None,
         latest: None,
     };
-    let candidate = match update::fetch(&settings.client, &base, &settings.keys, None).await {
-        Ok(candidate) => candidate,
-        Err(e) => {
-            result.reachable = !matches!(e, UpdateError::Download { .. });
-            result.error = Some(e.to_string());
-            return Ok(Json(result));
-        }
-    };
+    let candidate =
+        match fetch_channel(&settings.client, &settings.source, &settings.keys, channel).await {
+            Ok(candidate) => candidate,
+            Err(e) => {
+                result.reachable = !matches!(e, UpdateError::Download { .. });
+                result.error = Some(e.to_string());
+                return Ok(Json(result));
+            }
+        };
     let (status, _) = read_state(settings.dir.clone()).await?;
     let running = status.and_then(|s| s.running);
     let differs = |pinned: Option<&String>, image: &update::ImageRef| {

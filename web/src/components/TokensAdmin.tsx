@@ -315,7 +315,7 @@ export function configSnippet(token: CreatedToken): string {
   ].join("\n");
 }
 
-function NewToken({
+export function NewToken({
   token: created,
   editable,
   onDone,

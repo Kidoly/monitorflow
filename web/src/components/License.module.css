@@ -49,3 +49,11 @@
 .addedRow:first-child {
   border-top: none;
 }
+
+.includes {
+  margin: 0;
+  padding: 12px 20px 12px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

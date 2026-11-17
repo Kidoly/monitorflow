@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<zabbix_export>
+    <version>6.0</version>
+    <date>2026-11-17T01:45:00Z</date>
+    <media_types>
+        <media_type>
+            <name>Ops mail</name>
+            <type>EMAIL</type>
+            <smtp_server>mail.example.com</smtp_server>
+            <smtp_port>587</smtp_port>
+            <smtp_helo>example.com</smtp_helo>
+            <smtp_email>zabbix@example.com</smtp_email>
+            <smtp_security>STARTTLS</smtp_security>
+            <smtp_authentication>PASSWORD</smtp_authentication>
+            <username>zabbix@example.com</username>
+            <password>example-only</password>
+            <content_type>TEXT</content_type>
+        </media_type>
+        <media_type>
+            <name>Ops webhook</name>
+            <type>WEBHOOK</type>
+            <parameters>
+                <parameter>
+                    <name>Message</name>
+                    <value>{ALERT.MESSAGE}</value>
+                </parameter>
+                <parameter>
+                    <name>Subject</name>
+                    <value>{ALERT.SUBJECT}</value>
+                </parameter>
+                <parameter>
+                    <name>URL</name>
+                    <value>https://hooks.example.com/zabbix/0123456789</value>
+                </parameter>
+            </parameters>
+            <script>var p = JSON.parse(value); var r = new HttpRequest(); r.addHeader(&quot;Content-Type: application/json&quot;); r.post(p.URL, JSON.stringify({subject: p.Subject, message: p.Message})); return &quot;OK&quot;;</script>
+        </media_type>
+        <media_type>
+            <name>SMS</name>
+            <type>SMS</type>
+            <gsm_modem>/dev/ttyS0</gsm_modem>
+            <message_templates>
+                <message_template>
+                    <event_source>TRIGGERS</event_source>
+                    <operation_mode>PROBLEM</operation_mode>
+                    <message>{EVENT.SEVERITY}: {EVENT.NAME}
+Host: {HOST.NAME}
+{EVENT.DATE} {EVENT.TIME}</message>
+                </message_template>
+                <message_template>
+                    <event_source>TRIGGERS</event_source>
+                    <operation_mode>RECOVERY</operation_mode>
+                    <message>Resolved in {EVENT.DURATION}: {EVENT.NAME}
+Host: {HOST.NAME}
+{EVENT.DATE} {EVENT.TIME}</message>
+                </message_template>
+                <message_template>
+                    <event_source>TRIGGERS</event_source>
+                    <operation_mode>UPDATE</operation_mode>
+                    <message>{USER.FULLNAME} {EVENT.UPDATE.ACTION} problem in {EVENT.AGE} at {EVENT.UPDATE.DATE} {EVENT.UPDATE.TIME}</message>
+                </message_template>
+                <message_template>
+                    <event_source>DISCOVERY</event_source>
+                    <operation_mode>PROBLEM</operation_mode>
+                    <message>Discovery: {DISCOVERY.DEVICE.STATUS} {DISCOVERY.DEVICE.IPADDRESS}</message>
+                </message_template>
+                <message_template>
+                    <event_source>AUTOREGISTRATION</event_source>
+                    <operation_mode>PROBLEM</operation_mode>
+                    <message>Autoregistration: {HOST.HOST}
+Host IP: {HOST.IP}
+Agent port: {HOST.PORT}</message>
+                </message_template>
+            </message_templates>
+        </media_type>
+    </media_types>
+</zabbix_export>
+

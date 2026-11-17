@@ -33,15 +33,113 @@ export interface Me {
   multi_customer?: boolean;
   /** Whether the user sees more than one site; read it with `useMultiSite`. */
   multi_site?: boolean;
+  /** The sign-in provider that keeps the person's password; null for a password kept here (ADR-0145). */
+  provider?: AccountProvider | null;
+}
+
+/** The sign-in provider an account signs in through (ADR-0145). */
+export interface AccountProvider {
+  id: string;
+  name: string;
+  kind: IdentityProviderKind;
+}
+
+export type IdentityProviderKind = "oidc" | "ldap";
+
+/** `GET /api/auth/providers`: what the login page offers. */
+export interface LoginProvider {
+  id: string;
+  name: string;
+  kind: IdentityProviderKind;
+}
+
+export interface OidcSettings {
+  kind: "oidc";
+  issuer: string;
+  client_id: string;
+  scopes: string;
+  groups_claim: string;
+  ca_pem: string | null;
+}
+
+export interface LdapSettings {
+  kind: "ldap";
+  /** `ldaps://host[:port]`, or `ldap://host[:port]` with `starttls`. */
+  url: string;
+  starttls: boolean;
+  ca_pem: string | null;
+  bind_dn: string;
+  user_base_dn: string;
+  user_filter: string;
+  group_base_dn: string | null;
+  group_filter: string;
+  group_name_attribute: string;
+  nested_groups: boolean;
+}
+
+export type IdentityProviderSettings = OidcSettings | LdapSettings;
+
+/** One line of "Groups and roles": no customer and no site is everything. */
+export interface GroupMapping {
+  group: string;
+  role: Role;
+  customer_id: string | null;
+  site_id: string | null;
+}
+
+/** A sign-in provider, without its secret. */
+export interface IdentityProvider {
+  id: string;
+  kind: IdentityProviderKind;
+  name: string;
+  enabled: boolean;
+  has_secret: boolean;
+  settings: IdentityProviderSettings;
+  mappings: GroupMapping[];
+  accounts: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IdentityProviderList {
+  providers: IdentityProvider[];
+  /** What to enter as the redirect URI in an OpenID Connect provider. */
+  redirect_uri: string;
+  local_administrators: number;
+}
+
+export interface IdentityProviderRequest {
+  name: string;
+  enabled: boolean;
+  /** Empty or null keeps the stored one. */
+  secret: string | null;
+  settings: IdentityProviderSettings;
+}
+
+export interface IdentityProviderTest {
+  id?: string;
+  secret: string | null;
+  settings: IdentityProviderSettings;
+  username?: string;
+  password?: string;
+}
+
+export interface IdentityProviderTestResult {
+  ok: boolean;
+  error: string | null;
+  oidc: { issuer: string; keys: number; client_checked: boolean } | null;
+  ldap: { active_directory: boolean; dn: string | null; groups: string[] } | null;
+  roles: RoleGrant[];
 }
 
 export type ServerStatus = "online" | "offline";
 
 /** A server's one status on the fleet's pages, worst first (ADR-0130). */
-export type ServerState = "critical" | "warning" | "acknowledged" | "silenced" | "offline" | "ok";
+/** `waiting`: made by an import, waiting for its agent (ADR-0146). */
+export type ServerState = "critical" | "warning" | "acknowledged" | "silenced" | "offline" | "ok" | "waiting";
 
-/** `GET /api/servers/summary`: servers per state, out of `total`. */
-export type ServerSummary = Record<ServerState | "total", number>;
+/** `GET /api/servers/summary`: servers per state, out of `total`; `waiting` is absent from a central server older than ADR-0146. */
+export type ServerSummary = Record<Exclude<ServerState, "waiting"> | "total", number> & { waiting?: number };
 
 /** One entry of `GET /api/servers`. Timestamps are RFC 3339 in UTC. */
 export interface Server {
@@ -86,6 +184,8 @@ export interface Server {
   silence?: { by: string | null; until: string; reason: string } | null;
   /** The latest acknowledgement of its open incidents (ADR-0130). */
   acknowledgement?: { by: string; at: string; note: string | null } | null;
+  /** Made by an import and waiting for its agent, which takes it over by enrolling as `peer_id` (ADR-0146). */
+  awaiting_agent?: boolean;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -1158,6 +1258,100 @@ export interface ServerUpdateView {
   } | null;
 }
 
+/** A tool an import reads (ADR-0146), from `GET /api/imports/sources`. */
+export interface ImportSource {
+  id: string;
+  /** The product's name. */
+  name: string;
+  /** File extensions an upload accepts, without the dot; empty when it reads no files. */
+  extensions: string[];
+  many_files: boolean;
+  /** The connection's fields; empty when it cannot connect. */
+  connect: { key: string; secret: boolean; optional: boolean; placeholder: string }[];
+}
+
+/** Which list of the preview an item is in. */
+export type ImportList = "exact" | "approximated" | "not_movable";
+
+/** A note: a code the catalog translates (`imports.note.<code>`), its arguments, the English text. */
+export interface ImportNote {
+  code: string;
+  args?: Record<string, string>;
+  text: string;
+}
+
+/** What an import item creates. */
+export type ImportCreate =
+  | { object: "server"; peer_id: string; hostname: string; os_family: string; addresses: string[] }
+  | { object: "check"; server: string; kind: string; name: string; interval_ms: number; params: Record<string, string> }
+  | {
+      object: "threshold";
+      server: string;
+      metric: string;
+      instance: string | null;
+      comparison: Comparison;
+      warning: number | null;
+      critical: number | null;
+      duration_s: number;
+      hysteresis: number;
+    }
+  | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string }
+  | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null };
+
+/** One line of an import's preview. */
+export interface ImportItem {
+  id: string;
+  /** `server`, `check`, `threshold`, `silence`, `channel`, `builtin` or `other`. */
+  kind: string;
+  list: ImportList;
+  note?: ImportNote;
+  origin: { kind: string; name: string; detail?: string };
+  hosts: string[];
+  /** MonitorFlow has it already. */
+  present: boolean;
+  /** Items it needs: leaving one out leaves this one out. */
+  needs: string[];
+  create?: ImportCreate;
+}
+
+/** What a confirmation and an undo did. */
+export interface ImportResult {
+  created: Record<string, number>;
+  skipped: number;
+  present: number;
+  failed: { item: string; error: string }[];
+  removed: Record<string, number>;
+  kept_servers: string[];
+}
+
+/** One import: a preview, then confirmed, then perhaps undone. */
+export interface ImportRun {
+  id: string;
+  source: string;
+  source_name: string;
+  site_id: string;
+  site_name: string;
+  input: string;
+  state: "preview" | "confirmed" | "undone";
+  created_at: string;
+  created_by: string | null;
+  expires_at: string | null;
+  confirmed_at: string | null;
+  undone_at: string | null;
+  counts: { exact: number; approximated: number; not_movable: number; present: number; to_create: number };
+  /** Absent in lists. */
+  items?: ImportItem[];
+  result: ImportResult | null;
+}
+
+/** Body of `POST /api/imports`: files or a connection. */
+export interface ImportRequest {
+  source: string;
+  site_id?: string;
+  files?: { name: string; content: string; base64?: boolean }[];
+  connection?: Record<string, string>;
+}
+
 export type BackupKind = "daily" | "manual" | "update";
 
 /** One backup file in the backups volume (ADR-0058). */
@@ -1183,13 +1377,25 @@ export interface BackupRun {
   finished_at: string | null;
 }
 
-/** What a license key says (ADR-0100). */
+/** A paid subscription (ADR-0147). Community, the free tier, has no key. */
+export type LicenseTier = "basic" | "standard" | "premium" | "enterprise";
+
+/** What a license key says (ADR-0100, ADR-0147). */
 export interface License {
+  /** 2, or 1 for a key of ADR-0100, which says no tier, managed servers or contact. */
+  format?: number;
   id: string;
   customer: string;
+  /** `enterprise` when it includes the Enterprise edition, `core` otherwise. */
   edition: string;
+  /** Absent from servers older than ADR-0147, whose keys are all Enterprise. */
+  tier?: LicenseTier;
+  /** Managed servers covered; `null` for a format 1 key. */
+  managed_servers?: number | null;
   /** Central servers allowed on the database, the first one included. */
   server_instances: number;
+  /** An email address or an `https://` address. */
+  support?: string | null;
   /** `YYYY-MM-DD`. */
   issued: string;
   /** Last valid day, `YYYY-MM-DD` (UTC). */
@@ -1210,6 +1416,8 @@ export interface LicenseView {
   installed_by?: string | null;
   /** Central servers added under a license, oldest first. */
   added?: AddedServer[];
+  /** Managed servers now, whose agent is not revoked (ADR-0147). */
+  managed_servers_in_use?: number;
 }
 
 /** A central server added with `install-server.sh --join` (ADR-0100). */
@@ -2219,6 +2427,8 @@ export interface UserAccount {
   roles: RoleGrant[];
   /** Expiry of the user's unused password link, if any. */
   link_expires_at: string | null;
+  /** The sign-in provider whose groups give the roles; null for a password kept here (ADR-0145). */
+  provider?: AccountProvider | null;
 }
 
 export interface UserList {
@@ -2986,6 +3196,36 @@ export const api = {
   /** Every account; global administrators only (ADR-0059). */
   users: (signal?: AbortSignal) => request<UserList>("/api/users", { signal }),
 
+  /** The sign-in providers turned on, for the login page; no session needed (ADR-0145). */
+  loginProviders: (signal?: AbortSignal) =>
+    request<{ providers: LoginProvider[] }>("/api/auth/providers", { signal, redirectOn401: false }),
+
+  /** Sign-in providers, without secrets; global administrators only (ADR-0145). */
+  identityProviders: (signal?: AbortSignal) =>
+    request<IdentityProviderList>("/api/identity-providers", { signal }),
+
+  /** Adds a provider; turning it on tests it first. */
+  createIdentityProvider: (body: IdentityProviderRequest) =>
+    request<IdentityProvider>("/api/identity-providers", { method: "POST", body }),
+
+  /** Replaces a provider; an empty secret keeps the stored one for the same address. */
+  updateIdentityProvider: (id: string, body: IdentityProviderRequest) =>
+    request<IdentityProvider>(`/api/identity-providers/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  removeIdentityProvider: (id: string) =>
+    request<void>(`/api/identity-providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Tests what the form holds, saving nothing. */
+  testIdentityProvider: (body: IdentityProviderTest) =>
+    request<IdentityProviderTestResult>("/api/identity-providers/test", { method: "POST", body }),
+
+  /** Replaces the groups and roles of a provider; its accounts follow at once. */
+  setIdentityProviderGroups: (id: string, mappings: GroupMapping[]) =>
+    request<{ mappings: GroupMapping[] }>(`/api/identity-providers/${encodeURIComponent(id)}/groups`, {
+      method: "PUT",
+      body: { mappings },
+    }),
+
   /** Creates `username` with one role, and returns their invitation link. */
   inviteUser: (username: string, grant: GrantRequest) =>
     request<{ user: UserAccount; link: PasswordLink }>("/api/users", {
@@ -3707,6 +3947,22 @@ export const api = {
   /** Frees the place of an added central server; audited. */
   removeAddedServer: (name: string) =>
     request<void>(`/api/license/servers/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  /** Moving from another monitoring tool (ADR-0146): the tools an import reads. */
+  importSources: (signal?: AbortSignal) =>
+    request<{ sources: ImportSource[] }>("/api/imports/sources", { signal }),
+  /** The latest imports of the sites the user administers, without their items. */
+  imports: (signal?: AbortSignal) => request<{ imports: ImportRun[] }>("/api/imports", { signal }),
+  /** Reads files or connects, and stores a preview; creates nothing else. */
+  previewImport: (body: ImportRequest) => request<ImportRun>("/api/imports", { method: "POST", body }),
+  importRun: (id: string, signal?: AbortSignal) =>
+    request<ImportRun>(`/api/imports/${encodeURIComponent(id)}`, { signal }),
+  /** Creates the preview's items but `skip` and what needs them; audited. */
+  confirmImport: (id: string, skip: string[]) =>
+    request<ImportRun>(`/api/imports/${encodeURIComponent(id)}/confirm`, { method: "POST", body: { skip } }),
+  /** Removes what the import created, but servers an agent took over; audited. */
+  undoImport: (id: string) =>
+    request<ImportRun>(`/api/imports/${encodeURIComponent(id)}/undo`, { method: "POST" }),
 
   backups: (signal?: AbortSignal) =>
     request<BackupsView>("/api/backups", { signal }),

@@ -20,7 +20,7 @@ const HEALTHY = {
 
 async function signIn(password = "correct horse", user = userEvent.setup()) {
   render(<LoginForm />);
-  await user.type(screen.getByLabelText("Username"), "alice");
+  await user.type(await screen.findByLabelText("Username"), "alice");
   await user.type(screen.getByLabelText("Password"), password);
   await user.keyboard("{Enter}");
 }
@@ -51,7 +51,7 @@ describe("LoginForm", () => {
     const user = userEvent.setup();
     render(<LoginForm />);
     expect(screen.getByRole("heading", { name: "Se connecter" })).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Nom d’utilisateur"), "alice");
+    await user.type(await screen.findByLabelText("Nom d’utilisateur"), "alice");
     await user.type(screen.getByLabelText("Mot de passe"), "faux");
     await user.keyboard("{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -105,5 +105,52 @@ describe("LoginForm", () => {
     expect(screen.getByRole("status")).toHaveTextContent("No account yet.");
     expect(screen.getByText(/monitorflow-server setup-link/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+  });
+});
+
+describe("LoginForm with sign-in providers (ADR-0145)", () => {
+  beforeEach(() => replace.mockReset());
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  const keycloak = { id: "p1", name: "Keycloak", kind: "oidc" };
+  const directory = { id: "p2", name: "Directory", kind: "ldap" };
+
+  it("offers a button per provider and folds the password form for the local administrator", async () => {
+    stubFetch({ ...HEALTHY, "GET /api/auth/providers": { status: 200, body: { providers: [keycloak] } } });
+    const user = userEvent.setup();
+    render(<LoginForm />);
+    const button = await screen.findByRole("link", { name: "Sign in with Keycloak" });
+    expect(button).toHaveAttribute("href", "/api/auth/oidc/p1/start");
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Sign in with a password" }));
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+  });
+
+  it("keeps the password form open for a directory", async () => {
+    stubFetch({ ...HEALTHY, "GET /api/auth/providers": { status: 200, body: { providers: [keycloak, directory] } } });
+    render(<LoginForm />);
+    expect(await screen.findByRole("link", { name: "Sign in with Keycloak" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Sign in with Directory" })).not.toBeInTheDocument();
+  });
+
+  it("says why the provider's sign-in came back", async () => {
+    window.history.replaceState(null, "", "/login/?sso=no_group");
+    stubFetch({ ...HEALTHY, "GET /api/auth/providers": { status: 200, body: { providers: [keycloak] } } });
+    render(<LoginForm />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your account is in none of the groups that give access to MonitorFlow. Ask your administrator.",
+    );
+  });
+
+  it("says a directory account has no group that gives access", async () => {
+    stubFetch({
+      ...HEALTHY,
+      "GET /api/auth/providers": { status: 200, body: { providers: [directory] } },
+      "POST /api/auth/login": { status: 403, body: { error: "no", code: "no_access" } },
+    });
+    await signIn();
+    expect(await screen.findByText("Your account is in none of the groups that give access to MonitorFlow.")).toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalled();
   });
 });

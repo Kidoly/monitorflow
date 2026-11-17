@@ -10,12 +10,12 @@ The files in `ee/` are under the MonitorFlow Enterprise License (`LICENSE` in th
 
 As an additional permission under section 7 of the GNU AGPL, the copyright holder of MonitorFlow allows you to combine its AGPL code with the code in this directory into one program, and to convey that program, as long as the code in this directory stays under its own license and the rest under the AGPL. (Draft, reviewed with the license.)
 
-A server built without the Cargo feature `enterprise` (`cargo build -p monitorflow-server --no-default-features`) contains AGPL code only. It does everything except add a central server.
+A server built without the Cargo feature `enterprise` (`cargo build -p monitorflow-server --no-default-features`) contains AGPL code only. It does everything except add a central server and read subscription license keys, so it always follows the regular update channel (ADR-0147).
 
 ## Contents
 
 - `LICENSE`: the MonitorFlow Enterprise License.
 - `license-keys.pem`: the public keys that verify license keys, built into the server.
-- `crates/server-ee`: license keys, and letting an additional central server start.
+- `crates/server-ee`: license keys of every subscription tier (ADR-0147), and letting an additional central server start.
 
 Contributions are welcome, under the same Contributor License Agreement as the rest of MonitorFlow (`../CONTRIBUTING.md`).
