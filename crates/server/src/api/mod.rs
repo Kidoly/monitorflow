@@ -175,6 +175,12 @@
 //! | PUT | `/api/plugins/{id}/enabled` | global administrator | body `{"enabled"}`; 200 [`plugins::PluginView`]; audited (`plugin.enable`, `plugin.disable`) |
 //! | DELETE | `/api/plugins/{id}` | global administrator | 204; 409 while a channel or check uses it; audited (`plugin.remove`) |
 //! | GET | `/api/plugins/usable` | any role | [`plugins::UsableList`]: plugins turned on, with the places the user can see |
+//! | GET | `/api/imports/sources` | any administrator | [`imports::SourceList`]: the tools an import reads (ADR-0146) |
+//! | GET | `/api/imports` | any administrator | [`imports::RunList`]: the latest imports of the sites the user administers |
+//! | POST | `/api/imports` | site administrator | body [`imports::PreviewRequest`], files or a connection whose token is never stored; 201 [`imports::RunView`], the preview; creates nothing else; audited |
+//! | GET | `/api/imports/{id}` | site administrator | [`imports::RunView`] with its items |
+//! | POST | `/api/imports/{id}/confirm` | site administrator | body [`imports::ConfirmRequest`]; 200 [`imports::RunView`]; 409 once confirmed or a day old; audited |
+//! | POST | `/api/imports/{id}/undo` | site administrator | 200 [`imports::RunView`]; removes what it created, servers an agent took over kept; 409 unless confirmed; audited |
 //! | GET | `/api/plugins/publishers` | global administrator | [`plugins::PublisherList`] |
 //! | POST | `/api/plugins/publishers` | global administrator | body `{"name", "public_key"}`; 201 [`plugins::PublisherView`]; 409 for a key trusted already; audited (`plugin_publisher.add`) |
 //! | DELETE | `/api/plugins/publishers/{id}` | global administrator | 204; 409 while a plugin it signed is installed; audited (`plugin_publisher.remove`) |
@@ -681,6 +687,7 @@ pub mod follow_up;
 mod health;
 pub mod idempotency;
 pub mod identity_providers;
+pub mod imports;
 pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
@@ -699,6 +706,7 @@ pub mod openapi_campaigns;
 mod openapi_checks;
 pub mod openapi_core;
 mod openapi_dashboards;
+mod openapi_imports;
 mod openapi_plugins;
 pub mod openapi_remediation;
 mod openapi_settings;
@@ -1403,6 +1411,16 @@ pub fn router(state: ApiState) -> Router {
             )),
         )
         .route("/api/plugins/usable", get(plugins::usable))
+        .route("/api/imports/sources", get(imports::sources))
+        .route(
+            "/api/imports",
+            get(imports::list)
+                .post(imports::preview)
+                .layer(DefaultBodyLimit::max(imports::MAX_BODY)),
+        )
+        .route("/api/imports/{id}", get(imports::detail))
+        .route("/api/imports/{id}/confirm", post(imports::confirm))
+        .route("/api/imports/{id}/undo", post(imports::undo))
         .route(
             "/api/plugins/publishers",
             get(plugins::publishers).post(plugins::add_publisher),

@@ -78,6 +78,8 @@ pub enum Column {
     /// The state of an OpenID Connect sign-in in progress, sealed into a
     /// cookie rather than a column (ADR-0145). Never in [`SEALED`].
     SignInCookie,
+    /// Channel secrets of an import's preview (ADR-0146).
+    ImportRuns,
 }
 
 impl Column {
@@ -90,6 +92,7 @@ impl Column {
             Self::AiApiKey => "server_settings.ai_api_key",
             Self::IdentityProviders => "identity_providers.secret",
             Self::SignInCookie => "cookie.mf_sso",
+            Self::ImportRuns => "import_runs.secrets",
         }
     }
 

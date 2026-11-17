@@ -1,0 +1,25 @@
+[package]
+name = "monitorflow-import"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Reads the configuration of another monitoring tool into a neutral description (ADR-0146)."
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+monitorflow-common.workspace = true
+quick-xml.workspace = true
+regex.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde.workspace = true
+serde_json.workspace = true
+# YAML of configuration exports, rule files and scrape configs; the
+# maintained fork of serde_yaml.
+serde_norway = "0.9"
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

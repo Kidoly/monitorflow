@@ -7,6 +7,7 @@ import {
   BACKUPS_PATH,
   CERTIFICATE_AUTHORITY_PATH,
   GENERAL_SETTINGS_PATH,
+  IMPORT_PATH,
   INTEGRATIONS_PATH,
   LICENSE_PATH,
   NOTIFICATIONS_PATH,
@@ -28,6 +29,7 @@ export type SettingsId =
   | "sites"
   | "relays"
   | "add-servers"
+  | "import"
   | "certificate-authority"
   | "notifications"
   | "integrations"
@@ -106,6 +108,14 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         href: TOKENS_PATH,
         icon: "tokens",
         keywords: "settings.addServers.keywords",
+      },
+      {
+        id: "import",
+        label: "settings.import.label",
+        description: text("settings.import.description"),
+        href: IMPORT_PATH,
+        icon: "tokens",
+        keywords: "settings.import.keywords",
       },
       {
         id: "certificate-authority",

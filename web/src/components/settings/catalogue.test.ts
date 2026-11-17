@@ -12,7 +12,7 @@ describe("settings catalogue", () => {
   it("shows global administrators every page, their own preferences first", () => {
     const groups = visibleSettings(global);
     expect(groups.map((g) => t(g.heading))).toEqual(["You", "Fleet", "Alerting", "Access", "AI & extensions", "System"]);
-    expect(ids(groups)).toHaveLength(16);
+    expect(ids(groups)).toHaveLength(17);
     expect(ids(groups)[0]).toBe("preferences");
   });
 
@@ -23,6 +23,7 @@ describe("settings catalogue", () => {
       "sites",
       "relays",
       "add-servers",
+      "import",
       "notifications",
       "integrations",
       "users",
@@ -36,7 +37,7 @@ describe("settings catalogue", () => {
     expect(ids(filterSettings(groups, "back", global))).toEqual(["backups"]);
     expect(ids(filterSettings(groups, "SLACK", global))).toEqual(["notifications"]);
     expect(ids(filterSettings(groups, "install command", global))).toEqual(["add-servers"]);
-    expect(ids(filterSettings(groups, "  ", global))).toHaveLength(16);
+    expect(ids(filterSettings(groups, "  ", global))).toHaveLength(17);
     expect(ids(filterSettings(groups, "dark theme", global))).toEqual(["preferences"]);
     expect(filterSettings(groups, "nothing like this", global)).toEqual([]);
   });

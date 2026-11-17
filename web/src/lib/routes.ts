@@ -86,6 +86,8 @@ export const RELAYS_PATH = "/settings/relays/";
 export const SITES_PATH = "/settings/sites/";
 /** Install commands and single-use tokens. */
 export const TOKENS_PATH = "/settings/add-servers/";
+/** Moving from another monitoring tool (ADR-0146). */
+export const IMPORT_PATH = "/settings/import/";
 export const USERS_PATH = "/settings/users/";
 /** Sign-in providers: OpenID Connect and LDAP directories (ADR-0145). */
 export const SIGN_IN_PATH = "/settings/sign-in/";

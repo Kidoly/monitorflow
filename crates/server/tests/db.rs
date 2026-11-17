@@ -163,6 +163,8 @@ db_tests! {
                 "follow_up_policies",
                 "identity_provider_groups",
                 "identity_providers",
+                "import_created",
+                "import_runs",
                 "incident_acknowledgements",
                 "incident_events",
                 "incident_follow_ups",

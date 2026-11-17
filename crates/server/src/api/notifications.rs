@@ -136,7 +136,7 @@ const VIEW: &str = "SELECT n.id, n.kind,
     LEFT JOIN sites s ON s.id = n.site_id
     LEFT JOIN customers c ON c.id = coalesce(n.customer_id, s.customer_id)";
 
-pub(super) fn is_global_admin(user: &CurrentUser) -> bool {
+pub(crate) fn is_global_admin(user: &CurrentUser) -> bool {
     user.administered_customers() == Scope::All
 }
 
@@ -229,7 +229,7 @@ async fn validate(
 /// one the stored chat URL's host is kept, so that
 /// [`Destination::same_target`] sees the same place. An empty webhook URL
 /// keeps the stored one (ADR-0123).
-pub(super) fn checked(
+pub(crate) fn checked(
     kind: &str,
     mut settings: Value,
     secret: Option<String>,

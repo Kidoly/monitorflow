@@ -11,6 +11,7 @@ pub const SEALED: &[Column] = &[
     Column::IntegrationEndpoints,
     Column::AiApiKey,
     Column::IdentityProviders,
+    Column::ImportRuns,
 ];
 
 #[derive(Debug, thiserror::Error)]

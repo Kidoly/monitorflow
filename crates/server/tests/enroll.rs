@@ -428,6 +428,103 @@ async fn first_hello(pool: &PgPool, id: &str) -> Result<String, InventoryError> 
         .await
 }
 
+/// A server an import made in the site `paris`, waiting for its agent
+/// (ADR-0146), with one check.
+async fn expected_server(pool: &PgPool, peer_id: &str, hostname: &str) -> Uuid {
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO servers (peer_id, site_id, hostname, os_family, awaiting_agent, package_updates)
+         VALUES ($1, $2, $3, 'linux', true, false) RETURNING id",
+    )
+    .bind(peer_id)
+    .bind(site(pool).await)
+    .bind(hostname)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO sensor_configs (server_id, kind, name, interval_ms, params)
+         VALUES ($1, 'port', 'port_22', 60000, '{\"port\": \"22\"}')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+db_tests! {
+    #[sqlx::test]
+    async fn an_agent_takes_over_the_server_an_import_made(pool: PgPool) {
+        let pki = Pki::new();
+        let web = expected_server(&pool, "web-01", "web-01").await;
+        let db = expected_server(&pool, "db-01", "DB-01").await;
+        let key = install_key(&pki, &pool, None, false).await;
+        // The full name of the host matches the short one imported, and
+        // the other one matches by host name.
+        assert_eq!(enroll_host(&pki, &pool, &key, "web-01.example.com").await.unwrap(), "web-01");
+        assert_eq!(enroll_host(&pki, &pool, &key, "db-01").await.unwrap(), "db-01");
+        // A second host of that name gets a name of its own: the first one
+        // holds a certificate for it now.
+        assert_eq!(enroll_host(&pki, &pool, &key, "web-01").await.unwrap(), "web-01-2");
+
+        assert_eq!(first_hello(&pool, "web-01").await.unwrap(), "paris");
+        let (id, awaiting, checks): (Uuid, bool, i64) = sqlx::query_as(
+            "SELECT s.id, s.awaiting_agent,
+                    (SELECT count(*) FROM sensor_configs c WHERE c.server_id = s.id)
+             FROM servers s WHERE s.peer_id = 'web-01'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((id, awaiting, checks), (web, false, 1));
+        assert_eq!(count(&pool, "SELECT count(*) FROM servers WHERE peer_id = 'web-01'").await, 1);
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM audit_log WHERE action = 'server.agent_arrived' AND target_id = 'web-01'").await,
+            1
+        );
+        // Integrations hear of it now, not when it was imported.
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM integration_events WHERE event = 'server.added'").await,
+            1
+        );
+        let still: bool = sqlx::query_scalar("SELECT awaiting_agent FROM servers WHERE id = $1")
+            .bind(db)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(still, "db-01 waits until its first Hello");
+    }
+
+    #[sqlx::test]
+    async fn an_imported_server_still_waits_for_approval(pool: PgPool) {
+        let pki = Pki::new();
+        expected_server(&pool, "web-01", "web-01").await;
+        let key = install_key(&pki, &pool, None, true).await;
+        assert_eq!(enroll_host(&pki, &pool, &key, "web-01").await.unwrap(), "web-01");
+        let err = first_hello(&pool, "web-01").await.unwrap_err();
+        assert!(matches!(err, InventoryError::AwaitingApproval), "{err:?}");
+        let awaiting: bool = sqlx::query_scalar("SELECT awaiting_agent FROM servers WHERE peer_id = 'web-01'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(awaiting);
+    }
+
+    #[sqlx::test]
+    async fn a_token_for_an_imported_server_takes_it_over(pool: PgPool) {
+        let pki = Pki::new();
+        let web = expected_server(&pool, "web-01", "web-01").await;
+        enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "paris").await.unwrap();
+        assert_eq!(first_hello(&pool, "web-01").await.unwrap(), "paris");
+        let awaiting: bool = sqlx::query_scalar("SELECT awaiting_agent FROM servers WHERE id = $1")
+            .bind(web)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(!awaiting);
+    }
+}
+
 db_tests! {
     #[sqlx::test]
     async fn an_install_key_enrolls_many_hosts_under_unique_names(pool: PgPool) {

@@ -149,6 +149,7 @@ db_tests! {
                 Column::IntegrationEndpoints,
                 Column::AiApiKey,
                 Column::IdentityProviders,
+                Column::ImportRuns,
             ]
         );
         let channels = "SELECT secret FROM notification_channels ORDER BY settings->>'url'";
@@ -171,6 +172,7 @@ db_tests! {
             listed,
             [
                 "identity_providers.secret",
+                "import_runs.secrets",
                 "integration_endpoints.secret",
                 "notification_channels.secret",
                 "server_settings.ai_api_key",
