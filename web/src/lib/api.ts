@@ -1183,13 +1183,25 @@ export interface BackupRun {
   finished_at: string | null;
 }
 
-/** What a license key says (ADR-0100). */
+/** A paid subscription (ADR-0147). Community, the free tier, has no key. */
+export type LicenseTier = "basic" | "standard" | "premium" | "enterprise";
+
+/** What a license key says (ADR-0100, ADR-0147). */
 export interface License {
+  /** 2, or 1 for a key of ADR-0100, which says no tier, managed servers or contact. */
+  format?: number;
   id: string;
   customer: string;
+  /** `enterprise` when it includes the Enterprise edition, `core` otherwise. */
   edition: string;
+  /** Absent from servers older than ADR-0147, whose keys are all Enterprise. */
+  tier?: LicenseTier;
+  /** Managed servers covered; `null` for a format 1 key. */
+  managed_servers?: number | null;
   /** Central servers allowed on the database, the first one included. */
   server_instances: number;
+  /** An email address or an `https://` address. */
+  support?: string | null;
   /** `YYYY-MM-DD`. */
   issued: string;
   /** Last valid day, `YYYY-MM-DD` (UTC). */
@@ -1210,6 +1222,8 @@ export interface LicenseView {
   installed_by?: string | null;
   /** Central servers added under a license, oldest first. */
   added?: AddedServer[];
+  /** Managed servers now, whose agent is not revoked (ADR-0147). */
+  managed_servers_in_use?: number;
 }
 
 /** A central server added with `install-server.sh --join` (ADR-0100). */
