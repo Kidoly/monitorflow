@@ -17851,6 +17851,7 @@
                 },
                 "example": {
                   "available": null,
+                  "channel": "regular",
                   "enabled": true,
                   "requested": false,
                   "running_version": "0.4.0",
@@ -18121,7 +18122,7 @@
           "server-update"
         ],
         "summary": "Check for a newer release",
-        "description": "Fetches the latest release from `source` and verifies its signature, as\nthe updater will before installing it, and records what it saw as the\ndaily check does. Installs nothing; safe to repeat. Answers 200 even\nwhen the source cannot be reached: `reachable` and `error` say so.",
+        "description": "Fetches the latest release of the server's `channel` from `source` and\nverifies its signature, as the updater will before installing it, and\nrecords what it saw as the daily check does. The `regular` channel is\nthe latest release; the `tested` channel, followed while a license key\nis valid, is the release named by the signed `tested.json` next to it\n(ADR-0147). Installs nothing; safe to repeat. Answers 200 even\nwhen the source cannot be reached: `reachable` and `error` say so.",
         "operationId": "check_update",
         "parameters": [
           {
@@ -18156,6 +18157,7 @@
                   "$ref": "#/components/schemas/CheckResult"
                 },
                 "example": {
+                  "channel": "regular",
                   "error": null,
                   "latest": {
                     "agent_release_cached": false,
@@ -31412,9 +31414,14 @@
         "required": [
           "source",
           "running_version",
+          "channel",
           "reachable"
         ],
         "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/UpdateChannel",
+            "description": "The channel checked: `tested` while a license key is valid,\n`regular` otherwise (ADR-0147)."
+          },
           "error": {
             "type": [
               "string",
@@ -40535,6 +40542,14 @@
           }
         }
       },
+      "UpdateChannel": {
+        "type": "string",
+        "description": "Which releases a central server is offered.",
+        "enum": [
+          "regular",
+          "tested"
+        ]
+      },
       "UpdateMirrorRequest": {
         "type": "object",
         "description": "Body of `PATCH /api/mirrors/{id}`.",
@@ -40663,7 +40678,8 @@
           "running_version",
           "enabled",
           "source",
-          "requested"
+          "requested",
+          "channel"
         ],
         "properties": {
           "available": {
@@ -40676,6 +40692,10 @@
                 "type": "null"
               }
             ]
+          },
+          "channel": {
+            "$ref": "#/components/schemas/UpdateChannel",
+            "description": "The releases this server is offered: `tested` while a license key\nis valid, `regular` otherwise (ADR-0147)."
           },
           "enabled": {
             "type": "boolean",
