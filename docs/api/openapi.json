@@ -6142,6 +6142,1338 @@
         ]
       }
     },
+    "/api/v1/imports": {
+      "get": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "List imports",
+        "description": "The latest 50 imports of the sites the key's maker administers, newest\nfirst, without their items.",
+        "operationId": "list_imports",
+        "responses": {
+          "200": {
+            "description": "The imports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportList"
+                },
+                "example": {
+                  "imports": [
+                    {
+                      "confirmed_at": "2026-11-17T09:05:00Z",
+                      "counts": {
+                        "approximated": 1,
+                        "exact": 2,
+                        "not_movable": 1,
+                        "present": 0,
+                        "to_create": 3
+                      },
+                      "created_at": "2026-11-17T09:00:00Z",
+                      "created_by": "alice",
+                      "expires_at": null,
+                      "id": "3f6c2a1e-8b4d-4e7f-9a1c-5d2e3f4a6b7c",
+                      "input": "https://monitoring.example.com",
+                      "result": {
+                        "created": {
+                          "check": 1,
+                          "server": 1,
+                          "threshold": 1
+                        },
+                        "failed": [],
+                        "kept_servers": [],
+                        "present": 0,
+                        "removed": {},
+                        "skipped": 0
+                      },
+                      "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718",
+                      "site_name": "paris",
+                      "source": "example",
+                      "source_name": "Example tool",
+                      "state": "confirmed",
+                      "undone_at": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Read another tool's configuration into a preview",
+        "description": "Reads `files`, or connects with `connection`, and stores a preview of\nwhat a confirmation would create; nothing else is written. `site_id`\nmay be left out by someone who administers one site. A connection's\ntoken is used for this request only. Audited as `import.preview`. A\npreview can be confirmed for a day.",
+        "operationId": "preview_import",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              },
+              "example": {
+                "connection": {
+                  "token": "an API token",
+                  "url": "https://monitoring.example.com"
+                },
+                "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718",
+                "source": "example"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Import"
+                },
+                "example": {
+                  "confirmed_at": "2026-11-17T09:05:00Z",
+                  "counts": {
+                    "approximated": 1,
+                    "exact": 2,
+                    "not_movable": 1,
+                    "present": 0,
+                    "to_create": 3
+                  },
+                  "created_at": "2026-11-17T09:00:00Z",
+                  "created_by": "alice",
+                  "expires_at": null,
+                  "id": "3f6c2a1e-8b4d-4e7f-9a1c-5d2e3f4a6b7c",
+                  "input": "https://monitoring.example.com",
+                  "items": [
+                    {
+                      "create": {
+                        "addresses": [
+                          "10.0.0.5"
+                        ],
+                        "hostname": "web-01",
+                        "object": "server",
+                        "os_family": "debian",
+                        "peer_id": "web-01"
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "server:web-01",
+                      "kind": "server",
+                      "list": "exact",
+                      "needs": [],
+                      "origin": {
+                        "kind": "host",
+                        "name": "web-01"
+                      },
+                      "present": false
+                    },
+                    {
+                      "create": {
+                        "interval_ms": 60000,
+                        "kind": "port",
+                        "name": "port_shop_example_com_443",
+                        "object": "check",
+                        "params": {
+                          "host": "shop.example.com",
+                          "port": "443"
+                        },
+                        "server": "web-01"
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "check:web-01:port_443",
+                      "kind": "check",
+                      "list": "approximated",
+                      "needs": [
+                        "server:web-01"
+                      ],
+                      "note": {
+                        "args": {
+                          "host": "shop.example.com",
+                          "port": "443"
+                        },
+                        "code": "web_as_port",
+                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                      },
+                      "origin": {
+                        "kind": "web_scenario",
+                        "name": "Shop"
+                      },
+                      "present": false
+                    },
+                    {
+                      "create": {
+                        "comparison": ">",
+                        "critical": null,
+                        "duration_s": 300,
+                        "hysteresis": 0.0,
+                        "instance": "total",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "object": "threshold",
+                        "server": "web-01",
+                        "warning": 0.9
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "threshold:web-01:monitorflow_cpu_usage_ratio:total",
+                      "kind": "threshold",
+                      "list": "exact",
+                      "needs": [
+                        "server:web-01"
+                      ],
+                      "origin": {
+                        "detail": "min(/web-01/system.cpu.util,5m)>90",
+                        "kind": "trigger",
+                        "name": "High CPU utilization"
+                      },
+                      "present": false
+                    },
+                    {
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "other:item:Interface eth0: Bits received",
+                      "kind": "other",
+                      "list": "not_movable",
+                      "needs": [],
+                      "note": {
+                        "args": {},
+                        "code": "network_traffic",
+                        "text": "MonitorFlow does not measure network interface traffic yet."
+                      },
+                      "origin": {
+                        "detail": "net.if.in[\"eth0\"]",
+                        "kind": "item",
+                        "name": "Interface eth0: Bits received"
+                      },
+                      "present": false
+                    }
+                  ],
+                  "result": {
+                    "created": {
+                      "check": 1,
+                      "server": 1,
+                      "threshold": 1
+                    },
+                    "failed": [],
+                    "kept_servers": [],
+                    "present": 0,
+                    "removed": {},
+                    "skipped": 0
+                  },
+                  "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718",
+                  "site_name": "paris",
+                  "source": "example",
+                  "source_name": "Example tool",
+                  "state": "confirmed",
+                  "undone_at": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: unknown source, files and a connection together or neither, a file it cannot read, a field missing, the other tool unreachable or refusing the token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not an administrator of the site; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/imports/sources": {
+      "get": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "List the tools an import reads",
+        "description": "Each source says which files it reads and the fields of its\nconnection. Administrators only.",
+        "operationId": "list_import_sources",
+        "responses": {
+          "200": {
+            "description": "The sources",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSourceList"
+                },
+                "example": {
+                  "sources": [
+                    {
+                      "connect": [
+                        {
+                          "key": "url",
+                          "optional": false,
+                          "placeholder": "https://monitoring.example.com",
+                          "secret": false
+                        },
+                        {
+                          "key": "token",
+                          "optional": false,
+                          "placeholder": "",
+                          "secret": true
+                        }
+                      ],
+                      "extensions": [
+                        "yaml",
+                        "yml",
+                        "xml",
+                        "json"
+                      ],
+                      "id": "example",
+                      "many_files": true,
+                      "name": "Example tool"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/imports/{id}": {
+      "get": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Read an import",
+        "description": "One import with its items, in the order a confirmation creates them.",
+        "operationId": "import",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The import",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The import",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Import"
+                },
+                "example": {
+                  "confirmed_at": "2026-11-17T09:05:00Z",
+                  "counts": {
+                    "approximated": 1,
+                    "exact": 2,
+                    "not_movable": 1,
+                    "present": 0,
+                    "to_create": 3
+                  },
+                  "created_at": "2026-11-17T09:00:00Z",
+                  "created_by": "alice",
+                  "expires_at": null,
+                  "id": "3f6c2a1e-8b4d-4e7f-9a1c-5d2e3f4a6b7c",
+                  "input": "https://monitoring.example.com",
+                  "items": [
+                    {
+                      "create": {
+                        "addresses": [
+                          "10.0.0.5"
+                        ],
+                        "hostname": "web-01",
+                        "object": "server",
+                        "os_family": "debian",
+                        "peer_id": "web-01"
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "server:web-01",
+                      "kind": "server",
+                      "list": "exact",
+                      "needs": [],
+                      "origin": {
+                        "kind": "host",
+                        "name": "web-01"
+                      },
+                      "present": false
+                    },
+                    {
+                      "create": {
+                        "interval_ms": 60000,
+                        "kind": "port",
+                        "name": "port_shop_example_com_443",
+                        "object": "check",
+                        "params": {
+                          "host": "shop.example.com",
+                          "port": "443"
+                        },
+                        "server": "web-01"
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "check:web-01:port_443",
+                      "kind": "check",
+                      "list": "approximated",
+                      "needs": [
+                        "server:web-01"
+                      ],
+                      "note": {
+                        "args": {
+                          "host": "shop.example.com",
+                          "port": "443"
+                        },
+                        "code": "web_as_port",
+                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                      },
+                      "origin": {
+                        "kind": "web_scenario",
+                        "name": "Shop"
+                      },
+                      "present": false
+                    },
+                    {
+                      "create": {
+                        "comparison": ">",
+                        "critical": null,
+                        "duration_s": 300,
+                        "hysteresis": 0.0,
+                        "instance": "total",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "object": "threshold",
+                        "server": "web-01",
+                        "warning": 0.9
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "threshold:web-01:monitorflow_cpu_usage_ratio:total",
+                      "kind": "threshold",
+                      "list": "exact",
+                      "needs": [
+                        "server:web-01"
+                      ],
+                      "origin": {
+                        "detail": "min(/web-01/system.cpu.util,5m)>90",
+                        "kind": "trigger",
+                        "name": "High CPU utilization"
+                      },
+                      "present": false
+                    },
+                    {
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "other:item:Interface eth0: Bits received",
+                      "kind": "other",
+                      "list": "not_movable",
+                      "needs": [],
+                      "note": {
+                        "args": {},
+                        "code": "network_traffic",
+                        "text": "MonitorFlow does not measure network interface traffic yet."
+                      },
+                      "origin": {
+                        "detail": "net.if.in[\"eth0\"]",
+                        "kind": "item",
+                        "name": "Interface eth0: Bits received"
+                      },
+                      "present": false
+                    }
+                  ],
+                  "result": {
+                    "created": {
+                      "check": 1,
+                      "server": 1,
+                      "threshold": 1
+                    },
+                    "failed": [],
+                    "kept_servers": [],
+                    "present": 0,
+                    "removed": {},
+                    "skipped": 0
+                  },
+                  "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718",
+                  "site_name": "paris",
+                  "source": "example",
+                  "source_name": "Example tool",
+                  "state": "confirmed",
+                  "undone_at": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such import, or not of a site the key's maker administers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/imports/{id}/confirm": {
+      "post": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Confirm an import",
+        "description": "Creates the preview's items but those in `skip` and those that need\none of them, in one transaction. What exists meanwhile is not created\nagain; an item that fails is listed in `result.failed` and the others\nare created. Audited as `import.confirm`.",
+        "operationId": "confirm_import",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The import",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportConfirm"
+              },
+              "example": {
+                "skip": [
+                  "check:web-01:log_syslog"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Import"
+                },
+                "example": {
+                  "confirmed_at": "2026-11-17T09:05:00Z",
+                  "counts": {
+                    "approximated": 1,
+                    "exact": 2,
+                    "not_movable": 1,
+                    "present": 0,
+                    "to_create": 3
+                  },
+                  "created_at": "2026-11-17T09:00:00Z",
+                  "created_by": "alice",
+                  "expires_at": null,
+                  "id": "3f6c2a1e-8b4d-4e7f-9a1c-5d2e3f4a6b7c",
+                  "input": "https://monitoring.example.com",
+                  "items": [
+                    {
+                      "create": {
+                        "addresses": [
+                          "10.0.0.5"
+                        ],
+                        "hostname": "web-01",
+                        "object": "server",
+                        "os_family": "debian",
+                        "peer_id": "web-01"
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "server:web-01",
+                      "kind": "server",
+                      "list": "exact",
+                      "needs": [],
+                      "origin": {
+                        "kind": "host",
+                        "name": "web-01"
+                      },
+                      "present": false
+                    },
+                    {
+                      "create": {
+                        "interval_ms": 60000,
+                        "kind": "port",
+                        "name": "port_shop_example_com_443",
+                        "object": "check",
+                        "params": {
+                          "host": "shop.example.com",
+                          "port": "443"
+                        },
+                        "server": "web-01"
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "check:web-01:port_443",
+                      "kind": "check",
+                      "list": "approximated",
+                      "needs": [
+                        "server:web-01"
+                      ],
+                      "note": {
+                        "args": {
+                          "host": "shop.example.com",
+                          "port": "443"
+                        },
+                        "code": "web_as_port",
+                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                      },
+                      "origin": {
+                        "kind": "web_scenario",
+                        "name": "Shop"
+                      },
+                      "present": false
+                    },
+                    {
+                      "create": {
+                        "comparison": ">",
+                        "critical": null,
+                        "duration_s": 300,
+                        "hysteresis": 0.0,
+                        "instance": "total",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "object": "threshold",
+                        "server": "web-01",
+                        "warning": 0.9
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "threshold:web-01:monitorflow_cpu_usage_ratio:total",
+                      "kind": "threshold",
+                      "list": "exact",
+                      "needs": [
+                        "server:web-01"
+                      ],
+                      "origin": {
+                        "detail": "min(/web-01/system.cpu.util,5m)>90",
+                        "kind": "trigger",
+                        "name": "High CPU utilization"
+                      },
+                      "present": false
+                    },
+                    {
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "other:item:Interface eth0: Bits received",
+                      "kind": "other",
+                      "list": "not_movable",
+                      "needs": [],
+                      "note": {
+                        "args": {},
+                        "code": "network_traffic",
+                        "text": "MonitorFlow does not measure network interface traffic yet."
+                      },
+                      "origin": {
+                        "detail": "net.if.in[\"eth0\"]",
+                        "kind": "item",
+                        "name": "Interface eth0: Bits received"
+                      },
+                      "present": false
+                    }
+                  ],
+                  "result": {
+                    "created": {
+                      "check": 1,
+                      "server": 1,
+                      "threshold": 1
+                    },
+                    "failed": [],
+                    "kept_servers": [],
+                    "present": 0,
+                    "removed": {},
+                    "skipped": 0
+                  },
+                  "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718",
+                  "site_name": "paris",
+                  "source": "example",
+                  "source_name": "Example tool",
+                  "state": "confirmed",
+                  "undone_at": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: confirmed already, or a preview more than a day old; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/imports/{id}/undo": {
+      "post": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Undo an import",
+        "description": "Removes what the import created and still exists. A server an agent\nhas taken over stays, with what was created on it, and is listed in\n`result.kept_servers`. Audited as `import.undo`.",
+        "operationId": "undo_import",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The import",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Undone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Import"
+                },
+                "example": {
+                  "confirmed_at": "2026-11-17T09:05:00Z",
+                  "counts": {
+                    "approximated": 1,
+                    "exact": 2,
+                    "not_movable": 1,
+                    "present": 0,
+                    "to_create": 3
+                  },
+                  "created_at": "2026-11-17T09:00:00Z",
+                  "created_by": "alice",
+                  "expires_at": null,
+                  "id": "3f6c2a1e-8b4d-4e7f-9a1c-5d2e3f4a6b7c",
+                  "input": "https://monitoring.example.com",
+                  "items": [
+                    {
+                      "create": {
+                        "addresses": [
+                          "10.0.0.5"
+                        ],
+                        "hostname": "web-01",
+                        "object": "server",
+                        "os_family": "debian",
+                        "peer_id": "web-01"
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "server:web-01",
+                      "kind": "server",
+                      "list": "exact",
+                      "needs": [],
+                      "origin": {
+                        "kind": "host",
+                        "name": "web-01"
+                      },
+                      "present": false
+                    },
+                    {
+                      "create": {
+                        "interval_ms": 60000,
+                        "kind": "port",
+                        "name": "port_shop_example_com_443",
+                        "object": "check",
+                        "params": {
+                          "host": "shop.example.com",
+                          "port": "443"
+                        },
+                        "server": "web-01"
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "check:web-01:port_443",
+                      "kind": "check",
+                      "list": "approximated",
+                      "needs": [
+                        "server:web-01"
+                      ],
+                      "note": {
+                        "args": {
+                          "host": "shop.example.com",
+                          "port": "443"
+                        },
+                        "code": "web_as_port",
+                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                      },
+                      "origin": {
+                        "kind": "web_scenario",
+                        "name": "Shop"
+                      },
+                      "present": false
+                    },
+                    {
+                      "create": {
+                        "comparison": ">",
+                        "critical": null,
+                        "duration_s": 300,
+                        "hysteresis": 0.0,
+                        "instance": "total",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "object": "threshold",
+                        "server": "web-01",
+                        "warning": 0.9
+                      },
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "threshold:web-01:monitorflow_cpu_usage_ratio:total",
+                      "kind": "threshold",
+                      "list": "exact",
+                      "needs": [
+                        "server:web-01"
+                      ],
+                      "origin": {
+                        "detail": "min(/web-01/system.cpu.util,5m)>90",
+                        "kind": "trigger",
+                        "name": "High CPU utilization"
+                      },
+                      "present": false
+                    },
+                    {
+                      "hosts": [
+                        "web-01"
+                      ],
+                      "id": "other:item:Interface eth0: Bits received",
+                      "kind": "other",
+                      "list": "not_movable",
+                      "needs": [],
+                      "note": {
+                        "args": {},
+                        "code": "network_traffic",
+                        "text": "MonitorFlow does not measure network interface traffic yet."
+                      },
+                      "origin": {
+                        "detail": "net.if.in[\"eth0\"]",
+                        "kind": "item",
+                        "name": "Interface eth0: Bits received"
+                      },
+                      "present": false
+                    }
+                  ],
+                  "result": {
+                    "created": {
+                      "check": 1,
+                      "server": 1,
+                      "threshold": 1
+                    },
+                    "failed": [],
+                    "kept_servers": [],
+                    "present": 0,
+                    "removed": {},
+                    "skipped": 0
+                  },
+                  "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718",
+                  "site_name": "paris",
+                  "source": "example",
+                  "source_name": "Example tool",
+                  "state": "confirmed",
+                  "undone_at": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: not confirmed, or undone already; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/incidents": {
       "get": {
         "tags": [
@@ -33286,6 +34618,715 @@
         "type": "string",
         "description": "An image reference by digest: `name@sha256:<64 lower-case hex>`, where\n`name` is a registry path like `ghcr.io/kidoly/monitorflow-server` or\n`localhost:5000/monitorflow-web`. Tags are refused: a registry can move\nthem, a digest names the content."
       },
+      "Import": {
+        "type": "object",
+        "description": "One import.",
+        "required": [
+          "id",
+          "source",
+          "source_name",
+          "site_id",
+          "site_name",
+          "input",
+          "state",
+          "created_at",
+          "counts"
+        ],
+        "properties": {
+          "confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ImportCounts"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who read the source; `null` once the account is removed."
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Until when a preview can be confirmed."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "input": {
+            "type": "string",
+            "description": "What was read: file names, or the address connected to."
+          },
+          "items": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ImportItem"
+            },
+            "description": "The items, in the order they are created; absent in lists."
+          },
+          "result": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ImportResult",
+                "description": "What the confirmation and the undo did."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string",
+            "description": "The source's product name."
+          },
+          "state": {
+            "type": "string",
+            "description": "`preview`, `confirmed` or `undone`."
+          },
+          "undone_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ImportConfirm": {
+        "type": "object",
+        "description": "Body of `POST /api/imports/{id}/confirm`.",
+        "properties": {
+          "skip": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "IDs of items left out. Items that need one of them are left out\ntoo."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportCounts": {
+        "type": "object",
+        "description": "How many items fall in each list.",
+        "required": [
+          "exact",
+          "approximated",
+          "not_movable",
+          "present",
+          "to_create"
+        ],
+        "properties": {
+          "approximated": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "exact": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "not_movable": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "present": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items MonitorFlow has already.",
+            "minimum": 0
+          },
+          "to_create": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items a confirmation with nothing left out would create.",
+            "minimum": 0
+          }
+        }
+      },
+      "ImportCreate": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A server waiting for its agent.",
+            "required": [
+              "peer_id",
+              "hostname",
+              "os_family",
+              "addresses",
+              "object"
+            ],
+            "properties": {
+              "addresses": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Addresses the source had, for the person who installs the agent."
+              },
+              "hostname": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "server"
+                ]
+              },
+              "os_family": {
+                "type": "string",
+                "description": "`debian`, `rhel`, `windows` or `linux`."
+              },
+              "peer_id": {
+                "type": "string",
+                "description": "Its ID, which an agent takes over by enrolling with it."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A check (a sensor row) of a server.",
+            "required": [
+              "server",
+              "kind",
+              "name",
+              "interval_ms",
+              "params",
+              "object"
+            ],
+            "properties": {
+              "interval_ms": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "check"
+                ]
+              },
+              "params": {
+                "type": "object"
+              },
+              "server": {
+                "type": "string",
+                "description": "The server's ID."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A threshold of a server.",
+            "required": [
+              "server",
+              "metric",
+              "comparison",
+              "duration_s",
+              "hysteresis",
+              "object"
+            ],
+            "properties": {
+              "comparison": {
+                "type": "string",
+                "description": "`>`, `>=`, `<` or `<=`."
+              },
+              "critical": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "duration_s": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "hysteresis": {
+                "type": "number",
+                "format": "double"
+              },
+              "instance": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "metric": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "threshold"
+                ]
+              },
+              "server": {
+                "type": "string"
+              },
+              "warning": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A silence of a server, or of the import's site when `server` is\n`null`.",
+            "required": [
+              "starts_at",
+              "ends_at",
+              "reason",
+              "object"
+            ],
+            "properties": {
+              "ends_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "silence"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "server": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A notification channel.",
+            "required": [
+              "kind",
+              "settings",
+              "has_secret",
+              "object"
+            ],
+            "properties": {
+              "has_secret": {
+                "type": "boolean",
+                "description": "Whether a password or chat URL comes with it, kept sealed."
+              },
+              "kind": {
+                "type": "string",
+                "description": "`email`, `webhook`, `slack`, `teams` or `discord`."
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "channel"
+                ]
+              },
+              "settings": {
+                "type": "object",
+                "description": "As `POST /api/notifications/channels` takes them; a webhook's\nURL is shown by its origin only, and chat URLs not at all."
+              },
+              "site_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid",
+                "description": "The site it covers; `null` for everything."
+              }
+            }
+          }
+        ],
+        "description": "What an item creates."
+      },
+      "ImportFailure": {
+        "type": "object",
+        "description": "An item that could not be created.",
+        "required": [
+          "item",
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "In English."
+          },
+          "item": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportField": {
+        "type": "object",
+        "description": "One field of a connection.",
+        "required": [
+          "key",
+          "secret",
+          "optional",
+          "placeholder"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "optional": {
+            "type": "boolean"
+          },
+          "placeholder": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "boolean",
+            "description": "A token or password: never stored, never shown back."
+          }
+        }
+      },
+      "ImportFile": {
+        "type": "object",
+        "description": "An uploaded file.",
+        "required": [
+          "name",
+          "content"
+        ],
+        "properties": {
+          "base64": {
+            "type": "boolean"
+          },
+          "content": {
+            "type": "string",
+            "description": "Its content: text, or base64 with `base64`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name; readers use the extension and match names a\nconfiguration refers to."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportItem": {
+        "type": "object",
+        "description": "One line of the preview.",
+        "required": [
+          "id",
+          "kind",
+          "list",
+          "origin"
+        ],
+        "properties": {
+          "create": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ImportCreate",
+                "description": "What it creates; `null` when nothing."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of the hosts it concerns, as the source names them."
+          },
+          "id": {
+            "type": "string",
+            "description": "Unique in the run; what `skip` names."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`server`, `check`, `threshold`, `silence`, `channel`, or what the\nsource item was when nothing is created (`builtin` for what every\nserver measures already, `other`)."
+          },
+          "list": {
+            "$ref": "#/components/schemas/ImportList"
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Items it needs: unticking one of them leaves this one out."
+          },
+          "note": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ImportNote",
+                "description": "How it is approximated, or why it cannot be moved."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ImportOrigin"
+          },
+          "present": {
+            "type": "boolean",
+            "description": "MonitorFlow has it already: nothing is created."
+          }
+        }
+      },
+      "ImportList": {
+        "type": "string",
+        "description": "Which of the three lists of the preview an item is in.",
+        "enum": [
+          "exact",
+          "approximated",
+          "not_movable"
+        ]
+      },
+      "ImportNote": {
+        "type": "object",
+        "description": "A note: a code the web interface translates, its arguments, and the\nEnglish text.",
+        "required": [
+          "code",
+          "text"
+        ],
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "code": {
+            "type": "string",
+            "description": "One of the codes of `crates/import/src/notes.rs`."
+          },
+          "text": {
+            "type": "string",
+            "description": "In English."
+          }
+        }
+      },
+      "ImportOrigin": {
+        "type": "object",
+        "description": "Where an item came from in the source.",
+        "required": [
+          "kind",
+          "name"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The key, expression or setting it was read from."
+          },
+          "kind": {
+            "type": "string",
+            "description": "What it is there: `host`, `item`, `trigger`, `template`,\n`web_scenario`, `maintenance`, `media_type`, `user_media`,\n`scrape_target`, `alerting_rule`, `receiver`, `silence`, `sensor`,\n`notification`, `device` or `group`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name there."
+          }
+        }
+      },
+      "ImportRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/imports`: files or a connection.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "connection": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The connection's fields by key, as the source lists them. Used for\nthis request only: never stored, never logged.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportFile"
+            },
+            "description": "Files to read."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site servers go to; may be left out when the user administers\none site only."
+          },
+          "source": {
+            "type": "string",
+            "description": "The reader, from `GET /api/imports/sources`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportResult": {
+        "type": "object",
+        "description": "What a confirmation or an undo did.",
+        "properties": {
+          "created": {
+            "type": "object",
+            "description": "Created, by object: `server`, `check`, `threshold`, `silence`,\n`channel`.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportFailure"
+            },
+            "description": "Items that could not be created, and why."
+          },
+          "kept_servers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Servers an agent took over, which the undo keeps with what was\ncreated on them."
+          },
+          "present": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items MonitorFlow had already, then or by the confirmation.",
+            "minimum": 0
+          },
+          "removed": {
+            "type": "object",
+            "description": "Removed by the undo, by object.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items unticked, or that need an unticked one.",
+            "minimum": 0
+          }
+        }
+      },
+      "ImportSource": {
+        "type": "object",
+        "description": "A reader the server offers.",
+        "required": [
+          "id",
+          "name",
+          "extensions",
+          "many_files",
+          "connect"
+        ],
+        "properties": {
+          "connect": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportField"
+            },
+            "description": "The fields of `connection`; empty when it cannot connect."
+          },
+          "extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "File extensions an upload accepts, without the dot; empty when it\nreads no files."
+          },
+          "id": {
+            "type": "string",
+            "description": "What `source` takes: `zabbix`, `prometheus`, …"
+          },
+          "many_files": {
+            "type": "boolean",
+            "description": "Whether an upload takes several files at once."
+          },
+          "name": {
+            "type": "string",
+            "description": "The product's name."
+          }
+        }
+      },
+      "ImportSourceList": {
+        "type": "object",
+        "description": "Body of `GET /api/imports/sources`.",
+        "required": [
+          "sources"
+        ],
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportSource"
+            }
+          }
+        }
+      },
       "IncidentDetail": {
         "allOf": [
           {
@@ -38921,7 +40962,8 @@
           "acknowledged",
           "silenced",
           "offline",
-          "ok"
+          "ok",
+          "waiting"
         ]
       },
       "ServerStatus": {
@@ -38941,6 +40983,7 @@
           "silenced",
           "offline",
           "ok",
+          "waiting",
           "total"
         ],
         "properties": {
@@ -38972,6 +41015,12 @@
           "total": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Made by an import and waiting for their agent (ADR-0146).",
             "minimum": 0
           },
           "warning": {
@@ -39026,7 +41075,8 @@
           "open_incidents",
           "state",
           "offline_alerts",
-          "site_offline_alerts"
+          "site_offline_alerts",
+          "awaiting_agent"
         ],
         "properties": {
           "acknowledgement": {
@@ -39046,6 +41096,10 @@
               "null"
             ],
             "description": "Version reported by the live stream, else the one last stored."
+          },
+          "awaiting_agent": {
+            "type": "boolean",
+            "description": "Made by an import and waiting for its agent, which takes it over\nby enrolling with `peer_id` (ADR-0146)."
           },
           "cert_not_after": {
             "type": [
@@ -41161,6 +43215,10 @@
     {
       "name": "automatic updates",
       "description": "Agents and relays update themselves to the newest stable release the central server holds, never newer than the server: per site, one server first, then a quarter of the site at a time, never the host's packages and never a restart of the host. A rollout halts everywhere after too many failures until a global administrator resumes it. These routes need a global administrator and the key area \"updates\"; the settings themselves are under `/settings/auto-update`."
+    },
+    {
+      "name": "imports",
+      "description": "Moving from another monitoring tool. An import reads the other tool's configuration, from export files or through its API, and shows first what MonitorFlow would create: servers waiting for their agent, checks, thresholds, silences and notification channels. Each item is in one of three lists: `exact` (MonitorFlow does the same), `approximated` (close, the note says how it differs) or `not_movable` (the note says why), and says whether MonitorFlow has it already (`present`). Nothing is created until the preview is confirmed, with the items to leave out; items that need one left out are left out too. Importing the same configuration again creates nothing twice. An import can be undone: what it created goes, except servers an agent has taken over. Servers then only need the agent: one that enrolls with a server's ID, or with an install key of its site from a host of that name, takes it over with its checks. The other tool is only read, never changed, and can keep running. A connection's token is used for the request and never stored. Administrators of the target site only; everything is in the audit log. API keys need the `administration` area."
     }
   ]
 }

@@ -10,6 +10,7 @@ pub const SEALED: &[Column] = &[
     Column::UserContacts,
     Column::IntegrationEndpoints,
     Column::AiApiKey,
+    Column::ImportRuns,
 ];
 
 #[derive(Debug, thiserror::Error)]

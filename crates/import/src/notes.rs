@@ -144,6 +144,14 @@ pub const NOTES: &[(&str, &str)] = &[
         "The agent reads only logs under the directories its configuration allows.",
     ),
     (
+        "server_elsewhere",
+        "A server of this name is in a site you do not administer.",
+    ),
+    (
+        "refused",
+        "MonitorFlow refuses it: {reason}.",
+    ),
+    (
         "unknown_host",
         "It refers to a host that is not part of this import.",
     ),

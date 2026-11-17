@@ -1742,6 +1742,7 @@ dependencies = [
  "lettre",
  "monitorflow-ai",
  "monitorflow-common",
+ "monitorflow-import",
  "monitorflow-plugin",
  "monitorflow-sensors",
  "monitorflow-server-ee",

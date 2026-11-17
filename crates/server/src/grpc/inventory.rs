@@ -230,8 +230,9 @@ async fn agent_hello(
 ) -> Result<String, InventoryError> {
     let hello = accepted.hello;
     let id = hello.agent_id.as_str();
-    let existing: Option<(Uuid, bool, Uuid)> = sqlx::query_as(
-        "SELECT id, revoked_at IS NOT NULL, site_id FROM servers WHERE peer_id = $1 FOR UPDATE",
+    let existing: Option<(Uuid, bool, Uuid, bool)> = sqlx::query_as(
+        "SELECT id, revoked_at IS NOT NULL, site_id, awaiting_agent FROM servers
+         WHERE peer_id = $1 FOR UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut **tx)
@@ -264,21 +265,26 @@ async fn agent_hello(
 
     match existing {
         // A removed server enrolled again, until its approval restores it.
-        Some((_, true, _)) if awaiting_approval(tx, id).await? => {
+        Some((_, true, _, _)) if awaiting_approval(tx, id).await? => {
             Err(InventoryError::AwaitingApproval)
         }
-        Some((_, true, _)) => Err(InventoryError::Revoked {
+        // A server an import made, whose host an install key asked to
+        // approve: it waits like any new host (ADR-0146).
+        Some((_, false, _, true)) if awaiting_approval(tx, id).await? => {
+            Err(InventoryError::AwaitingApproval)
+        }
+        Some((_, true, _, _)) => Err(InventoryError::Revoked {
             role: PeerRole::Agent,
             id: id.to_owned(),
         }),
-        Some((server_id, false, site_id)) => {
+        Some((server_id, false, site_id, awaiting)) => {
             // relay_id follows the path of the latest connection; the
             // composite foreign key keeps it in the server's site.
             sqlx::query(
                 "UPDATE servers SET hostname = $2, os_family = $3, os_version = $4,
                         agent_version = $5, relay_id = $6, package_updates = $7,
                         command_kinds = $8, system_uuid = $9, mac_addresses = $10,
-                        last_seen_at = now()
+                        last_seen_at = now(), awaiting_agent = false
                  WHERE id = $1",
             )
             .bind(server_id)
@@ -293,6 +299,28 @@ async fn agent_hello(
             .bind(&mac_addresses)
             .execute(&mut **tx)
             .await?;
+            if awaiting {
+                // The agent takes over a server an import made (ADR-0146).
+                let actor = accepted.peer.uri();
+                audit::record(
+                    &mut **tx,
+                    Event {
+                        actor_kind: "peer",
+                        actor_id: &actor,
+                        action: "server.agent_arrived",
+                        target: Some(("agent", id)),
+                        details: serde_json::json!({
+                            "server_id": server_id,
+                            "site_id": site_id,
+                            "hostname": hello.hostname,
+                            "os_family": hello.os_family,
+                            "via_relay": accepted.via_relay,
+                        }),
+                    },
+                )
+                .await?;
+                tracing::info!(agent_id = id, %server_id, "an agent took over an imported server");
+            }
             site_name(tx, site_id).await
         }
         None => {

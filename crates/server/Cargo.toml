@@ -25,6 +25,8 @@ monitorflow-server-ee = { workspace = true, optional = true }
 # server-update: checks and requests of server updates (ADR-0056).
 monitorflow-common = { workspace = true, features = ["mirror", "server-update", "openapi"] }
 monitorflow-sensors.workspace = true
+# Readers of other monitoring tools' configuration (ADR-0146).
+monitorflow-import.workspace = true
 # AI remediation loop (ADR-0039, ADR-0043).
 monitorflow-ai.workspace = true
 # Plugins: signed packages and their runtime (ADR-0103).

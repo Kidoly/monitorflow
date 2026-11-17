@@ -166,7 +166,8 @@ pub async fn load(pool: &PgPool) -> Result<Vec<Watched>, sqlx::Error> {
          JOIN sites si ON si.id = s.site_id
          LEFT JOIN incidents i ON i.server_id = s.id AND i.metric = 'offline'
                               AND i.state = 'open'
-         WHERE s.revoked_at IS NULL
+         -- A server an import made has no agent yet to go offline (ADR-0146).
+         WHERE s.revoked_at IS NULL AND NOT s.awaiting_agent
          UNION ALL
          SELECT true, r.id, r.peer_id, NULL, COALESCE(r.last_seen_at, r.created_at),
                 si.offline_alerts AND r.offline_alerts, i.id

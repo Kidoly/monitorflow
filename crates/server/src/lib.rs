@@ -16,6 +16,7 @@ pub mod discovery;
 pub mod edition;
 pub mod enroll;
 pub mod grpc;
+pub mod import;
 pub mod ingest;
 pub mod integrations;
 pub mod live_settings;

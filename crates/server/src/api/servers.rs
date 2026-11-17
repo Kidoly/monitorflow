@@ -97,6 +97,8 @@ pub enum ServerState {
     Silenced,
     Offline,
     Ok,
+    /// Made by an import, waiting for its agent (ADR-0146).
+    Waiting,
 }
 
 impl ServerState {
@@ -180,6 +182,9 @@ pub struct ServerView {
     /// Latest expiry among the agent's unrevoked certificates; `null` when
     /// it has none. Past dates mean every certificate has expired.
     pub cert_not_after: Option<DateTime<Utc>>,
+    /// Made by an import and waiting for its agent, which takes it over
+    /// by enrolling with `peer_id` (ADR-0146).
+    pub awaiting_agent: bool,
 }
 
 /// Body of `GET /api/servers/{id}`: the listing row plus the agent's
@@ -259,7 +264,7 @@ const SELECT_SERVERS: &str = concat!(
     "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name,
             si.customer_id, c.name AS customer_name, s.relay_id,
             s.os_family, s.os_version, s.package_updates, s.command_kinds, s.agent_version,
-            s.created_at, s.last_seen_at,
+            s.created_at, s.last_seen_at, s.awaiting_agent,
             s.revoked_at, s.offline_alerts, si.offline_alerts AS site_offline_alerts,
             silenced_until(s.id, NULL, s.site_id, si.customer_id) AS silenced_until,
             o.open_incidents, o.unacknowledged, o.unacknowledged_critical,
@@ -331,6 +336,8 @@ pub struct ServerSummary {
     pub silenced: u64,
     pub offline: u64,
     pub ok: u64,
+    /// Made by an import and waiting for their agent (ADR-0146).
+    pub waiting: u64,
     pub total: u64,
 }
 
@@ -343,6 +350,7 @@ impl ServerSummary {
             ServerState::Silenced => &mut self.silenced,
             ServerState::Offline => &mut self.offline,
             ServerState::Ok => &mut self.ok,
+            ServerState::Waiting => &mut self.waiting,
         };
         *count += 1;
         self.total += 1;
@@ -352,6 +360,7 @@ impl ServerSummary {
 #[derive(sqlx::FromRow)]
 struct SummaryRow {
     peer_id: String,
+    awaiting_agent: bool,
     silenced: bool,
     open_incidents: i64,
     unacknowledged: i64,
@@ -372,7 +381,7 @@ pub async fn summary(
     }
     let (all_sites, sites) = user.readable_sites().bind();
     let rows: Vec<SummaryRow> = sqlx::query_as(concat!(
-        "SELECT s.peer_id,
+        "SELECT s.peer_id, s.awaiting_agent,
                 silenced_until(s.id, NULL, s.site_id, si.customer_id) IS NOT NULL AS silenced,
                 o.open_incidents, o.unacknowledged, o.unacknowledged_critical
          FROM servers s
@@ -392,6 +401,10 @@ pub async fn summary(
     .await?;
     let mut summary = ServerSummary::default();
     for row in rows {
+        if row.awaiting_agent {
+            summary.add(ServerState::Waiting);
+            continue;
+        }
         let online = state.registry.live(PeerRole::Agent, &row.peer_id).is_some();
         summary.add(ServerState::of(
             row.silenced,
@@ -434,6 +447,7 @@ struct Row {
     acknowledged_at: Option<DateTime<Utc>>,
     acknowledged_note: Option<String>,
     cert_not_after: Option<DateTime<Utc>>,
+    awaiting_agent: bool,
 }
 
 /// `GET /api/servers`: one page of the servers of the sites the user may
@@ -568,13 +582,18 @@ impl ServerView {
 
     fn offline(row: Row) -> Self {
         Self {
-            state: ServerState::of(
-                row.silenced_until.is_some(),
-                false,
-                row.open_incidents,
-                row.unacknowledged,
-                row.unacknowledged_critical,
-            ),
+            state: if row.awaiting_agent {
+                ServerState::Waiting
+            } else {
+                ServerState::of(
+                    row.silenced_until.is_some(),
+                    false,
+                    row.open_incidents,
+                    row.unacknowledged,
+                    row.unacknowledged_critical,
+                )
+            },
+            awaiting_agent: row.awaiting_agent,
             id: row.id,
             peer_id: row.peer_id,
             hostname: row.hostname,

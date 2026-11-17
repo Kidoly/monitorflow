@@ -72,6 +72,8 @@ pub enum Column {
     UserContacts,
     IntegrationEndpoints,
     AiApiKey,
+    /// Channel secrets of an import's preview (ADR-0146).
+    ImportRuns,
 }
 
 impl Column {
@@ -82,6 +84,7 @@ impl Column {
             Self::UserContacts => "user_contacts.secret",
             Self::IntegrationEndpoints => "integration_endpoints.secret",
             Self::AiApiKey => "server_settings.ai_api_key",
+            Self::ImportRuns => "import_runs.secrets",
         }
     }
 
