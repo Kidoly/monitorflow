@@ -660,6 +660,17 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             // Another customer's existence shows nowhere (ADR-0104).
             assert_eq!(body["multi_customer"], false);
         }
+        // Sign-in providers on the login page (ADR-0145): no customer or
+        // site in them, and the sign-in itself only redirects.
+        ("GET", "/api/auth/providers") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
+        ("GET", "/api/auth/oidc/{id}/start") | ("GET", "/api/auth/oidc/callback") => {
+            let (status, _) = ctx.call(method, &concrete(path), None).await;
+            assert_eq!(status, StatusCode::SEE_OTHER);
+        }
         // Server-wide: only global administrators manage sign-in providers.
         ("GET", "/api/identity-providers")
         | ("POST", "/api/identity-providers")

@@ -29565,6 +29565,7 @@
                       "created_at": "2026-09-01T08:00:00Z",
                       "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
                       "link_expires_at": null,
+                      "provider": null,
                       "roles": [
                         {
                           "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
@@ -29860,6 +29861,7 @@
                   "created_at": "2026-09-01T08:00:00Z",
                   "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
                   "link_expires_at": null,
+                  "provider": null,
                   "roles": [
                     {
                       "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
@@ -29975,7 +29977,7 @@
           "users"
         ],
         "summary": "Grant a role",
-        "description": "Gives the user a role on everything (both IDs absent), on one customer\nand all its sites, or on one site. Takes effect at the user's next\nrequest, for their sessions and API keys alike. Granting a role the\nuser already holds changes nothing, so it is safe to repeat. Audited\nas `user.grant`.\n\nErrors: 400 `invalid` for both a customer and a site, or one that does\nnot exist; 404 `not_found` for an unknown user.",
+        "description": "Gives the user a role on everything (both IDs absent), on one customer\nand all its sites, or on one site. Takes effect at the user's next\nrequest, for their sessions and API keys alike. Granting a role the\nuser already holds changes nothing, so it is safe to repeat. Audited\nas `user.grant`.\n\nErrors: 400 `invalid` for both a customer and a site, or one that does\nnot exist; 404 `not_found` for an unknown user; 409 `conflict` for an\naccount of a sign-in provider, whose roles follow its groups.",
         "operationId": "grant_role",
         "parameters": [
           {
@@ -30037,6 +30039,7 @@
                   "created_at": "2026-09-01T08:00:00Z",
                   "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
                   "link_expires_at": null,
+                  "provider": null,
                   "roles": [
                     {
                       "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
@@ -30212,6 +30215,7 @@
                   "created_at": "2026-09-01T08:00:00Z",
                   "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
                   "link_expires_at": null,
+                  "provider": null,
                   "roles": [
                     {
                       "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
@@ -30266,7 +30270,7 @@
             }
           },
           "409": {
-            "description": "Last administrator: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "description": "Last administrator, or an account of a sign-in provider: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -30319,6 +30323,27 @@
   },
   "components": {
     "schemas": {
+      "AccountProvider": {
+        "type": "object",
+        "description": "The sign-in provider of an account.",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "AcknowledgeRequest": {
         "type": "object",
         "description": "Body of `POST /api/incidents/acknowledge`.",
@@ -34095,6 +34120,7 @@
               "unauthenticated",
               "invalid_credentials",
               "forbidden",
+              "no_access",
               "api_key_scope",
               "cross_site",
               "rate_limited",
@@ -42557,6 +42583,17 @@
             ],
             "format": "date-time",
             "description": "Expiry of the user's unused password link, if any."
+          },
+          "provider": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AccountProvider",
+                "description": "The sign-in provider the account signs in through, whose groups\ngive its roles; `null` for an account with a password kept by\nMonitorFlow (ADR-0145)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "roles": {
             "type": "array",

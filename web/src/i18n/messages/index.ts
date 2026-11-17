@@ -31,6 +31,7 @@ import * as server from "./server";
 import * as serverUpdate from "./serverUpdate";
 import * as settings from "./settings";
 import * as shell from "./shell";
+import * as signIn from "./signIn";
 import * as silences from "./silences";
 import * as sites from "./sites";
 import * as ui from "./ui";
@@ -70,6 +71,7 @@ export const en = {
   serverUpdate: serverUpdate.en,
   settings: settings.en,
   shell: shell.en,
+  signIn: signIn.en,
   silences: silences.en,
   sites: sites.en,
   ui: ui.en,
@@ -108,6 +110,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   serverUpdate: serverUpdate.fr,
   settings: settings.fr,
   shell: shell.fr,
+  signIn: signIn.fr,
   silences: silences.fr,
   sites: sites.fr,
   ui: ui.fr,
