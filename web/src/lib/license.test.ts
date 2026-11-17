@@ -4,7 +4,15 @@ import { setActiveLocale } from "@/i18n/locale";
 
 import type { AddedServer, License, LicenseView } from "./api";
 
-import { centralServers, formatDay, licenseNotice, licenseSummary } from "./license";
+import {
+  centralServers,
+  coverageNote,
+  formatDay,
+  licenseNotice,
+  licenseSummary,
+  supportHref,
+  tierIncludes,
+} from "./license";
 
 const license: License = {
   id: "6f1c1d1e-8a43-4c55-9d43-3c2f6c0e9a01",
@@ -36,11 +44,14 @@ describe("license", () => {
   });
 
   it("says where the license stands in plain words", () => {
-    expect(licenseSummary(view("none"))).toEqual(["No license key.", "neutral"]);
-    expect(licenseSummary(view("valid"))).toEqual(["Valid until 30 November 2027, for 3 central servers.", "ok"]);
-    expect(licenseSummary(view("expires_soon"))[0]).toMatch(/^Expires on 30 November 2027\. Central servers already added keep running/);
+    expect(licenseSummary(view("none"))).toEqual(["Community edition", "neutral"]);
+    // A key of ADR-0100, without a plan, is Enterprise.
+    expect(licenseSummary(view("valid"))).toEqual(["Enterprise subscription, valid until 30 November 2027, for 3 central servers.", "ok"]);
+    expect(licenseSummary(view("expires_soon"))[0]).toMatch(
+      /^Enterprise subscription, expires on 30 November 2027\. Central servers already added keep running/,
+    );
     expect(licenseSummary(view("expired"))).toEqual([
-      "Expired on 30 November 2027. Central servers already added keep running; none can be added until a new license key is installed.",
+      "Enterprise subscription expired on 30 November 2027. Central servers already added keep running; none can be added until a new license key is installed.",
       "bad",
     ]);
     expect(licenseSummary(view("invalid", { license: null, problem: "the signature does not verify" }))).toEqual([
@@ -67,6 +78,55 @@ describe("license", () => {
     expect(licenseNotice(view("none", { added: [...added, ...added] }))).toBe(
       "Il n’y a pas de clé de licence Enterprise. Les 2 serveurs centraux déjà ajoutés continuent de fonctionner, mais aucun autre ne peut être ajouté.",
     );
-    expect(licenseSummary(view("valid"))[0]).toBe("Valide jusqu’au 30 novembre 2027, pour 3 serveurs centraux.");
+    expect(licenseSummary(view("valid"))[0]).toBe("Abonnement Enterprise, valide jusqu’au 30 novembre 2027, pour 3 serveurs centraux.");
+  });
+
+  const standard: License = { ...license, format: 2, edition: "core", tier: "standard", managed_servers: 100, server_instances: 1 };
+
+  it("speaks calmly of a plan without central servers (ADR-0147)", () => {
+    expect(licenseSummary(view("valid", { license: standard }))).toEqual(["Standard subscription, valid until 30 November 2027.", "ok"]);
+    const [soon, soonTone] = licenseSummary(view("expires_soon", { license: standard }));
+    expect(soon).toBe(
+      "Standard subscription, expires on 30 November 2027. Everything keeps working after that day; the central server is then offered every release as soon as it is published.",
+    );
+    expect(soonTone).toBe("neutral");
+    const [expired, tone] = licenseSummary(view("expired", { license: standard }));
+    expect(expired).toMatch(/^Standard subscription expired on 30 November 2027\. Everything keeps working/);
+    expect(tone).toBe("neutral");
+    // No notice on other pages without added central servers.
+    expect(licenseNotice(view("expired", { license: standard }))).toBeNull();
+    // Added under an earlier Enterprise key, then a Standard one.
+    const added: AddedServer[] = [{ name: "host2", admitted_at: "2026-11-07T10:00:00Z", running: true }];
+    expect(licenseNotice(view("valid", { license: standard, added }))).toBe(
+      "The Standard subscription does not include the Enterprise edition. The central server already added keeps running, but no other can be added.",
+    );
+  });
+
+  it("says what each plan includes", () => {
+    expect(tierIncludes("basic")).toEqual([
+      "Every feature, for any number of servers and users, as in the Community edition",
+      "Tested releases for the central server: it is offered a release once it ran longer",
+      "Support tickets in business hours, a number per year",
+    ]);
+    expect(tierIncludes("standard")[2]).toBe("Unlimited support tickets in business hours, with a faster response");
+    expect(tierIncludes("premium")).toHaveLength(3);
+    expect(tierIncludes("enterprise")[3]).toMatch(/^The Enterprise edition: more than one central server/);
+  });
+
+  it("notes calmly when more servers are managed than covered", () => {
+    expect(coverageNote(view("valid", { license: standard, managed_servers_in_use: 100 }))).toBeNull();
+    expect(coverageNote(view("valid", { license: standard, managed_servers_in_use: 112 }))).toBe(
+      "MonitorFlow manages 112 servers and the subscription covers 100. Everything keeps working; your support contact can cover the others at renewal.",
+    );
+    // A key of ADR-0100 says nothing of managed servers.
+    expect(coverageNote(view("valid", { managed_servers_in_use: 112 }))).toBeNull();
+    expect(coverageNote(view("expired", { license: standard, managed_servers_in_use: 112 }))).toBeNull();
+  });
+
+  it("links support contacts that are addresses only", () => {
+    expect(supportHref("support@example.com")).toBe("mailto:support@example.com");
+    expect(supportHref("https://example.com/help")).toBe("https://example.com/help");
+    expect(supportHref("javascript:alert(1)")).toBeNull();
+    expect(supportHref("http://example.com")).toBeNull();
   });
 });

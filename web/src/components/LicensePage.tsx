@@ -5,7 +5,17 @@ import { type ChangeEvent, type FormEvent, useCallback, useState } from "react";
 import { t } from "@/i18n";
 import { type AddedServer, ApiError, type LicenseView, api, describeError } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
-import { centralServers, formatDay, licenseSummary } from "@/lib/license";
+import {
+  addsCentralServers,
+  centralServers,
+  coverageNote,
+  formatDay,
+  licenseSummary,
+  supportHref,
+  tierIncludes,
+  tierName,
+  tierOf,
+} from "@/lib/license";
 import { administersEverything, useMe } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -18,7 +28,7 @@ import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui
 import { missingText } from "./ui/Missing";
 import { Label } from "./ui/StatusLabel";
 
-/** `/settings/license/`: global administrators only, like the API (ADR-0100). */
+/** `/settings/license/`: global administrators only, like the API (ADR-0100, ADR-0147). */
 export function LicensePage() {
   const me = useMe();
   if (!administersEverything(me)) {
@@ -26,6 +36,9 @@ export function LicensePage() {
   }
   return <LicenseAdmin />;
 }
+
+/** Where subscriptions are described, outside the product (ADR-0147). */
+const ABOUT_SUBSCRIPTIONS = "https://github.com/Kidoly/monitorflow#licence";
 
 function LicenseAdmin() {
   const fetcher = useCallback((signal: AbortSignal) => api.license(signal), []);
@@ -71,11 +84,15 @@ function Status({ view, onRemoved }: { view: LicenseView; onRemoved: () => void 
           </h2>
         </div>
         <p className={styles.sectionNote}>
-          {t("license.noneNote")}
+          {t("license.noneNote")}{" "}
+          <a href={ABOUT_SUBSCRIPTIONS} target="_blank" rel="noreferrer">
+            {t("license.none.about")}
+          </a>
         </p>
       </section>
     );
   }
+  const note = coverageNote(view);
   return (
     <>
       <section className={styles.section} aria-labelledby="license-status">
@@ -85,16 +102,34 @@ function Status({ view, onRemoved }: { view: LicenseView; onRemoved: () => void 
           </h2>
         </div>
       </section>
+      {note && <Banner tone="neutral">{note}</Banner>}
       {license && (
         <FactsBox
           title={t("license.facts.title")}
           facts={[
+            { label: t("license.facts.tier"), value: tierName(tierOf(license)) },
             { label: t("license.facts.for"), value: license.customer },
-            {
-              label: t("license.facts.allows"),
-              value: t("license.facts.allowsValue", { servers: centralServers(license.server_instances) }),
-            },
+            ...(license.managed_servers != null
+              ? [
+                  {
+                    label: t("license.facts.managed"),
+                    value: t("license.facts.managedValue", {
+                      inUse: view.managed_servers_in_use ?? 0,
+                      covered: license.managed_servers,
+                    }),
+                  },
+                ]
+              : []),
+            ...(addsCentralServers(license)
+              ? [
+                  {
+                    label: t("license.facts.allows"),
+                    value: t("license.facts.allowsValue", { servers: centralServers(license.server_instances) }),
+                  },
+                ]
+              : []),
             { label: t("license.facts.validUntil"), value: formatDay(license.expires) },
+            { label: t("license.facts.support"), value: <Support contact={license.support} /> },
             {
               label: t("license.facts.installed"),
               value: view.installed_by
@@ -113,6 +148,7 @@ function Status({ view, onRemoved }: { view: LicenseView; onRemoved: () => void 
           ]}
         />
       )}
+      <Includes view={view} />
       <div>
         <InlineConfirm
           trigger={t("license.remove.trigger")}
@@ -127,6 +163,35 @@ function Status({ view, onRemoved }: { view: LicenseView; onRemoved: () => void 
         />
       </div>
     </>
+  );
+}
+
+/** Where to ask for support, as a link only when it is an email or `https://` address. */
+function Support({ contact }: { contact?: string | null }) {
+  if (!contact) return <span className={styles.dim}>{missingText("notSet")}</span>;
+  const href = supportHref(contact);
+  return href ? <a href={href}>{contact}</a> : <>{contact}</>;
+}
+
+/** What the plan includes, in plain words, and what lapses with the key (ADR-0147). */
+function Includes({ view }: { view: LicenseView }) {
+  const license = view.license;
+  if (!license) return null;
+  const current = view.state === "valid" || view.state === "expires_soon";
+  return (
+    <section className={styles.section} aria-labelledby="license-includes">
+      <div className={styles.sectionHead}>
+        <h2 id="license-includes" className={styles.sectionTitle}>
+          {t("license.includes.title")}
+        </h2>
+      </div>
+      <ul className={own.includes}>
+        {tierIncludes(tierOf(license)).map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      {!current && <p className={styles.sectionNote}>{t("license.includes.lapsed")}</p>}
+    </section>
   );
 }
 
