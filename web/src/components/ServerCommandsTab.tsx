@@ -13,6 +13,7 @@ import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
+import { Tooltip } from "@/components/ui/Hint";
 import { Banner, EmptyState, SkeletonLines } from "@/components/ui/PageState";
 import { StatusLabel } from "@/components/ui/StatusLabel";
 import { StatTiles } from "@/components/ui/StatTiles";
@@ -112,8 +113,8 @@ export function ServerCommandsTab({
       key: "command",
       header: t("server.commands.column.command"),
       cell: (c) => {
-        const { title, sub } = describeCommand(c);
-        return <PrimaryCell title={title} sub={sub} />;
+        const { title, sub, note } = describeCommand(c);
+        return <PrimaryCell title={note ? <Tooltip text={note}>{title}</Tooltip> : title} sub={sub} />;
       },
     },
     {

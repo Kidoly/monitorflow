@@ -71,6 +71,24 @@ describe("CampaignForm", () => {
     expect(within(form).getByRole("checkbox", { name: /web-2/ })).not.toBeChecked();
   });
 
+  it("names the servers' site only when there are several", async () => {
+    stubFetch({
+      ...inventory,
+      "GET /api/servers": {
+        status: 200,
+        body: { servers: [server(), server({ id: WEB2, peer_id: "web-2", hostname: "web-2", package_updates: false })], next_cursor: null },
+      },
+    });
+    const { unmount } = render(<CampaignForm me={customerAdmin} />);
+    const list = await screen.findByRole("list", { name: "Servers" });
+    expect(list).toHaveTextContent(/web-1 \(paris\)web-2 \(paris, .+\)/);
+    unmount();
+    render(<CampaignForm me={{ ...customerAdmin, multi_site: false }} />);
+    const alone = await screen.findByRole("list", { name: "Servers" });
+    expect(alone).not.toHaveTextContent("paris");
+    expect(alone).toHaveTextContent(/^web-1web-2 \(.+\)$/);
+  });
+
   it("creates a campaign with a pilot wave and a window, then opens it", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({ ...inventory, "POST /api/campaigns": { status: 201, body: detail() } });

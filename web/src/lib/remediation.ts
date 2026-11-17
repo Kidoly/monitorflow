@@ -12,6 +12,7 @@ import type {
 } from "./api";
 import { t } from "@/i18n";
 import { activeLocale } from "@/i18n/locale";
+import { formatBytes } from "@/lib/format";
 
 /** The `risk` status word of a tier (`StatusLabel kind="risk"`). */
 export function riskWord(tier: RiskTier): "read-only" | "low-impact" | "high-impact" | "forbidden" {
@@ -238,6 +239,41 @@ export function snapshotReason(reason: SnapshotUnsupported | null, kind?: GuestK
 }
 
 /**
+ * Why `snapshots` has no local snapshot, in the active language, from the
+ * API's `local_reason`; its English `detail` from an older server; null
+ * when it says neither.
+ */
+export function localReasonText(snapshots: Pick<SnapshotSupport, "detail" | "local_reason">): string | null {
+  const why = snapshots.local_reason;
+  if (!why) return snapshots.detail ?? null;
+  const bytes = (n: number | undefined) => formatBytes(n ?? 0);
+  switch (why.code) {
+    case "inspect":
+      return t("remediation.local.inspect", { error: why.error ?? "" });
+    case "root_not_covered":
+      if (why.fs_type === "btrfs") return t("remediation.local.root_not_covered.btrfs");
+      if (why.fs_type === "zfs") return t("remediation.local.root_not_covered.zfs");
+      return t("remediation.local.root_not_covered", { fs: why.fs_type ?? "" });
+    case "no_space":
+      return t("remediation.local.no_space", {
+        group: why.group ?? "",
+        free: bytes(why.free_bytes),
+        mount: why.mount_point ?? "",
+        needed: bytes(why.needed_bytes),
+      });
+    case "pool_full":
+      return t("remediation.local.pool_full", { mount: why.mount_point ?? "", free: bytes(why.free_bytes), size: bytes(why.pool_bytes) });
+    case "windows":
+    case "not_reported":
+    case "sudo_rules":
+    case "no_root":
+      return t(`remediation.local.${why.code}`);
+    default:
+      return snapshots.detail ?? null;
+  }
+}
+
+/**
  * The rollback line of the approval detail: which snapshot is taken before
  * the command, or why none is, then a quieter note (ADR-0044, ADR-0093,
  * ADR-0094).
@@ -253,7 +289,7 @@ export function rollbackText(snapshots: SnapshotSupport): { text: string; note: 
       };
     }
     // Not a Proxmox guest: why there is no local snapshot.
-    return { text: t("remediation.rollback.noneDetail", { detail }), note: null };
+    return { text: t("remediation.rollback.noneDetail", { detail: localReasonText(snapshots) ?? detail }), note: null };
   }
   if ((snapshots.method === "lvm" || snapshots.method === "zfs") && detail) {
     return { text: t("remediation.rollback.local", { detail }), note: null };

@@ -50,9 +50,12 @@ export function FilterBar({
   search,
   onChange,
   trailing,
+  clears = [],
   label = t("ui.filters.label"),
 }: {
   filters: Filter[];
+  /** Keys set elsewhere on the page (the status bar's `state`) that "Clear" removes too. */
+  clears?: string[];
   search?: SearchField;
   onChange?: (params: URLSearchParams) => void;
   /** Controls at the right end, like a sort toggle. */
@@ -60,7 +63,7 @@ export function FilterBar({
   label?: string;
 }) {
   const [params, setParams] = useUrlParams();
-  const keys = [...(search ? [search.name] : []), ...filters.map((f) => f.name)];
+  const keys = [...(search ? [search.name] : []), ...filters.map((f) => f.name), ...clears];
   // The input keeps its own state: Next applies replaceState to
   // useSearchParams in a transition, which would lag behind typing.
   const urlText = (search && params.get(search.name)) ?? "";
@@ -71,7 +74,7 @@ export function FilterBar({
     setLastUrlText(urlText);
     if (urlText === "") setText("");
   }
-  const anySet = text !== "" || filters.some((f) => params.get(f.name));
+  const anySet = text !== "" || filters.some((f) => params.get(f.name)) || clears.some((k) => params.get(k));
 
   function update(changes: ParamChanges) {
     setParams(changes);
@@ -134,7 +137,7 @@ export function FilterBar({
             setText("");
             update(Object.fromEntries(keys.map((k) => [k, null])));
           }}>
-          Clear
+          {t("ui.filters.clearShort")}
         </button>
       )}
       {trailing && <span className={styles.trailing}>{trailing}</span>}

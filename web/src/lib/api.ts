@@ -31,6 +31,8 @@ export interface Me {
   roles: RoleGrant[];
   /** Whether the user sees more than one customer (ADR-0104); read it with `useMultiCustomer`. */
   multi_customer?: boolean;
+  /** Whether the user sees more than one site; read it with `useMultiSite`. */
+  multi_site?: boolean;
 }
 
 export type ServerStatus = "online" | "offline";
@@ -1460,6 +1462,20 @@ export interface SnapshotSupport {
   left_out?: string | null;
   /** Which snapshot a change gets when available: `proxmox`, or a local `lvm` or `zfs` one; absent from servers before ADR-0094. */
   method?: "proxmox" | "lvm" | "zfs" | null;
+  /** Why no local snapshot, as data to word in the active language; `detail` says it in English. */
+  local_reason?: LocalReason;
+}
+
+/** Why a server cannot get a local snapshot (ADR-0094), with the values of its sentence. */
+export interface LocalReason {
+  code: "windows" | "not_reported" | "sudo_rules" | "inspect" | "no_root" | "root_not_covered" | "no_space" | "pool_full";
+  fs_type?: string;
+  mount_point?: string;
+  group?: string;
+  free_bytes?: number;
+  needed_bytes?: number;
+  pool_bytes?: number;
+  error?: string;
 }
 
 /** `GET /api/servers/{id}/proxmox`: the server's Proxmox guest; customer administrators. */
@@ -2121,6 +2137,9 @@ export interface Rollback {
 }
 
 /** `GET /api/servers/{id}/sources` (ADR-0074). */
+/** Why a server cannot use a mirror (ADR-0074). */
+export type SourcesProblem = "no_package_updates" | "windows" | "no_distribution" | "no_catalog" | "not_enabled" | "no_mirror" | "copying";
+
 export interface SourcesStatus {
   using: "mirror" | "own";
   mirrors: { name: string; snapshot: string }[];
@@ -2136,6 +2155,8 @@ export interface SourcesStatus {
   problem: string | null;
   /** The fix is adding `distribution` on the Mirrors page. */
   add_mirror: boolean;
+  /** `problem` as a code, worded from the translations; absent from older servers. */
+  problem_code?: SourcesProblem;
   /**
    * Windows servers: where Windows Update takes updates from (ADR-0086).
    * `null` on Linux and until an agent that reports it sent its updates.

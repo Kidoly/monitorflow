@@ -112,6 +112,8 @@ describe("ServerLogsTab", () => {
     stubLogs(() => ({ lines: [], more: false, units: [] }));
     render(<ServerLogsTab server={server} />);
     expect(await screen.findByText("No warnings or errors in this time")).toBeInTheDocument();
+    // The title says it all.
+    expect(screen.queryByText(/forwards the warnings/)).toBeNull();
   });
 
   it("says Windows event logs are not forwarded yet, without asking the API", async () => {

@@ -19,7 +19,7 @@ export interface TimeSeries {
   points: [number, number | null][];
 }
 
-/** A dashed horizontal line with its label above it at the right: "Warning 80 %". */
+/** A dashed horizontal line, named in the legend: "Warning 80 %". */
 export interface Threshold {
   severity: "warning" | "critical";
   value: number;
@@ -242,10 +242,8 @@ export function TimeChart({
           )}
           {thresholds.map((t) => (
             <g key={`${t.severity}-${t.value}`} className={styles[t.severity]} data-testid="chart-threshold">
+              {/* No label on the line: the legend names it, and close lines' labels overlapped. */}
               <line x1={LEFT} y1={y(t.value)} x2={RIGHT} y2={y(t.value)} strokeDasharray="4 3" strokeWidth={1.5} />
-              <text x={RIGHT - 4} y={y(t.value) - 4} textAnchor="end">
-                {t.label} {format(t.value)}
-              </text>
             </g>
           ))}
           {series.map((s, i) => (
@@ -330,7 +328,8 @@ export function TimeChart({
         {readoutText}
       </p>
       <div className={styles.legend}>
-        {series.map((s, i) => (
+        {/* A lone series is the chart's title: no legend button to repeat it. */}
+        {series.length > 1 && series.map((s, i) => (
           <button
             key={s.label}
             type="button"
@@ -353,7 +352,7 @@ export function TimeChart({
           </span>
         ))}
         {allSeries.length > MAX_SERIES && (
-          <span className={styles.subtitle}>{allSeries.length - MAX_SERIES} more series not shown.</span>
+          <span className={styles.subtitle}>{t("ui.chart.notShown", { count: allSeries.length - MAX_SERIES })}</span>
         )}
         {footer && <span className={styles.footer}>{footer}</span>}
       </div>

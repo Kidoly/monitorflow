@@ -17,7 +17,7 @@ import { modifiesSite, useMe } from "@/lib/me";
 import { sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { LEVEL_LABELS, perInstance, ruleCompact, ruleLevel, ruleSummary, rowRule } from "@/lib/sensorRules";
-import { type SensorRow, formatSensorValue, sensorKind } from "@/lib/sensors";
+import { type SensorRow, formatSensorValue } from "@/lib/sensors";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Button } from "@/components/ui/Button";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
@@ -108,14 +108,14 @@ export function ServerSensorsTab({
         <PrimaryCell
           title={row.title}
           href={scopedHref(sensorHref(server.id, row.metric, row.instance), scope)}
+          // An incident's reason repeats the status, the value and the rule beside it, and
+          // the sensor's kind ("disk · /") its title: only why a sensor reports nothing.
           sub={
-            row.status !== "ok" && (row.reason ?? row.error) ? (
+            !row.incident && row.status !== "ok" && (row.reason ?? row.error) ? (
               <span className={styles.why}>
                 <Reason short text={row.reason ?? row.error} />
               </span>
-            ) : (
-              sensorKind(row.sensor, row.instance)
-            )
+            ) : undefined
           }
         />
       ),

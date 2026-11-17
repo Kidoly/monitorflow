@@ -24,7 +24,7 @@ import {
   validateCampaign,
 } from "@/lib/campaigns";
 import { formatDuration } from "@/lib/format";
-import { administersCustomer, multiCustomer, useMe } from "@/lib/me";
+import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
 
 import own from "./Campaigns.module.css";
@@ -143,7 +143,7 @@ export function CampaignForm({ me }: { me: Me }) {
 
   return (
     <div className={own.page}>
-      <Breadcrumb parents={[{ label: t("campaigns.label"), href: CAMPAIGNS_PATH }]} current={t("campaigns.newCampaign")} />
+      <Breadcrumb parents={[{ label: t("campaigns.label"), href: CAMPAIGNS_PATH }]} />
       <PageHeader detail title={t("campaigns.newCampaign")} meta={t("campaigns.form.meta")} />
       <form className={own.form} onSubmit={submit} aria-label={t("campaigns.newCampaign")} noValidate>
         <div className={own.grid}>
@@ -198,11 +198,15 @@ export function CampaignForm({ me }: { me: Me }) {
                     disabled={noPackages(s) || s.site_id === draft.siteId}
                     onChange={(e) => set({ serverIds: toggle(draft.serverIds, s.id, e.target.checked) })}
                   />
-                  {s.hostname}{" "}
-                  <span className={own.dim}>
-                    ({s.site_name}
-                    {noPackages(s) && `, ${t("campaigns.form.noPackages")}`})
-                  </span>
+                  {s.hostname}
+                  {(multiSite(me) || noPackages(s)) && (
+                    <>
+                      {" "}
+                      <span className={own.dim}>
+                        ({[multiSite(me) && s.site_name, noPackages(s) && t("campaigns.form.noPackages")].filter(Boolean).join(", ")})
+                      </span>
+                    </>
+                  )}
                 </label>
               </li>
             ))}

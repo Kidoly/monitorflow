@@ -59,6 +59,19 @@ describe("PendingUpdates", () => {
     expect(order).toEqual(["Operating", "Flatpak", "Snap"]);
   });
 
+  it("names an architecture only when it is not the usual one, and leaves out managers the server lacks", async () => {
+    const pkg = (name: string, arch: string) => ({ ...packages.packages[0]!, name, arch });
+    const mixed = { ...packages, packages: [pkg("openssl", "amd64"), pkg("curl", "amd64"), pkg("libc6", "i386"), pkg("tzdata", "all")] };
+    const absent = { ...apps, managers: [{ ...apps.managers[0]!, state: "absent" as const, pending: 0 }, apps.managers[1]!], packages: [] };
+    stubFetch({ [OS]: { status: 200, body: mixed }, [APPS]: { status: 200, body: absent } });
+    render(<PendingUpdates server={linux} />);
+
+    const rows = within(await screen.findByRole("region", { name: "Operating system" })).getAllByRole("row").slice(1);
+    expect(rows.map((r) => within(r).getAllByRole("cell")[0]!.textContent).sort()).toEqual(["curl", "libc6i386", "openssl", "tzdata"]);
+    expect(screen.queryByRole("region", { name: "Flatpak" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Snap" })).toBeInTheDocument();
+  });
+
   it("says when the agent does not list apps yet", async () => {
     const windows = { ...linux, os_family: "windows" } as ServerDetail;
     stubFetch({

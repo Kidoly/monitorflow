@@ -66,14 +66,19 @@ export function PackageSources({ server }: { server: ServerDetail }) {
         {status.failed && (
           <Banner tone="bad">{t("mirrors.sources.failed", { reason: status.failed })}</Banner>
         )}
-        <p className={styles.note}>
-          {status.using === "mirror"
-            ? t("mirrors.sources.fromMirror", { server: server.hostname, mirrors: mirrorsText(status) })
-            : t("mirrors.sources.fromOwn", { server: server.hostname })}{" "}
-          {status.changing_to && t("mirrors.sources.nextContact")}
-          {status.campaign && t("mirrors.sources.campaign")}
-        </p>
-        {status.using === "own" && status.problem && <Problem status={status} />}
+        {/* Its own sources go without saying: the label above says it. */}
+        {(status.using === "mirror" || status.changing_to || status.campaign) && (
+          <p className={styles.note}>
+            {[
+              status.using === "mirror" && t("mirrors.sources.fromMirror", { server: server.hostname, mirrors: mirrorsText(status) }),
+              status.changing_to && t("mirrors.sources.nextContact"),
+              status.campaign && t("mirrors.sources.campaign"),
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          </p>
+        )}
+        {status.using === "own" && status.problem && <Problem status={status} osVersion={server.os_version} />}
         {canChange && settled && status.using === "own" && !status.problem && (
           <div className={styles.actions}>
             <InlineConfirm
@@ -113,12 +118,26 @@ export function PackageSources({ server }: { server: ServerDetail }) {
   );
 }
 
-/** Why the server keeps its sources, and the next step when there is one. */
-function Problem({ status }: { status: SourcesStatus }) {
+/**
+ * Why `status` cannot use a mirror, in the active language from its code;
+ * the API's English sentence from an older server.
+ */
+export function problemText(status: Pick<SourcesStatus, "problem" | "problem_code" | "distribution">, osVersion: string | null): string | null {
+  const code = status.problem_code;
+  if (!code) return status.problem;
+  return t(`mirrors.sources.problem.${code}`, { distribution: status.distribution ?? "", version: osVersion ?? "" });
+}
+
+/**
+ * Why the server keeps its sources, and the next step when there is one.
+ * When the step is adding its distribution, the label and the button say it all.
+ */
+function Problem({ status, osVersion }: { status: SourcesStatus; osVersion: string | null }) {
   const me = useMe();
+  const add = status.add_mirror && administersEverything(me);
   return (
     <>
-      <Banner tone="plain">{status.problem}</Banner>
+      {!add && <Banner tone="plain">{problemText(status, osVersion)}</Banner>}
       {status.add_mirror &&
         (administersEverything(me) ? (
           <div className={styles.actions}>

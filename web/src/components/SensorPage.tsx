@@ -251,7 +251,6 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
           { label: t("sensors.page.fleet"), href: scopedHref("/", scope) },
           { label: server.hostname, href: serverLink, siblings: serverSiblings(server, scope) },
         ]}
-        current={title}
         siblings={config ? sensorSiblings(server, config.sensors, data.recent, { metric, instance }, scope) : undefined}
       />
       <PageHeader

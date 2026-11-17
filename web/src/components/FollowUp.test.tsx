@@ -119,6 +119,19 @@ describe("FollowUpSection", () => {
     });
   });
 
+  it("hides the default's sentence while a new follow-up's form, which starts from it, is open", async () => {
+    stubFetch({ "GET /api/follow-up/policies": { status: 200, body: LIST }, ...places });
+    const user = userEvent.setup();
+    show();
+    expect(await screen.findByText("The follow-up tells more people, step by step.")).toBeInTheDocument();
+    const sentence = /Critical alerts not acknowledged within 15 minutes/;
+    expect(screen.getByText(sentence)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Set a follow-up…" }));
+    expect(screen.queryByText(sentence)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText(sentence)).toBeInTheDocument();
+  });
+
   it("shows the server's reason for refusing steps", async () => {
     stubFetch({
       "GET /api/follow-up/policies": { status: 200, body: LIST },

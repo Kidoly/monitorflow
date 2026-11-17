@@ -9,6 +9,7 @@ import {
   auditQuery,
   chainSummary,
   eventSummary,
+  localReasonText,
   riskWord,
   rollbackText,
   snapshotReason,
@@ -161,6 +162,9 @@ describe("approval helpers", () => {
       text: "No snapshot before this change: the container's storage cannot take snapshots.",
       note: "(rootfs is on storage local (dir).)",
     });
+    expect(rollbackText({ available: false, reason: "disabled", detail: "x", local_reason: { code: "root_not_covered", fs_type: "xfs" } }).text).toBe(
+      "No snapshot before this change: / is on plain xfs.",
+    );
     expect(chainSummary({ valid: true, events: 3, broken_at: null, reason: null, head_hash: "abcdef0123456789" })).toBe(
       "Hash chain verified: 3 events, head abcdef012345.",
     );
@@ -173,5 +177,25 @@ describe("approval helpers", () => {
     const filters = auditFiltersFromQuery(new URLSearchParams("incident=i1&kind=approval&actor=root&server=s1"));
     expect(filters).toEqual({ incident: "i1", server: "s1", kind: "approval", actor: null });
     expect(auditQuery(filters)).toEqual({ incident_id: "i1", server_id: "s1", kind: "approval", actor_kind: undefined });
+  });
+});
+
+describe("localReasonText", () => {
+  it("words the API's local reason in the active language, and falls back to its English detail", () => {
+    expect(localReasonText({ detail: "older server words" })).toBe("older server words");
+    expect(localReasonText({ detail: null })).toBeNull();
+    const full = { code: "no_space" as const, group: "vg0", mount_point: "/var", free_bytes: 1024 ** 3, needed_bytes: 5 * 1024 ** 3 };
+    expect(localReasonText({ local_reason: full })).toBe("volume group vg0 has 1 GiB free, and a snapshot of /var needs 5 GiB");
+    setActiveLocale("fr");
+    try {
+      expect(localReasonText({ detail: "English", local_reason: { code: "sudo_rules" } })).toBe(
+        "les règles sudo de ce serveur datent d’avant les instantanés\u202f; relancez la commande d’installation",
+      );
+      expect(localReasonText({ local_reason: { code: "pool_full", mount_point: "/", free_bytes: 1024, pool_bytes: 1024 ** 2 } })).toBe(
+        "le stockage de / n’a que 1 Kio de libre sur 1 Mio",
+      );
+    } finally {
+      setActiveLocale("en");
+    }
   });
 });

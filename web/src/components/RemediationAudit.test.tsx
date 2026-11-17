@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { REFRESH_MS } from "@/lib/usePolledData";
+import { As, oneSite, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { SERVER_ID, SITE_ID } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
@@ -104,6 +105,18 @@ describe("RemediationAudit", () => {
     expect(rows[1]).toHaveTextContent(/Escalation.*The command did not complete$/);
     expect(rows[1]).not.toHaveTextContent(/disabled/);
     expect(rows[2]).toHaveTextContent(/Command result.*Did not complete: AI commands are off on this agent\./);
+  });
+
+  it("names no site while there is only one", async () => {
+    stubFetch({ ...SERVERS, [`GET /api/remediation/events?limit=${PAGE_SIZE}`]: events([result]) });
+    render(
+      <As user={oneSite(viewer)}>
+        <RemediationAuditView />
+      </As>,
+    );
+    const rows = within(await table()).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent(/web-1Disk used \/var, event 9/);
+    expect(rows[1]).not.toHaveTextContent("paris");
   });
 
   it("verifies the chain of the incident it is filtered to", async () => {

@@ -54,8 +54,7 @@ export const en = {
   title: "Silences",
   about: "About silences",
   add: "New silence",
-  intro:
-    "A silence stops notifications for a while, for planned work. Incidents still open and show as usual. When it ends, what is still open is sent, once. To silence one server or site, open its page.",
+  intro: "A silence stops notifications for a while, for planned work. Incidents still open and show as usual. When it ends, what is still open is sent, once.",
   load: "silences",
   empty: "Nothing is silenced. Notifications go out as usual.",
 } as const satisfies Catalog;
@@ -113,8 +112,7 @@ export const fr: Translation<typeof en> = {
   title: "Silences",
   about: "À propos des silences",
   add: "Nouveau silence",
-  intro:
-    "Un silence suspend les notifications pendant un temps, pour des travaux prévus. Les incidents s’ouvrent et s’affichent comme d’habitude. À la fin, ce qui est encore ouvert est envoyé, une fois. Pour mettre en silence un serveur ou un site, ouvrez sa page.",
+  intro: "Un silence suspend les notifications pendant un temps, pour des travaux prévus. Les incidents s’ouvrent et s’affichent comme d’habitude. À la fin, ce qui est encore ouvert est envoyé, une fois.",
   load: "les silences",
   empty: "Rien n’est en silence. Les notifications partent comme d’habitude.",
 };

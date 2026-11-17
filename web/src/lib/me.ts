@@ -33,6 +33,19 @@ export function useMultiCustomer(): boolean {
 }
 
 /**
+ * Whether `me` sees more than one site. With a single site its name on
+ * every row says nothing, so site columns and labels show only then. An
+ * older server, without the field, shows them as before.
+ */
+export function multiSite(me: Me | null): boolean {
+  return me?.multi_site ?? true;
+}
+
+export function useMultiSite(): boolean {
+  return multiSite(useMe());
+}
+
+/**
  * Whether `me` has an administrator grant of any kind, which shows the
  * Settings item (ADR-0133). UX only: the API decides (ADR-0029).
  */

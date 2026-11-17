@@ -398,7 +398,6 @@ function ScheduleForm({
       </div>
       <fieldset className={styles.people}>
         <legend>{t("onCall.form.people")}</legend>
-        {members.length === 0 && <p className={admin.dim}>{t("onCall.form.noPeople")}</p>}
         <ol className={styles.order}>
           {members.map((m, i) => (
             <li key={m.id}>

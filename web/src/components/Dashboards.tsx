@@ -101,9 +101,12 @@ export function DashboardsPage() {
         title={t("dashboards.list.title")}
         meta={<RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={DASHBOARD_REFRESH_MS} />}
         actions={
-          <ButtonLink variant="k" href={newHref}>
-            {t("dashboards.list.new")}
-          </ButtonLink>
+          // With none of their own, the empty state below has the button.
+          data?.dashboards.length !== 0 && (
+            <ButtonLink variant="k" href={newHref}>
+              {t("dashboards.list.new")}
+            </ButtonLink>
+          )
         }
       />
       {stale && updatedAt && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
@@ -395,9 +398,8 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
             </option>
           ))}
         </select>
-        <span className={admin.fieldNote}>
-          {draft.shared_with.kind === "personal" ? t("dashboards.view.onlyYou") : t("dashboards.view.everyone")}
-        </span>
+        {/* "Only me" says it all; a shared one adds who may change it. */}
+        {draft.shared_with.kind !== "personal" && <span className={admin.fieldNote}>{t("dashboards.view.everyone")}</span>}
       </label>
       <label className={admin.field}>
         {t("dashboards.view.opensOn")}
@@ -428,20 +430,17 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
     <Page>
       <Breadcrumb
         parents={[{ label: t("dashboards.list.title"), href: scopedHref(DASHBOARDS_PATH, scope) }]}
-        current={shown.name || t("dashboards.view.new")}
       />
       <PageHeader
         detail
         title={shown.name || t("dashboards.view.new")}
         status={
-          <Label tone="neutral">
-            {builtIn
-              ? t("dashboards.view.readyMade")
-              : draft
-                ? (sharingOptions(me, servers ?? [], draft.shared_with).find((o) => o.value === sharingValue(draft.shared_with))?.label ??
-                  sharingLabel(draft.shared_with, multiCustomer(me)))
-                : sharingLabel(saved?.shared_with ?? shown.shared_with, multiCustomer(me))}
-          </Label>
+          // While editing, the Shared with field says it.
+          !draft && (
+            <Label tone="neutral">
+              {builtIn ? t("dashboards.view.readyMade") : sharingLabel(saved?.shared_with ?? shown.shared_with, multiCustomer(me))}
+            </Label>
+          )
         }
         meta={panels.length > 0 ? <RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={DASHBOARD_REFRESH_MS} /> : undefined}
         actions={
@@ -586,7 +585,7 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
           {panels.length >= MAX_PANELS && <span className={admin.dim}> {t("dashboards.view.maxPanels", { max: MAX_PANELS })}</span>}
         </div>
       )}
-      {draft && <p className={admin.footnote}>{t("dashboards.view.footnote")}</p>}
+      {draft && panels.length > 1 && <p className={admin.footnote}>{t("dashboards.view.footnote")}</p>}
       {!draft && saved?.can_link && <DisplayLinks dashboard={saved} />}
     </Page>
   );

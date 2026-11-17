@@ -108,7 +108,7 @@ export function MirrorPage({ id }: { id: string | null }) {
 
   return (
     <div className={styles.page}>
-      <Breadcrumb parents={[{ label: t("mirrors.title"), href: MIRRORS_PATH }]} current={mirror.name} />
+      <Breadcrumb parents={[{ label: t("mirrors.title"), href: MIRRORS_PATH }]} />
       <PageHeader
         detail
         title={mirror.name}

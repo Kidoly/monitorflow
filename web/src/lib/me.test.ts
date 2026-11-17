@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import type { Me, RoleGrant } from "./api";
-import { administersCustomer, isAdministrator, modifiesSite, readsCustomers } from "./me";
+import { administersCustomer, isAdministrator, modifiesSite, multiSite, readsCustomers } from "./me";
 
 const me = (...roles: RoleGrant[]): Me => ({ id: "u1", username: "alice", roles });
+
+describe("multiSite", () => {
+  it("names sites only to someone who sees several, and when the server does not say", () => {
+    expect(multiSite({ ...me(), multi_site: false })).toBe(false);
+    expect(multiSite({ ...me(), multi_site: true })).toBe(true);
+    expect(multiSite(me())).toBe(true);
+    expect(multiSite(null)).toBe(true);
+  });
+});
 
 describe("administration rights", () => {
   it("shows the section for any administrator grant", () => {

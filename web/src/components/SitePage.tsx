@@ -58,7 +58,7 @@ export function SitePage({ id }: { id: string | null }) {
   const fleet = scopedHref("/", { customerId: site.customer_id, siteId: site.id });
   return (
     <Page>
-      <Breadcrumb parents={[{ label: t("fleet.title"), href: "/" }]} current={site.name} />
+      <Breadcrumb parents={[{ label: t("fleet.title"), href: "/" }]} />
       <PageHeader
         detail
         title={site.name}

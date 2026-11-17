@@ -133,7 +133,7 @@ describe("RelayPage", () => {
     stubFetch({ [`GET /api/relays/${ID}`]: { status: 200, body: detail() }, ...lists });
     render(<RelayPage id={ID} me={siteAdmin} />);
     expect(await screen.findByRole("heading", { level: 1, name: "relay-1" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Relays›relay-1");
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(/^Relays$/);
     expect(screen.getByText("Site").nextElementSibling).toHaveTextContent("paris · acme");
     cleanup();
 

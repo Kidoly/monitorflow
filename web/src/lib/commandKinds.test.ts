@@ -41,7 +41,7 @@ describe("commandSummary", () => {
       commandSummary({
         command_kinds: { apply_updates: "accepted", configure_sources: "unsupported", self_update: "accepted", shell: "off" },
       }),
-    ).toBe("Accepts package updates, agent updates. Refuses package sources, AI commands.");
+    ).toBe("Accepts package updates, agent updates. Refuses package sources.");
     expect(commandSummary({ command_kinds: { self_update: "accepted" } })).toBe("Accepts agent updates.");
   });
 });

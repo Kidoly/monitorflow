@@ -10,9 +10,10 @@ const strings = (value: unknown): string[] =>
 
 /**
  * What a command does, in a few words, and its grey sub-line:
- * "Security updates, no reboot" over "every security update".
+ * "Security updates, no reboot" over "every security update". `note` is
+ * what every command of its kind does, for a tooltip.
  */
-export function describeCommand(command: Command): { title: string; sub: string } {
+export function describeCommand(command: Command): { title: string; sub: string; note?: string } {
   const p = command.parameters ?? {};
   switch (command.kind) {
     case "apply_updates": {
@@ -46,9 +47,11 @@ export function describeCommand(command: Command): { title: string; sub: string 
     case "self_update": {
       const version = typeof p.version === "string" ? p.version : "?";
       const timeout = typeof p.health_timeout_seconds === "number" && p.health_timeout_seconds > 0 ? p.health_timeout_seconds : 300;
+      // The same on every update: in a tooltip, not under each row.
       return {
         title: t("server.commands.selfUpdate", { version }),
-        sub: `${p.allow_downgrade === true ? t("server.commands.downgrade") : ""}${t("server.commands.rollsBack", { seconds: String(timeout) })}`,
+        sub: p.allow_downgrade === true ? t("server.commands.downgrade") : "",
+        note: t("server.commands.rollsBack", { seconds: String(timeout) }),
       };
     }
     case "ai_commands":

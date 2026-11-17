@@ -464,6 +464,7 @@ db_tests! {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["using"], "own");
         assert!(body["problem"].as_str().unwrap().contains("hasn't said"), "{body}");
+        assert_eq!(body["problem_code"], "no_distribution");
 
         h.set_os(h.debian, "debian 11").await;
         let (_, body) = h.send("GET", &uri, &reader, None).await;
@@ -471,6 +472,7 @@ db_tests! {
             body["problem"],
             "MonitorFlow has no mirror for debian 11. It keeps its own package sources."
         );
+        assert_eq!(body["problem_code"], "no_catalog");
         assert_eq!(body["add_mirror"], false);
 
         // In the catalog, one of its three mirrors added, the rest not.
@@ -482,6 +484,7 @@ db_tests! {
             body["problem"],
             "No mirror carries Debian 12 (bookworm) yet, so this server keeps its own package sources."
         );
+        assert_eq!(body["problem_code"], "no_mirror");
         let (status, body) = h.send("POST", &use_uri, &admin, None).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(body["error"].as_str().unwrap().contains("No mirror carries"), "{body}");
@@ -491,10 +494,12 @@ db_tests! {
         let (_, body) = h.send("GET", &uri, &reader, None).await;
         assert_eq!(body["add_mirror"], false);
         assert!(body["problem"].as_str().unwrap().contains("still being copied"), "{body}");
+        assert_eq!(body["problem_code"], "copying");
 
         h.publish_all().await;
         let (_, body) = h.send("GET", &uri, &reader, None).await;
         assert_eq!(body["problem"], Value::Null);
+        assert!(body.get("problem_code").is_none(), "{body}");
 
         // Reading is not changing.
         let (status, _) = h.send("POST", &use_uri, &reader, None).await;

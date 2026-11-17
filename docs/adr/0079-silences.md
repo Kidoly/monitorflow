@@ -66,3 +66,9 @@ Rejected:
 - The offline rule, the engine and the triggers are unchanged. A channel added later needs nothing: held rows are about events, not channels.
 - A wide silence ending with a chat channel set up releases a few incidents per pass: 100 incidents take about two minutes with Teams. The outbox gains `channel_id` for the copies a limited chat channel is owed.
 - `silences` keeps its rows, as the record of what was quiet and why; incident timelines point to them.
+
+## Amendment 2026-11-16: the same silence twice is one
+
+**Problem.** A real install listed one server's silence twice, identical: same end, same default reason, started the same minute. "Until tomorrow 8:00" picked again before the page showed the first silence makes a second row, and the silences page lists both.
+
+**Decision.** `POST /api/silences` first looks for a silence of the same target, not ended, already started by the requested start, with the same `ends_at` and `reason`. If there is one, it answers it with 200 and creates nothing, so no audit row either. A transaction-scoped advisory lock on the target makes two such requests at once wait for each other. A different end or reason is still a new silence, as overlapping silences are allowed.

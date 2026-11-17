@@ -23,7 +23,7 @@ import { metricsError } from "@/lib/charts";
 import { aiCommands, aiSwitch, commandSummary, unsupportedReason } from "@/lib/commandKinds";
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
-import { administersCustomer, administersSite, multiCustomer, useMe } from "@/lib/me";
+import { administersCustomer, administersSite, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { serverHref, siteHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorValues, sensorRows, valuesBySensor } from "@/lib/sensors";
@@ -48,7 +48,7 @@ import { serverSiblings } from "./breadcrumbSiblings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { ServerCommandsTab } from "./ServerCommandsTab";
-import { RollbackBadge, RollbackFact } from "./ServerRollback";
+import { RollbackBadge, RollbackFact, useRollback } from "./ServerRollback";
 import { ServerLogsTab } from "./ServerLogsTab";
 import { type SensorRules, ServerSensorsTab } from "./ServerSensorsTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
@@ -154,6 +154,8 @@ export function ServerPage({ id }: { id: string | null }) {
   }, [oldTab, setParams]);
   // Commands shown, so a refresh reloads all of them rather than the first page.
   const [commandLimit, setCommandLimit] = useState(COMMANDS_PAGE);
+  // The Details panel under the header; the Commands tab opens it to turn AI commands on.
+  const [details, setDetails] = useState(false);
   const fetcher = useCallback((signal: AbortSignal) => loadServer(id ?? "", commandLimit, signal), [id, commandLimit]);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { enabled: valid });
 
@@ -191,6 +193,8 @@ export function ServerPage({ id }: { id: string | null }) {
         now={updatedAt}
         stale={stale}
         onChanged={refresh}
+        details={details}
+        onDetails={setDetails}
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {server.revoked_at && (
@@ -239,7 +243,10 @@ export function ServerPage({ id }: { id: string | null }) {
         )}
         {tab === "logs" && <ServerLogsTab server={server} />}
         {tab === "updates" && <ServerUpdatesTab server={server} />}
-        {tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} />}
+        {tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} onOpenDetails={() => {
+          setDetails(true);
+          window.scrollTo({ top: 0 });
+        }} />}
         {tab === "commands" && (
           <ServerCommandsTab
             serverId={server.id}
@@ -267,6 +274,8 @@ function ServerHeader({
   now,
   stale,
   onChanged,
+  details,
+  onDetails: setDetails,
 }: {
   server: ServerDetail;
   latestAgent: string | null;
@@ -274,9 +283,11 @@ function ServerHeader({
   now: Date;
   stale: boolean;
   onChanged: () => void;
+  details: boolean;
+  onDetails: (open: boolean) => void;
 }) {
   const me = useMe();
-  const [details, setDetails] = useState(false);
+  const severalSites = multiSite(me);
   const [removing, setRemoving] = useState(false);
   const live = !server.revoked_at;
   const silences = useSilenceBar({
@@ -314,8 +325,12 @@ function ServerHeader({
                 t("server.line.agent", { version: server.agent_version ?? t("server.fact.unknown") }),
               ].join(" · ")}
               {" · "}
-              <Link href={siteHref(server.site_id)}>{server.site_name}</Link>
-              {" · "}
+              {severalSites && (
+                <>
+                  <Link href={siteHref(server.site_id)}>{server.site_name}</Link>
+                  {" · "}
+                </>
+              )}
               {server.last_heartbeat ? (
                 <>
                   {t("server.line.seen")} <RelativeTime value={server.last_heartbeat} now={now} stale={stale} />
@@ -336,7 +351,7 @@ function ServerHeader({
       )}
       {live && silences.notices}
       {live && silences.form}
-      {details && <ServerFacts server={server} latestAgent={latestAgent} now={now} stale={stale} onChanged={onChanged} />}
+      {details && <ServerFacts server={server} latestAgent={latestAgent} now={now} onChanged={onChanged} />}
     </>
   );
 }
@@ -384,7 +399,6 @@ function ServerHeading({ server }: { server: ServerDetail }) {
   return (
     <Breadcrumb
       parents={[{ label: t("server.fleet"), href: scopedHref("/", scope) }]}
-      current={server.hostname}
       siblings={serverSiblings(server, scope)}
     />
   );
@@ -438,16 +452,20 @@ function UpdateAgent({
 }
 
 /** How to turn on AI commands on this server, or who can. */
-function AllowOnThisServer({ server }: { server: ServerDetail }) {
+function AllowOnThisServer({ server, onOpenDetails }: { server: ServerDetail; onOpenDetails: () => void }) {
   const me = useMe();
   const where = server.os_family === "windows" ? t("server.allow.windows") : "";
   if (aiSwitch(server) === "both") {
     return (
       <Banner tone="warn">
         <strong>{t("server.allow.off", { server: server.hostname })}</strong> {t("server.allow.refused")}{" "}
-        {administersSite(me, server.customer_id, server.site_id)
-          ? t("server.allow.turnOnAbove")
-          : t("server.allow.askSite")}
+        {administersSite(me, server.customer_id, server.site_id) ? (
+          <Button variant="ghost" size="small" onClick={onOpenDetails}>
+            {t("server.allow.openDetails")}
+          </Button>
+        ) : (
+          t("server.allow.askSite")
+        )}
       </Banner>
     );
   }
@@ -477,8 +495,8 @@ function AiCommandsFact({ server, onChanged }: { server: ServerDetail; onChanged
     case "accepted":
       return (
         <>
-          <Label tone="ok">{t("server.ai.on")}</Label> {t("server.ai.runs")}
-          {lastContact}
+          <Label tone="ok">{t("server.ai.on")}</Label>
+          {lastContact && <> {lastContact}</>}
           <AiCommandsChangeLine server={server} />
           <AiCommandsSwitch server={server} on={false} onChanged={onChanged} />
         </>
@@ -486,8 +504,8 @@ function AiCommandsFact({ server, onChanged }: { server: ServerDetail; onChanged
     case "off":
       return (
         <>
-          <Label tone="warn">{t("server.ai.off")}</Label> {t("server.ai.refuses")}
-          {lastContact}
+          <Label tone="warn">{t("server.ai.off")}</Label>
+          {lastContact && <> {lastContact}</>}
           <AiCommandsChangeLine server={server} />
           {aiSwitch(server) === "both" ? (
             <AiCommandsSwitch server={server} on onChanged={onChanged} />
@@ -586,54 +604,33 @@ function ServerFacts({
   server,
   latestAgent,
   now,
-  stale,
   onChanged,
 }: {
   server: ServerDetail;
   latestAgent: string | null;
   now: Date;
-  stale: boolean;
   onChanged: () => void;
 }) {
   const { certificate } = server;
   const summary = commandSummary(server);
   const me = useMe();
+  const canMap = administersCustomer(me, server.customer_id);
+  const rollback = useRollback(server.id, !server.revoked_at);
+  // The header says the system, the agent's version, the site and when it was last seen.
+  const agentNews = [
+    updateAvailable(server.agent_version, latestAgent) && t("server.fact.available", { version: latestAgent ?? "" }),
+    server.via_relay && t("server.fact.via", { relay: server.via_relay }),
+  ].filter(Boolean);
   return (
     <FactsBox
       columns={2}
       facts={[
-        {
-          label: t("server.fact.site"),
-          value: (
-            <>
-              <Link href={siteHref(server.site_id)}>{server.site_name}</Link>
-              {multiCustomer(me) && ` · ${server.customer_name}`}
-            </>
-          ),
-        },
-        {
-          label: t("server.fact.lastSeen"),
-          value: server.last_heartbeat ? (
-            <RelativeTime value={server.last_heartbeat} now={now} stale={stale} />
-          ) : (
-            t("server.fact.never")
-          ),
-        },
-        { label: t("server.fact.os"), value: formatOs(server.os_family, server.os_version) },
+        ...(multiCustomer(me) ? [{ label: t("server.fact.customer"), value: server.customer_name }] : []),
         {
           label: server.connected_at ? t("server.fact.connectedSince") : t("server.fact.connected"),
           value: server.connected_at ? minutes(server.connected_at) : t("server.fact.notNow"),
         },
-        {
-          label: t("server.fact.agent"),
-          value: [
-            server.agent_version ?? t("server.fact.unknown"),
-            updateAvailable(server.agent_version, latestAgent) && t("server.fact.available", { version: latestAgent ?? "" }),
-            server.via_relay && t("server.fact.via", { relay: server.via_relay }),
-          ]
-            .filter(Boolean)
-            .join(" · "),
-        },
+        ...(agentNews.length > 0 ? [{ label: t("server.fact.agent"), value: agentNews.join(" · ") }] : []),
         {
           label: t("server.fact.certificate"),
           value: certificate ? <CertificateFact certificate={certificate} now={now} /> : t("server.fact.noCertificate"),
@@ -648,14 +645,14 @@ function ServerFacts({
               { label: t("server.fact.aiCommands"), value: <AiCommandsFact server={server} onChanged={onChanged} /> },
               { label: t("server.fact.offlineAlerts"), value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> },
               // What a change gets first; the Proxmox mapping for administrators of the customer.
-              {
-                label: t("server.fact.rollback"),
-                value: <RollbackFact server={server} canMap={administersCustomer(me, server.customer_id)} />,
-              },
+              // A limited rollback without a mapping to change is the header's badge alone.
+              ...(rollback.data?.snapshots.available || canMap
+                ? [{ label: t("server.fact.rollback"), value: <RollbackFact server={server} canMap={canMap} /> }]
+                : []),
             ]),
         ...(summary ? [{ label: t("server.fact.commands"), value: summary }] : []),
-        { label: t("server.fact.certificateId"), value: server.peer_id, mono: true },
-        ...(certificate ? [{ label: t("server.fact.certificateUntil"), value: formatExact(new Date(certificate.not_after)).slice(0, 10) }] : []),
+        // Usually the host name, then said already.
+        ...(server.peer_id !== server.hostname ? [{ label: t("server.fact.certificateId"), value: server.peer_id, mono: true }] : []),
       ]}
     />
   );
@@ -673,7 +670,7 @@ function CertificateFact({ certificate, now }: { certificate: NonNullable<Server
     );
   }
   const problem = certificateProblem(certificate.not_after, now);
-  if (!problem) return <>{t("server.fact.certificateValid")}</>;
+  if (!problem) return <>{t("server.fact.certificateValid", { date })}</>;
   return (
     <>
       <Label tone={certificateState(certificate.not_after, now) === "failed" ? "bad" : "warn"}>{problem}</Label> {date}

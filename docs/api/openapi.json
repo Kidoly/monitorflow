@@ -25168,7 +25168,7 @@
           "alerts"
         ],
         "summary": "Create a silence",
-        "description": "Stops notifications about a server, a relay, a site, a customer or everything, from `starts_at` (now when absent or past) until `ends_at`, at most 30 days later. Use it around a deployment or maintenance.\n\n**Who**, by `scope`: for `server`, `relay` or `site`, operator or above on its site; for `customer`, operator or above on the customer as a whole; for `all`, a global administrator. **Area**: `alerts`. `target_id` is required, except for `all`, which takes none.\n\n`reason` (1 to 200 characters) shows to others, so they know what the silence is for. Audited as `silence.create`. **Not safe to repeat**: each request makes a silence; send `Idempotency-Key` to retry.",
+        "description": "Stops notifications about a server, a relay, a site, a customer or everything, from `starts_at` (now when absent or past) until `ends_at`, at most 30 days later. Use it around a deployment or maintenance.\n\n**Who**, by `scope`: for `server`, `relay` or `site`, operator or above on its site; for `customer`, operator or above on the customer as a whole; for `all`, a global administrator. **Area**: `alerts`. `target_id` is required, except for `all`, which takes none.\n\n`reason` (1 to 200 characters) shows to others, so they know what the silence is for. Audited as `silence.create`. The same request again while its silence runs or waits (same target, `ends_at` and `reason`) answers that silence with 200 and makes no second one. Otherwise **not safe to repeat**: each request makes a silence; send `Idempotency-Key` to retry.",
         "operationId": "create_silence",
         "parameters": [
           {
@@ -25201,6 +25201,31 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "The same silence, already there: nothing was created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SilenceView"
+                },
+                "example": {
+                  "active": false,
+                  "can_end": true,
+                  "created_at": "2026-11-14T09:30:00Z",
+                  "created_by_username": "alice",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "ends_at": "2026-11-15T00:00:00Z",
+                  "id": "7c6b5a4f-3e2d-4c1b-a09f-8e7d6c5b4a3f",
+                  "reason": "Kernel upgrade and reboot",
+                  "scope": "server",
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "starts_at": "2026-11-14T22:00:00Z",
+                  "target_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "target_name": "web-1"
+                }
+              }
+            }
+          },
           "201": {
             "description": "The new silence",
             "content": {
@@ -34276,6 +34301,74 @@
           }
         }
       },
+      "LocalReason": {
+        "type": "object",
+        "description": "Why a server cannot get a local snapshot (ADR-0094), as data.",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "`windows`, `not_reported`, `sudo_rules`, `inspect`, `no_root`,\n`root_not_covered`, `no_space` or `pool_full`."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `inspect`: the agent's own error, as it gave it."
+          },
+          "free_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "With `no_space` and `pool_full`: bytes free.",
+            "minimum": 0
+          },
+          "fs_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `root_not_covered`: the file system of `/`, like `ext4`."
+          },
+          "group": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `no_space`: the LVM volume group."
+          },
+          "mount_point": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `no_space` and `pool_full`: the mount point that lacks space."
+          },
+          "needed_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "With `no_space`: bytes the snapshot needs.",
+            "minimum": 0
+          },
+          "pool_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "With `pool_full`: the size of the pool.",
+            "minimum": 0
+          }
+        }
+      },
       "LogLevel": {
         "type": "string",
         "description": "Which priorities to show.",
@@ -39757,6 +39850,17 @@
             ],
             "description": "What a snapshot does not hold, though Proxmox takes one."
           },
+          "local_reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LocalReason",
+                "description": "Why no local snapshot, as a code and its values, for a client to\nword in its own language; `detail` says it in English. Absent\nunless a local snapshot was looked for and is not possible."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "method": {
             "type": [
               "string",
@@ -39861,6 +39965,13 @@
               "null"
             ],
             "description": "Why the server cannot use a mirror, in a sentence for the page;\n`null` when it can."
+          },
+          "problem_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "[`Self::problem`] as a code, for a client to word in its own\nlanguage: `no_package_updates`, `windows`, `no_distribution`,\n`no_catalog`, `not_enabled`, `no_mirror` or `copying`. Its values\nare [`Self::distribution`] and the server's OS version."
           },
           "using": {
             "$ref": "#/components/schemas/SourcesUsing",

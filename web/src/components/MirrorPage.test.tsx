@@ -36,7 +36,7 @@ describe("MirrorPage", () => {
     render(<MirrorPage id={MIRROR_ID} />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "debian-bookworm" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Mirrors›debian-bookworm");
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(/^Mirrors$/);
     expect(screen.getByText("apt · deb.debian.org/debian · bookworm · main contrib · amd64 arm64 · every 12 h")).toBeInTheDocument();
     // The last run is told once, by its tile, not again next to the title.
     expect(screen.queryByText("Last run succeeded")).not.toBeInTheDocument();

@@ -44,13 +44,26 @@ const columns = (): Column<Row>[] => [
   },
 ];
 
-const osRow = (p: Package): Row => ({
-  key: `${p.name}:${p.arch}`,
-  name: p.name,
-  sub: p.title ?? p.arch,
-  from: p.version,
-  to: p.upgradable_version ?? "",
-});
+/** Architectures every system shares, which say nothing about a package. */
+const ANY_ARCH = new Set(["all", "noarch", ""]);
+
+/** The architecture most packages have, which then goes without saying. */
+export function usualArch(packages: Pick<Package, "arch">[]): string | null {
+  const counts = new Map<string, number>();
+  for (const { arch } of packages) if (!ANY_ARCH.has(arch)) counts.set(arch, (counts.get(arch) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+}
+
+/** Under the name: the package's title, or its architecture when it is not the usual one. */
+const osRow =
+  (usual: string | null) =>
+  (p: Package): Row => ({
+    key: `${p.name}:${p.arch}`,
+    name: p.name,
+    sub: p.title ?? (ANY_ARCH.has(p.arch) || p.arch === usual ? "" : p.arch),
+    from: p.version,
+    to: p.upgradable_version ?? "",
+  });
 
 const appRow = (p: ThirdPartyPackage): Row => ({
   key: `${p.id}:${p.scope}`,
@@ -80,7 +93,6 @@ const count = (n: number) =>
 /** A third-party manager's line: its pending count, or why there is none. */
 function managerStatus(manager: ThirdPartyManager | undefined): ReactNode {
   if (!manager) return <span className={styles.dim}>{t("server.pending.notReported")}</span>;
-  if (manager.state === "absent") return <span className={styles.dim}>{t("server.pending.absent")}</span>;
   if (manager.state === "unusable") {
     return (
       <>
@@ -126,10 +138,12 @@ export function PendingUpdates({ server }: { server: ServerDetail }) {
         <Source
           name={t("server.pending.os")}
           status={os.data.reported_at === null ? <span className={styles.dim}>{t("server.pending.notReported")}</span> : count(osPending.length)}
-          rows={osPending.map(osRow)}
+          rows={osPending.map(osRow(usualArch(osPending)))}
         />
         {managers.map((manager) => {
           const status = apps.data?.managers.find((m) => m.manager === manager);
+          // A manager the server does not have is no source of updates.
+          if (status?.state === "absent") return null;
           const rows = (apps.data?.packages ?? [])
             .filter((p) => p.manager === manager && p.available_version !== null)
             .map(appRow);
