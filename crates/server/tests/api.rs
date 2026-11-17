@@ -131,6 +131,7 @@ db_tests! {
             "roles": [{ "role": "administrator", "customer_id": null, "site_id": null }],
             "multi_customer": false,
             "multi_site": false,
+            "provider": null,
         });
         assert_eq!(body, expected);
         let cookie = cookie.unwrap();
