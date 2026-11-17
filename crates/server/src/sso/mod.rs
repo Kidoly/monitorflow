@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod jws;
+pub mod oidc;
 pub mod tls;
 
 use crate::api::users::GrantScope;
