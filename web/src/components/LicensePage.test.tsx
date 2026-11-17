@@ -51,8 +51,12 @@ describe("LicensePage", () => {
   it("says a single central server needs no license key", async () => {
     stubFetch({ "GET /api/license": { status: 200, body: none } });
     renderPage();
-    expect(await screen.findByText("No license key.")).toBeInTheDocument();
-    expect(screen.getByText(/A single central server needs none/)).toBeInTheDocument();
+    expect(await screen.findByText("Community edition")).toBeInTheDocument();
+    expect(screen.getByText(/Every feature, for any number of servers and users, free/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "About subscriptions" })).toHaveAttribute(
+      "href",
+      "https://github.com/Kidoly/monitorflow#licence",
+    );
     // The form's own labels say where the key goes: no sentence repeats them.
     expect(screen.queryByText(/goes here|Paste the text you received/)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Install a license key" })).toBeInTheDocument();
@@ -70,11 +74,40 @@ describe("LicensePage", () => {
     renderPage();
     await user.type(await screen.findByRole("textbox", { name: /License key/ }), "-----BEGIN MONITORFLOW LICENSE-----");
     await user.click(screen.getByRole("button", { name: "Install" }));
-    expect(await screen.findByText("Valid until 30 November 2027, for 3 central servers.")).toBeInTheDocument();
+    expect(await screen.findByText("Enterprise subscription, valid until 30 November 2027, for 3 central servers.")).toBeInTheDocument();
     const put = fetch.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
     expect(JSON.parse(String((put?.[1] as RequestInit).body))).toEqual({ text: "-----BEGIN MONITORFLOW LICENSE-----" });
     expect(screen.getByText("Example Corp")).toBeInTheDocument();
     expect(screen.getByText("3 central servers, the first one included")).toBeInTheDocument();
+  });
+
+  it("shows the plan, what it includes, the support contact and a calm note above the servers covered", async () => {
+    const standard: LicenseView = {
+      ...valid,
+      license: {
+        ...valid.license!,
+        format: 2,
+        edition: "core",
+        tier: "standard",
+        managed_servers: 100,
+        server_instances: 1,
+        support: "support@example.com",
+      },
+      added: [],
+      managed_servers_in_use: 112,
+    };
+    stubFetch({ "GET /api/license": { status: 200, body: standard } });
+    renderPage();
+    expect(await screen.findByText("Standard subscription, valid until 30 November 2027.")).toBeInTheDocument();
+    expect(screen.getByText("Plan")).toBeInTheDocument();
+    expect(screen.getByText("Standard")).toBeInTheDocument();
+    expect(screen.getByText("112 of 100 covered")).toBeInTheDocument();
+    expect(screen.getByText(/MonitorFlow manages 112 servers and the subscription covers 100\. Everything keeps working/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "support@example.com" })).toHaveAttribute("href", "mailto:support@example.com");
+    expect(screen.getByRole("heading", { name: "What it includes" })).toBeInTheDocument();
+    expect(screen.getByText("Unlimited support tickets in business hours, with a faster response")).toBeInTheDocument();
+    // No central servers to speak of without Enterprise.
+    expect(screen.queryByText(/central servers/i)).not.toBeInTheDocument();
   });
 
   it("shows why a license key is refused", async () => {
@@ -100,9 +133,9 @@ describe("LicensePage", () => {
     });
     renderPage();
     await user.click(await screen.findByRole("button", { name: "Remove the license key…" }));
-    expect(screen.getByText(/Central servers already added keep running and monitoring goes on/)).toBeInTheDocument();
+    expect(screen.getByText(/Monitoring goes on and central servers already added keep running/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Remove the license key" }));
-    expect(await screen.findByText("No license key.")).toBeInTheDocument();
+    expect(await screen.findByText("Community edition")).toBeInTheDocument();
   });
 
   it("never says customer, whoever reads it (ADR-0104)", async () => {

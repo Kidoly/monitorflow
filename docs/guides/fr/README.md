@@ -12,6 +12,11 @@ Chaque guide explique ce qui peut mal tourner, ce que MonitorFlow vérifie, comm
 
 Les guides existent aussi [en anglais](../README.md).
 
+## Passer à MonitorFlow
+
+- [Passer de Zabbix ou Prometheus à MonitorFlow](venir-d-un-autre-outil.md) : Importez vos hôtes, vérifications, seuils, maintenances et canaux de notification depuis Zabbix ou Prometheus, prévisualisez ce qui est repris, puis installez l'agent.
+- [Comment migrer de PRTG vers MonitorFlow](migrer-depuis-prtg.md) : Lisez vos équipements, capteurs, limites, fenêtres de maintenance et notifications PRTG, voyez ce qui sera repris, et créez en un clic les serveurs, contrôles, seuils, silences et canaux correspondants.
+
 ## Serveurs
 
 - [Comment être alerté quand un serveur tombe](alerte-serveur-hors-ligne.md) : Sachez en quelques minutes qu'un serveur Linux ou Windows ne répond plus, sans rien configurer, et soyez prévenu par e-mail ou messagerie.
@@ -51,3 +56,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller les contrôleurs de domaine Active Directory](surveiller-active-directory.md) : Surveillez vos contrôleurs de domaine : Active Directory, serveur DNS, LDAP sur le port 389, service de temps et erreurs du journal Système.
 - [Comment surveiller les erreurs du journal d'événements Windows](surveiller-journal-evenements-windows.md) : Soyez alerté quand Windows écrit un événement critique ou d'erreur dans le journal Système ou Application, sur un serveur ou tout un site.
 - [Comment surveiller le Bureau à distance (RDP)](surveiller-bureau-a-distance.md) : Soyez alerté quand le Bureau à distance ne répond plus sur le port 3389 ou que son service s'arrête, sur vos serveurs Windows.
+
+## Administration
+
+- [Comment se connecter à MonitorFlow avec votre propre fournisseur d'identité](connexion-avec-votre-fournisseur.md) : Laissez vos collègues se connecter avec les comptes et le second facteur qu'ils ont déjà : OpenID Connect (Entra ID, Google, Keycloak, authentik) ou un annuaire LDAP en TLS.

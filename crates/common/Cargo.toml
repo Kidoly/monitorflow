@@ -72,6 +72,10 @@ crc.workspace = true
 tonic-prost-build.workspace = true
 
 [[test]]
+name = "channel_file"
+required-features = ["server-update"]
+
+[[test]]
 name = "mirror_serve"
 required-features = ["mirror"]
 
