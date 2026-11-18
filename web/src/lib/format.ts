@@ -21,6 +21,7 @@ const osName = (id: string) => OS_NAMES[id] ?? id.charAt(0).toUpperCase() + id.s
  * `Rocky Linux 9.4`. A Windows version names the system already.
  */
 export function formatOs(family: string, version: string | null): string {
+  if (family === "device") return t("devices.word");
   if (!version) return osName(family);
   if (family === "windows") return version;
   const [first = "", ...rest] = version.split(" ");

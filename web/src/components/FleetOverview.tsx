@@ -9,7 +9,7 @@ import { certificateProblem, certificateState } from "@/lib/certificates";
 import { formatOs } from "@/lib/format";
 import { incidentTitle, isOffline } from "@/lib/incidents";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
-import { incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
+import { ADD_DEVICE_PATH, incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
 import { isServerState, SERVER_STATES, STATE_TONES, serverState, stateWord, stateHref } from "@/lib/serverState";
@@ -139,10 +139,17 @@ export function FleetOverview() {
   const siteFilter = severalSites && !scope.siteId;
   const families = [...new Set(all.map((r) => r.server.os_family))].sort();
   const canEnroll = administersCustomer(me, scope.customerId ?? undefined);
-  const enroll = canEnroll && (
-    <ButtonLink variant="k" href={scopedHref(TOKENS_PATH, scope)}>
-      {t("fleet.addServers")}
-    </ButtonLink>
+  // Operators add devices (ADR-0148); the API checks the site.
+  const canAddDevice = me?.roles.some((grant) => grant.role !== "viewer") ?? false;
+  const enroll = (canEnroll || canAddDevice) && (
+    <>
+      {canAddDevice && <ButtonLink href={scopedHref(ADD_DEVICE_PATH, scope)}>{t("devices.add")}</ButtonLink>}
+      {canEnroll && (
+        <ButtonLink variant="k" href={scopedHref(TOKENS_PATH, scope)}>
+          {t("fleet.addServers")}
+        </ButtonLink>
+      )}
+    </>
   );
 
   const columns: Column<Row>[] = [
@@ -154,13 +161,17 @@ export function FleetOverview() {
         <PrimaryCell
           title={r.server.hostname}
           href={scopedHref(serverHref(r.server.id), scope)}
-          sub={[
-            formatOs(r.server.os_family, r.server.os_version),
-            t("fleet.agent", { version: r.server.agent_version ?? t("fleet.agentUnknown") }),
-            r.server.via_relay && t("fleet.via", { relay: r.server.via_relay }),
-          ]
-            .filter(Boolean)
-            .join(" · ")}
+          sub={
+            r.server.kind === "device"
+              ? t("devices.line", { address: r.server.address ?? "" })
+              : [
+                  formatOs(r.server.os_family, r.server.os_version),
+                  t("fleet.agent", { version: r.server.agent_version ?? t("fleet.agentUnknown") }),
+                  r.server.via_relay && t("fleet.via", { relay: r.server.via_relay }),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+          }
         />
       ),
       sortValue: (r) => r.server.hostname,
@@ -179,7 +190,13 @@ export function FleetOverview() {
       key: "seen",
       header: t("fleet.column.lastSeen"),
       className: styles.muted,
-      cell: (r) => (r.server.last_heartbeat ? <RelativeTime value={r.server.last_heartbeat} now={now} stale={stale} /> : t("fleet.never")),
+      // A device has no agent to hear from: its checks say how it is.
+      cell: (r) =>
+        r.server.kind === "device" ? null : r.server.last_heartbeat ? (
+          <RelativeTime value={r.server.last_heartbeat} now={now} stale={stale} />
+        ) : (
+          t("fleet.never")
+        ),
       sortValue: (r) => r.server.last_heartbeat,
     },
   ];

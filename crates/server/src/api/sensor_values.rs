@@ -81,7 +81,7 @@ fn primary(sensor: &EffectiveSensor) -> (String, Option<String>, Rollup) {
         "disk" => (Some("used_ratio"), None, Rollup::Max),
         "diskio" => (Some("busy_ratio"), None, Rollup::Max),
         "systemd" | "windows_service" => (Some("active"), None, Rollup::Min),
-        "port" => (Some("up"), None, Rollup::Min),
+        "port" | "ping" => (Some("up"), None, Rollup::Min),
         "log" | "eventlog" => (Some("matches"), None, Rollup::Max),
         "script" => (Some("status"), None, Rollup::Max),
         _ => (None, None, Rollup::Last),
@@ -308,6 +308,8 @@ mod tests {
             interval_ms: 30_000,
             timeout_ms: None,
             params: Map::new(),
+            probe: None,
+            probe_relay_id: None,
         }
     }
 

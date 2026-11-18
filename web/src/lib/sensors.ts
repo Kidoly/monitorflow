@@ -1,6 +1,7 @@
 import { t } from "@/i18n";
 
 import type { EffectiveSensor, Incident, SensorSeries, SensorValueList } from "./api";
+import { checkTitle } from "./alerts";
 import { formatSeconds, formatValue, unitOf } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
 
@@ -45,6 +46,8 @@ export function sensorOf(sensors: EffectiveSensor[], metric: string): EffectiveS
 export function seriesTitle(sensor: EffectiveSensor | undefined, metric: string, instance: string): string {
   const shown = instance === "total" ? "" : instance;
   const primary = sensor && primaryMetric(sensor).metric === metric;
+  // A check from the central server or a relay says which (ADR-0148).
+  if (sensor && primary && sensor.probe) return checkTitle(sensor);
   if (sensor && primary) {
     switch (sensor.kind) {
       case "cpu":
@@ -74,6 +77,7 @@ export function formatSensorValue(metric: string, value: number | null | undefin
   if (value === null || value === undefined) return "–";
   const short = shortMetric(metric);
   if (short.endsWith("_active")) return value === 1 ? t("sensors.value.active") : t("sensors.value.inactive");
+  if (short.startsWith("ping") && short.endsWith("_up")) return value === 1 ? t("sensors.value.answers") : t("sensors.value.noAnswer");
   if (short.endsWith("_up")) return value === 1 ? t("sensors.value.open") : t("sensors.value.closed");
   if (short.endsWith("_loaded")) return value === 1 ? t("sensors.value.loaded") : t("sensors.value.notLoaded");
   if (short.endsWith("_installed")) return value === 1 ? t("sensors.value.installed") : t("sensors.value.notInstalled");

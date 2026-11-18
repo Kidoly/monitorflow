@@ -465,6 +465,7 @@ impl Planner<'_> {
             timeout_ms: None,
             params: params.clone(),
             enabled: true,
+            probe: None,
         });
         if let Err(reason) = valid {
             self.not_movable(

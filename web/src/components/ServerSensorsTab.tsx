@@ -158,7 +158,8 @@ export function ServerSensorsTab({
 
   return (
     <div className={styles.tab}>
-      <Drift config={sensors} />
+      {/* A device has no agent to confirm a configuration (ADR-0148). */}
+      {server.kind !== "device" && <Drift config={sensors} />}
       {incidentsFailed && (
         <Banner tone="warn">{t("server.sensors.incidentsFailed")}</Banner>
       )}

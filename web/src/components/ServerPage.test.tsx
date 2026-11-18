@@ -162,6 +162,61 @@ async function heading() {
   return title;
 }
 
+describe("ServerPage of a device (ADR-0148)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(NOW);
+    setUrl(`/servers/view/?id=${ID}`);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("shows its checks alone, with its address and where they run from", async () => {
+    const device: ServerDetail = {
+      ...web1,
+      hostname: "Core switch",
+      peer_id: "core-switch",
+      kind: "device",
+      address: "192.0.2.10",
+      os_family: "device",
+      os_version: null,
+      agent_version: null,
+      status: "device",
+      state: "ok",
+      certificate: null,
+      command_kinds: null,
+      package_updates: false,
+    };
+    const ping = {
+      origin: "server", entry_id: "e1", kind: "ping", name: "ping", instance: "central", interval_ms: 60_000,
+      timeout_ms: null, params: {}, probe: "central", probe_relay_id: null,
+    };
+    stubFetch(
+      routes({
+        [`GET /api/servers/${ID}`]: ok(device),
+        [`GET /api/servers/${ID}/sensors`]: ok(config({ sensors: [ping] as never, applied_revision: null, in_sync: false })),
+        [`GET /api/servers/${ID}/sensor-values`]: ok({ start: T - 3600, end: T, step: 120, sensors: [
+          { name: "ping", instance: "central", metric: "monitorflow_ping_up", reason: null,
+            series: [{ instance: "central", points: [[T - 60, 1]], last_value: 1, last_at: NOW.toISOString(), reason: null }] },
+        ] }),
+        [`GET /api/incidents?state=open&server_id=${ID}&limit=500`]: ok({ incidents: [], next_cursor: null }),
+      }),
+    );
+    render(
+      <As user={customerAdmin}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    await screen.findByRole("heading", { level: 1, name: "Core switch" });
+    expect(header()).toHaveTextContent("Device · 192.0.2.10");
+    expect(header()).not.toHaveTextContent(/agent|Last seen|Offline/i);
+    expect(screen.queryByRole("tab", { name: /Logs|Updates|Commands/ })).toBeNull();
+    expect(await screen.findByText("Ping · from central server")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(document.querySelector("dl")!).toHaveTextContent("192.0.2.10");
+    expect(document.querySelector("dl")!).not.toHaveTextContent(/Certificate|AI commands/);
+  });
+});
+
 describe("ServerPage", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

@@ -494,6 +494,7 @@ async fn create_one(
                 timeout_ms: None,
                 params: params.clone(),
                 enabled: true,
+                probe: None,
             })?;
             sqlx::query_scalar(
                 "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, params)

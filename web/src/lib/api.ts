@@ -132,7 +132,8 @@ export interface IdentityProviderTestResult {
   roles: RoleGrant[];
 }
 
-export type ServerStatus = "online" | "offline";
+/** `device`: no agent, watched from the central server or a relay (ADR-0148). */
+export type ServerStatus = "online" | "offline" | "device";
 
 /** A server's one status on the fleet's pages, worst first (ADR-0130). */
 /** `waiting`: made by an import, waiting for its agent (ADR-0146). */
@@ -186,6 +187,10 @@ export interface Server {
   acknowledgement?: { by: string; at: string; note: string | null } | null;
   /** Made by an import and waiting for its agent, which takes it over by enrolling as `peer_id` (ADR-0146). */
   awaiting_agent?: boolean;
+  /** `device`: an address without an agent (ADR-0148); absent is `agent`. */
+  kind?: "agent" | "device";
+  /** A device's address; null for an agent. */
+  address?: string | null;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -537,6 +542,32 @@ export interface EffectiveSensor {
   /** Null: the agent's default. */
   timeout_ms: number | null;
   params: Record<string, string>;
+  /** Who runs it (ADR-0148): null or absent for the agent, `central` or `relay`. */
+  probe?: Probe["probe"] | null;
+  probe_relay_id?: string | null;
+}
+
+/** Where a site's network checks can run from (ADR-0148). */
+export interface Probe {
+  probe: "central" | "relay";
+  relay_id: string | null;
+  /** `central` or the relay's name: the instance its checks default to. */
+  key: string;
+  name: string | null;
+  online: boolean;
+  /** What a device's new check runs from when it names none. */
+  default: boolean;
+}
+
+/** Body of `POST /api/devices`. */
+export interface DeviceRequest {
+  site_id: string;
+  name: string;
+  address: string;
+  /** `central` or a relay's ID; absent: the site's default. */
+  probe?: string;
+  /** Add a ping every minute and its alerts; true when absent. */
+  ping?: boolean;
 }
 
 /** How often a site's built-in checks run, and whether the site set it (ADR-0097). */
@@ -635,16 +666,21 @@ export interface SensorConfigRequest {
   timeout_ms?: number | null;
   params?: Record<string, string | number | boolean>;
   enabled?: boolean;
+  /** `central` or a relay's ID: it runs from there instead of the agent (ADR-0148). */
+  probe?: string | null;
 }
 
 /** One stored row of `sensor_configs`; exactly one of `site_id` and `server_id` is set. */
 export interface SensorConfigEntry extends Required<
-  Omit<SensorConfigRequest, "timeout_ms">
+  Omit<SensorConfigRequest, "timeout_ms" | "probe">
 > {
   id: string;
   site_id: string | null;
   server_id: string | null;
   timeout_ms: number | null;
+  /** Who runs it (ADR-0148): null or absent for the agent. */
+  probe?: "central" | "relay" | null;
+  probe_relay_id?: string | null;
 }
 
 /** Body of a threshold create or update (ADR-0019); an update replaces every field. */
@@ -3694,6 +3730,16 @@ export const api = {
         signal,
       },
     ),
+
+  /** Adds a device (ADR-0148): an address watched from a probe, pinged by default. */
+  createDevice: (body: DeviceRequest) => request<Server>("/api/devices", { method: "POST", body }),
+
+  updateDevice: (id: string, body: { name?: string; address?: string }) =>
+    request<Server>(`/api/devices/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  /** Where the site's network checks can run from: the central server, then its relays. */
+  siteProbes: (siteId: string, signal?: AbortSignal) =>
+    request<{ probes: Probe[] }>(`/api/sites/${encodeURIComponent(siteId)}/probes`, { signal }),
 
   createSensor: (owner: ConfigOwner, body: SensorConfigRequest) =>
     request<SensorConfigEntry>(

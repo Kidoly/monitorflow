@@ -547,6 +547,19 @@ pub async fn detail(
     }))
 }
 
+/// The listing row of the server `id`, removed or not, without access
+/// checks.
+pub(super) async fn view(state: &ApiState, id: Uuid) -> Result<Option<ServerView>, ApiError> {
+    // SQL-safe: interpolates only the constant SELECT_SERVERS.
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT_SERVERS} WHERE s.id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?;
+    Ok(row.map(|row| ServerView::new(state, row)))
+}
+
 /// The certificate the CA issued last to `role`/`peer_id`, revoked or not.
 pub(super) async fn latest_certificate(
     pool: &sqlx::PgPool,

@@ -681,6 +681,7 @@ pub mod commands;
 pub mod customers;
 pub mod dashboard_data;
 pub mod dashboards;
+pub mod devices;
 pub mod display;
 mod error;
 pub mod follow_up;
@@ -706,6 +707,7 @@ pub mod openapi_campaigns;
 mod openapi_checks;
 pub mod openapi_core;
 mod openapi_dashboards;
+mod openapi_devices;
 mod openapi_imports;
 mod openapi_plugins;
 pub mod openapi_remediation;
@@ -1175,6 +1177,9 @@ pub fn router(state: ApiState) -> Router {
             post(approvals::reject),
         )
         .route("/api/remediation/events", get(remediation_events::list))
+        .route("/api/devices", post(devices::create))
+        .route("/api/devices/{id}", put(devices::update))
+        .route("/api/sites/{id}/probes", get(devices::probes))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route(
             "/api/servers/{id}/recommendations",

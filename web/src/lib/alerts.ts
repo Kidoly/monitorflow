@@ -26,7 +26,7 @@ export type Shape =
   | { type: "percent" | "number"; noun: string; suffix: string; unit?: string }
   | { type: "event"; noun: string; text: string; brief: string; comparison: Comparison; value: number };
 
-type EventWords = "port" | "service" | "log" | "eventlog" | "script";
+type EventWords = "port" | "ping" | "service" | "log" | "eventlog" | "script";
 
 /**
  * The fixed trigger of an event, by sensor kind and metric suffix; its
@@ -35,6 +35,7 @@ type EventWords = "port" | "service" | "log" | "eventlog" | "script";
  */
 const EVENTS: Record<string, { suffix: string; words: EventWords; comparison: Comparison; value: number }> = {
   port: { suffix: "up", words: "port", comparison: "<", value: 1 },
+  ping: { suffix: "up", words: "ping", comparison: "<", value: 1 },
   systemd: { suffix: "active", words: "service", comparison: "<", value: 1 },
   windows_service: { suffix: "active", words: "service", comparison: "<", value: 1 },
   log: { suffix: "matches", words: "log", comparison: ">", value: 0 },
@@ -52,8 +53,11 @@ function checkNoun(sensor: EffectiveSensor): string {
     case "port": {
       const host = remoteHost(params);
       const port = params.port ?? "?";
+      if (params.protocol === "udp") return t("checks.noun.udpPort", { port });
       return host ? t("checks.noun.portOn", { port, host }) : t("checks.noun.port", { port });
     }
+    case "ping":
+      return params.host ? t("checks.noun.ping", { host: params.host }) : t("checks.noun.pingDevice");
     case "systemd":
       return t("checks.noun.service", { name: params.units ?? sensor.name });
     case "windows_service":
@@ -239,6 +243,8 @@ export interface CheckType {
   duration_s: number;
   /** No alert comes with it: a plugin's metrics are its own (ADR-0103). */
   noAlert?: boolean;
+  /** Runs from the central server or a relay, which the form asks (ADR-0148). */
+  probe?: boolean;
 }
 
 const portNumber = (value: string) =>
@@ -374,6 +380,65 @@ export const CHECK_TYPES: CheckType[] = [
   },
 ];
 
+const hostField = (): CheckField => ({
+  key: "host",
+  label: t("devices.check.host"),
+  placeholder: "",
+  hint: t("devices.check.hostHint"),
+  optional: true,
+});
+
+/** What a device can be checked with, from the central server or a relay (ADR-0148). */
+export const DEVICE_CHECK_TYPES: CheckType[] = [
+  {
+    kind: "ping",
+    get label() {
+      return t("checks.type.ping");
+    },
+    os: null,
+    get fields() {
+      return [hostField()];
+    },
+    nameFrom: "host",
+    severity: "critical",
+    duration_s: 120,
+    probe: true,
+  },
+  {
+    kind: "port",
+    get label() {
+      return t("checks.type.tcp");
+    },
+    os: null,
+    get fields() {
+      return [{ key: "port", label: t("checks.field.port"), placeholder: "443", check: portNumber }, hostField()];
+    },
+    nameFrom: "port",
+    severity: "critical",
+    duration_s: 60,
+    probe: true,
+  },
+  {
+    kind: "port",
+    get label() {
+      return t("checks.type.udp");
+    },
+    os: null,
+    get fields() {
+      return [
+        { key: "port", label: t("checks.field.port"), placeholder: "53", check: portNumber, hint: t("devices.check.queryNote") },
+        hostField(),
+      ];
+    },
+    fixed: { protocol: "udp" },
+    nameFrom: "port",
+    prefix: "udp",
+    severity: "critical",
+    duration_s: 60,
+    probe: true,
+  },
+];
+
 /** Which checks a server can run; every check for a site, which can mix systems. */
 export function checkTypesFor(osFamily: string | null): CheckType[] {
   if (osFamily === null) return CHECK_TYPES;
@@ -421,7 +486,7 @@ export function checkRequests(
   const params = Object.fromEntries(
     type.fields.map((f) => [f.key, (values[f.key] ?? "").trim()]).filter(([, value]) => value !== ""),
   );
-  const sensor = { kind: type.kind, name, interval_ms: intervalMs, params: { ...params, ...type.fixed } };
+  const sensor: SensorConfigRequest = { kind: type.kind, name, interval_ms: intervalMs, params: { ...params, ...type.fixed } };
   const event = EVENTS[type.kind];
   if (!event || type.noAlert) return { sensor, threshold: null };
   const level = (severity: Severity) => (type.severity === severity ? event.value : null);
@@ -511,6 +576,14 @@ export async function saveCheckInterval(
 
 /** "Port 443", "Service nginx", "Disk space": a check in the list. */
 export function checkTitle(sensor: EffectiveSensor): string {
+  const title = ownTitle(sensor);
+  // Run from the central server or a relay (ADR-0148): which one, as two probes may watch one address.
+  if (!sensor.probe) return title;
+  const probe = sensor.probe === "central" ? t("devices.from.short.central") : sensor.instance;
+  return t("checks.title.from", { title, probe });
+}
+
+function ownTitle(sensor: EffectiveSensor): string {
   const { params } = sensor;
   switch (sensor.kind) {
     case "cpu":
@@ -528,8 +601,11 @@ export function checkTitle(sensor: EffectiveSensor): string {
     case "port": {
       const host = remoteHost(params);
       const port = params.port ?? "?";
+      if (params.protocol === "udp") return host ? t("checks.title.udpOn", { port, host }) : t("checks.title.udp", { port });
       return host ? t("checks.title.portOn", { port, host }) : t("checks.title.port", { port });
     }
+    case "ping":
+      return params.host ? t("checks.title.pingOf", { host: params.host }) : t("checks.title.ping");
     case "systemd":
       return t("checks.title.service", { name: params.units ?? sensor.name });
     case "windows_service":
