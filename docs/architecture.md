@@ -96,6 +96,7 @@ gRPC over HTTP/2 with mutual TLS on every link: agent ↔ relay, relay ↔ relay
 | Memory | Used, available, swap (page files on Windows) | Available below a percentage |
 | Disk | Space and inodes per mount, or per fixed drive on Windows | Free space below a percentage |
 | Disk activity | Reads, writes, bytes, busy share, wait and queue per disk (`diskio`, ADR-0092) | Average wait above 200 ms for 10 minutes |
+| Network | Traffic, errors and drops per interface, in and out (`net`, ADR-0149) | Errors above N a second |
 | Service | systemd unit state; Windows service state (`windows_service`) | Unit not active |
 | Port | TCP reachability, local or remote; UDP from a probe (an answer to DNS or NTP, or no refusal) | Closed or timeout |
 | Ping | From a probe: answer, round trip and packet loss of an address | No answer, loss above a share |

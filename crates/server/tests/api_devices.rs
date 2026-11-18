@@ -233,13 +233,13 @@ db_tests! {
         // The agent's configuration leaves them out; the effective list
         // shows them after the agent's.
         let agent = SensorConfigStore::new(pool.clone()).load("web-01").await.unwrap().unwrap();
-        assert_eq!(agent.sensors.len(), 4, "the built-in checks only");
+        assert_eq!(agent.sensors.len(), 5, "the built-in checks only");
         let (_, effective) = call(&pool, &operator, "GET", &format!("/api/servers/{server}/sensors"), None).await;
         let names: Vec<_> = effective["sensors"].as_array().unwrap().iter()
             .map(|s| (s["name"].as_str().unwrap().to_owned(), s["probe"].clone())).collect();
-        assert_eq!(names.len(), 6, "{names:?}");
-        assert_eq!(names[4], ("dns".to_string(), json!("relay")));
-        assert_eq!(names[5], ("ping".to_string(), json!("central")));
+        assert_eq!(names.len(), 7, "{names:?}");
+        assert_eq!(names[5], ("dns".to_string(), json!("relay")));
+        assert_eq!(names[6], ("ping".to_string(), json!("central")));
         // A site's row runs on agents.
         let (status, error) = call(&pool, &operator, "POST", &format!("/api/sites/{paris}/sensor_configs"),
             Some(json!({"kind": "ping", "interval_ms": 60000, "params": {"host": "x"}, "probe": "central"}))).await;

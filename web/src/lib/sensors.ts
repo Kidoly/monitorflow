@@ -15,6 +15,7 @@ const PRIMARY: Record<string, { suffix: string; instance?: string }> = {
   memory: { suffix: "available_ratio" },
   disk: { suffix: "used_ratio" },
   diskio: { suffix: "busy_ratio" },
+  net: { suffix: "receive_bytes_per_second" },
   systemd: { suffix: "active" },
   windows_service: { suffix: "active" },
   port: { suffix: "up" },
