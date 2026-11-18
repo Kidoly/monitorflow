@@ -230,7 +230,7 @@ describe("ImportPage", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "MonitorFlow does not measure network interface traffic yet.",
+        "MonitorFlow measures interface traffic but does not move thresholds on it: add one on the server's page.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("net.if.in[eth0]")).toBeInTheDocument();
@@ -322,7 +322,7 @@ describe("ImportPage", () => {
       .closest("section")!;
     expect(
       within(list).getByText(
-        "MonitorFlow ne mesure pas encore le trafic des interfaces réseau.",
+        "MonitorFlow mesure le trafic des interfaces mais n’en reprend pas les seuils : ajoutez-en un sur la page du serveur.",
       ),
     ).toBeInTheDocument();
   });

@@ -257,7 +257,13 @@ fn assert_common(inventory: &Inventory) {
         expression.origin.detail.as_deref(),
         Some("increase(node_vmstat_oom_kill[1m]) > 0")
     );
-    assert_eq!(unmovable(inventory, "127.0.0.11"), "no_equivalent");
+    // Docker's resolver, a loopback address no probe reaches.
+    assert_eq!(unmovable(inventory, "127.0.0.11"), "no_address");
+    // db-01 runs a node exporter and is pinged too: a ping from a probe.
+    assert_eq!(
+        check(inventory, "db-01", &Watch::Ping { address: None }).fidelity,
+        Fidelity::Exact
+    );
     assert_eq!(unmovable(inventory, "localhost:9090"), "unknown_host");
     assert_eq!(unmovable(inventory, "route"), "routes");
     // The recording rule is skipped silently.
@@ -373,8 +379,10 @@ async fn missing_files_are_reported() {
         .read(Input::Files(only_config), &context())
         .await
         .unwrap();
-    // web-01 is a static target; db-01 came from a file not uploaded.
-    assert_eq!(names(&inventory), vec!["monitor-01", "web-01"]);
+    // web-01 is a static target; db-01's node exporter came from a file
+    // not uploaded, so the address pinged alone becomes a device.
+    assert_eq!(names(&inventory), vec!["db-01", "monitor-01", "web-01"]);
+    assert!(inventory.host("db-01").is_some_and(|h| h.agentless));
     let missing: Vec<_> = inventory
         .unmovable
         .iter()
