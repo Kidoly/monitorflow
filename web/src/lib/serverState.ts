@@ -26,10 +26,13 @@ export function isServerState(value: string | null): value is ServerState {
 /**
  * The server's state, or for a central server older than it, a guess from
  * the other fields: it cannot tell a warning from a critical one, nor an
- * acknowledged one.
+ * acknowledged one. A state this interface has no word for, from a newer
+ * central server, is guessed the same way: shown as is, it would be a raw
+ * catalog key, as `common.state.waiting` was before this page knew it.
  */
 export function serverState(server: Pick<Server, "state" | "status" | "open_incidents" | "silenced_until">): ServerState {
-  if (server.state) return server.state;
+  const { state } = server;
+  if (state && isServerState(state)) return state;
   if (server.silenced_until) return "silenced";
   if (server.status === "offline") return "offline";
   return server.open_incidents > 0 ? "warning" : "ok";
