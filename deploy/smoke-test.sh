@@ -32,7 +32,14 @@ failed=0
 check() {
     printf '%-45s' "$1"
     shift
-    if "$@" >/dev/null 2>&1; then echo ok; else echo FAILED; failed=1; fi
+    if "$@" >"$work/check.log" 2>&1; then
+        echo ok
+    else
+        echo FAILED
+        failed=1
+        # The last lines say why.
+        tail -n 15 "$work/check.log" | sed 's/^/    /'
+    fi
 }
 
 # The certificate a TLS listener presents names localhost. No client
@@ -223,10 +230,17 @@ docker exec "$fixture" cat /srv/upstream-key.gpg | compose exec -T mirror gpg --
 # Manual: the scheduler syncs a new mirror at its next poll, and the sync
 # below is then refused as busy if it starts in that moment.
 add() { compose exec -T server monitorflow-server mirror add --interval manual "$@" >/dev/null; }
-add --name fixture-apt --family apt --url http://fixture:8000/apt --distribution fixture \
+# Full mirrors download every package (ADR-0030); the retention and
+# deletion checks below are about them.
+add --name fixture-apt --mode full --family apt --url http://fixture:8000/apt --distribution fixture \
     --component main --component empty --arch amd64
 # With an architecture: the noarch package must still come.
-add --name fixture-dnf --family dnf --url http://fixture:8000/dnf --arch x86_64
+add --name fixture-dnf --mode full --family dnf --url http://fixture:8000/dnf --arch x86_64
+# On-demand mirrors download only the indexes, each package when first
+# asked for (ADR-0142).
+add --name ondemand-apt --mode on-demand --family apt --url http://fixture:8000/apt \
+    --distribution fixture --component main --component empty --arch amd64
+add --name ondemand-dnf --mode on-demand --family dnf --url http://fixture:8000/dnf --arch x86_64
 compose exec -T server monitorflow-server mirror key generate >/dev/null
 run_ended() { # mirror-id mirror-name
     get "mirrors/$1" >"$work/mirror-$2" && jq -e '.last_run.state != "running"' "$work/mirror-$2" >/dev/null
@@ -245,20 +259,20 @@ check "a dnf mirror syncs and publishes" synced fixture-dnf
 check "a second sync publishes again" synced fixture-dnf
 
 mirror=http://127.0.0.1:$MIRROR_PORT
-apt_installs() {
+apt_installs() { # [mirror]
     docker run --rm --network host debian:trixie-slim sh -ec "
         apt-get update -qq -o APT::Update::Error-Mode=any >/dev/null 2>&1 || true
         apt-get install -y -qq --no-install-recommends curl >/dev/null
         curl -fsS $mirror/keys/monitorflow-archive.asc >/etc/apt/mirror.asc
         rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
-        echo 'deb [signed-by=/etc/apt/mirror.asc] $mirror/apt/fixture-apt/current fixture main' >/etc/apt/sources.list
+        echo 'deb [signed-by=/etc/apt/mirror.asc] $mirror/apt/${1:-fixture-apt}/current fixture main' >/etc/apt/sources.list
         apt-get update -o APT::Update::Error-Mode=any
         apt-get install -y mf-fixture
         test -x /usr/bin/mf-fixture"
 }
-dnf_installs() {
+dnf_installs() { # [mirror]
     docker run --rm --network host rockylinux:9 sh -ec "
-        printf '[f]\nname=f\nbaseurl=$mirror/dnf/fixture-dnf/current/\ngpgcheck=0\nrepo_gpgcheck=1\ngpgkey=$mirror/keys/monitorflow-archive.asc\nenabled=1\n' >/etc/yum.repos.d/f.repo
+        printf '[f]\nname=f\nbaseurl=$mirror/dnf/${1:-fixture-dnf}/current/\ngpgcheck=0\nrepo_gpgcheck=1\ngpgkey=$mirror/keys/monitorflow-archive.asc\nenabled=1\n' >/etc/yum.repos.d/f.repo
         dnf install -y --disablerepo='*' --enablerepo=f mf-fixture
         test -x /usr/bin/mf-fixture"
 }
@@ -266,6 +280,12 @@ keeps_groups() { curl -fsS "$mirror/dnf/fixture-dnf/current/repodata/repomd.xml"
 check "a dnf mirror keeps upstream groups" keeps_groups
 check "apt verifies and installs from the mirror" apt_installs
 check "dnf verifies and installs from the mirror" dnf_installs
+check "an on-demand apt mirror syncs and publishes" synced ondemand-apt
+check "an on-demand dnf mirror syncs and publishes" synced ondemand-dnf
+check "apt installs from the on-demand mirror" apt_installs ondemand-apt
+check "dnf installs from the on-demand mirror" dnf_installs ondemand-dnf
+fetched_on_demand() { compose logs server | grep -q "package fetched on demand.*$1"; }
+check "the on-demand apt package came from upstream" fetched_on_demand ondemand-apt
 
 # Retention (ADR-0074), with the real tools: upstream replaces the package,
 # and once the snapshots holding the old one are past the seven kept, a
@@ -290,6 +310,8 @@ check "seven apt snapshots stay" test "$(snapshot_count fixture-apt)" = 7
 check "seven dnf snapshots stay" test "$(snapshot_count fixture-dnf)" = 7
 check "apt still installs from the mirror" apt_installs
 check "dnf still installs from the mirror" dnf_installs
+check "an on-demand mirror follows the upgraded upstream" synced ondemand-apt
+check "apt installs the upgrade on demand" apt_installs ondemand-apt
 
 # Deleting a mirror (ADR-0075), with the real tools.
 in_aptly() { compose exec -T mirror aptly "$@" -config="$mirrors/aptly.conf" -raw; }
