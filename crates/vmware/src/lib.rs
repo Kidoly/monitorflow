@@ -15,6 +15,7 @@
 //! check it sends a probe; [`SECRET_PARAMS`] are never stored with the
 //! check nor shown.
 
+pub mod soap;
 pub mod tls;
 pub mod xml;
 
