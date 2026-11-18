@@ -8,12 +8,12 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveTime, TimeZone, Utc};
 
 use crate::args;
 use crate::model::{
-    Alert, Check, Fidelity, Host, Inventory, Origin, Os, Severity, Silence, SilenceScope,
-    Threshold, Unmovable, Watch,
+    Alert, Check, Fidelity, Host, Inventory, Origin, Os, Repeat, Rule, Severity, Silence,
+    SilenceScope, Threshold, Unmovable, Watch, Window, EVERY_MONTH, MAX_WINDOW_MINUTES,
 };
 use crate::notes::Note;
 
@@ -35,10 +35,11 @@ const SHORT_DESCRIPTION: usize = 120;
 /// windows.
 pub fn inventory(config: &Config, now: DateTime<Utc>) -> Inventory {
     let mut out = Inventory::default();
+    let mut tagged = Tagged::new();
     for host in &config.hosts {
-        map_host(config, host, &mut out);
+        map_host(config, host, &mut out, &mut tagged);
     }
-    silences(config, now, &mut out);
+    silences(config, now, &tagged, &mut out);
     let globals = Macros::new(vec![config.global_macros.clone()], HostValues::default());
     media::channels(config, &globals, &mut out);
     merge(&mut out);
@@ -264,13 +265,17 @@ fn summary(keys: &[String]) -> String {
 /// its owner and the keys of its items.
 type Groups = BTreeMap<(String, String, String), (Watch, Owner, Vec<String>)>;
 
+/// What each host's triggers watch, with their tags, by host key: the
+/// checks a maintenance limited to tags silences.
+type Tagged = BTreeMap<String, Vec<(Vec<(String, String)>, Watch)>>;
+
 /// A check being built, with the item keys whose triggers are its alert.
 struct Pending {
     check: Check,
     keys: Vec<String>,
 }
 
-fn map_host(config: &Config, host: &config::Host, out: &mut Inventory) {
+fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &mut Tagged) {
     let key = host.host.clone();
     if !host.enabled {
         out.unmovable.push(Unmovable {
@@ -304,6 +309,16 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory) {
         os,
         groups: host.groups.clone(),
         origin: Origin::new("host", &host.host),
+        // No agent interface and no agent item: a device Zabbix pings or
+        // polls over SNMP (ADR-0148).
+        agentless: !host
+            .interfaces
+            .iter()
+            .any(|i| i.kind == InterfaceKind::Agent)
+            && !view
+                .items
+                .iter()
+                .any(|(item, _)| item.kind == config::ItemKind::Agent),
     });
     for name in &view.missing {
         out.unmovable.push(Unmovable {
@@ -419,6 +434,10 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory) {
         match triggers::map(trigger, &view) {
             Outcome::Thresholds(levels) => {
                 for level in levels {
+                    tagged
+                        .entry(key.clone())
+                        .or_default()
+                        .push((trigger.tags.clone(), level.measure.watch(&out.checks)));
                     let (warning, critical) = match severity {
                         Severity::Warning => (Some(level.value), None),
                         Severity::Critical => (None, Some(level.value)),
@@ -460,6 +479,10 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory) {
                     continue;
                 }
                 for target in targets {
+                    tagged
+                        .entry(key.clone())
+                        .or_default()
+                        .push((trigger.tags.clone(), target.check.watch.clone()));
                     let stronger = match &target.check.alert {
                         None => true,
                         Some(a) => {
@@ -529,8 +552,94 @@ fn at(seconds: i64) -> DateTime<Utc> {
         .unwrap_or(DateTime::<Utc>::MIN_UTC)
 }
 
-/// Maintenances as silences of the hosts they cover.
-fn silences(config: &Config, now: DateTime<Utc>, out: &mut Inventory) {
+/// Whether a problem with `tags` is in `maintenance`: one of its tag
+/// conditions passes, or with `tags_all`, one of each tag name.
+fn tags_match(maintenance: &config::Maintenance, tags: &[(String, String)]) -> bool {
+    let passes = |f: &config::TagFilter| tags.iter().any(|(t, v)| f.matches(t, v));
+    if maintenance.tags_all {
+        let names: HashSet<&str> = maintenance
+            .tag_filters
+            .iter()
+            .map(|f| f.tag.as_str())
+            .collect();
+        names.iter().all(|name| {
+            maintenance
+                .tag_filters
+                .iter()
+                .filter(|f| f.tag == *name)
+                .any(passes)
+        })
+    } else {
+        maintenance.tag_filters.iter().any(passes)
+    }
+}
+
+/// The rules of a recurring period, one per weekday for a monthly one by
+/// week; `None` for a one-time period. The bool says it was cut to a week.
+fn rules(period: &config::Period, since: i64, till: i64) -> Option<(Vec<Rule>, bool)> {
+    let minutes = period.length.div_ceil(60).max(1);
+    let base = Rule {
+        repeat: Repeat::Weekly,
+        every: 1,
+        weekdays: 0,
+        month_day: None,
+        month_week: None,
+        months: EVERY_MONTH,
+        start_time: NaiveTime::from_num_seconds_from_midnight_opt(period.start_time % 86_400, 0)
+            .unwrap_or_default(),
+        duration_minutes: minutes.min(MAX_WINDOW_MINUTES),
+        time_zone: None,
+        starts_on: Some(at(since).date_naive()),
+        ends_on: Some(at(till.saturating_sub(1)).date_naive()),
+    };
+    let every = |max: u32| u16::try_from(period.every.clamp(1, max)).unwrap_or(1);
+    let weekdays = u8::try_from(period.weekdays & 0x7f).unwrap_or(0);
+    let rules = match period.kind {
+        config::PeriodKind::Once => return None,
+        config::PeriodKind::Daily => vec![Rule {
+            repeat: Repeat::Daily,
+            every: every(365),
+            ..base
+        }],
+        config::PeriodKind::Weekly => vec![Rule {
+            weekdays,
+            every: every(52),
+            ..base
+        }],
+        config::PeriodKind::Monthly => {
+            let months = match u16::try_from(period.months & 0xfff).unwrap_or(0) {
+                0 => EVERY_MONTH,
+                m => m,
+            };
+            let monthly = Rule {
+                repeat: Repeat::Monthly,
+                months,
+                ..base
+            };
+            if period.day > 0 {
+                vec![Rule {
+                    month_day: u8::try_from(period.day.min(31)).ok(),
+                    ..monthly
+                }]
+            } else {
+                (0..7)
+                    .filter(|bit| weekdays & (1 << bit) != 0)
+                    .map(|bit| Rule {
+                        weekdays: 1 << bit,
+                        month_week: u8::try_from(period.every.clamp(1, 5)).ok(),
+                        ..monthly.clone()
+                    })
+                    .collect()
+            }
+        }
+    };
+    Some((rules, minutes > MAX_WINDOW_MINUTES))
+}
+
+/// Maintenances as silences, one-time periods, and maintenance windows,
+/// recurring ones, of the hosts they cover; limited to tags, of the
+/// checks made from triggers with those tags.
+fn silences(config: &Config, now: DateTime<Utc>, tagged: &Tagged, out: &mut Inventory) {
     let known: HashSet<&str> = out.hosts.iter().map(|h| h.key.as_str()).collect();
     for maintenance in &config.maintenances {
         let mut hosts: Vec<String> = maintenance
@@ -547,49 +656,98 @@ fn silences(config: &Config, now: DateTime<Utc>, out: &mut Inventory) {
                 hosts.push(host.host.clone());
             }
         }
-        let next = maintenance
-            .periods
-            .iter()
-            .filter_map(|p| {
-                maintenance::next_window(p, maintenance.active_since, maintenance.active_till, now)
-                    .map(|w| (w, p.kind))
-            })
-            .min_by_key(|((start, _), _)| *start);
-        let ((starts_at, ends_at), kind) = match next {
-            Some(found) => found,
-            // Nothing left: a window that is over, which the preview says.
-            None => {
-                let end = at(maintenance.active_till).min(now);
-                ((end, end), config::PeriodKind::Once)
+        let mut notes: Vec<Option<Note>> = Vec::new();
+        if !maintenance.collect_data {
+            notes.push(Some(Note::plain("zabbix_no_data")));
+        }
+        // Hosts that get the same checks are one silence.
+        let mut parts: Vec<(Vec<String>, Vec<Watch>)> = Vec::new();
+        for host in &hosts {
+            let mut checks: Vec<Watch> = Vec::new();
+            if !maintenance.tag_filters.is_empty() {
+                for (tags, watch) in tagged.get(host).into_iter().flatten() {
+                    if tags_match(maintenance, tags) && !checks.contains(watch) {
+                        checks.push(watch.clone());
+                    }
+                }
+                if checks.contains(&Watch::Agent) {
+                    checks.retain(|w| *w != Watch::Agent);
+                    notes.push(Some(Note::plain("window_offline_kept")));
+                }
+                if checks.is_empty() {
+                    notes.push(Some(Note::new(
+                        "zabbix_tags_unmatched",
+                        args! {"tags" => maintenance.tags.join(", ")},
+                    )));
+                }
             }
-        };
+            match parts.iter_mut().find(|(_, c)| *c == checks) {
+                Some((hosts, _)) => hosts.push(host.clone()),
+                None => parts.push((vec![host.clone()], checks)),
+            }
+        }
+        if parts.is_empty() {
+            parts.push((vec![], vec![]));
+        }
+        notes.dedup();
         let mut reason = maintenance.name.trim().to_owned();
         let description = maintenance.description.trim();
         if !description.is_empty() && description.chars().count() <= SHORT_DESCRIPTION {
             reason = format!("{reason}: {description}");
         }
-        let format = |t: DateTime<Utc>| t.format("%Y-%m-%d %H:%M UTC").to_string();
-        let note = if !maintenance.tags.is_empty() {
-            Some(Note::new(
-                "silence_whole_server",
-                args! {"matchers" => maintenance.tags.join(", ")},
-            ))
-        } else if kind != config::PeriodKind::Once {
-            Some(Note::new(
-                "silence_next_window",
-                args! {"starts" => format(starts_at), "ends" => format(ends_at)},
-            ))
-        } else {
-            None
-        };
-        out.silences.push(Silence {
-            scope: SilenceScope::Hosts(hosts),
-            starts_at,
-            ends_at,
-            reason,
-            origin: Origin::new("maintenance", &maintenance.name),
-            fidelity: fidelity([note]),
-        });
+        let origin = Origin::new("maintenance", &maintenance.name);
+        let mut added = false;
+        for period in &maintenance.periods {
+            if let Some((rules, cut)) =
+                rules(period, maintenance.active_since, maintenance.active_till)
+            {
+                let cut = cut.then(|| Note::plain("window_cut"));
+                for rule in rules {
+                    for (hosts, checks) in &parts {
+                        out.windows.push(Window {
+                            scope: SilenceScope::Hosts(hosts.clone()),
+                            checks: checks.clone(),
+                            rule: rule.clone(),
+                            reason: reason.clone(),
+                            origin: origin.clone(),
+                            fidelity: fidelity(notes.iter().cloned().chain([cut.clone()])),
+                        });
+                        added = true;
+                    }
+                }
+            } else if let Some((starts_at, ends_at)) = maintenance::next_window(
+                period,
+                maintenance.active_since,
+                maintenance.active_till,
+                now,
+            ) {
+                for (hosts, checks) in &parts {
+                    out.silences.push(Silence {
+                        scope: SilenceScope::Hosts(hosts.clone()),
+                        checks: checks.clone(),
+                        starts_at,
+                        ends_at,
+                        reason: reason.clone(),
+                        origin: origin.clone(),
+                        fidelity: fidelity(notes.iter().cloned()),
+                    });
+                    added = true;
+                }
+            }
+        }
+        if !added {
+            // Nothing left: a window that is over, which the preview says.
+            let end = at(maintenance.active_till).min(now);
+            out.silences.push(Silence {
+                scope: SilenceScope::Hosts(hosts),
+                checks: vec![],
+                starts_at: end,
+                ends_at: end,
+                reason,
+                origin,
+                fidelity: Fidelity::Exact,
+            });
+        }
     }
 }
 

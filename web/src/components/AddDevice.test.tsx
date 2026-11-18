@@ -61,6 +61,44 @@ describe("AddDevice", () => {
     expect(sent(fetchMock)).toEqual({ site_id: "site-1", name: "Core switch", address: "192.0.2.10", ping: true, probe: "r1" });
   });
 
+  it("detects what a device answers over SNMP and adds it with its template", async () => {
+    const fetchMock = stubFetch({
+      "GET /api/sites": { status: 200, body: { sites: [site] } },
+      "GET /api/sites/site-1/probes": { status: 200, body: probes },
+      "GET /api/devices/templates": {
+        status: 200,
+        body: { templates: ["switch", "ups", "nas"].map((key) => ({ key, groups: ["system"], thresholds: [] })) },
+      },
+      "POST /api/devices/detect": {
+        status: 200,
+        body: { answers: true, error: null, description: "Test UPS", name: "ups-room", object_id: "1.3.6.1.2.1.33",
+                groups: ["ups"], template: "ups", probe: "relay-paris" },
+      },
+      "POST /api/devices": { status: 201, body: { id: "d2" } },
+    });
+    render(
+      <As user={operator}>
+        <AddDevice />
+      </As>,
+    );
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/^Address/), "192.0.2.30");
+    await user.click(screen.getByLabelText(/Watch it over SNMP/));
+    await user.click(screen.getByRole("button", { name: "Detect" }));
+    expect(await screen.findByText("Enter the community.")).toBeTruthy();
+    await user.type(screen.getByLabelText(/^Community/), "e2e-community");
+    await waitFor(() => expect((screen.getByLabelText("Checked from") as HTMLSelectElement).value).toBe("r1"));
+    await user.click(screen.getByRole("button", { name: "Detect" }));
+    expect(await screen.findByText(/ups-room answers: Test UPS/)).toBeTruthy();
+    expect(screen.getByText(/It reports: UPS battery/)).toBeTruthy();
+    expect((screen.getByLabelText(/^Kind of device/) as HTMLSelectElement).value).toBe("ups");
+    expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe("ups-room");
+    await user.click(screen.getByRole("button", { name: "Add the device" }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/servers/view/?id=d2"));
+    const added = JSON.parse(String(fetchMock.mock.calls.filter(([url, init]) => url === "/api/devices" && init?.method === "POST")[0]![1]!.body));
+    expect(added).toMatchObject({ template: "ups", probe: "r1", snmp: { version: "v2c", community: "e2e-community", port: 161 } });
+  });
+
   it("says so when no site can take a device", async () => {
     stubFetch({ "GET /api/sites": { status: 200, body: { sites: [site] } } });
     render(

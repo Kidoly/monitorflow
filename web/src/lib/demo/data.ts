@@ -26,6 +26,7 @@ import type {
   RemediationEventKind,
   RemediationIncidentDetail,
   ActorKind,
+  MaintenanceWindow,
   Silence,
   ThresholdSnapshot,
 } from "../api";
@@ -300,6 +301,27 @@ export const SILENCES: Silence[] = [
     id: demoId(12, 2), scope: "site", target_id: BRANCH.id, target_name: BRANCH.name, site_id: BRANCH.id, customer_id: CUSTOMER.id,
     starts_at: later(4 * DAY), ends_at: later(4 * DAY + 4 * HOUR), active: false, reason: "Power work in the branch office building",
     created_by_username: "sam", created_at: ago(DAY), can_end: true,
+  },
+];
+
+/** The next `count` Sundays at 02:00 UTC, two hours each, from now. */
+function sundays(count: number): { starts_at: string; ends_at: string }[] {
+  const day = new Date();
+  day.setUTCHours(2, 0, 0, 0);
+  day.setUTCDate(day.getUTCDate() + ((7 - day.getUTCDay()) % 7 || 7));
+  return Array.from({ length: count }, (_, i) => {
+    const start = new Date(day.getTime() + i * 7 * DAY * 60_000);
+    return { starts_at: start.toISOString(), ends_at: new Date(start.getTime() + 2 * HOUR * 60_000).toISOString() };
+  });
+}
+
+export const MAINTENANCE_WINDOWS: MaintenanceWindow[] = [
+  {
+    id: demoId(13, 1), site_id: DATACENTER.id, site_name: DATACENTER.name, customer_id: CUSTOMER.id,
+    servers: [], checks: null, repeat: "weekly", every: 1, weekdays: ["sunday"], month_day: null, month_week: null,
+    months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], start_time: "02:00", duration_minutes: 120, time_zone: "UTC",
+    starts_on: "2026-01-04", ends_on: null, reason: "Weekly patches", active_until: null, next: sundays(3),
+    created_by_username: "alex", created_at: ago(30 * DAY), updated_at: ago(30 * DAY), can_change: true,
   },
 ];
 

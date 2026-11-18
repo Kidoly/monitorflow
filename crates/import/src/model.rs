@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use monitorflow_common::redact::Secret;
 use serde::Serialize;
 
@@ -24,6 +24,8 @@ pub struct Inventory {
     pub checks: Vec<Check>,
     pub thresholds: Vec<Threshold>,
     pub silences: Vec<Silence>,
+    /// Maintenance windows that come back (ADR-0151).
+    pub windows: Vec<Window>,
     pub channels: Vec<Channel>,
     /// What the source has and MonitorFlow cannot do, with why.
     pub unmovable: Vec<Unmovable>,
@@ -41,6 +43,7 @@ impl Inventory {
             && self.checks.is_empty()
             && self.thresholds.is_empty()
             && self.silences.is_empty()
+            && self.windows.is_empty()
             && self.channels.is_empty()
             && self.unmovable.is_empty()
     }
@@ -154,6 +157,11 @@ pub struct Host {
     /// Groups, folders or jobs it belongs to there.
     pub groups: Vec<String>,
     pub origin: Origin,
+    /// No agent can run on it, like a switch or a printer the source
+    /// watches by ping or SNMP: it becomes a device, watched from a probe
+    /// (ADR-0148).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agentless: bool,
 }
 
 /// Alert severity.
@@ -199,6 +207,27 @@ pub enum Watch {
     /// A web page or API answering as expected: a website check
     /// (ADR-0150).
     Web(Box<Website>),
+    /// The host, or another address, answering ping, from the central
+    /// server or a relay (ADR-0148).
+    Ping {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        address: Option<String>,
+    },
+    /// A UDP port of the host or another address, from a probe: `query`
+    /// is `dns` or `ntp` for an answer to expect, `none` for no refusal.
+    UdpPort {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        address: Option<String>,
+        port: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+    },
+    /// What a group of the common SNMP objects says (ADR-0149): `system`,
+    /// `interfaces`, `host`, `ups`, `temperature` or `printer`.
+    Snmp { group: String },
+    /// The traffic of the host's network interfaces: the built-in `net`
+    /// check of a server, the SNMP interfaces of a device (ADR-0149).
+    Traffic,
 }
 
 impl Watch {
@@ -367,6 +396,26 @@ pub enum Measure {
     CertificateDays { url: String },
 }
 
+impl Measure {
+    /// The check that measures it: a built-in one, or the website check of
+    /// its URL among `checks` (ADR-0150), as a silence names it.
+    pub fn watch<'a>(&self, checks: impl IntoIterator<Item = &'a Check>) -> Watch {
+        match self {
+            Self::CpuUsage | Self::CpuLoad { .. } => Watch::Cpu,
+            Self::MemoryAvailable => Watch::Memory,
+            Self::DiskUsed { .. } => Watch::Disk,
+            Self::DiskWait { .. } => Watch::DiskIo,
+            Self::WebResponseTime { url } | Self::CertificateDays { url } => checks
+                .into_iter()
+                .find_map(|c| match &c.watch {
+                    Watch::Web(site) if site.url == *url => Some(c.watch.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| Watch::web(Website::new(url.clone()))),
+        }
+    }
+}
+
 /// Above or below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -405,13 +454,76 @@ pub enum SilenceScope {
     Hosts(Vec<String>),
 }
 
-/// No notifications for a while: a maintenance window or a silence.
-/// Recurring windows are given as their next occurrence, with a note.
+/// No notifications for a while: a one-time maintenance or a silence.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Silence {
     pub scope: SilenceScope,
+    /// Only what these watch on the hosts (ADR-0151); empty: everything.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<Watch>,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
+    pub reason: String,
+    pub origin: Origin,
+    #[serde(flatten)]
+    pub fidelity: Fidelity,
+}
+
+/// How a maintenance window comes back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Repeat {
+    Daily,
+    Weekly,
+    Monthly,
+}
+
+/// When a maintenance window comes back, as MonitorFlow's rules say it
+/// (ADR-0151).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Rule {
+    pub repeat: Repeat,
+    /// Every N days or weeks; 1 for monthly.
+    pub every: u16,
+    /// A bit per weekday, Monday first: the days of a weekly rule, the one
+    /// weekday of a monthly one by week.
+    pub weekdays: u8,
+    /// Monthly, on this day.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub month_day: Option<u8>,
+    /// Monthly, in this week (1 to 4, 5 the last).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub month_week: Option<u8>,
+    /// A bit per month, January first.
+    pub months: u16,
+    /// Local start.
+    pub start_time: NaiveTime,
+    /// At most a week.
+    pub duration_minutes: u32,
+    /// The IANA zone when the source says it; `None`: the zone chosen
+    /// for the import, as the source keeps its server's local time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub starts_on: Option<NaiveDate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ends_on: Option<NaiveDate>,
+}
+
+/// Longest window of a rule, in minutes.
+pub const MAX_WINDOW_MINUTES: u32 = 7 * 24 * 60;
+/// Every month of a rule.
+pub const EVERY_MONTH: u16 = 0xfff;
+
+/// A maintenance that comes back: a recurring Zabbix maintenance,
+/// an Alertmanager time interval, a PRTG schedule.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Window {
+    pub scope: SilenceScope,
+    /// Only what these watch on the hosts; empty: everything.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<Watch>,
+    pub rule: Rule,
     pub reason: String,
     pub origin: Origin,
     #[serde(flatten)]
