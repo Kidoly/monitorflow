@@ -535,6 +535,8 @@ async fn main() -> anyhow::Result<()> {
         .with_sources(api_settings.live.clone(), mirrors.clone())
         .with_agent_releases(api_settings.agent_releases.clone())
         .with_proxmox(config.proxmox.enabled);
+    // Virtual machines, hosts and datastores from the samples (ADR-0156).
+    let virt = monitorflow_server::virt::Sink::spawn(pool.clone());
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
@@ -548,6 +550,7 @@ async fn main() -> anyhow::Result<()> {
     .with_ingest(Ingest {
         metrics: Some(metrics.queue()),
         events: Some(events.queue()),
+        virt: Some(virt.clone()),
     });
     // Network checks from the central server and from relays (ADR-0148).
     let probes = Probes::new(
@@ -555,6 +558,7 @@ async fn main() -> anyhow::Result<()> {
         Ingest {
             metrics: Some(metrics.queue()),
             events: Some(events.queue()),
+            virt: Some(virt),
         },
         Some(alerts),
     );

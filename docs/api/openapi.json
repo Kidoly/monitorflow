@@ -27470,6 +27470,163 @@
         }
       }
     },
+    "/api/v1/servers/{id}/virtualization": {
+      "get": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Read a server's virtualization",
+        "description": "For a vCenter, ESXi or Hyper-V source, whether its last collection worked and its hosts, clusters, virtual machines and datastores, with their numbers of that collection. For any server, the virtual machines it is (`guest_of`), from sources the caller can read. An object the source stopped listing is `stale` after 15 minutes and removed after a day. A matched server the caller cannot read is shown as `null`.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "operationId": "server_virtualization",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server or device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Its virtualization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Virtualization"
+                },
+                "example": {
+                  "guest_of": [],
+                  "objects": [
+                    {
+                      "collected_at": "2026-11-18T10:20:00Z",
+                      "details": {
+                        "addresses": "192.0.2.21",
+                        "guest_hostname": "web-1.example.test",
+                        "guest_os": "Debian GNU/Linux 12 (64-bit)",
+                        "host": "esx-02",
+                        "macs": "00:50:56:aa:bb:01",
+                        "power_state": "poweredOn",
+                        "uuid": "4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"
+                      },
+                      "id": "8a1f3c52-6b7d-4e9f-a0b1-c2d3e4f5a6b7",
+                      "key": "vm-42",
+                      "kind": "vm",
+                      "link_fixed": false,
+                      "matched_by": "uuid",
+                      "metrics": {
+                        "alarms_critical": 0.0,
+                        "alarms_warning": 0.0,
+                        "cpu_count": 2.0,
+                        "cpu_usage_ratio": 0.12,
+                        "memory_bytes": 4294967296.0,
+                        "memory_usage_ratio": 0.4,
+                        "powered_on": 1.0,
+                        "snapshot_age_seconds": 864000.0,
+                        "snapshots": 1.0,
+                        "status": 0.0,
+                        "storage_used_bytes": 21474836480.0
+                      },
+                      "name": "web-1",
+                      "seen_at": "2026-11-18T10:20:03Z",
+                      "server": {
+                        "awaiting_agent": false,
+                        "hostname": "web-1",
+                        "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "kind": "agent"
+                      },
+                      "stale": false
+                    }
+                  ],
+                  "source": {
+                    "details": {
+                      "api_type": "VirtualCenter",
+                      "product": "VMware vCenter Server 8.0.2",
+                      "version": "8.0.2"
+                    },
+                    "error": null,
+                    "reason": null,
+                    "seen_at": "2026-11-18T10:20:03Z",
+                    "up": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/website-checks": {
       "get": {
         "tags": [
@@ -38277,6 +38434,29 @@
           "lxc"
         ]
       },
+      "GuestOf": {
+        "type": "object",
+        "description": "A virtual machine a server is, with where it runs.",
+        "required": [
+          "object",
+          "source_id",
+          "source_name"
+        ],
+        "properties": {
+          "object": {
+            "$ref": "#/components/schemas/ObjectView",
+            "description": "The virtual machine."
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The vCenter, ESXi or Hyper-V host listing it."
+          },
+          "source_name": {
+            "type": "string"
+          }
+        }
+      },
       "HealthStatus": {
         "type": "object",
         "description": "Up or down, nothing more.",
@@ -40468,6 +40648,33 @@
           }
         }
       },
+      "LinkedServer": {
+        "type": "object",
+        "description": "The server or device a virtual machine is.",
+        "required": [
+          "id",
+          "hostname",
+          "kind",
+          "awaiting_agent"
+        ],
+        "properties": {
+          "awaiting_agent": {
+            "type": "boolean",
+            "description": "Whether it is waiting for its agent."
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`agent` or `device`."
+          }
+        }
+      },
       "LocalReason": {
         "type": "object",
         "description": "Why a server cannot get a local snapshot (ADR-0094), as data.",
@@ -41732,6 +41939,82 @@
           "ok": {
             "type": "boolean",
             "description": "Whether the test message went through."
+          }
+        }
+      },
+      "ObjectView": {
+        "type": "object",
+        "description": "One host, cluster, virtual machine or datastore.",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "key",
+          "details",
+          "metrics",
+          "collected_at",
+          "seen_at",
+          "stale",
+          "link_fixed"
+        ],
+        "properties": {
+          "collected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {
+            "type": "object",
+            "description": "What it says of itself: for a virtual machine `uuid`, `host`,\n`power_state`, `guest_hostname`, `guest_os`, `addresses`, `macs`,\n`replication_mode`, `replication_state`; for a host `cluster`,\n`connection_state`, `maintenance`, `product`, `vendor`, `model`;\nfor a datastore `type`."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string",
+            "description": "Its ID at the source: a managed object ID, or Hyper-V's VM ID."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`vm`, `host`, `cluster` or `datastore`."
+          },
+          "link_fixed": {
+            "type": "boolean",
+            "description": "Whether a person decided its server, even none."
+          },
+          "matched_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`uuid`, `mac`, `address`, `name`, or `person` when someone tied\nit by hand; `null` without a server."
+          },
+          "metrics": {
+            "type": "object",
+            "description": "Its numbers at the last collection, by measure without the check's\nand kind's prefix: `powered_on`, `cpu_usage_ratio`,\n`memory_bytes`, `snapshots`, `snapshot_age_seconds`,\n`free_ratio`, `alarms_critical`, and so on."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name, as its series' `instance`."
+          },
+          "seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "server": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkedServer",
+                "description": "For a virtual machine, the server or device it is; `null` when\nnone is known, or when the viewer cannot read it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "Not seen for 15 minutes: the source stopped listing it."
           }
         }
       },
@@ -46911,6 +47194,43 @@
           }
         }
       },
+      "SourceView": {
+        "type": "object",
+        "description": "Whether a source was read at its last collection.",
+        "required": [
+          "up",
+          "details",
+          "seen_at"
+        ],
+        "properties": {
+          "details": {
+            "type": "object",
+            "description": "What answered: `product`, `version`, `api_type`, `host`."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The message, in English, such as what to do about it."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not: `connect`, `tls`, `certificate`, `login`, `api` for a\nvCenter; `not_installed`, `denied`, `failed` for Hyper-V."
+          },
+          "seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "up": {
+            "type": "boolean",
+            "description": "Whether the last collection worked."
+          }
+        }
+      },
       "SourcesMode": {
         "type": "string",
         "description": "`replace` sets the host's other sources aside, `add` keeps them\n(ADR-0032).",
@@ -47961,6 +48281,41 @@
           }
         }
       },
+      "Virtualization": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/virtualization`.",
+        "required": [
+          "objects",
+          "guest_of"
+        ],
+        "properties": {
+          "guest_of": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuestOf"
+            },
+            "description": "The virtual machines this server is, from sources the viewer can\nread: usually none or one."
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObjectView"
+            },
+            "description": "When the server is a source: its objects, hosts first, then\nclusters, virtual machines and datastores, by name."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SourceView",
+                "description": "When the server is a source: its last collection; else `null`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "WebsiteCheck": {
         "type": "object",
         "description": "One website check and its last run.",
@@ -48356,6 +48711,10 @@
     {
       "name": "devices",
       "description": "Devices: switches, routers, printers, UPSs or any address watched without the agent, by network checks that run from the central server or from a relay of the device's site (a probe). A device is a server of kind `device`: it is listed, read, silenced, charted and removed with the server routes, its checks are `sensor_configs` rows with a `probe`, and its thresholds are a server's. It is never offline nor waiting for an agent: its checks say what is wrong. The same probe checks can watch a server that has the agent, from outside. Operators of the site add and change devices. Area `servers`."
+    },
+    {
+      "name": "virtualization",
+      "description": "VMware and Hyper-V: the hosts, clusters, virtual machines and datastores of a vCenter or ESXi host (a device with a `vmware` check, run from a probe) or of a Hyper-V host (a Windows server with a `hyperv` check), kept from what their checks last reported. Each virtual machine is matched to the server or device of the same customer it is, by its hardware ID, a network card, an address or its name. Area `servers`."
     }
   ]
 }

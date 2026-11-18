@@ -48,6 +48,7 @@
 //! | GET | `/api/devices/templates` | read | [`devices::TemplateList`]: the kinds of SNMP devices, their checks and thresholds (ADR-0149) |
 //! | POST | `/api/devices/detect` | modify | body [`devices::DetectRequest`]; 200 [`devices::Detected`]: what an address answers over SNMP, from its probe |
 //! | GET, PUT, DELETE | `/api/devices/{id}/snmp` | read, modify | [`crate::snmp::View`] without secrets; body [`crate::snmp::CredentialsRequest`]; audited |
+//! | GET | `/api/servers/{id}/virtualization` | read | [`virtualization::Virtualization`]: a vCenter, ESXi or Hyper-V source's hosts, clusters, virtual machines and datastores, and the virtual machine a server is (ADR-0156) |
 //! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
 //! | GET | `/api/servers/{id}/recommendations` | read | [`recommendations::RecommendationList`]: checks recommended from what the agent saw (ADR-0134) |
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
@@ -728,6 +729,7 @@ mod openapi_settings;
 mod openapi_sso;
 mod openapi_system;
 mod openapi_users;
+mod openapi_virtualization;
 pub mod own_password;
 pub mod package_sources;
 pub mod packages;
@@ -763,6 +765,7 @@ pub mod tokens;
 pub mod user_admin;
 pub mod users;
 pub mod v1;
+pub mod virtualization;
 pub mod website_checks;
 
 use std::future::Future;
@@ -1220,6 +1223,7 @@ pub fn router(state: ApiState) -> Router {
                 .delete(devices::delete_snmp),
         )
         .route("/api/sites/{id}/probes", get(devices::probes))
+        .route("/api/servers/{id}/virtualization", get(virtualization::get))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route(
             "/api/servers/{id}/recommendations",
