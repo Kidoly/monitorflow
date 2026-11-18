@@ -42,6 +42,11 @@ message Envelope {
     ProbeResults probe_results = 22;
     // Relay to server, on its own stream, once it applied a ProbeConfig.
     ProbeConfigAck probe_config_ack = 23;
+    // Server to relay, on the relay's own stream: run one check once now,
+    // to see what a device answers before adding it (ADR-0149).
+    ProbeTest probe_test = 24;
+    // Relay to server: what that check measured.
+    ProbeTestResult probe_test_result = 25;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -254,6 +259,20 @@ message DeviceSamples {
   // configuration it sent this relay.
   string device = 1;
   repeated Sample samples = 2;
+}
+
+// One check to run once, right away, outside the relay's configuration.
+message ProbeTest {
+  // Chosen by the server; the result names it.
+  string id = 1;
+  ProbeCheck check = 2;
+}
+
+message ProbeTestResult {
+  string id = 1;
+  repeated Sample samples = 2;
+  // Why the check could not run or failed; empty when it ran.
+  string error = 3;
 }
 
 // What a relay's mirror listener serves, sent after its Hello and again

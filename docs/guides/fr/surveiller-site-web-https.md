@@ -32,7 +32,7 @@ Chaque contrôle de site web vient avec ces alertes, modifiables comme les autre
 
 Un certificat expiré ne masque pas le reste : la page est tout de même lue, vous voyez donc à la fois son code de statut et ce qui ne va pas avec le certificat.
 
-Le contrôle tourne sur l'agent du serveur auquel vous l'ajoutez. Ajoutez-le au serveur web pour vérifier le site tel qu'il le sert, ou à un autre serveur pour le vérifier à travers le réseau comme un visiteur. Chaque serveur peut limiter où ses contrôles se connectent avec `port_targets` dans son `agent.toml`, redirections comprises ; partout par défaut.
+Le contrôle tourne sur l'agent du serveur auquel vous l'ajoutez, sauf si **« Vérifié depuis »** désigne le serveur central ou un relais du site. Ajoutez-le au serveur web pour vérifier le site tel qu'il le sert, à un autre serveur pour le vérifier à travers le réseau, ou faites-le vérifier de l'extérieur par le serveur central ou un relais, comme un visiteur. Un équipement, qui n'a pas d'agent, reçoit aussi des contrôles de site web, lancés depuis le serveur central ou un relais. Chaque serveur peut limiter où ses contrôles se connectent avec `port_targets` dans son `agent.toml`, redirections comprises ; partout par défaut.
 
 ## Mise en place
 

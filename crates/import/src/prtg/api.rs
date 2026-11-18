@@ -514,5 +514,6 @@ pub async fn read(fetch: Arc<dyn Fetch>, now: DateTime<Utc>) -> Result<Tree, Rea
         objects,
         notifications: notifications(fetch.as_ref()).await?,
         local_times: false,
+        schedules: Default::default(),
     })
 }

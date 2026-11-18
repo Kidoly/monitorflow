@@ -23,6 +23,8 @@ use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
+use crate::notify::silence::{CheckRef, MAX_CHECKS};
+use crate::sensor_config::builtin_defaults;
 
 /// Longest silence: every silence ends on its own, soon enough that
 /// nobody forgets one.
@@ -72,6 +74,10 @@ pub struct CreateRequest {
     pub ends_at: DateTime<Utc>,
     /// Why, for others: 1 to 200 characters, trimmed.
     pub reason: String,
+    /// Only these checks of the server, or of every server of the site
+    /// (ADR-0151): 1 to 20. Absent or `null`: everything of the target.
+    #[serde(default)]
+    pub checks: Option<Vec<CheckRef>>,
 }
 
 /// One silence.
@@ -99,6 +105,13 @@ pub struct SilenceView {
     /// `null` once the user is deleted.
     pub created_by_username: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// Only these checks of its server or site; `null` for all of it
+    /// (ADR-0151).
+    #[schema(value_type = Option<Vec<CheckRef>>)]
+    pub checks: Option<sqlx::types::Json<Vec<CheckRef>>>,
+    /// The maintenance window it is an occurrence of, `null` for a one-off
+    /// silence (ADR-0151).
+    pub window_id: Option<Uuid>,
     /// Whether this user may end it.
     #[sqlx(default)]
     pub can_end: bool,
@@ -121,7 +134,7 @@ const SELECT: &str = "SELECT x.id,
         COALESCE(s.hostname, r.name, si.name, c.name) AS target_name,
         si.id AS site_id, c.id AS customer_id, x.starts_at, x.ends_at,
         x.starts_at <= now() AS active, x.reason,
-        u.username AS created_by_username, x.created_at
+        u.username AS created_by_username, x.created_at, x.checks, x.window_id
     FROM silences x
     LEFT JOIN servers s ON s.id = x.server_id
     LEFT JOIN relays r ON r.id = x.relay_id
@@ -203,6 +216,8 @@ pub async fn list(
     let mut silences: Vec<SilenceView> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT}
          WHERE coalesce(x.ended_at, x.ends_at) > now() AND {VISIBLE}
+           -- A window's coming occurrences are its own list.
+           AND (x.window_id IS NULL OR x.starts_at <= now())
            AND (NOT $4
                 OR num_nonnulls(x.server_id, x.relay_id, x.site_id, x.customer_id) = 0
                 OR x.server_id = $5 OR x.relay_id = $6
@@ -276,6 +291,59 @@ async fn authorize_target(
     }
 }
 
+/// Where checks are looked for: one server, or every server of a site.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Place {
+    Server(Uuid),
+    Site(Uuid),
+}
+
+/// `checks` without repeats once each is a valid check name and instance
+/// that `place` runs: built in, or a row of its site or of one of its
+/// servers. The error is a sentence for the form.
+pub(super) async fn known_checks(
+    db: &sqlx::PgPool,
+    checks: &[CheckRef],
+    place: Place,
+) -> Result<Vec<CheckRef>, ApiError> {
+    if checks.is_empty() || checks.len() > MAX_CHECKS {
+        return Err(ApiError::Invalid(format!(
+            "Choose 1 to {MAX_CHECKS} checks, or none for everything."
+        )));
+    }
+    let mut unique: Vec<CheckRef> = Vec::new();
+    for check in checks {
+        monitorflow_sensors::validate::sensor_name(&check.name)
+            .and_then(|()| monitorflow_sensors::validate::instance(&check.instance))
+            .map_err(|e| ApiError::Invalid(format!("check `{}`: {e}", check.name)))?;
+        if !unique.contains(check) {
+            unique.push(check.clone());
+        }
+    }
+    let (server, site) = match place {
+        Place::Server(id) => (Some(id), None),
+        Place::Site(id) => (None, Some(id)),
+    };
+    let mut names: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT sc.name FROM sensor_configs sc
+         WHERE sc.server_id = $1
+            OR sc.site_id = coalesce($2, (SELECT site_id FROM servers WHERE id = $1))
+            OR sc.server_id IN (SELECT id FROM servers WHERE site_id = $2)",
+    )
+    .bind(server)
+    .bind(site)
+    .fetch_all(db)
+    .await?;
+    names.extend(builtin_defaults(0).into_iter().map(|spec| spec.name));
+    if let Some(unknown) = unique.iter().find(|c| !names.contains(&c.name)) {
+        return Err(ApiError::Invalid(format!(
+            "There is no check `{}` there.",
+            unknown.name
+        )));
+    }
+    Ok(unique)
+}
+
 /// The reason trimmed and the period, or why not; the error is a sentence
 /// for the form.
 fn validate(
@@ -310,6 +378,21 @@ pub async fn create(
     let request = body(request)?;
     authorize_target(&state, &user, request.scope, request.target_id).await?;
     let (reason, starts_at) = validate(&request, Utc::now()).map_err(ApiError::Invalid)?;
+    let checks = match (&request.checks, request.scope, request.target_id) {
+        (None, ..) => None,
+        (Some(checks), Target::Server, Some(id)) => {
+            Some(known_checks(&state.pool, checks, Place::Server(id)).await?)
+        }
+        (Some(checks), Target::Site, Some(id)) => {
+            Some(known_checks(&state.pool, checks, Place::Site(id)).await?)
+        }
+        (Some(_), ..) => {
+            return Err(ApiError::Invalid(
+                "Only a server or a site can be narrowed to checks.".into(),
+            ))
+        }
+    };
+    let checks = checks.map(sqlx::types::Json);
     let column = |target| request.target_id.filter(|_| request.scope == target);
     let mut tx = state.pool.begin().await?;
     // The same silence asked twice (a menu choice picked again before the
@@ -324,6 +407,7 @@ pub async fn create(
          WHERE server_id IS NOT DISTINCT FROM $1 AND relay_id IS NOT DISTINCT FROM $2
            AND site_id IS NOT DISTINCT FROM $3 AND customer_id IS NOT DISTINCT FROM $4
            AND ended_at IS NULL AND starts_at <= $5 AND ends_at = $6 AND reason = $7
+           AND checks IS NOT DISTINCT FROM $8 AND window_id IS NULL
          ORDER BY created_at LIMIT 1",
     )
     .bind(column(Target::Server))
@@ -333,6 +417,7 @@ pub async fn create(
     .bind(starts_at)
     .bind(request.ends_at)
     .bind(&reason)
+    .bind(&checks)
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(id) = same {
@@ -348,8 +433,8 @@ pub async fn create(
     }
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO silences (server_id, relay_id, site_id, customer_id, starts_at, ends_at,
-                               reason, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+                               reason, created_by, checks)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
     )
     .bind(column(Target::Server))
     .bind(column(Target::Relay))
@@ -359,6 +444,7 @@ pub async fn create(
     .bind(request.ends_at)
     .bind(&reason)
     .bind(user.id)
+    .bind(&checks)
     .fetch_one(&mut *tx)
     .await?;
     let actor = user.id.to_string();
@@ -375,6 +461,7 @@ pub async fn create(
                 "starts_at": starts_at,
                 "ends_at": request.ends_at,
                 "reason": reason,
+                "checks": checks,
             }),
         },
     )
@@ -441,6 +528,7 @@ pub async fn end(
                 "target_id": silence.target_id,
                 "planned_end": silence.ends_at,
                 "started": silence.active,
+                "window_id": silence.window_id,
             }),
         },
     )
@@ -464,6 +552,7 @@ mod tests {
             starts_at: starts_at.map(at),
             ends_at: at(ends_at),
             reason: reason.into(),
+            checks: None,
         }
     }
 

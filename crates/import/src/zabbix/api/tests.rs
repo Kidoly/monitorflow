@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use super::*;
-use crate::model::{Fidelity, Measure, SilenceScope, Target, Watch, WebMethod};
+use crate::model::{Fidelity, Measure, Repeat, SilenceScope, Target, Watch, WebMethod};
 use crate::zabbix::map;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -189,7 +189,8 @@ fn answer(version: &str, groups: &str, method: &str, params: &Value) -> Value {
             {"triggerid": "3002", "description": "PostgreSQL is down",
              "expression": "max(/web-01/net.tcp.port[,5432],3m)=0", "recovery_mode": "0",
              "recovery_expression": "", "priority": "5", "status": "0",
-             "hosts": [{"hostid": "10"}], "triggerDiscovery": []},
+             "hosts": [{"hostid": "10"}], "triggerDiscovery": [],
+             "tags": [{"tag": "service", "value": "postgresql"}]},
         ]),
         "triggerprototype.get" => json!([
             {"triggerid": "3100", "description": "FS [{#FSNAME}]: Space is low",
@@ -220,6 +221,21 @@ fn answer(version: &str, groups: &str, method: &str, params: &Value) -> Value {
             "hosts": [], (groups): [{"groupid": "2"}], "tags": [],
             "timeperiods": [{"timeperiod_type": "3", "every": "1", "month": "0", "dayofweek": "64",
                              "day": "0", "start_time": "7200", "period": "7200", "start_date": "0"}],
+        }, {
+            "maintenanceid": "2", "name": "Database work", "description": "",
+            "maintenance_type": "0", "active_since": "1767225600", "active_till": "1798761600",
+            "hosts": [{"hostid": "10"}], (groups): [], "tags_evaltype": "0",
+            "tags": [{"tag": "service", "operator": "0", "value": "postgres"}],
+            // The second Tuesday and Friday of January and July, 22:00 for 4 hours.
+            "timeperiods": [{"timeperiod_type": "4", "every": "2", "month": "65", "dayofweek": "18",
+                             "day": "0", "start_time": "79200", "period": "14400", "start_date": "0"}],
+        }, {
+            "maintenanceid": "3", "name": "Unknown tags", "description": "",
+            "maintenance_type": "0", "active_since": "1767225600", "active_till": "1798761600",
+            "hosts": [{"hostid": "10"}], (groups): [],
+            "tags": [{"tag": "team", "operator": "2", "value": "web"}],
+            "timeperiods": [{"timeperiod_type": "2", "every": "3", "month": "0", "dayofweek": "0",
+                             "day": "0", "start_time": "0", "period": "3600", "start_date": "0"}],
         }]),
         "mediatype.get" => json!([
             {"mediatypeid": "1", "type": "0", "name": "Email", "smtp_server": "mail.example.com",
@@ -415,10 +431,56 @@ async fn zabbix_7_with_a_bearer_token() {
     assert!(!api.0.follow_redirects);
     assert_eq!(api.0.timeout_s, Some(5));
     assert_eq!(api.1, &Fidelity::Exact);
-    let silence = &inventory.silences[0];
-    assert_eq!(silence.scope, SilenceScope::Hosts(vec!["web-01".into()]));
-    assert_eq!(silence.reason, "Patching: Kernel updates");
-    assert_eq!(silence.starts_at.to_rfc3339(), "2026-11-22T02:00:00+00:00");
+    // Weekly on Sundays at 02:00: a maintenance window, not its next one.
+    let window = &inventory.windows[0];
+    assert_eq!(window.scope, SilenceScope::Hosts(vec!["web-01".into()]));
+    assert_eq!(window.reason, "Patching: Kernel updates");
+    assert_eq!(window.rule.repeat, Repeat::Weekly);
+    assert_eq!(window.rule.weekdays, 64);
+    assert_eq!(window.rule.start_time.to_string(), "02:00:00");
+    assert_eq!(window.rule.time_zone, None);
+    // Without data collection in Zabbix: MonitorFlow only holds notifications.
+    assert!(matches!(&window.fidelity, Fidelity::Approximated(n) if n.code == "zabbix_no_data"));
+    assert!(inventory.silences.is_empty());
+    // Limited to tags: the check made from the trigger with them, on the
+    // second Tuesday and the second Friday, one window each.
+    let work: Vec<_> = inventory
+        .windows
+        .iter()
+        .filter(|w| w.reason == "Database work")
+        .collect();
+    assert_eq!(work.len(), 2);
+    for w in &work {
+        assert_eq!(
+            w.checks,
+            vec![Watch::Port {
+                address: None,
+                port: 5432
+            }]
+        );
+        assert_eq!(
+            (w.rule.repeat, w.rule.month_week, w.rule.months),
+            (Repeat::Monthly, Some(2), 65)
+        );
+        assert_eq!(w.rule.duration_minutes, 240);
+        assert_eq!(w.fidelity, Fidelity::Exact);
+    }
+    let days: Vec<u8> = work.iter().map(|w| w.rule.weekdays).collect();
+    assert_eq!(days, vec![2, 16]);
+    // Tags no check comes from: the whole server, said so.
+    let unknown = inventory
+        .windows
+        .iter()
+        .find(|w| w.reason == "Unknown tags")
+        .unwrap();
+    assert!(unknown.checks.is_empty());
+    assert_eq!(
+        (unknown.rule.repeat, unknown.rule.every),
+        (Repeat::Daily, 3)
+    );
+    assert!(
+        matches!(&unknown.fidelity, Fidelity::Approximated(n) if n.code == "zabbix_tags_unmatched")
+    );
     let names: Vec<_> = inventory.channels.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, ["Email", "MS Teams Workflow (Admin)"]);
     assert!(

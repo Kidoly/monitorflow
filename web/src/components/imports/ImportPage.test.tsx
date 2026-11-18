@@ -186,6 +186,8 @@ describe("ImportPage", () => {
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({
       source: "example",
       connection: { url: "https://monitoring.example.com", token: "s3cret" },
+      // Maintenance windows without a zone are read in the browser's.
+      time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
     expect(
       await screen.findByText("Example tool: export.yaml"),
@@ -230,7 +232,7 @@ describe("ImportPage", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "MonitorFlow does not measure network interface traffic yet.",
+        "MonitorFlow measures interface traffic but does not move thresholds on it: add one on the server's page.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("net.if.in[eth0]")).toBeInTheDocument();
@@ -322,7 +324,7 @@ describe("ImportPage", () => {
       .closest("section")!;
     expect(
       within(list).getByText(
-        "MonitorFlow ne mesure pas encore le trafic des interfaces réseau.",
+        "MonitorFlow mesure le trafic des interfaces mais n’en reprend pas les seuils : ajoutez-en un sur la page du serveur.",
       ),
     ).toBeInTheDocument();
   });

@@ -10,8 +10,8 @@ use axum::http::{Request, StatusCode};
 use chrono::{TimeDelta, Utc};
 use monitorflow_common::redact::Secret;
 use monitorflow_import::model::{
-    Alert, Channel, Check, Direction, Fidelity, Host, Inventory, Measure, Origin, Os, Severity,
-    Silence, SilenceScope, Smtp, Target, Threshold, Watch, Website,
+    Alert, Channel, Check, Direction, Fidelity, Host, Inventory, Measure, Origin, Os, Repeat, Rule,
+    Severity, Silence, SilenceScope, Smtp, Target, Threshold, Watch, Website, Window, EVERY_MONTH,
 };
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
@@ -113,6 +113,7 @@ fn inventory() -> Inventory {
         os: Os::Debian,
         groups: vec![],
         origin: origin("host", name),
+        agentless: false,
     };
     // One time for every call, so two imports read the same windows.
     static NOW: std::sync::OnceLock<chrono::DateTime<Utc>> = std::sync::OnceLock::new();
@@ -161,6 +162,7 @@ fn inventory() -> Inventory {
         }],
         silences: vec![Silence {
             scope: SilenceScope::Hosts(vec!["2".into()]),
+            checks: vec![],
             starts_at: now + TimeDelta::hours(1),
             ends_at: now + TimeDelta::hours(3),
             reason: "Database upgrade".into(),
@@ -192,6 +194,7 @@ fn inventory() -> Inventory {
                 fidelity: Fidelity::Exact,
             },
         ],
+        windows: vec![],
         unmovable: vec![],
     }
 }
@@ -341,6 +344,74 @@ db_tests! {
         assert_eq!(count(&pool, tables).await, before);
     }
 
+    /// A host without an agent becomes a device with its probe checks,
+    /// and the undo removes it (ADR-0148).
+    #[sqlx::test]
+    async fn devices_are_imported_and_undone(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let relay: Uuid = sqlx::query_scalar("INSERT INTO relays (peer_id, site_id, name) VALUES ('relay-paris', $1, 'relay-paris') RETURNING id")
+            .bind(paris)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let switch = Host {
+            key: "sw".into(),
+            name: "core-switch".into(),
+            visible_name: None,
+            addresses: vec!["192.0.2.2".into()],
+            os: Os::Unknown,
+            groups: vec![],
+            origin: origin("host", "core-switch"),
+            agentless: true,
+        };
+        let probe = |watch: Watch, name: &str| Check {
+            host: "sw".into(),
+            watch,
+            interval_s: Some(60),
+            alert: Some(Alert { severity: Severity::Critical, for_s: 60 }),
+            origin: origin("item", name),
+            fidelity: Fidelity::Exact,
+        };
+        let inventory = Inventory {
+            hosts: vec![switch],
+            checks: vec![
+                probe(Watch::Ping { address: None }, "ICMP ping"),
+                probe(Watch::Snmp { group: "interfaces".into() }, "Interfaces"),
+            ],
+            ..Inventory::default()
+        };
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["failed"], json!([]), "{run}");
+        let device: (String, Option<String>, bool) =
+            sqlx::query_as("SELECT kind, address, awaiting_agent FROM servers WHERE peer_id = 'core-switch'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(device, ("device".into(), Some("192.0.2.2".into()), false));
+        let checks: Vec<(String, String, Option<String>, Option<Uuid>)> = sqlx::query_as(
+            "SELECT name, instance, probe, probe_relay_id FROM sensor_configs ORDER BY name",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            checks,
+            [
+                ("ping".into(), "relay-paris".into(), Some("relay".into()), Some(relay)),
+                ("snmp_if".into(), "relay-paris".into(), Some("relay".into()), Some(relay)),
+            ]
+        );
+        assert_eq!(count(&pool, "SELECT count(*) FROM thresholds WHERE metric = 'monitorflow_ping_up'").await, 1);
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["kept_servers"], json!([]));
+        assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 0);
+    }
+
     #[sqlx::test]
     async fn undo_removes_what_it_made_but_servers_an_agent_took_over(pool: PgPool) {
         monitorflow_server::secrets::install_for_tests();
@@ -447,6 +518,7 @@ db_tests! {
                 os: Os::Debian,
                 groups: vec![],
                 origin: origin("host", "web-01"),
+                agentless: false,
             }],
             checks: vec![Check {
                 host: "1".into(),
@@ -533,5 +605,76 @@ db_tests! {
             .filter(|i| i["present"] == false)
             .collect();
         assert!(fresh.is_empty(), "{fresh:#?}");
+    }
+
+    #[sqlx::test]
+    async fn windows_and_check_silences_import_once_and_undo(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let mut inventory = inventory();
+        let now = Utc::now();
+        inventory.silences.push(Silence {
+            scope: SilenceScope::Hosts(vec!["2".into()]),
+            checks: vec![Watch::Port { address: None, port: 5432 }],
+            starts_at: now + TimeDelta::hours(1),
+            ends_at: now + TimeDelta::hours(2),
+            reason: "Database port work".into(),
+            origin: origin("silence", "port work"),
+            fidelity: Fidelity::Exact,
+        });
+        inventory.windows.push(Window {
+            scope: SilenceScope::Hosts(vec!["1".into(), "2".into()]),
+            checks: vec![Watch::Service { name: "nginx".into() }],
+            rule: Rule {
+                repeat: Repeat::Daily,
+                every: 1,
+                weekdays: 0,
+                month_day: None,
+                month_week: None,
+                months: EVERY_MONTH,
+                start_time: chrono::NaiveTime::from_hms_opt(3, 0, 0).unwrap(),
+                duration_minutes: 60,
+                time_zone: Some("Europe/Paris".into()),
+                starts_on: None,
+                ends_on: None,
+            },
+            reason: "Nightly restart".into(),
+            origin: origin("maintenance", "Nightly restart"),
+            fidelity: Fidelity::Exact,
+        });
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["created"]["window"], 1, "{run}");
+        assert_eq!(run["result"]["failed"], json!([]));
+        let (repeat, zone, checks, servers): (String, String, Value, i64) = sqlx::query_as(
+            "SELECT repeat, time_zone, checks,
+                    (SELECT count(*) FROM maintenance_window_servers ws WHERE ws.window_id = w.id)
+             FROM maintenance_windows w",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((repeat.as_str(), zone.as_str(), servers), ("daily", "Europe/Paris", 2));
+        assert_eq!(checks, json!([{"name": "service_nginx", "instance": ""}]));
+        // Its occurrences are written at once, one per server.
+        assert!(count(&pool, "SELECT count(*) FROM silences WHERE window_id IS NOT NULL").await >= 2);
+        let port: Value = sqlx::query_scalar("SELECT checks FROM silences WHERE reason = 'Database port work'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(port, json!([{"name": "port_5432", "instance": ""}]));
+
+        // A second import finds both there.
+        let second = preview(&pool, paris, admin, &inventory).await;
+        let (_, run) = call(&pool, "GET", &format!("/api/imports/{second}"), &cookie, None).await;
+        assert_eq!(run["counts"]["to_create"], 0, "{run}");
+
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["removed"]["window"], 1);
+        assert_eq!(count(&pool, "SELECT count(*) FROM maintenance_windows").await, 0);
+        assert_eq!(count(&pool, "SELECT count(*) FROM silences").await, 0);
     }
 }

@@ -27,7 +27,7 @@ export type Shape =
   | { type: "percent" | "number"; noun: string; suffix: string; unit?: string }
   | { type: "event"; noun: string; text: string; brief: string; comparison: Comparison; value: number };
 
-type EventWords = "port" | "ping" | "service" | "log" | "eventlog" | "script" | "website" | "certificate";
+type EventWords = "port" | "ping" | "snmp" | "service" | "log" | "eventlog" | "script" | "website" | "certificate";
 
 /**
  * The fixed trigger of an event, by sensor kind and metric suffix; its
@@ -37,6 +37,7 @@ type EventWords = "port" | "ping" | "service" | "log" | "eventlog" | "script" | 
 const EVENTS: Record<string, { suffix: string; words: EventWords; comparison: Comparison; value: number }> = {
   port: { suffix: "up", words: "port", comparison: "<", value: 1 },
   ping: { suffix: "up", words: "ping", comparison: "<", value: 1 },
+  snmp: { suffix: "up", words: "snmp", comparison: "<", value: 1 },
   systemd: { suffix: "active", words: "service", comparison: "<", value: 1 },
   windows_service: { suffix: "active", words: "service", comparison: "<", value: 1 },
   log: { suffix: "matches", words: "log", comparison: ">", value: 0 },
@@ -273,6 +274,8 @@ export interface CheckType {
   noAlert?: boolean;
   /** Runs from the central server or a relay, which the form asks (ADR-0148). */
   probe?: boolean;
+  /** Runs on the agent unless the form names a probe (ADR-0150). */
+  anyRunner?: boolean;
   /** Alerts that come with it besides its own event, like a website's certificate (ADR-0150). */
   moreAlerts?: (metricOf: (suffix: string) => string, values: Record<string, string>) => ThresholdRequest[];
 }
@@ -419,7 +422,24 @@ export const CHECK_TYPES: CheckType[] = [
     severity: "warning",
     duration_s: 60,
   },
-  {
+  websiteType(false),
+];
+
+const hostField = (): CheckField => ({
+  key: "host",
+  label: t("devices.check.host"),
+  placeholder: "",
+  hint: t("devices.check.hostHint"),
+  optional: true,
+});
+
+/** What a device can be checked with, from the central server or a relay (ADR-0148). */
+/**
+ * A website check (ADR-0150): run by the server's agent or, chosen in
+ * the form, by a probe; a device's always by a probe (`probe`).
+ */
+function websiteType(probe: boolean): CheckType {
+  return {
     kind: "http",
     get label() {
       return t("checks.type.http");
@@ -479,6 +499,8 @@ export const CHECK_TYPES: CheckType[] = [
     nameFrom: "url",
     severity: "critical",
     duration_s: 120,
+    probe,
+    anyRunner: !probe,
     moreAlerts: (metricOf, values) => {
       const rule = (suffix: string, comparison: Comparison, warning: number | null, critical: number | null, duration_s: number) => ({
         metric: metricOf(suffix),
@@ -496,18 +518,9 @@ export const CHECK_TYPES: CheckType[] = [
         rule("response_seconds", ">", 3, null, 300),
       ];
     },
-  },
-];
+  };
+}
 
-const hostField = (): CheckField => ({
-  key: "host",
-  label: t("devices.check.host"),
-  placeholder: "",
-  hint: t("devices.check.hostHint"),
-  optional: true,
-});
-
-/** What a device can be checked with, from the central server or a relay (ADR-0148). */
 export const DEVICE_CHECK_TYPES: CheckType[] = [
   {
     kind: "ping",
@@ -556,6 +569,7 @@ export const DEVICE_CHECK_TYPES: CheckType[] = [
     duration_s: 60,
     probe: true,
   },
+  websiteType(true),
 ];
 
 /** Which checks a server can run; every check for a site, which can mix systems. */
@@ -731,6 +745,8 @@ function ownTitle(sensor: EffectiveSensor): string {
     }
     case "ping":
       return params.host ? t("checks.title.pingOf", { host: params.host }) : t("checks.title.ping");
+    case "snmp":
+      return t(`devices.snmp.group.${SNMP_GROUPS.find((g) => g === params.what) ?? "system"}`);
     case "systemd":
       return t("checks.title.service", { name: params.units ?? sensor.name });
     case "windows_service":
@@ -743,6 +759,9 @@ function ownTitle(sensor: EffectiveSensor): string {
       return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }
 }
+
+/** The groups of SNMP checks (ADR-0149). */
+export const SNMP_GROUPS = ["system", "interfaces", "host", "ups", "temperature", "printer"] as const;
 
 /** "Warning" or "Critical", for the severity select; the label is read when shown. */
 export const SEVERITIES = (["warning", "critical"] as const).map((value) => ({
