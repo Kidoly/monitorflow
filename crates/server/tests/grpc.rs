@@ -13,8 +13,8 @@ use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
     Command, CommandAcceptance, CommandKindState, DeviceSamples, DiscoveredPort, DiscoveryReport,
-    Envelope, Heartbeat, Hello, LogBatch, LogEntry, ProbeConfigAck, ProbeResults, RelayMirrors,
-    Sample, SampleBatch, SensorConfigAck, ServedMirror,
+    Envelope, Heartbeat, Hello, LogBatch, LogEntry, ProbeConfigAck, ProbeResults, ProbeTestResult,
+    RelayMirrors, Sample, SampleBatch, SensorConfigAck, ServedMirror,
 };
 use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
 use monitorflow_common::via::Via;
@@ -1262,7 +1262,7 @@ db_tests! {
         let mut peer = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
         let first = config(peer.next().await.unwrap());
         let kinds: Vec<_> = first.sensors.iter().map(|s| s.kind.as_str()).collect();
-        assert_eq!(kinds, ["cpu", "disk", "diskio", "memory"]);
+        assert_eq!(kinds, ["cpu", "disk", "diskio", "memory", "net"]);
         assert_eq!(first.revision, 0);
         assert_eq!(h.registry.get(PeerRole::Agent, "agent-1").unwrap().sensor_revision_sent, Some(0));
 
@@ -1706,5 +1706,57 @@ db_tests! {
         assert!(series[0].contains(&("probe".into(), "relay-1".into())));
         assert!(series[0].contains(&("peer".into(), "nas".into())));
         assert_eq!(probes.stats().unknown_device, 1, "the printer is the central server's");
+    }
+
+    /// A one-off test goes to the relay and its answer comes back to who
+    /// asked; an answer from another relay does not (ADR-0149).
+    #[sqlx::test]
+    async fn relays_answer_one_off_tests(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        for relay in ["relay-1", "relay-2"] {
+            sqlx::query("INSERT INTO relays (peer_id, site_id, name) VALUES ($1, $2, $1)")
+                .bind(relay)
+                .bind(paris)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let probes = Probes::new(ProbeStore::new(pool.clone()), Ingest::default(), None);
+        let service_probes = probes.clone();
+        let h = Harness::start_service(|registry| {
+            AgentStreamService::new(registry, Arc::new(DbRelayPolicy::new(pool.clone())), settings())
+                .with_inventory(Arc::new(DbInventory::new(pool.clone())))
+                .with_probes(service_probes)
+        })
+        .await;
+        let mut relay = h.open(&h.ca.relay("relay-1", 10), hello("relay-1")).await.unwrap();
+        let other = h.open(&h.ca.relay("relay-2", 10), hello("relay-2")).await.unwrap();
+        let mut config = monitorflow_sensors::SensorConfig::new("snmp", Duration::from_secs(60));
+        config.timeout = Some(Duration::from_secs(2));
+        let check = monitorflow_probe::Check { device: "detect".into(), kind: "snmp".into(), config };
+        let (asking, registry) = (probes.clone(), h.registry.clone());
+        let answer = tokio::spawn(async move { asking.test(&registry, "relay-1", check).await });
+        let test = loop {
+            let envelope = relay.next().await.unwrap().unwrap();
+            if let Some(Payload::ProbeTest(test)) = envelope.payload {
+                break test;
+            }
+        };
+        assert_eq!(test.check.unwrap().spec.unwrap().kind, "snmp");
+        let result = |error: &str| ProbeTestResult {
+            id: test.id.clone(),
+            samples: vec![Sample { sensor: "snmp_answers".into(), value: 1.0, ..Default::default() }],
+            error: error.into(),
+        };
+        other.send(2, Payload::ProbeTestResult(result("forged"))).await;
+        relay.send(2, Payload::ProbeTestResult(result(""))).await;
+        let samples = answer.await.unwrap().unwrap();
+        assert_eq!(samples[0].sensor, "snmp_answers");
+        // A relay this instance does not hold is said so at once.
+        let mut config = monitorflow_sensors::SensorConfig::new("snmp", Duration::from_secs(60));
+        config.timeout = Some(Duration::from_secs(1));
+        let check = monitorflow_probe::Check { device: "detect".into(), kind: "snmp".into(), config };
+        let error = probes.test(&h.registry, "relay-3", check).await.unwrap_err();
+        assert_eq!(error, monitorflow_server::probes::TestError::NotConnected);
     }
 }

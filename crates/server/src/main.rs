@@ -565,6 +565,7 @@ async fn main() -> anyhow::Result<()> {
         .with_registry(registry.clone())
         .with_relay_commands(relay_commands.clone());
     let api_state = ApiState::new(pool.clone(), registry, api_settings)
+        .with_probes(probes.clone())
         .with_metrics(
             VmQuery::with_auth(&config.victoriametrics_url, QUERY_TIMEOUT, storage.as_ref())
                 .context("VictoriaMetrics query client")?,

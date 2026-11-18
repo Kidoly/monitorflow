@@ -155,6 +155,23 @@ pub fn validate_with_host(
         if !plugin.is_some_and(monitorflow_plugin::manifest::valid_name) {
             return Err(format!("param `{PLUGIN_PARAM}` must name a check plugin"));
         }
+    } else if request.kind == monitorflow_snmp::KIND {
+        // Credentials belong to the device, not to a row (ADR-0149).
+        if let Some(key) = config
+            .params
+            .keys()
+            .find(|k| monitorflow_snmp::CREDENTIAL_PARAMS.contains(&k.as_str()))
+        {
+            return Err(format!(
+                "param `{key}` is not for a check: set a device's SNMP credentials with PUT /api/devices/{{id}}/snmp"
+            ));
+        }
+        let mut checked = config.params.clone();
+        checked
+            .entry("host".into())
+            .or_insert_with(|| address.unwrap_or("192.0.2.1").to_owned());
+        checked.insert("community".into(), "checked".into());
+        monitorflow_snmp::parse(&checked)?;
     } else {
         let mut checked = config.params.clone();
         if let Some(address) = address {
@@ -602,7 +619,9 @@ pub(super) async fn run_by(
 /// the probe.
 pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> {
     let udp = valid.params.get("protocol").and_then(Value::as_str) == Some("udp");
-    let probe_only = registry::PROBE_KINDS.contains(&valid.kind.as_str()) || udp;
+    let probe_only = registry::PROBE_KINDS.contains(&valid.kind.as_str())
+        || valid.kind == monitorflow_snmp::KIND
+        || udp;
     if by.probe.is_none() {
         if probe_only {
             return Err(ApiError::Invalid(format!(
@@ -617,6 +636,11 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
             "the central server and relays run {} checks, not `{}`",
             PROBE_KINDS_TEXT, valid.kind
         )));
+    }
+    if valid.kind == monitorflow_snmp::KIND && by.address.is_none() {
+        return Err(ApiError::Invalid(
+            "SNMP checks are for devices: add the address as a device (POST /api/devices)".into(),
+        ));
     }
     if by.address.is_none() && valid.params.get("host").is_none() {
         return Err(ApiError::Invalid(
@@ -634,7 +658,7 @@ pub fn probe_kind(kind: &str) -> bool {
     monitorflow_probe::PROBE_RUNS.contains(&kind)
 }
 
-const PROBE_KINDS_TEXT: &str = "`ping` and `port`";
+const PROBE_KINDS_TEXT: &str = "`ping`, `port` and `snmp`";
 
 async fn create(
     state: &ApiState,
@@ -1190,6 +1214,7 @@ mod tests {
                 ("cpu", "", Origin::Server, Some(entries[1].id), 5_000),
                 ("disk", "/data", Origin::Server, Some(entries[4].id), 60_000),
                 ("memory", "", Origin::Site, Some(entries[2].id), 10_000),
+                ("net", "", Origin::Default, None, 60_000),
             ]
         );
         assert_eq!(sensors[0].params["per_core"], "false");
@@ -1197,6 +1222,6 @@ mod tests {
         assert!(defaults.iter().all(|s| s.origin == Origin::Default
             && s.entry_id.is_none()
             && s.interval_ms == 300_000));
-        assert_eq!(defaults.len(), 4);
+        assert_eq!(defaults.len(), 5);
     }
 }
