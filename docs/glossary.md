@@ -107,6 +107,11 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Rollback | Retour arrière | Going back to the snapshot taken before an AI change. "Snapshot first" when MonitorFlow takes one, "Rollback limited" when it cannot, with the reason: "the container's storage cannot take snapshots" | revert, restore point | `snapshots.available`, `reason` |
 | VM, container | VM, conteneur | The Proxmox guest a server runs in: a virtual machine, or an LXC container. "VM 101 on pve1", "container 104 on pve2". The ID is Proxmox's | guest, CT, qemu, lxc (on screen) | `server_proxmox_vms`, `kind`, `vmid` |
 | Matched automatically | Associé automatiquement | A server MonitorFlow tied to its Proxmox VM or container by itself: "Matched automatically to VM 104 on pve2 by its hardware ID". "Not this one" undoes it for good; "Change" picks another | discovered, auto-mapped | `matched_by` |
+| Virtual machine | Machine virtuelle | A machine a hypervisor runs, listed from a vCenter, an ESXi host or a Hyper-V host whether or not it has the agent. "Virtual machine web-01 on host esx-02" | guest, VM object, instance (on screen) | `virtual_objects`, `kind = 'vm'` |
+| Host | Hôte | A hypervisor machine of a vCenter, or the Hyper-V server itself, that runs virtual machines | hypervisor node, ESX box | `kind = 'host'` |
+| Datastore | Banque de données | Where a vCenter keeps virtual machines' disks; "Datastore full" when under 10% is free | volume, LUN (on screen) | `kind = 'datastore'` |
+| Snapshot (virtual machine) | Instantané | A saved state of a virtual machine kept by its hypervisor; Hyper-V calls them checkpoints, and the page says "Snapshots (checkpoints)" for Hyper-V. "Snapshot older than 7 days" | checkpoint alone | `vm_snapshots`, `vm_snapshot_age_seconds` |
+| Install the agent | Installer l'agent | The button on a virtual machine without the agent: adds a server waiting for its agent and shows the command | deploy, onboard | `install-agent` |
 
 Keep the technical word when it is the thing being asked for, such as a certificate, a mirror or a sudo rule, and put the rest under a "Details" disclosure. Certificate warnings speak of renewal, and appear only when it is late (under 2 days left) or failed.
 
