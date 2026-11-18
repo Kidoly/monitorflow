@@ -114,6 +114,9 @@ impl Area {
                 "incidents"
                 | "silences"
                 | "maintenance-windows"
+                | "business-services"
+                | "availability"
+                | "report-schedules"
                 | "on-call"
                 | "follow-up"
                 | "sensor_configs"
@@ -777,6 +780,9 @@ mod tests {
             (&post, "/api/incidents/acknowledge", Some(Area::Alerts)),
             (&post, "/api/silences", Some(Area::Alerts)),
             (&get, "/api/maintenance-windows", Some(Area::Alerts)),
+            (&post, "/api/business-services", Some(Area::Alerts)),
+            (&get, "/api/availability", Some(Area::Alerts)),
+            (&post, "/api/report-schedules/{id}/send", Some(Area::Alerts)),
             (&post, "/api/sites/{id}/thresholds", Some(Area::Alerts)),
             (&get, "/api/servers/{id}/sensor_configs", Some(Area::Alerts)),
             (&get, "/api/sites/{id}/sensors", Some(Area::Alerts)),

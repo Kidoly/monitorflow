@@ -93,6 +93,10 @@
 //! | POST | `/api/maintenance-windows` | modify the site | body [`maintenance_windows::WindowRequest`]; 201 [`maintenance_windows::WindowView`]; audited |
 //! | PUT | `/api/maintenance-windows/{id}` | modify the sites | the same body; [`maintenance_windows::WindowView`]; audited |
 //! | DELETE | `/api/maintenance-windows/{id}` | modify the site | 204; the running window ends; audited |
+//! | GET | `/api/business-services` | customer-wide grant | `customer_id`; [`business_services::ServiceList`] (ADR-0155) |
+//! | POST | `/api/business-services` | modify the whole customer | body [`business_services::ServiceRequest`]; 201 [`business_services::ServiceView`]; 409 for a name in use; audited |
+//! | PUT | `/api/business-services/{id}` | modify the whole customer | the same body; [`business_services::ServiceView`]; audited |
+//! | DELETE | `/api/business-services/{id}` | modify the whole customer | 204; audited |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
@@ -683,6 +687,7 @@ pub(crate) mod audit;
 pub mod auth;
 pub mod auto_update;
 pub mod backups;
+pub mod business_services;
 pub mod campaigns;
 pub mod certificate_authority;
 pub mod check_interval;
@@ -724,6 +729,7 @@ mod openapi_imports;
 mod openapi_maintenance;
 mod openapi_plugins;
 pub mod openapi_remediation;
+mod openapi_reports;
 mod openapi_settings;
 mod openapi_sso;
 mod openapi_system;
@@ -1106,6 +1112,14 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/maintenance-windows/{id}",
             put(maintenance_windows::update).delete(maintenance_windows::remove),
+        )
+        .route(
+            "/api/business-services",
+            get(business_services::list).post(business_services::create),
+        )
+        .route(
+            "/api/business-services/{id}",
+            put(business_services::update).delete(business_services::remove),
         )
         .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
         .route("/api/sites/{id}/check-interval", put(check_interval::site))

@@ -165,6 +165,8 @@ struct Tenant {
     customer_silence: Uuid,
     /// A weekly maintenance window of the site (ADR-0151).
     window: Uuid,
+    /// A business service of the server (ADR-0155).
+    business_service: Uuid,
     /// A viewer of the customer with a contact, on its on-call schedule
     /// (ADR-0081), which has an override.
     member: Uuid,
@@ -352,6 +354,18 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let business_service = one(
+        "WITH b AS (INSERT INTO business_services (customer_id, name) VALUES ($1, 'Email')
+                    RETURNING id),
+              m AS (INSERT INTO business_service_members (service_id, server_id)
+                    SELECT id, $2 FROM b)
+         SELECT id FROM b",
+    )
+    .bind(customer)
+    .bind(server)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     let member = one(
         "WITH u AS (INSERT INTO users (username) VALUES ($1) RETURNING id),
               r AS (INSERT INTO user_roles (user_id, role, customer_id)
@@ -428,6 +442,7 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         silence,
         customer_silence,
         window,
+        business_service,
         remediation,
         pending,
         campaign,
@@ -2017,6 +2032,48 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         ("DELETE", "/api/maintenance-windows/{id}") => {
             let uri = path.replace("{id}", &b.window.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        // Business services (ADR-0155): B's are not listed, and A cannot
+        // make one of B's customer or with B's server.
+        ("GET", "/api/business-services") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.business_service), "{body}");
+            assert!(!Ctx::mentions(&body, b.business_service), "{body}");
+            let uri = format!("{path}?customer_id={}", b.customer);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("POST", "/api/business-services") => {
+            let service = |customer: Uuid, server: Uuid| json!({"customer_id": customer, "name": "Web", "members": [{"server_id": server}]});
+            let body = Some(service(b.customer, b.server));
+            assert_eq!(ctx.status(method, path, body).await, not_found);
+            let body = Some(service(a.customer, b.server));
+            assert_eq!(
+                ctx.status(method, path, body).await,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        ("PUT", "/api/business-services/{id}") => {
+            let body = json!({"name": "Web", "members": [{"server_id": a.server}]});
+            let uri = path.replace("{id}", &b.business_service.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, Some(body.clone())).await,
+                not_found
+            );
+            // A's service cannot take B's server, nor move to B.
+            let uri = path.replace("{id}", &a.business_service.to_string());
+            let mut taking = body.clone();
+            taking["members"] = json!([{"server_id": b.server}]);
+            assert_eq!(
+                ctx.status(method, &uri, Some(taking)).await,
+                StatusCode::BAD_REQUEST
+            );
+            let mut moved = body;
+            moved["customer_id"] = json!(b.customer);
+            assert_eq!(ctx.status(method, &uri, Some(moved)).await, not_found);
+        }
+        ("DELETE", "/api/business-services/{id}") => {
+            let uri = path.replace("{id}", &b.business_service.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
         ("POST", "/api/silences/{id}/end") => {

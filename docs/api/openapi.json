@@ -1255,6 +1255,636 @@
         }
       }
     },
+    "/api/v1/business-services": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "List business services",
+        "description": "The business services of the customers the key is granted as a whole, by name. A key granted only some sites sees none: services belong to a customer.\n\n**Who**: any role on the whole customer. **Area**: `alerts`. Unknown parameters are 400.",
+        "operationId": "list_services",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only the services of this customer.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The services",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessServiceList"
+                },
+                "example": {
+                  "services": [
+                    {
+                      "at_least": null,
+                      "can_change": true,
+                      "created_at": "2026-11-18T09:30:00Z",
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "customer_name": "default",
+                      "description": "Mail for the whole office",
+                      "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                      "members": [
+                        {
+                          "check": null,
+                          "device": false,
+                          "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                          "server_name": "mail-1"
+                        },
+                        {
+                          "check": {
+                            "instance": "",
+                            "name": "service_postfix"
+                          },
+                          "device": false,
+                          "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                          "server_name": "mail-1"
+                        }
+                      ],
+                      "name": "Email",
+                      "rule": "all",
+                      "target": 99.9,
+                      "updated_at": "2026-11-18T09:30:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer of the filter does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Create a business service",
+        "description": "A business service is a named group with one availability, like \"Email\" or \"Website\": servers, devices, or chosen checks of them (`{name, instance}`, as silences name them), all of one customer. Its `rule` is `all` (down while any member is down) or `at_least` (down while fewer than `at_least` members are up, for members that back each other up). A member under planned maintenance counts as up; the time the service would be down only because of such members is its planned maintenance. `target` is an SLA target in percent, which reports say was met or missed, with the error budget left.\n\n`customer_id` may be left out when there is only one customer. Members are 1 to 200 servers or devices of that customer, not removed, each whole or one of its checks.\n\n**Who**: operator or above on the whole customer. **Area**: `alerts`. Audited as `business_service.create`. **Not safe to repeat**: send `Idempotency-Key` to retry.",
+        "operationId": "create_service",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessServiceRequest"
+              },
+              "example": {
+                "description": "Mail for the whole office",
+                "members": [
+                  {
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  },
+                  {
+                    "check": {
+                      "instance": "",
+                      "name": "service_postfix"
+                    },
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  }
+                ],
+                "name": "Email",
+                "rule": "all",
+                "target": 99.9
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new service",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessService"
+                },
+                "example": {
+                  "at_least": null,
+                  "can_change": true,
+                  "created_at": "2026-11-18T09:30:00Z",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "default",
+                  "description": "Mail for the whole office",
+                  "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                  "members": [
+                    {
+                      "check": null,
+                      "device": false,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    },
+                    {
+                      "check": {
+                        "instance": "",
+                        "name": "service_postfix"
+                      },
+                      "device": false,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    }
+                  ],
+                  "name": "Email",
+                  "rule": "all",
+                  "target": 99.9,
+                  "updated_at": "2026-11-18T09:30:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A name missing or over 80 characters, a description over 500, no member or over 200, a member twice, a server of another customer, an unknown check, a rule other than `all` or `at_least`, `at_least` missing, with `all`, or over the number of members, a target outside 50 to 100 or with more than three decimals, or no customer named when there are several: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer, or has only some of its sites: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The customer has a service of that name: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/business-services/{id}": {
+      "put": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Change a business service",
+        "description": "Replaces every field, as when creating one; without `customer_id`, it stays with its customer. Reports of past periods use the new members and rule.\n\n**Who**: operator or above on the whole customer. **Area**: `alerts`. Audited as `business_service.update`. Safe to repeat.",
+        "operationId": "update_service",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The service",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessServiceRequest"
+              },
+              "example": {
+                "description": "Mail for the whole office",
+                "members": [
+                  {
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  },
+                  {
+                    "check": {
+                      "instance": "",
+                      "name": "service_postfix"
+                    },
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  }
+                ],
+                "name": "Email",
+                "rule": "all",
+                "target": 99.9
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessService"
+                },
+                "example": {
+                  "at_least": null,
+                  "can_change": true,
+                  "created_at": "2026-11-18T09:30:00Z",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "default",
+                  "description": "Mail for the whole office",
+                  "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                  "members": [
+                    {
+                      "check": null,
+                      "device": false,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    },
+                    {
+                      "check": {
+                        "instance": "",
+                        "name": "service_postfix"
+                      },
+                      "device": false,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    }
+                  ],
+                  "name": "Email",
+                  "rule": "all",
+                  "target": 99.9,
+                  "updated_at": "2026-11-18T09:30:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As when creating one: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such service, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The customer has another service of that name: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Remove a business service",
+        "description": "Removes the service; reports no longer show it, for past periods too. Its members are not touched.\n\n**Who**: operator or above on the whole customer. **Area**: `alerts`. Audited as `business_service.remove`.",
+        "operationId": "remove_service",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The service",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such service, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/campaigns": {
       "get": {
         "tags": [
@@ -34985,6 +35615,205 @@
           }
         ],
         "description": "Body of `GET /api/backups`."
+      },
+      "BusinessService": {
+        "type": "object",
+        "description": "One business service.",
+        "required": [
+          "id",
+          "customer_id",
+          "customer_name",
+          "name",
+          "description",
+          "rule",
+          "members",
+          "created_at",
+          "updated_at",
+          "can_change"
+        ],
+        "properties": {
+          "at_least": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "can_change": {
+            "type": "boolean",
+            "description": "Whether this user may change or remove it."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessServiceMember"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BusinessServiceList": {
+        "type": "object",
+        "description": "Body of `GET /api/business-services`.",
+        "required": [
+          "services"
+        ],
+        "properties": {
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessService"
+            },
+            "description": "By name."
+          }
+        }
+      },
+      "BusinessServiceMember": {
+        "type": "object",
+        "description": "A member, by name.",
+        "required": [
+          "server_id",
+          "server_name",
+          "device"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SilencedCheck",
+                "description": "The check; `null` for the whole server or device."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device": {
+            "type": "boolean"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "server_name": {
+            "type": "string"
+          }
+        }
+      },
+      "BusinessServiceMemberRequest": {
+        "type": "object",
+        "description": "A member in a request: a whole server or device, or one check of it.",
+        "required": [
+          "server_id"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SilencedCheck",
+                "description": "Only this check of it; absent or `null` for the whole server."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BusinessServiceRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/business-services` and `PUT\n/api/business-services/{id}`; a change replaces every field.",
+        "required": [
+          "name",
+          "members"
+        ],
+        "properties": {
+          "at_least": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "For `at_least`: 1 to the number of members.",
+            "minimum": 0
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it belongs to; may be left out when there is only one."
+          },
+          "description": {
+            "type": "string",
+            "description": "At most 500 characters."
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessServiceMemberRequest"
+            },
+            "description": "1 to 200 members."
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 80 characters, unique per customer, like `Email`."
+          },
+          "rule": {
+            "type": "string",
+            "description": "`all` (the default): down while any member is down; `at_least`: down\nwhile fewer than `at_least` members are up."
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The SLA target, a percentage from 50 to 100 with up to three\ndecimals, like 99.9; absent or `null` for none."
+          }
+        },
+        "additionalProperties": false
       },
       "CaPeer": {
         "type": "object",
