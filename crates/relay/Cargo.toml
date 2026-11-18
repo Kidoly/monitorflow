@@ -19,6 +19,8 @@ monitorflow-common = { workspace = true, features = ["mirror"] }
 monitorflow-agent = { path = "../agent" }
 # Network checks run as a probe (ADR-0148).
 monitorflow-probe.workspace = true
+# Website checks among the probe kinds (ADR-0150).
+monitorflow-webcheck.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true

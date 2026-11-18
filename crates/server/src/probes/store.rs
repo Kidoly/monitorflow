@@ -72,7 +72,8 @@ fn group(lines: Vec<Line>) -> HashMap<String, ProbeSet> {
             _ => continue,
         };
         let mut params: BTreeMap<String, String> = params(raw);
-        if let Some(address) = address {
+        // A website check names its URL itself (ADR-0150).
+        if let Some(address) = address.filter(|_| kind != monitorflow_webcheck::KIND) {
             params.entry("host".into()).or_insert(address);
         }
         let mut config = SensorConfig::new(name, Duration::from_millis(non_negative(interval)));
@@ -145,11 +146,30 @@ mod tests {
                 serde_json::json!({"host": "198.51.100.7"}),
             ),
             line("odd", None, "ping", "relay", None, serde_json::json!({})),
+            {
+                let mut web = line(
+                    "nas",
+                    Some("192.0.2.5"),
+                    "http",
+                    "central",
+                    None,
+                    serde_json::json!({"url": "https://nas.test/"}),
+                );
+                web.3 = "http".into();
+                web
+            },
         ]);
         assert_eq!(sets.len(), 2);
         let central = &sets[CENTRAL];
-        assert_eq!(central.checks.len(), 1);
+        assert_eq!(central.checks.len(), 2);
         assert_eq!(central.checks[0].config.params["host"], "192.0.2.5");
+        let web = &central.checks[1];
+        assert_eq!(web.kind, "http");
+        assert!(
+            !web.config.params.contains_key("host"),
+            "{:?}",
+            web.config.params
+        );
         assert_eq!(central.sites["nas"], "paris");
         let relay = &sets["relay-1"];
         assert_eq!(relay.checks.len(), 2);

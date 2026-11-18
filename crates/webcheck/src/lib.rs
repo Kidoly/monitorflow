@@ -270,3 +270,40 @@ mod tests {
         assert_eq!(label("a\nb"), "ab");
     }
 }
+
+/// The kinds a probe runs (ADR-0148) plus website checks: what the
+/// central server and relays build their checks with.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ProbeKinds;
+
+impl monitorflow_probe::ProbeFactory for ProbeKinds {
+    fn build(
+        &self,
+        kind: &str,
+        params: &BTreeMap<String, String>,
+    ) -> Result<Arc<dyn Sensor>, String> {
+        if kind == KIND {
+            // A probe has no port targets: those are an agent's own limit.
+            build(params, None).map_err(|e| e.to_string())
+        } else {
+            monitorflow_probe::Builtin.build(kind, params)
+        }
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+    use monitorflow_probe::ProbeFactory;
+
+    #[test]
+    fn probes_build_website_checks_and_the_network_kinds() {
+        let url = BTreeMap::from([("url".to_owned(), "https://example.com/".to_owned())]);
+        assert!(ProbeKinds.build("http", &url).is_ok());
+        let error = ProbeKinds.build("http", &BTreeMap::new()).err().unwrap();
+        assert!(error.contains("`url` is required"), "{error}");
+        let host = BTreeMap::from([("host".to_owned(), "192.0.2.1".to_owned())]);
+        assert!(ProbeKinds.build("ping", &host).is_ok());
+        assert!(ProbeKinds.build("cpu", &BTreeMap::new()).is_err());
+    }
+}
