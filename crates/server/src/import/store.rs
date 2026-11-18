@@ -477,6 +477,7 @@ async fn create_one(
             kind,
             name,
             interval_ms,
+            timeout_ms,
             params,
         } => {
             let id = match server(peer_id, servers) {
@@ -486,25 +487,28 @@ async fn create_one(
                     .map_err(db_error)?
                     .ok_or("its server is not there")?,
             };
+            // Never a secret: an imported website check has no password
+            // (the person sets it after the import).
             let valid = crate::api::sensors::validate_entry(crate::api::sensors::EntryRequest {
                 kind: kind.clone(),
                 name: Some(name.clone()),
                 instance: String::new(),
                 interval_ms: *interval_ms,
-                timeout_ms: None,
+                timeout_ms: *timeout_ms,
                 params: params.clone(),
                 enabled: true,
                 probe: None,
             })?;
             sqlx::query_scalar(
-                "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, params)
-                 VALUES ($1, $2, $3, '', $4, $5)
+                "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, timeout_ms, params)
+                 VALUES ($1, $2, $3, '', $4, $5, $6)
                  ON CONFLICT ON CONSTRAINT sensor_configs_key DO NOTHING RETURNING id",
             )
             .bind(id)
             .bind(&valid.kind)
             .bind(&valid.name)
             .bind(valid.interval_ms)
+            .bind(valid.timeout_ms)
             .bind(&valid.params)
             .fetch_optional(&mut **tx)
             .await

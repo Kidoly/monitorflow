@@ -1359,7 +1359,7 @@ export interface ImportNote {
 /** What an import item creates. */
 export type ImportCreate =
   | { object: "server"; peer_id: string; hostname: string; os_family: string; addresses: string[] }
-  | { object: "check"; server: string; kind: string; name: string; interval_ms: number; params: Record<string, string> }
+  | { object: "check"; server: string; kind: string; name: string; interval_ms: number; timeout_ms?: number; params: Record<string, string> }
   | {
       object: "threshold";
       server: string;

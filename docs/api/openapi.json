@@ -7980,19 +7980,21 @@
                     {
                       "create": {
                         "interval_ms": 60000,
-                        "kind": "port",
-                        "name": "port_shop_example_com_443",
+                        "kind": "http",
+                        "name": "http_shop_example_com",
                         "object": "check",
                         "params": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "contains": "Welcome",
+                          "status": "200",
+                          "url": "https://shop.example.com/"
                         },
-                        "server": "web-01"
+                        "server": "web-01",
+                        "timeout_ms": 15000
                       },
                       "hosts": [
                         "web-01"
                       ],
-                      "id": "check:web-01:port_443",
+                      "id": "check:web-01:http_shop_example_com",
                       "kind": "check",
                       "list": "approximated",
                       "needs": [
@@ -8000,13 +8002,13 @@
                       ],
                       "note": {
                         "args": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "username": "monitor"
                         },
-                        "code": "web_as_port",
-                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                        "code": "web_password",
+                        "text": "Passwords are not imported: set the password of monitor in the check after the import."
                       },
                       "origin": {
+                        "detail": "https://shop.example.com/",
                         "kind": "web_scenario",
                         "name": "Shop"
                       },
@@ -8362,19 +8364,21 @@
                     {
                       "create": {
                         "interval_ms": 60000,
-                        "kind": "port",
-                        "name": "port_shop_example_com_443",
+                        "kind": "http",
+                        "name": "http_shop_example_com",
                         "object": "check",
                         "params": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "contains": "Welcome",
+                          "status": "200",
+                          "url": "https://shop.example.com/"
                         },
-                        "server": "web-01"
+                        "server": "web-01",
+                        "timeout_ms": 15000
                       },
                       "hosts": [
                         "web-01"
                       ],
-                      "id": "check:web-01:port_443",
+                      "id": "check:web-01:http_shop_example_com",
                       "kind": "check",
                       "list": "approximated",
                       "needs": [
@@ -8382,13 +8386,13 @@
                       ],
                       "note": {
                         "args": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "username": "monitor"
                         },
-                        "code": "web_as_port",
-                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                        "code": "web_password",
+                        "text": "Passwords are not imported: set the password of monitor in the check after the import."
                       },
                       "origin": {
+                        "detail": "https://shop.example.com/",
                         "kind": "web_scenario",
                         "name": "Shop"
                       },
@@ -8631,19 +8635,21 @@
                     {
                       "create": {
                         "interval_ms": 60000,
-                        "kind": "port",
-                        "name": "port_shop_example_com_443",
+                        "kind": "http",
+                        "name": "http_shop_example_com",
                         "object": "check",
                         "params": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "contains": "Welcome",
+                          "status": "200",
+                          "url": "https://shop.example.com/"
                         },
-                        "server": "web-01"
+                        "server": "web-01",
+                        "timeout_ms": 15000
                       },
                       "hosts": [
                         "web-01"
                       ],
-                      "id": "check:web-01:port_443",
+                      "id": "check:web-01:http_shop_example_com",
                       "kind": "check",
                       "list": "approximated",
                       "needs": [
@@ -8651,13 +8657,13 @@
                       ],
                       "note": {
                         "args": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "username": "monitor"
                         },
-                        "code": "web_as_port",
-                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                        "code": "web_password",
+                        "text": "Passwords are not imported: set the password of monitor in the check after the import."
                       },
                       "origin": {
+                        "detail": "https://shop.example.com/",
                         "kind": "web_scenario",
                         "name": "Shop"
                       },
@@ -8905,19 +8911,21 @@
                     {
                       "create": {
                         "interval_ms": 60000,
-                        "kind": "port",
-                        "name": "port_shop_example_com_443",
+                        "kind": "http",
+                        "name": "http_shop_example_com",
                         "object": "check",
                         "params": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "contains": "Welcome",
+                          "status": "200",
+                          "url": "https://shop.example.com/"
                         },
-                        "server": "web-01"
+                        "server": "web-01",
+                        "timeout_ms": 15000
                       },
                       "hosts": [
                         "web-01"
                       ],
-                      "id": "check:web-01:port_443",
+                      "id": "check:web-01:http_shop_example_com",
                       "kind": "check",
                       "list": "approximated",
                       "needs": [
@@ -8925,13 +8933,13 @@
                       ],
                       "note": {
                         "args": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "username": "monitor"
                         },
-                        "code": "web_as_port",
-                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                        "code": "web_password",
+                        "text": "Passwords are not imported: set the password of monitor in the check after the import."
                       },
                       "origin": {
+                        "detail": "https://shop.example.com/",
                         "kind": "web_scenario",
                         "name": "Shop"
                       },
@@ -37134,6 +37142,15 @@
               "server": {
                 "type": "string",
                 "description": "The server's ID."
+              },
+              "timeout_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "How long one run may take, when the source says; at most\n`interval_ms`.",
+                "minimum": 0
               }
             }
           },

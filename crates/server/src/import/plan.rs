@@ -100,6 +100,8 @@ pub fn plan(
         checks: HashMap::new(),
         alerts: HashMap::new(),
         thresholds: BTreeMap::new(),
+        websites: HashMap::new(),
+        web_rules: Vec::new(),
     };
     planner.hosts();
     for check in &inventory.checks {
@@ -129,6 +131,9 @@ struct Server {
 /// Thresholds merged by (server, metric, instance).
 type ThresholdKey = (String, String, Option<String>);
 
+/// A metric every server has, with its instance.
+type Fixed = Option<(String, Option<String>)>;
+
 struct Merged {
     server: Server,
     comparison: &'static str,
@@ -138,6 +143,20 @@ struct Merged {
     hysteresis: f64,
     origins: Vec<OriginView>,
     note: Option<NoteView>,
+    /// The item of the website check whose measure it compares.
+    check: Option<String>,
+}
+
+/// An alert the web interface adds with a website check, planned once
+/// the source's own thresholds are known: one of the source on the same
+/// measure replaces it.
+struct WebRule {
+    server: Server,
+    metric: String,
+    rule: website::Rule,
+    origin: OriginView,
+    /// The check's item.
+    check: String,
 }
 
 struct Planner<'a> {
@@ -158,6 +177,9 @@ struct Planner<'a> {
     /// Alert items planned, by metric of a server, to their index.
     alerts: HashMap<String, usize>,
     thresholds: BTreeMap<ThresholdKey, Merged>,
+    /// Website checks by (lowercase peer ID, URL), to their name and item.
+    websites: HashMap<(String, String), (String, String)>,
+    web_rules: Vec<WebRule>,
 }
 
 fn list_of(fidelity: &Fidelity) -> (List, Option<NoteView>) {
@@ -394,23 +416,18 @@ impl Planner<'_> {
                     ("eventlog", params, ("eventlog".into(), channel.clone()))
                 }
                 Watch::Web(site) => {
-                    let url = &site.url;
-                    let host = monitorflow_import::text::host_of(url);
-                    let Some(port) = monitorflow_import::text::port_of(url) else {
-                        self.not_movable(
-                            "check",
-                            origin,
-                            vec![server.name.clone()],
-                            note("no_equivalent", args! {}),
-                        );
-                        return;
-                    };
-                    let mut params = Map::new();
-                    params.insert("port".into(), json!(port.to_string()));
-                    params.insert("host".into(), json!(host));
-                    list = List::Approximated;
-                    why = note("web_as_port", args! {"port" => port, "host" => host});
-                    ("port", params, ("port".into(), format!("{host}_{port}")))
+                    let (params, left) = website::params(site);
+                    // What the person must do (a password) comes first;
+                    // a header left out only when nothing else differs.
+                    let password = left.as_ref().is_some_and(|n| {
+                        n.code.starts_with("web_password") || n.code == "web_token"
+                    });
+                    if left.is_some() && (password || list == List::Exact) {
+                        list = List::Approximated;
+                        why = left;
+                    }
+                    let label = website::label(site.url.trim());
+                    ("http", params, ("http".into(), label))
                 }
             };
         if !server.may_change {
@@ -433,6 +450,22 @@ impl Planner<'_> {
                 clamped
             }
         };
+        let website = match &check.watch {
+            Watch::Web(site) => Some(site),
+            _ => None,
+        };
+        // The time a run may take, within its interval.
+        let timeout_ms = website
+            .and_then(|site| site.timeout_s)
+            .map(|s| (u64::from(s) * 1000).min(interval_ms));
+        // A website check comes with its alert, as the web interface adds
+        // it, with the source's severity and wait when it has some.
+        let alert = check.alert.clone().or_else(|| {
+            website.map(|_| Alert {
+                severity: Severity::Critical,
+                for_s: website::UP_FOR_S,
+            })
+        });
         let lower = server.peer_id.to_ascii_lowercase();
         // The same check twice, from two items or a template and the host,
         // is one check: the first one, with an alert if either has one.
@@ -442,7 +475,7 @@ impl Planner<'_> {
             Value::Object(params.clone()).to_string(),
         );
         if let Some(name) = self.checks.get(&same).cloned() {
-            if let Some(alert) = &check.alert {
+            if let Some(alert) = &alert {
                 self.alert(&server, kind, &name, alert, origin);
             }
             return;
@@ -463,7 +496,7 @@ impl Planner<'_> {
             name: Some(name.clone()),
             instance: String::new(),
             interval_ms,
-            timeout_ms: None,
+            timeout_ms,
             params: params.clone(),
             enabled: true,
             probe: None,
@@ -492,11 +525,27 @@ impl Planner<'_> {
                 kind: kind.into(),
                 name: name.clone(),
                 interval_ms,
+                timeout_ms,
                 params,
             }),
         });
         self.checks.insert(same, name.clone());
-        if let Some(alert) = &check.alert {
+        if let Some(site) = website {
+            let url = site.url.trim().to_owned();
+            for rule in website::rules(&url) {
+                self.web_rules.push(WebRule {
+                    server: server.clone(),
+                    metric: format!("monitorflow_{name}_{}", rule.suffix),
+                    rule,
+                    origin: origin.clone(),
+                    check: id.clone(),
+                });
+            }
+            self.websites
+                .entry((lower, url))
+                .or_insert((name.clone(), id));
+        }
+        if let Some(alert) = &alert {
             self.alert(&server, kind, &name, alert, origin);
         }
     }
@@ -514,7 +563,7 @@ impl Planner<'_> {
         let lower = server.peer_id.to_ascii_lowercase();
         let id = format!("check:{lower}:{name}");
         let (suffix, comparison, value) = match kind {
-            "port" => ("up", "<", 1.0),
+            "port" | "http" => ("up", "<", 1.0),
             "systemd" | "windows_service" => ("active", "<", 1.0),
             _ => ("matches", ">", 0.0),
         };
@@ -614,23 +663,32 @@ impl Planner<'_> {
     fn thresholds(&mut self) {
         for threshold in &self.inventory.thresholds {
             let origin: OriginView = (&threshold.origin).into();
-            let (metric, instance) = match &threshold.measure {
+            // A measure every server has, or one of a website check.
+            let (fixed, site): (Fixed, Option<(&str, &str)>) = match &threshold.measure {
                 Measure::CpuUsage => (
-                    "monitorflow_cpu_usage_ratio".to_owned(),
-                    Some("total".to_owned()),
+                    Some((
+                        "monitorflow_cpu_usage_ratio".to_owned(),
+                        Some("total".to_owned()),
+                    )),
+                    None,
                 ),
-                Measure::CpuLoad { minutes } => (format!("monitorflow_cpu_load{minutes}"), None),
-                Measure::MemoryAvailable => ("monitorflow_memory_available_ratio".to_owned(), None),
-                Measure::DiskUsed { mount } => {
-                    ("monitorflow_disk_used_ratio".to_owned(), mount.clone())
+                Measure::CpuLoad { minutes } => {
+                    (Some((format!("monitorflow_cpu_load{minutes}"), None)), None)
                 }
-                Measure::DiskWait { device } => {
-                    ("monitorflow_diskio_wait_seconds".to_owned(), device.clone())
-                }
-                Measure::WebResponseTime { .. } | Measure::CertificateDays { .. } => {
-                    self.not_movable("threshold", origin, vec![], note("no_equivalent", args! {}));
-                    continue;
-                }
+                Measure::MemoryAvailable => (
+                    Some(("monitorflow_memory_available_ratio".to_owned(), None)),
+                    None,
+                ),
+                Measure::DiskUsed { mount } => (
+                    Some(("monitorflow_disk_used_ratio".to_owned(), mount.clone())),
+                    None,
+                ),
+                Measure::DiskWait { device } => (
+                    Some(("monitorflow_diskio_wait_seconds".to_owned(), device.clone())),
+                    None,
+                ),
+                Measure::WebResponseTime { url } => (None, Some((url, "response_seconds"))),
+                Measure::CertificateDays { url } => (None, Some((url, "cert_days_left"))),
             };
             let comparison = match threshold.direction {
                 Direction::Above => ">",
@@ -661,11 +719,25 @@ impl Planner<'_> {
                     );
                     continue;
                 }
-                let map_key = (
-                    server.peer_id.to_ascii_lowercase(),
-                    metric.clone(),
-                    instance.clone(),
-                );
+                let lower = server.peer_id.to_ascii_lowercase();
+                let (metric, instance, check) = match (&fixed, site) {
+                    (Some((metric, instance)), _) => (metric.clone(), instance.clone(), None),
+                    (None, Some((url, suffix))) => {
+                        let found = self.websites.get(&(lower.clone(), url.trim().to_owned()));
+                        let Some((name, id)) = found.cloned() else {
+                            self.not_movable(
+                                "threshold",
+                                origin.clone(),
+                                vec![server.name.clone()],
+                                note("web_no_check", args! {}),
+                            );
+                            continue;
+                        };
+                        (format!("monitorflow_{name}_{suffix}"), None, Some(id))
+                    }
+                    (None, None) => continue,
+                };
+                let map_key = (lower, metric, instance);
                 match self.thresholds.get_mut(&map_key) {
                     Some(merged) => {
                         merged.warning = merged.warning.or(threshold.warning);
@@ -691,11 +763,28 @@ impl Planner<'_> {
                                 hysteresis,
                                 origins: vec![origin.clone()],
                                 note: why.clone(),
+                                check,
                             },
                         );
                     }
                 }
             }
+        }
+        // The alerts a website check comes with, where the source has no
+        // threshold of its own on the same measure.
+        for web in std::mem::take(&mut self.web_rules) {
+            let key = (web.server.peer_id.to_ascii_lowercase(), web.metric, None);
+            self.thresholds.entry(key).or_insert(Merged {
+                server: web.server,
+                comparison: web.rule.comparison,
+                warning: web.rule.warning,
+                critical: web.rule.critical,
+                duration_s: web.rule.duration_s,
+                hysteresis: 0.0,
+                origins: vec![web.origin],
+                note: None,
+                check: Some(web.check),
+            });
         }
         for ((lower, metric, instance), merged) in std::mem::take(&mut self.thresholds) {
             let mut origin = merged.origins[0].clone();
@@ -761,7 +850,12 @@ impl Planner<'_> {
                 origin,
                 hosts: vec![merged.server.name.clone()],
                 present,
-                needs: Self::needs(&merged.server),
+                needs: merged
+                    .check
+                    .iter()
+                    .cloned()
+                    .chain(Self::needs(&merged.server))
+                    .collect(),
                 create: Some(Create::Threshold {
                     server: merged.server.peer_id.clone(),
                     metric,
@@ -985,6 +1079,8 @@ impl Planner<'_> {
         }
     }
 }
+
+mod website;
 
 #[cfg(test)]
 mod tests;

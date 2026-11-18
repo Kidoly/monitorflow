@@ -89,10 +89,6 @@ pub const NOTES: &[(&str, &str)] = &[
         "MonitorFlow's offline alert tells when the agent stops answering, after {minutes} minutes.",
     ),
     (
-        "web_as_port",
-        "MonitorFlow checks that port {port} of {host} answers; it does not read the page or its status code.",
-    ),
-    (
         "web_password",
         "Passwords are not imported: set the password of {username} in the check after the import.",
     ),

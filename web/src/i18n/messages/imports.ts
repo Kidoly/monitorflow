@@ -10,8 +10,6 @@ export const en = {
     "Every MonitorFlow server measures this already; nothing to add.",
   "note.offline_alert":
     "MonitorFlow's offline alert tells when the agent stops answering, after {minutes} minutes.",
-  "note.web_as_port":
-    "MonitorFlow checks that port {port} of {host} answers; it does not read the page or its status code.",
   "note.web_password":
     "Passwords are not imported: set the password of {username} in the check after the import.",
   "note.web_token":
@@ -271,8 +269,6 @@ export const fr: Translation<typeof en> = {
   "note.builtin": "Chaque serveur MonitorFlow le mesure déjà ; rien à ajouter.",
   "note.offline_alert":
     "L’alerte hors ligne de MonitorFlow prévient quand l’agent ne répond plus, après {minutes} minutes.",
-  "note.web_as_port":
-    "MonitorFlow vérifie que le port {port} de {host} répond ; il ne lit ni la page ni son code de statut.",
   "note.web_password":
     "Les mots de passe ne sont pas importés : saisissez le mot de passe de {username} dans le contrôle après l’import.",
   "note.web_token":

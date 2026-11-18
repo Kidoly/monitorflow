@@ -22,15 +22,15 @@ Retyping hundreds of devices, sensors and limits is the hardest part of switchin
 | Disk free and volume sensors, with limits on a percent free channel | Disk space threshold for that drive or mount point | Approximated: read as space used |
 | Windows service sensor | Windows service check, critical when it stops | Exact |
 | Port sensor | Port check of the device's address | Approximated: checked by the server's own agent, not from a probe |
-| HTTP and HTTP advanced sensors | Port check of the page's host and port | Approximated: the page, its status code and load time are not checked |
-| SSL certificate sensor | Port check of its host and port | Approximated: the certificate and its expiry are not checked |
+| HTTP and HTTP advanced sensors | Website check of the page: its method, the keyword it must or must not hold, custom headers and timeout, with the response time limits as a threshold | Exact; approximated for a POST, a keyword given as a regular expression or Windows authentication. A password is not imported: set it in the check afterwards |
+| SSL certificate sensor | Website check of its host and port, with its days limits on the days left. A page of the same site checked already takes them instead | Approximated: the check also requests the page, whatever it answers |
 | Event log sensors | Event log check of the same log, levels, sources and event IDs | Exact, or approximated when a message filter or a count limit cannot be moved |
 | Maintenance window | Silence of the servers it covers | Exact; at most 30 days |
 | Paused device, group or probe | Silence of 30 days, the longest there is | Approximated |
 | Notification template sending email | Email channel | Approximated: it gets every incident, where PRTG used it only where a trigger named it. Its mail server is not in PRTG's API: add an email channel with yours if the preview says so |
 | Notification template calling a URL | Slack, Teams, Discord or webhook channel, by the URL | Approximated: MonitorFlow sends its own message |
 
-What cannot be moved is listed too, with the reason: SNMP traffic sensors, devices watched only over SNMP (switches, printers), sensors of a kind MonitorFlow has no check for, limits on channels MonitorFlow has no threshold for (response times, certificate days left), sensors paused by a schedule or a dependency, a single paused sensor (MonitorFlow silences whole servers), and SMS or push notifications.
+What cannot be moved is listed too, with the reason: SNMP traffic sensors, devices watched only over SNMP (switches, printers), sensors of a kind MonitorFlow has no check for, limits on channels MonitorFlow has no threshold for, sensors paused by a schedule or a dependency, a single paused sensor (MonitorFlow silences whole servers), and SMS or push notifications.
 
 ## Before you start
 

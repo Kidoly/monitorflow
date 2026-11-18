@@ -34,7 +34,7 @@ describe("imports", () => {
     expect(originKind("trigger")).toBe("Trigger");
     expect(originKind("sensor_group")).toBe("sensor_group");
     setActiveLocale("fr");
-    expect(noteText({ code: "web_as_port", args: { port: "443", host: "shop" }, text: "" })).toContain("le port 443 de shop");
+    expect(noteText({ code: "web_password", args: { username: "monitor" }, text: "" })).toContain("le mot de passe de monitor");
   });
 
   it("titles what items create", () => {
