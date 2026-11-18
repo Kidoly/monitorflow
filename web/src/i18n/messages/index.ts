@@ -39,6 +39,7 @@ import * as silences from "./silences";
 import * as sites from "./sites";
 import * as ui from "./ui";
 import * as users from "./users";
+import * as virtualization from "./virtualization";
 
 // One file per area of the interface, English and French side by side.
 // An area added here is typed into `MessageKey`.
@@ -82,6 +83,7 @@ export const en = {
   sites: sites.en,
   ui: ui.en,
   users: users.en,
+  virtualization: virtualization.en,
 };
 
 export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
@@ -124,4 +126,5 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   sites: sites.fr,
   ui: ui.fr,
   users: users.fr,
+  virtualization: virtualization.fr,
 };

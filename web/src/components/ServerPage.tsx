@@ -46,6 +46,7 @@ import { formatExact } from "@/components/ui/time";
 
 import { AllowCommandsLine } from "./AllowCommands";
 import { DeviceFacts, EditDevice } from "./DeviceDetails";
+import { VirtualizationSection } from "./Virtualization";
 import { serverSiblings } from "./breadcrumbSiblings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
@@ -215,6 +216,12 @@ export function ServerPage({ id }: { id: string | null }) {
           osFamily={server.os_family}
           removedAt={server.revoked_at}
           canAdminister={!device && administersCustomer(me, server.customer_id)}
+        />
+      )}
+      {!server.revoked_at && (
+        <VirtualizationSection
+          server={server}
+          hypervWatched={"sensors" in sensors && sensors.sensors.some((sensor) => sensor.kind === "hyperv")}
         />
       )}
       <Tabs
