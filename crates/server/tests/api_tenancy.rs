@@ -1983,6 +1983,21 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "enabled": false }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        // Devices and probes (ADR-0148): another customer's site and
+        // servers are not found.
+        ("GET", "/api/sites/{id}/probes") => {
+            let uri = path.replace("{id}", &b.site.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+        }
+        ("POST", "/api/devices") => {
+            let body = json!({ "site_id": b.site, "name": "printer", "address": "192.0.2.9" });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("PUT", "/api/devices/{id}") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "address": "192.0.2.9" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
         ("GET", "/api/sites/{id}/sensor_configs")
         | ("GET", "/api/sites/{id}/thresholds")
         | ("GET", "/api/sites/{id}/sensors")
