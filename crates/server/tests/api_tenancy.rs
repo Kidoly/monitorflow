@@ -176,6 +176,8 @@ struct Tenant {
     /// server (ADR-0095).
     site_dashboard: Uuid,
     customer_dashboard: Uuid,
+    /// A network scan of the site with a finished run (ADR-0154).
+    scan: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -418,7 +420,30 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         .fetch_one(pool)
         .await
         .unwrap();
+    let scan = one("INSERT INTO network_scans (site_id, name, targets, probe)
+         VALUES ($1, $2, '{192.0.2.0/30}', 'central') RETURNING id")
+    .bind(site)
+    .bind(format!("Scan {name}"))
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let run = one(
+        "INSERT INTO network_scan_runs (scan_id, trigger, state, finished_at)
+         VALUES ($1, 'person', 'done', now()) RETURNING id",
+    )
+    .bind(scan)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO network_scan_hosts (run_id, address, ping) VALUES ($1, '192.0.2.1', true)",
+    )
+    .bind(run)
+    .execute(pool)
+    .await
+    .unwrap();
     Tenant {
+        scan,
         site_dashboard,
         customer_dashboard,
         member,
@@ -2073,6 +2098,40 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("DELETE", "/api/devices/{id}/snmp") => {
             let uri = path.replace("{id}", &b.server.to_string());
             let body = Some(json!({ "version": "v2c", "community": "c" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
+        // Network scans (ADR-0154): another customer's scans are not
+        // listed nor found, and none can be made in its site.
+        ("GET", "/api/network-scans") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.scan) && !Ctx::mentions(&body, b.site));
+            assert!(Ctx::mentions(&body, a.scan));
+            let uri = format!("{path}?site_id={}", b.site);
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["scans"], json!([]));
+        }
+        ("POST", "/api/network-scans") => {
+            let body = json!({ "site_id": b.site, "name": "x", "targets": ["192.0.2.1"] });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("GET", "/api/network-scans/{id}")
+        | ("PUT", "/api/network-scans/{id}")
+        | ("DELETE", "/api/network-scans/{id}")
+        | ("POST", "/api/network-scans/{id}/run")
+        | ("GET", "/api/network-scans/{id}/runs")
+        | ("GET", "/api/network-scans/{id}/results")
+        | ("POST", "/api/network-scans/{id}/add")
+        | ("POST", "/api/network-scans/{id}/dismiss")
+        | ("POST", "/api/network-scans/{id}/restore") => {
+            let uri = path.replace("{id}", &b.scan.to_string());
+            let body = match path.rsplit('/').next() {
+                Some("add") => Some(json!({ "all": true })),
+                Some("dismiss" | "restore") => Some(json!({ "address": "192.0.2.1" })),
+                _ if method == "PUT" => Some(json!({ "name": "x", "targets": ["192.0.2.1"] })),
+                _ => None,
+            };
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
         ("PUT", "/api/devices/{id}") => {

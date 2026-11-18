@@ -109,7 +109,7 @@ impl Area {
                 _ if first == "sites" => Self::Administration,
                 _ => Self::Servers,
             },
-            ("servers" | "relays" | "metrics" | "devices", _) => Self::Servers,
+            ("servers" | "relays" | "metrics" | "devices" | "network-scans", _) => Self::Servers,
             (
                 "incidents"
                 | "silences"
