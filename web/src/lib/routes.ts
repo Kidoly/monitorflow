@@ -88,6 +88,13 @@ export const SITES_PATH = "/settings/sites/";
 export const TOKENS_PATH = "/settings/add-servers/";
 /** Adding a device watched without the agent (ADR-0148). */
 export const ADD_DEVICE_PATH = "/devices/add/";
+/** Network scans: what answers on a site's networks (ADR-0154). */
+export const DISCOVERY_PATH = "/discovery/";
+
+/** Link to the network scan `id`. */
+export function discoveryHref(id: string): string {
+  return `/discovery/view/?id=${encodeURIComponent(id)}`;
+}
 /** Moving from another monitoring tool (ADR-0146). */
 export const IMPORT_PATH = "/settings/import/";
 export const USERS_PATH = "/settings/users/";
