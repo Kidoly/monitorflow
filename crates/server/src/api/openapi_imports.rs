@@ -18,7 +18,9 @@ use crate::import::{Create, Item, List, NoteView, OriginView};
     modifiers(&Common),
     tags((name = "imports", description = "Moving from another monitoring tool. An import reads the \
 other tool's configuration, from export files or through its API, and shows first what MonitorFlow would \
-create: servers waiting for their agent, checks, thresholds, silences and notification channels. Each item \
+create: servers waiting for their agent, checks, thresholds, silences (of servers or of chosen checks), \
+maintenance windows that come back (ADR-0151) and notification channels. Windows whose source does not say \
+its time zone, like Zabbix's and PRTG's, are read in the request's `time_zone`. Each item \
 is in one of three lists: `exact` (MonitorFlow does the same), `approximated` (close, the note says how it \
 differs) or `not_movable` (the note says why), and says whether MonitorFlow has it already (`present`). \
 Nothing is created until the preview is confirmed, with the items to leave out; items that need one left \
@@ -160,13 +162,14 @@ fn run(items: bool) -> serde_json::Value {
                            "os_family": "debian", "addresses": ["10.0.0.5"]},
             },
             {
-                "id": "check:web-01:port_443", "kind": "check", "list": "approximated",
-                "note": {"code": "web_as_port", "args": {"host": "shop.example.com", "port": "443"},
-                         "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."},
-                "origin": {"kind": "web_scenario", "name": "Shop"},
+                "id": "check:web-01:http_shop_example_com", "kind": "check", "list": "approximated",
+                "note": {"code": "web_password", "args": {"username": "monitor"},
+                         "text": "Passwords are not imported: set the password of monitor in the check after the import."},
+                "origin": {"kind": "web_scenario", "name": "Shop", "detail": "https://shop.example.com/"},
                 "hosts": ["web-01"], "present": false, "needs": ["server:web-01"],
-                "create": {"object": "check", "server": "web-01", "kind": "port", "name": "port_shop_example_com_443",
-                           "interval_ms": 60000, "params": {"host": "shop.example.com", "port": "443"}},
+                "create": {"object": "check", "server": "web-01", "kind": "http", "name": "http_shop_example_com",
+                           "interval_ms": 60000, "timeout_ms": 15000,
+                           "params": {"url": "https://shop.example.com/", "status": "200", "contains": "Welcome"}},
             },
             {
                 "id": "threshold:web-01:monitorflow_cpu_usage_ratio:total", "kind": "threshold", "list": "exact",

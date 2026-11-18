@@ -129,6 +129,15 @@ describe("FleetOverview", () => {
     expect(screen.getByText("by bob 14:02 · replacing the disk")).toBeInTheDocument();
   });
 
+  it("says a server is in maintenance during its window", async () => {
+    const until = new Date(2026, 9, 23, 4, 0).toISOString();
+    const quiet = server({ id: "s6", hostname: "app-1", state: "silenced", silence: { by: "alice", until, reason: "Patch night", window: true } });
+    stubFetch(reply([quiet, web1], []));
+    render(<FleetOverview />);
+    await rows();
+    expect(screen.getByText(/^in maintenance until .*04:00 · Patch night$/)).toBeInTheDocument();
+  });
+
   it("filters by state from the status bar's link, with no second state filter", async () => {
     setUrl("/?state=silenced");
     const until = new Date(2026, 9, 22, 18, 0).toISOString();

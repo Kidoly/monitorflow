@@ -111,8 +111,15 @@ impl Area {
             },
             ("servers" | "relays" | "metrics" | "devices", _) => Self::Servers,
             (
-                "incidents" | "silences" | "on-call" | "follow-up" | "sensor_configs"
-                | "thresholds" | "notifications" | "checks",
+                "incidents"
+                | "silences"
+                | "maintenance-windows"
+                | "on-call"
+                | "follow-up"
+                | "sensor_configs"
+                | "thresholds"
+                | "notifications"
+                | "checks",
                 _,
             ) => Self::Alerts,
             (
@@ -769,6 +776,7 @@ mod tests {
             (&get, "/api/incidents", Some(Area::Alerts)),
             (&post, "/api/incidents/acknowledge", Some(Area::Alerts)),
             (&post, "/api/silences", Some(Area::Alerts)),
+            (&get, "/api/maintenance-windows", Some(Area::Alerts)),
             (&post, "/api/sites/{id}/thresholds", Some(Area::Alerts)),
             (&get, "/api/servers/{id}/sensor_configs", Some(Area::Alerts)),
             (&get, "/api/sites/{id}/sensors", Some(Area::Alerts)),

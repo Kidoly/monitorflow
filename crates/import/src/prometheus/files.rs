@@ -37,13 +37,12 @@ pub fn collect(files: &[File]) -> Result<Collected, ReadError> {
                     merged.route = config.route.clone();
                 }
                 merged.receivers.extend(config.receivers);
+                merged.time_intervals.extend(config.time_intervals);
+                merged
+                    .mute_time_intervals
+                    .extend(config.mute_time_intervals);
             }
-            Kind::Blackbox(config) => collected.probers.extend(
-                config
-                    .modules
-                    .into_iter()
-                    .map(|(name, module)| (name, module.prober)),
-            ),
+            Kind::Blackbox(config) => collected.modules.extend(config.modules),
             Kind::FileSd(groups) => discovery.push((file.name.clone(), groups)),
         }
     }

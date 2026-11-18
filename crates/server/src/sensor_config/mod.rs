@@ -78,10 +78,10 @@ impl Spec {
 }
 
 /// What every server runs unless its site or itself overrides it: cpu,
-/// memory, disk and diskio every `interval_ms`, the site's check interval
-/// or [`DEFAULT_INTERVAL_MS`].
+/// memory, disk, diskio and net (ADR-0149) every `interval_ms`, the site's
+/// check interval or [`DEFAULT_INTERVAL_MS`].
 pub fn builtin_defaults(interval_ms: u64) -> Vec<Spec> {
-    ["cpu", "memory", "disk", "diskio"]
+    ["cpu", "memory", "disk", "diskio", "net"]
         .into_iter()
         .map(|kind| Spec::new(kind, interval_ms))
         .collect()
@@ -197,7 +197,8 @@ mod tests {
                 ("cpu", "", 60_000),
                 ("disk", "", 60_000),
                 ("diskio", "", 60_000),
-                ("memory", "", 60_000)
+                ("memory", "", 60_000),
+                ("net", "", 60_000)
             ]
         );
     }
@@ -225,6 +226,7 @@ mod tests {
             [
                 ("cpu", "", 5_000),
                 ("memory", "", 20_000),
+                ("net", "", 60_000),
                 ("port", "22", 10_000),
                 ("service", "nginx", 15_000),
             ]
@@ -247,6 +249,7 @@ mod tests {
                 ("disk", "", 10_000),
                 ("diskio", "", 3_600_000),
                 ("memory", "", 3_600_000),
+                ("net", "", 3_600_000),
                 ("port", "22", 30_000),
             ]
         );

@@ -29,6 +29,7 @@ use crate::diskio::DiskIoSensor;
 use crate::eventlog::{self, EventLogSensor};
 use crate::log::{self, LogSensor};
 use crate::memory::MemorySensor;
+use crate::net::NetSensor;
 use crate::ping::PingSensor;
 use crate::port::{PortSensor, PortTargets};
 use crate::script::{self, ScriptSensor};
@@ -45,6 +46,7 @@ pub const KINDS: &[&str] = &[
     "eventlog",
     "log",
     "memory",
+    "net",
     "ping",
     "port",
     "script",
@@ -160,6 +162,7 @@ fn build_with(
         "eventlog" => Arc::new(EventLogSensor::from_params(&mut params, local)?),
         "log" => Arc::new(LogSensor::from_params(&mut params, local)?),
         "memory" => Arc::new(MemorySensor),
+        "net" => Arc::new(NetSensor::default()),
         "ping" => Arc::new(PingSensor::from_params(&mut params)?),
         "port" => Arc::new(PortSensor::from_params(&mut params, local)?),
         "script" => Arc::new(ScriptSensor::from_params(&mut params, local)?),
@@ -287,7 +290,7 @@ mod tests {
         let error = build("gpu", &BTreeMap::new()).err().unwrap();
         assert_eq!(error, BuildError::UnknownKind("gpu".into()));
         assert!(error.to_string().contains(
-            "expected one of: cpu, disk, diskio, eventlog, log, memory, ping, port, script, systemd, windows_service"
+            "expected one of: cpu, disk, diskio, eventlog, log, memory, net, ping, port, script, systemd, windows_service"
         ));
         assert_eq!(
             build("cpu", &params(&[("per_cores", "true")])).err(),

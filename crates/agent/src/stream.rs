@@ -514,6 +514,8 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::ProbeConfig(_) => "probe_config",
         Payload::ProbeResults(_) => "probe_results",
         Payload::ProbeConfigAck(_) => "probe_config_ack",
+        Payload::ProbeTest(_) => "probe_test",
+        Payload::ProbeTestResult(_) => "probe_test_result",
     }
 }
 

@@ -32,7 +32,7 @@ Every website check comes with these alerts, which you can change like any other
 
 An expired certificate does not hide the rest: the page is still read, so you see both its status code and what is wrong with the certificate.
 
-The check runs on the agent of the server you add it to. Add it to the web server to check the site as it serves it, or to another server to check it across the network like a visitor. Each server can limit where its checks connect with `port_targets` in its `agent.toml`, redirects included; anywhere by default.
+The check runs on the agent of the server you add it to, unless **"Checked from"** names the central server or a relay of the site. Add it to the web server to check the site as it serves it, to another server to check it across the network, or have the central server or a relay check it from outside, like a visitor. A device, which has no agent, gets website checks too, run from the central server or a relay. Each server can limit where its checks connect with `port_targets` in its `agent.toml`, redirects included; anywhere by default.
 
 ## Set it up
 

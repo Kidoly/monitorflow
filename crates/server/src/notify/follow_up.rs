@@ -358,7 +358,7 @@ pub async fn take_due(
     .into_iter()
     .collect();
     let policies = policies(&mut *tx).await?;
-    let silences = silence::load(&mut *tx, now, now).await?;
+    let silences = silence::load(&mut tx, now, now).await?;
     let mut due = Vec::new();
     for row in rows {
         let incident: Uuid = row.try_get("incident_id")?;

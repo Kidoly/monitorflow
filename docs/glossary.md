@@ -27,6 +27,10 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Checked from | Vérifié depuis | Where a network check runs: "the central server" or a relay of the site. "Ping, checked from relay-paris" | probe, poller, vantage point (on screen) | `probe`, `probe_relay_id` |
 | Packet loss | Perte de paquets | The share of pings that got no answer, out of the few sent each time | drop rate | `ping_loss_ratio` |
 | Round trip | Aller-retour | How long a ping took to come back, on average | RTT, latency (on screen) | `ping_rtt_seconds` |
+| SNMP | SNMP | How switches, printers and UPSs say what they measure. Name the version: "SNMP v2c", "SNMP v3" | | `snmp` |
+| Community | Communauté | The password of SNMP v2c, like `public`. Kept sealed and never shown again | community string | `community` |
+| Template | Modèle | The checks and alerts a kind of device gets when added: Switch, Router, Firewall, Printer, UPS, NAS or Generic | profile, preset | `template` |
+| Traffic | Trafic | What goes through a network interface, in and out, per second | bandwidth, throughput | `in_bytes_per_second`, `net_receive_bytes_per_second` |
 | Watches | Surveille | The disk, port or service a sensor measures | instance | `instance` |
 | Every 30 s, every 1 h | Toutes les 30 s, toutes les 5 min | How often a check runs: "Checked every 5 min". The built-in checks run at their site's interval | interval, frequency, polling rate, scrape interval (on screen) | `interval_ms`, `check_interval_ms` |
 | Log folders | Dossiers de journaux | The folders whose files a server's log checks may read, set by its administrator in `agent.toml`: `/var/log` on Linux by default, none on Windows | log directories, allowlist | `sensors.log_dirs` |
@@ -55,7 +59,8 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Revoke | Révoquer | Stop an install command, a token or a role from working | | |
 | Notify about | Notifier pour | What a channel hears of: Everything, All of a customer, or one site | scope, coverage, routing | `customer_id`, `site_id`, `Coverage` |
 | Everything | Tout | For a channel or a silence: all customers and sites, plus news about the central server: failed backups, automatic updates, new versions | global, all customers | both columns null; a silence with no target |
-| Silence | Silence, mettre en silence | Stop notifications about a server, relay, site, customer or everything for a while, whatever channel they go to. Incidents still open and show; what is still open at the end is sent | mute, snooze, maintenance mode, downtime | `silences` |
+| Silence | Silence, mettre en silence | Stop notifications about a server, relay, site, customer or everything for a while, whatever channel they go to, or about chosen checks of a server or site: "Silence this check". Incidents still open and show; what is still open at the end is sent | mute, snooze, maintenance mode, downtime | `silences`, `checks` |
+| Maintenance window | Fenêtre de maintenance ; « En maintenance jusqu’à 04:00 » | A silence that comes back on its own, every day, week or month, at local times in a time zone: "Every Sunday, 02:00 to 04:00 (Europe/Paris)". Covers a site, chosen servers or chosen checks. While one runs: "In maintenance until 04:00". For a campaign, the times updates may run in | recurring silence, downtime, schedule, blackout | `maintenance_windows`, `window_id` |
 | Sent together | Envoyés ensemble | Incidents told in one notification: the same check on several machines, the rest of a site, or what a silence held back. Each incident still has its own page | group, batch, digest, bundle, aggregate | `notification_groups`, `?group=` |
 | On call | Astreinte | Who is told of each alert of a place in person, besides the channels, in turns. A page under Monitoring | pager, duty, rota (on screen) | `on_call_schedules` |
 | Schedule | Planning | The people who take turns being on call for everything, a customer or a site, and when they hand off | rotation, layer, policy | `on_call_schedules`, `on_call_members` |

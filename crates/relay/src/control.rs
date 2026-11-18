@@ -283,6 +283,16 @@ impl Control {
                     }
                 }
                 message = inbound.message() => match message {
+                    Ok(Some(Envelope { payload: Some(Payload::ProbeTest(test)), .. })) => {
+                        match probes {
+                            Some(end) => {
+                                if end.tests.try_send(test).is_err() {
+                                    tracing::warn!("too many probe tests at once; one refused");
+                                }
+                            }
+                            None => tracing::debug!("ignoring a probe test: this relay runs none"),
+                        }
+                    }
                     Ok(Some(Envelope { payload: Some(Payload::ProbeConfig(config)), .. })) => {
                         match probes {
                             Some(end) => {

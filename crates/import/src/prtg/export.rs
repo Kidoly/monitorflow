@@ -185,6 +185,7 @@ fn object(element: &Element, kind: Kind, parent: Option<i64>, offset: Duration) 
             object.maintenance = Some(Maintenance { start, end });
         }
     }
+    object.schedule = settings.get("schedule").and_then(|v| schedule_name(v));
     match kind {
         Kind::Device => object.host = settings.get("host").filter(|h| !h.is_empty()).cloned(),
         Kind::Sensor => {
@@ -228,6 +229,19 @@ fn walk(element: &Element, parent: Option<i64>, offset: Duration, tree: &mut Tre
                 };
                 walk(child, parent_here, offset, tree);
             }
+            // A schedule's definition; an object's `schedule` setting has
+            // no ID.
+            None if child.name == "schedule" && child.id.is_some() => {
+                let settings = child.settings();
+                if let Some(name) = settings.get("name").filter(|n| !n.is_empty()) {
+                    let periods = settings
+                        .get("periodlist")
+                        .or_else(|| settings.get("periods"))
+                        .filter(|p| !p.trim().is_empty())
+                        .cloned();
+                    tree.schedules.insert(name.clone(), periods);
+                }
+            }
             None if child.name == "notification" => {
                 if let Some(id) = child.id {
                     let mut fields = BTreeMap::new();
@@ -247,6 +261,18 @@ fn walk(element: &Element, parent: Option<i64>, offset: Duration, tree: &mut Tre
             None => walk(child, parent, offset, tree),
         }
     }
+}
+
+/// The schedule an object setting names: `Weekends`, or PRTG's
+/// `651|Weekends|`; `None` for none.
+pub fn schedule_name(value: &str) -> Option<String> {
+    let parts: Vec<&str> = value.split('|').map(str::trim).collect();
+    let name = match parts.as_slice() {
+        [id, name, ..] if id.chars().all(|c| c.is_ascii_digit()) => *name,
+        [name, ..] => *name,
+        [] => "",
+    };
+    (!name.is_empty() && !name.eq_ignore_ascii_case("none")).then(|| name.to_owned())
 }
 
 /// Every leaf below `element` by its path of names, for [`deliveries`].

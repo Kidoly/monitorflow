@@ -171,7 +171,8 @@ fn delete() {}
                 { "id": "alerts", "servers": 4, "unavailable": 1, "kind": "alerts", "alerts": [
                     { "id": "2b3c4d5e-6f70-4a1b-9c2d-3e4f5a6b7c8d", "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
                       "hostname": "web-1", "metric": "monitorflow_disk_used_ratio", "instance": "/var",
-                      "severity": "warning", "opened_at": "2026-11-14T15:02:00Z" }
+                      "severity": "warning", "opened_at": "2026-11-14T15:02:00Z",
+                      "silenced_until": null, "in_maintenance": false }
                 ] }
             ]
         })),
