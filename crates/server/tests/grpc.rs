@@ -12,9 +12,9 @@ use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    Command, CommandAcceptance, CommandKindState, DiscoveredPort, DiscoveryReport, Envelope,
-    Heartbeat, Hello, LogBatch, LogEntry, RelayMirrors, Sample, SampleBatch, SensorConfigAck,
-    ServedMirror,
+    Command, CommandAcceptance, CommandKindState, DeviceSamples, DiscoveredPort, DiscoveryReport,
+    Envelope, Heartbeat, Hello, LogBatch, LogEntry, ProbeConfigAck, ProbeResults, RelayMirrors,
+    Sample, SampleBatch, SensorConfigAck, ServedMirror,
 };
 use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
 use monitorflow_common::via::Via;
@@ -29,6 +29,7 @@ use monitorflow_server::ingest::metrics::decode;
 use monitorflow_server::ingest::{
     Ingest, JsonLines, LogRecord, RemoteWrite, Series, Writer, WriterSettings,
 };
+use monitorflow_server::probes::{ProbeStore, Probes};
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
 use sqlx::PgPool;
 use support::{uri_san, Ca, Leaf};
@@ -1581,5 +1582,129 @@ db_tests! {
         }
         let stats = alerts.stats();
         assert_eq!((stats.batches, stats.out_of_order), (2, 0));
+    }
+
+    /// A relay gets the probe checks it runs, and is believed for their
+    /// devices only (ADR-0148); its results reach storage and thresholds.
+    #[sqlx::test]
+    async fn relays_run_their_probe_checks(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let relay: Uuid = sqlx::query_scalar(
+            "INSERT INTO relays (peer_id, site_id, name) VALUES ('relay-1', $1, 'relay-1') RETURNING id",
+        )
+        .bind(paris)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let device = |peer: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Uuid>(
+                    "INSERT INTO servers (peer_id, site_id, hostname, os_family, kind, address, package_updates)
+                     VALUES ($1, $2, $1, 'device', 'device', '192.0.2.5', false) RETURNING id",
+                )
+                .bind(peer)
+                .bind(paris)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let nas = device("nas").await;
+        let other = device("printer").await;
+        for (server, probe, relay_id) in [(nas, "relay", Some(relay)), (nas, "central", None), (other, "central", None)] {
+            sqlx::query(
+                "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, params, probe, probe_relay_id)
+                 VALUES ($1, 'ping', 'ping', $2, 60000, '{}', $3, $4)",
+            )
+            .bind(server)
+            .bind(if relay_id.is_some() { "relay-1" } else { "central" })
+            .bind(probe)
+            .bind(relay_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // A device runs no agent checks, not even the site's.
+        sqlx::query("INSERT INTO sensor_configs (site_id, kind, name, interval_ms) VALUES ($1, 'cpu', 'cpu', 60000)")
+            .bind(paris)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(SensorConfigStore::new(pool.clone()).load("nas").await.unwrap().unwrap().sensors.is_empty());
+        sqlx::query(
+            "INSERT INTO thresholds (server_id, metric, instance, comparison, critical, duration_s)
+             VALUES ($1, 'monitorflow_ping_up', NULL, '<', 1, 0)",
+        )
+        .bind(nas)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let alerts = Alerts::start(AlertStore::new(pool.clone()), EngineSettings::default(), Arc::new(LogNotifier))
+            .await
+            .unwrap();
+        let storage = Storage::start().await;
+        let probes = Probes::new(ProbeStore::new(pool.clone()), storage.ingest(), Some(alerts));
+        let service_probes = probes.clone();
+        let h = Harness::start_service(|registry| {
+            AgentStreamService::new(registry, Arc::new(DbRelayPolicy::new(pool.clone())), settings())
+                .with_inventory(Arc::new(DbInventory::new(pool.clone())))
+                .with_probes(service_probes)
+        })
+        .await;
+        tokio::spawn(probes.clone().run_relays(h.registry.clone(), std::future::pending()));
+        let mut relay_peer = h.open(&h.ca.relay("relay-1", 10), hello("relay-1")).await.unwrap();
+        let config = loop {
+            let envelope = tokio::time::timeout(Duration::from_secs(15), relay_peer.rx.message())
+                .await
+                .expect("a probe configuration within the poll")
+                .unwrap()
+                .unwrap();
+            if let Some(Payload::ProbeConfig(config)) = envelope.payload {
+                break config;
+            }
+        };
+        assert_eq!(config.checks.len(), 1, "{config:?}");
+        let check = &config.checks[0];
+        assert_eq!(check.device, "nas");
+        let spec = check.spec.as_ref().unwrap();
+        assert_eq!((spec.kind.as_str(), spec.instance.as_str()), ("ping", "relay-1"));
+        assert_eq!(spec.params["host"], "192.0.2.5");
+        relay_peer
+            .send(2, Payload::ProbeConfigAck(ProbeConfigAck { revision: config.revision, errors: vec![] }))
+            .await;
+        let now = chrono::Utc::now().timestamp_millis();
+        let down = |device: &str| DeviceSamples {
+            device: device.into(),
+            samples: vec![Sample {
+                sensor: "ping_up".into(),
+                instance: "relay-1".into(),
+                timestamp_unix_ms: now,
+                value: 0.0,
+                labels: Default::default(),
+            }],
+        };
+        relay_peer
+            .send(3, Payload::ProbeResults(ProbeResults { devices: vec![down("nas"), down("printer")] }))
+            .await;
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        let incident = loop {
+            let found: Option<(Uuid, String, String)> =
+                sqlx::query_as("SELECT server_id, instance, severity FROM incidents WHERE state = 'open'")
+                    .fetch_optional(&pool)
+                    .await
+                    .unwrap();
+            if let Some(found) = found {
+                break found;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "no incident on the device");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert_eq!(incident, (nas, "relay-1".to_string(), "critical".to_string()));
+        let series = storage.wait_for_series(1).await;
+        assert_eq!(series.len(), 1, "{series:?}");
+        assert!(series[0].contains(&("probe".into(), "relay-1".into())));
+        assert!(series[0].contains(&("peer".into(), "nas".into())));
+        assert_eq!(probes.stats().unknown_device, 1, "the printer is the central server's");
     }
 }

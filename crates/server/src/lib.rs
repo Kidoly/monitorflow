@@ -23,6 +23,7 @@ pub mod live_settings;
 pub mod mirror;
 pub mod notify;
 pub mod plugins;
+pub mod probes;
 pub mod recommend;
 pub mod relay_commands;
 pub mod release_check;

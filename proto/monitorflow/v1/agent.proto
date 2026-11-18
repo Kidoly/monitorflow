@@ -35,6 +35,13 @@ message Envelope {
     // Agent to server: what runs on the machine, for check
     // recommendations (ADR-0134).
     DiscoveryReport discovery = 18;
+    // Server to relay, on the relay's own stream: the network checks it
+    // runs as a probe (ADR-0148).
+    ProbeConfig probe_config = 19;
+    // Relay to server, on its own stream: what its probe checks measured.
+    ProbeResults probe_results = 22;
+    // Relay to server, on its own stream, once it applied a ProbeConfig.
+    ProbeConfigAck probe_config_ack = 23;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -205,6 +212,48 @@ message SensorSpecError {
   string name = 1;
   string instance = 2;
   string message = 3;
+}
+
+// The network checks a relay runs as a probe (ADR-0148): pings, ports and
+// SNMP of addresses of its site, each for one server or device of the
+// central server's inventory. Sent after the relay's Hello and whenever it
+// changes; replaces the whole previous one. Older relays drop it.
+message ProbeConfig {
+  // Changes whenever the checks change.
+  uint64 revision = 1;
+  repeated ProbeCheck checks = 2;
+}
+
+message ProbeCheck {
+  // The server or device the results belong to: its ID in the inventory.
+  string device = 1;
+  // What to run; (device, name, instance) is unique within a ProbeConfig.
+  SensorSpec spec = 2;
+}
+
+// Sent by a relay once it applied a ProbeConfig, valid or not.
+message ProbeConfigAck {
+  uint64 revision = 1;
+  repeated ProbeCheckError errors = 2;
+}
+
+message ProbeCheckError {
+  string device = 1;
+  string name = 2;
+  string instance = 3;
+  string message = 4;
+}
+
+// What a relay's probe checks measured, oldest first.
+message ProbeResults {
+  repeated DeviceSamples devices = 1;
+}
+
+message DeviceSamples {
+  // `ProbeCheck.device`: the server only accepts devices of the
+  // configuration it sent this relay.
+  string device = 1;
+  repeated Sample samples = 2;
 }
 
 // What a relay's mirror listener serves, sent after its Hello and again

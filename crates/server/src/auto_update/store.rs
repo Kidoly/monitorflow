@@ -107,8 +107,9 @@ pub(crate) async fn peers(
              LEFT JOIN relays r ON r.id = s.relay_id
              LEFT JOIN agent_auto_updates a ON a.server_id = s.id AND a.version = $1
              LEFT JOIN commands c ON c.id = a.command_id
-             -- A server an import made has no agent to update yet (ADR-0146).
-             WHERE s.revoked_at IS NULL AND NOT s.awaiting_agent
+             -- A server an import made has no agent to update yet
+             -- (ADR-0146), a device none at all (ADR-0148).
+             WHERE s.revoked_at IS NULL AND NOT s.awaiting_agent AND s.kind = 'agent'
              ORDER BY s.hostname, s.id"
         }
         Kind::Relay => {

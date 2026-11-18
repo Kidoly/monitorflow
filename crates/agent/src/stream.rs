@@ -511,6 +511,9 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::RelayMirrors(_) => "relay_mirrors",
         Payload::Logs(_) => "logs",
         Payload::Discovery(_) => "discovery",
+        Payload::ProbeConfig(_) => "probe_config",
+        Payload::ProbeResults(_) => "probe_results",
+        Payload::ProbeConfigAck(_) => "probe_config_ack",
     }
 }
 

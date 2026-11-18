@@ -72,6 +72,8 @@ pub struct Control {
     up: watch::Sender<bool>,
     mirrors: watch::Receiver<RelayMirrors>,
     commands: Option<StreamEnd>,
+    /// The probe task's ends (ADR-0148).
+    probes: Option<crate::probe::ProbeEnd>,
     /// Where the self-update watchdog looks for the connection.
     connected_dir: Option<PathBuf>,
     sequence: u64,
@@ -92,6 +94,7 @@ impl Control {
             // No mirrors until `with_mirrors`.
             mirrors: watch::channel(RelayMirrors::default()).1,
             commands: None,
+            probes: None,
             connected_dir: None,
             sequence: 0,
         };
@@ -110,6 +113,13 @@ impl Control {
         self
     }
 
+    /// Passes probe checks to the probe task and sends what it reports
+    /// (ADR-0148).
+    pub fn with_probes(mut self, probes: crate::probe::ProbeEnd) -> Self {
+        self.probes = Some(probes);
+        self
+    }
+
     /// Records each accepted stream in `data_dir` for the self-update
     /// watchdog.
     pub fn with_connected_record(mut self, data_dir: PathBuf) -> Self {
@@ -121,10 +131,11 @@ impl Control {
     pub async fn run(mut self, mut shutdown: Shutdown) {
         let mut backoff = self.settings.backoff.clone();
         let mut commands = self.commands.take();
+        let mut probes = self.probes.take();
         loop {
             let mut opened = None;
             let result = self
-                .session(&mut shutdown, &mut opened, &mut commands)
+                .session(&mut shutdown, &mut opened, &mut commands, &mut probes)
                 .await;
             self.up.send_replace(false);
             let Err(failure) = result else { return };
@@ -169,6 +180,7 @@ impl Control {
         shutdown: &mut Shutdown,
         opened: &mut Option<Instant>,
         commands: &mut Option<StreamEnd>,
+        probes: &mut Option<crate::probe::ProbeEnd>,
     ) -> Result<(), Failure> {
         let identity = self.identity.borrow_and_update().clone();
         let url = self.settings.upstream_url.clone();
@@ -189,7 +201,7 @@ impl Control {
             })?,
             () = shutdown.wait() => return Ok(()),
         };
-        let (tx, rx) = mpsc::channel(4);
+        let (tx, rx) = mpsc::channel(8);
         let hello = self.envelope(Payload::Hello(Hello {
             agent_id: identity.peer_id().to_owned(),
             protocol_version: PROTOCOL_VERSION.into(),
@@ -262,7 +274,25 @@ impl Control {
                         tracing::warn!("upstream is not reading; command result dropped");
                     }
                 }
+                // Waits for room: a probe result stays in its task's queue
+                // rather than being dropped here.
+                payload = next_probe_up(probes) => {
+                    let envelope = self.envelope(payload);
+                    if tx.send(envelope).await.is_err() {
+                        return Err(Failure::Transient("the upstream closed the stream".into()));
+                    }
+                }
                 message = inbound.message() => match message {
+                    Ok(Some(Envelope { payload: Some(Payload::ProbeConfig(config)), .. })) => {
+                        match probes {
+                            Some(end) => {
+                                if end.configs.try_send(config).is_err() {
+                                    tracing::warn!("probe configuration queue full; the server will send it again");
+                                }
+                            }
+                            None => tracing::debug!("ignoring probe checks: this relay runs none"),
+                        }
+                    }
                     Ok(Some(Envelope { payload: Some(Payload::Command(command)), .. })) => {
                         match commands {
                             Some(end) => {
@@ -293,6 +323,17 @@ impl Control {
             sequence: self.sequence,
             payload: Some(payload),
         }
+    }
+}
+
+/// The next message of the probe task; never, without it.
+async fn next_probe_up(probes: &mut Option<crate::probe::ProbeEnd>) -> Payload {
+    match probes {
+        Some(end) => match end.up.recv().await {
+            Some(payload) => payload,
+            None => std::future::pending().await,
+        },
+        None => std::future::pending().await,
     }
 }
 
