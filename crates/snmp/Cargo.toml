@@ -1,0 +1,20 @@
+[package]
+name = "monitorflow-snmp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# SNMP checks of devices, run from a probe (ADR-0149): v2c and v3 with
+# what the common MIBs say. A sensor of `monitorflow-sensors`, kept apart
+# so agents do not carry an SNMP stack.
+
+[dependencies]
+monitorflow-sensors.workspace = true
+async-trait.workspace = true
+async-snmp = { version = "0.18", default-features = false, features = ["crypto-rustcrypto"] }
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

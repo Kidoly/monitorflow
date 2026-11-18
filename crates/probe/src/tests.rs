@@ -149,6 +149,17 @@ fn builtin_runs_network_kinds_only() {
         .unwrap()
         .contains("does not run"));
     assert!(Builtin.build("ping", &BTreeMap::new()).is_err());
+    let snmp = BTreeMap::from([
+        ("host".to_string(), "192.0.2.1".to_string()),
+        ("community".to_string(), "public".to_string()),
+        ("what".to_string(), "interfaces".to_string()),
+    ]);
+    assert!(Builtin.build("snmp", &snmp).is_ok());
+    assert!(Builtin
+        .build("snmp", &BTreeMap::new())
+        .err()
+        .unwrap()
+        .contains("`host`"));
 }
 
 #[test]

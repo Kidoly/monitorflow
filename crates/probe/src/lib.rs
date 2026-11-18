@@ -38,7 +38,7 @@ pub trait ProbeFactory: Send + Sync + 'static {
 }
 
 /// The kinds of `monitorflow-sensors`, without an agent's local limits:
-/// `ping`, `port` over TCP or UDP, and the others a probe may run.
+/// `ping` and `port` over TCP or UDP, and `snmp` of `monitorflow-snmp`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Builtin;
 
@@ -48,6 +48,9 @@ impl ProbeFactory for Builtin {
         kind: &str,
         params: &BTreeMap<String, String>,
     ) -> Result<Arc<dyn Sensor>, String> {
+        if kind == monitorflow_snmp::KIND {
+            return monitorflow_snmp::build(params);
+        }
         if !PROBE_RUNS.contains(&kind) {
             return Err(format!("a probe does not run `{kind}` checks"));
         }
@@ -55,9 +58,10 @@ impl ProbeFactory for Builtin {
     }
 }
 
-/// Built-in kinds a probe runs: what it measures over the network. Machine
-/// kinds (processor, disks, services) only make sense on an agent.
-pub const PROBE_RUNS: &[&str] = &["ping", "port"];
+/// Built-in kinds a probe runs: what it measures over the network, SNMP
+/// included (ADR-0149). Machine kinds (processor, disks, services) only
+/// make sense on an agent.
+pub const PROBE_RUNS: &[&str] = &["ping", "port", monitorflow_snmp::KIND];
 
 /// One check of a probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
