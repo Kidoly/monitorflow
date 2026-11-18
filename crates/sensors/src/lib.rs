@@ -42,6 +42,7 @@ pub mod systemd;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod validate;
+pub mod virt;
 #[cfg(windows)]
 mod win;
 #[cfg(all(windows, feature = "testing"))]
