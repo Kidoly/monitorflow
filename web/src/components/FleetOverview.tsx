@@ -273,6 +273,9 @@ function Problem({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
  */
 function whoAndWhy(row: Pick<Row, "server" | "state">, now: Date): string | null {
   const { silence, acknowledgement } = row.server;
+  if (row.state === "silenced" && silence?.window) {
+    return t("fleet.inMaintenance", { until: formatDay(new Date(silence.until), now), reason: silence.reason });
+  }
   if (row.state === "silenced" && silence) {
     return t("fleet.silencedBy", {
       who: silence.by ?? t("fleet.someone"),

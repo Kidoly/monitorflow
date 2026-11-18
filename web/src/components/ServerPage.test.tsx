@@ -627,16 +627,48 @@ describe("ServerPage", () => {
       await user.keyboard("{Enter}");
       const menu = screen.getByRole("menu", { name: "Actions for CPU usage" });
       const items = within(menu).getAllByRole("menuitem");
-      expect(items.map((i) => i.textContent)).toEqual(["Edit", "Open chart", "Turn off…"]);
+      expect(items.map((i) => i.textContent)).toEqual([
+        "Edit",
+        "Open chart",
+        "Silence this check for 1 hour",
+        "Silence this check until tomorrow, 8:00",
+        "Turn off…",
+      ]);
       expect(items[0]).toHaveFocus();
       expect(items[0]).toHaveAttribute("href", expect.stringMatching(/sensor=cpu_usage_ratio&instance=total&edit=1$/));
       await user.keyboard("{ArrowDown}");
       expect(items[1]).toHaveFocus();
       await user.keyboard("{ArrowUp}{ArrowUp}");
-      expect(items[2]).toHaveFocus();
+      expect(items[4]).toHaveFocus();
       await user.keyboard("{Escape}");
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(button).toHaveFocus();
+    });
+
+    it("silences one check in one click and says so on its row", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const silence = {
+        id: "x1", scope: "server", target_id: ID, target_name: "web-1", site_id: "site-1", customer_id: "c1",
+        starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 3_600_000).toISOString(), active: true,
+        reason: "Planned maintenance", created_by_username: "olga", created_at: new Date().toISOString(),
+        checks: [{ name: "cpu", instance: "" }], window_id: null, can_end: true,
+      };
+      const fetchMock = open(operator, {
+        [`GET /api/silences?server_id=${ID}`]: [ok({ silences: [] }), ok({ silences: [silence] })],
+        "POST /api/silences": { status: 201, body: silence },
+      });
+      await user.click(await screen.findByRole("button", { name: "Actions for CPU usage" }));
+      await user.click(screen.getByRole("menuitem", { name: "Silence this check for 1 hour" }));
+      await vi.waitFor(() =>
+        expect(sent(fetchMock, "POST", "/api/silences")).toMatchObject({
+          scope: "server",
+          target_id: ID,
+          checks: [{ name: "cpu", instance: "" }],
+        }),
+      );
+      expect(await screen.findByText(/^Silenced until/)).toBeInTheDocument();
+      // The server itself is not silenced: its menu still says Silence.
+      expect(screen.getByText(/Checks silenced: cpu\./)).toBeInTheDocument();
     });
 
     it("offers readers the chart only", async () => {
