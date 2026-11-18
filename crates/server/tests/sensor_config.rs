@@ -130,7 +130,7 @@ db_tests! {
         let defaults = store.load("web-01").await.unwrap().unwrap();
         assert_eq!(
             keys(&defaults.sensors),
-            [("cpu", "", 60_000), ("disk", "", 60_000), ("diskio", "", 60_000), ("memory", "", 60_000)]
+            [("cpu", "", 60_000), ("disk", "", 60_000), ("diskio", "", 60_000), ("memory", "", 60_000), ("net", "", 60_000)]
         );
         assert!(store.load("nobody").await.unwrap().is_none());
 
@@ -151,13 +151,14 @@ db_tests! {
                 ("cpu", "", 5_000),
                 ("diskio", "", 60_000),
                 ("memory", "", 60_000),
+                ("net", "", 60_000),
                 ("port", "22", 10_000),
                 ("service", "nginx", 15_000)
             ]
         );
-        let port = &web.sensors[3];
+        let port = &web.sensors[4];
         assert_eq!((port.params["port"].as_str(), port.params["host"].as_str()), ("22", "localhost"));
-        assert_eq!(web.sensors[4].params["unit"], "nginx");
+        assert_eq!(web.sensors[5].params["unit"], "nginx");
 
         // Another server of the site sees the site rows only.
         let db = store.load("db-01").await.unwrap().unwrap();
@@ -167,13 +168,14 @@ db_tests! {
                 ("cpu", "", 30_000),
                 ("diskio", "", 60_000),
                 ("memory", "", 60_000),
+                ("net", "", 60_000),
                 ("port", "22", 10_000),
                 ("port", "443", 10_000)
             ]
         );
         // Another site's rows stay there.
         let app = store.load("app-01").await.unwrap().unwrap();
-        assert_eq!(keys(&app.sensors), [("cpu", "", 60_000), ("disk", "", 60_000), ("diskio", "", 60_000)]);
+        assert_eq!(keys(&app.sensors), [("cpu", "", 60_000), ("disk", "", 60_000), ("diskio", "", 60_000), ("net", "", 60_000)]);
     }
 
     #[sqlx::test]
@@ -196,7 +198,7 @@ db_tests! {
         let web_config = store.load("web-01").await.unwrap().unwrap();
         assert_eq!(
             keys(&web_config.sensors),
-            [("cpu", "", 10_000), ("disk", "", 3_600_000), ("diskio", "", 3_600_000), ("memory", "", 3_600_000), ("port", "22", 30_000)]
+            [("cpu", "", 10_000), ("disk", "", 3_600_000), ("diskio", "", 3_600_000), ("memory", "", 3_600_000), ("net", "", 3_600_000), ("port", "22", 30_000)]
         );
         // The timeout sent to the agent scales with the interval.
         let proto = web_config.to_proto();

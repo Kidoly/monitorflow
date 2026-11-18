@@ -78,6 +78,8 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
   switch (create.object) {
     case "server":
       return create.hostname;
+    case "device":
+      return t("devices.importTitle", { name: create.hostname, address: create.address });
     case "check":
       return checkTitle({
         origin: "server",

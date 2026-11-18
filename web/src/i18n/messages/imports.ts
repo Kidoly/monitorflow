@@ -40,9 +40,15 @@ export const en = {
     "A server of this name is in a site you do not administer.",
   "note.refused": "MonitorFlow refuses it: {reason}.",
   "note.unknown_host": "It refers to a host that is not part of this import.",
-  "note.udp": "MonitorFlow checks TCP ports only.",
   "note.network_traffic":
-    "MonitorFlow does not measure network interface traffic yet.",
+    "MonitorFlow measures interface traffic but does not move thresholds on it: add one on the server's page.",
+  "note.snmp_object": "An SNMP object outside the common MIBs MonitorFlow reads: interfaces, host resources, UPS, temperature sensors and printer supplies.",
+  "note.dns_as_udp": "MonitorFlow checks that the DNS server answers a query; it does not compare the record.",
+  "note.no_address": "There is no address MonitorFlow can check it at.",
+  "note.device_no_agent": "It becomes a device, which has no agent to measure this.",
+  "note.snmp_of_agent": "MonitorFlow polls SNMP on devices; on a server, its agent measures this itself.",
+  "note.snmp_credentials": "SNMP credentials are not moved: set them on the device's page, and its SNMP checks start.",
+  "note.builtin_net": "Every server measures the traffic of its network interfaces already.",
   "note.no_equivalent": "MonitorFlow has no check of this kind.",
   "note.expression":
     "MonitorFlow cannot read this expression; add a check and an alert by hand if you need it.",
@@ -50,8 +56,6 @@ export const en = {
     "The source compares the load per processor; MonitorFlow compares the load itself.",
   "note.script":
     "Commands run by the source are not moved: put the script in the agent's scripts directory and add a custom script check.",
-  "note.snmp":
-    "MonitorFlow watches servers through its agent; SNMP devices cannot be moved.",
   "note.no_target": "Notifications of this kind cannot be sent by MonitorFlow.",
   "note.chat_token":
     "The source posts with an app token; MonitorFlow needs an incoming webhook URL. Add a channel with one.",
@@ -75,10 +79,6 @@ export const en = {
     "Its setting {setting} has no usable address in the source.",
   "note.scrape_as_port":
     "MonitorFlow checks that port {port} answers; it does not read the exporter's metrics.",
-  "note.ping_as_offline":
-    "The source pings the host; MonitorFlow's offline alert tells when its agent stops answering.",
-  "note.ping":
-    "MonitorFlow does not ping addresses; it watches servers through their agent.",
   "note.disk_wait":
     "MonitorFlow compares the average wait of the disk's operations, reads and writes together, which differs from what the source measures.",
   "note.cpu_busy_modes":
@@ -98,7 +98,6 @@ export const en = {
   "note.routes":
     "MonitorFlow sends every alert to every channel of its site; the source's routing by labels is not moved.",
 
-  "note.prtg_ping": "PRTG pinged it from a probe; MonitorFlow's offline alert tells when its agent stops answering. Ping times are not measured.",
   "note.prtg_from_server": "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
   "note.prtg_certificate": "MonitorFlow checks that port {port} answers; the certificate and its expiry are not checked.",
   "note.prtg_sensor_type": "MonitorFlow has no check like this PRTG sensor ({type}).",
@@ -278,9 +277,15 @@ export const fr: Translation<typeof en> = {
   "note.refused": "MonitorFlow le refuse : {reason}.",
   "note.unknown_host":
     "Il désigne un hôte qui ne fait pas partie de cet import.",
-  "note.udp": "MonitorFlow ne vérifie que les ports TCP.",
   "note.network_traffic":
-    "MonitorFlow ne mesure pas encore le trafic des interfaces réseau.",
+    "MonitorFlow mesure le trafic des interfaces mais n’en reprend pas les seuils : ajoutez-en un sur la page du serveur.",
+  "note.snmp_object": "Un objet SNMP hors des MIB courantes que lit MonitorFlow : interfaces, ressources de l’hôte, onduleur, capteurs de température et consommables d’imprimante.",
+  "note.dns_as_udp": "MonitorFlow vérifie que le serveur DNS répond à une requête ; il ne compare pas l’enregistrement.",
+  "note.no_address": "Aucune adresse à laquelle MonitorFlow peut le vérifier.",
+  "note.device_no_agent": "Il devient un équipement, sans agent pour mesurer cela.",
+  "note.snmp_of_agent": "MonitorFlow interroge SNMP sur les équipements ; sur un serveur, son agent le mesure lui-même.",
+  "note.snmp_credentials": "Les identifiants SNMP ne sont pas repris : saisissez-les sur la page de l’équipement et ses contrôles SNMP démarrent.",
+  "note.builtin_net": "Chaque serveur mesure déjà le trafic de ses interfaces réseau.",
   "note.no_equivalent": "MonitorFlow n’a pas de vérification de ce genre.",
   "note.expression":
     "MonitorFlow ne sait pas lire cette expression ; ajoutez une vérification et une alerte à la main si vous en avez besoin.",
@@ -288,8 +293,6 @@ export const fr: Translation<typeof en> = {
     "La source compare la charge par processeur ; MonitorFlow compare la charge elle-même.",
   "note.script":
     "Les commandes lancées par la source ne sont pas reprises : placez le script dans le répertoire de scripts de l’agent et ajoutez une vérification par script.",
-  "note.snmp":
-    "MonitorFlow surveille les serveurs par son agent ; les équipements SNMP ne peuvent pas être repris.",
   "note.no_target":
     "MonitorFlow ne sait pas envoyer de notifications de ce genre.",
   "note.chat_token":
@@ -314,10 +317,6 @@ export const fr: Translation<typeof en> = {
     "Son paramètre {setting} n’a pas d’adresse utilisable dans la source.",
   "note.scrape_as_port":
     "MonitorFlow vérifie que le port {port} répond ; il ne lit pas les métriques de l’exportateur.",
-  "note.ping_as_offline":
-    "La source envoie un ping à l’hôte ; l’alerte hors ligne de MonitorFlow prévient quand son agent ne répond plus.",
-  "note.ping":
-    "MonitorFlow n’envoie pas de ping à des adresses ; il surveille les serveurs par leur agent.",
   "note.disk_wait":
     "MonitorFlow compare l’attente moyenne des opérations du disque, lectures et écritures ensemble, ce qui diffère de ce que mesure la source.",
   "note.cpu_busy_modes":
@@ -337,7 +336,6 @@ export const fr: Translation<typeof en> = {
   "note.routes":
     "MonitorFlow envoie chaque alerte à chaque canal de son site ; le routage par étiquettes de la source n’est pas repris.",
 
-  "note.prtg_ping": "PRTG l’interrogeait par ping depuis une sonde ; l’alerte hors ligne de MonitorFlow prévient quand son agent ne répond plus. Les temps de ping ne sont pas mesurés.",
   "note.prtg_from_server": "Vérifié par l’agent du serveur lui-même, pas depuis une sonde : un problème réseau entre les deux n’est pas vu.",
   "note.prtg_certificate": "MonitorFlow vérifie que le port {port} répond ; le certificat et son expiration ne sont pas vérifiés.",
   "note.prtg_sensor_type": "MonitorFlow n’a pas de vérification comme ce capteur PRTG ({type}).",
