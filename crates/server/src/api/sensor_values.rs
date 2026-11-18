@@ -82,6 +82,15 @@ fn primary(sensor: &EffectiveSensor) -> (String, Option<String>, Rollup) {
         "diskio" => (Some("busy_ratio"), None, Rollup::Max),
         "systemd" | "windows_service" => (Some("active"), None, Rollup::Min),
         "port" | "ping" => (Some("up"), None, Rollup::Min),
+        // An SNMP check stands for what its group watches most (ADR-0149).
+        "snmp" => match sensor.params.get("what").map(String::as_str) {
+            Some("interfaces") => (Some("oper_up"), None, Rollup::Min),
+            Some("host") => (Some("cpu_usage_ratio"), None, Rollup::Max),
+            Some("ups") => (Some("battery_charge_ratio"), None, Rollup::Min),
+            Some("temperature") => (Some("celsius"), None, Rollup::Max),
+            Some("printer") => (Some("supply_level_ratio"), None, Rollup::Min),
+            _ => (Some("up"), None, Rollup::Min),
+        },
         "log" | "eventlog" => (Some("matches"), None, Rollup::Max),
         "script" => (Some("status"), None, Rollup::Max),
         _ => (None, None, Rollup::Last),
@@ -90,8 +99,14 @@ fn primary(sensor: &EffectiveSensor) -> (String, Option<String>, Rollup) {
         Some(suffix) => format!("{METRIC_PREFIX}{}_{suffix}", sensor.name),
         None => format!("{METRIC_PREFIX}{}", sensor.name),
     };
+    // Interfaces, sensors and supplies name their own instances.
+    let own_instances = sensor.kind == "snmp"
+        && matches!(
+            sensor.params.get("what").map(String::as_str),
+            Some("interfaces" | "temperature" | "printer")
+        );
     let instance = Some(sensor.instance.as_str())
-        .filter(|i| !i.is_empty())
+        .filter(|i| !i.is_empty() && !own_instances)
         .or(instance)
         .map(str::to_owned);
     (metric, instance, rollup)
@@ -311,6 +326,30 @@ mod tests {
             probe: None,
             probe_relay_id: None,
         }
+    }
+
+    #[test]
+    fn snmp_checks_stand_for_their_group() {
+        let with = |what: &str, instance: &str| EffectiveSensor {
+            params: [("what".to_string(), what.to_string())].into(),
+            ..sensor("snmp", "snmp_x", instance)
+        };
+        let (metric, instance, _) = primary(&with("interfaces", "central"));
+        assert_eq!(
+            (metric.as_str(), instance),
+            ("monitorflow_snmp_x_oper_up", None)
+        );
+        let (metric, instance, _) = primary(&with("ups", "central"));
+        assert_eq!(
+            (metric.as_str(), instance.as_deref()),
+            ("monitorflow_snmp_x_battery_charge_ratio", Some("central"))
+        );
+        let (metric, _, rollup) = primary(&with("temperature", "central"));
+        assert_eq!(
+            (metric.as_str(), rollup),
+            ("monitorflow_snmp_x_celsius", Rollup::Max)
+        );
+        assert_eq!(primary(&with("system", "")).0, "monitorflow_snmp_x_up");
     }
 
     #[test]

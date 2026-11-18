@@ -606,6 +606,8 @@ function ownTitle(sensor: EffectiveSensor): string {
     }
     case "ping":
       return params.host ? t("checks.title.pingOf", { host: params.host }) : t("checks.title.ping");
+    case "snmp":
+      return t(`devices.snmp.group.${SNMP_GROUPS.find((g) => g === params.what) ?? "system"}`);
     case "systemd":
       return t("checks.title.service", { name: params.units ?? sensor.name });
     case "windows_service":
@@ -616,6 +618,9 @@ function ownTitle(sensor: EffectiveSensor): string {
       return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }
 }
+
+/** The groups of SNMP checks (ADR-0149). */
+export const SNMP_GROUPS = ["system", "interfaces", "host", "ups", "temperature", "printer"] as const;
 
 /** "Warning" or "Critical", for the severity select; the label is read when shown. */
 export const SEVERITIES = (["warning", "critical"] as const).map((value) => ({

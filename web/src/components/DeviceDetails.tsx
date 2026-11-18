@@ -1,26 +1,74 @@
 "use client";
 
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 
 import { t } from "@/i18n";
-import { type ServerDetail, api, describeError } from "@/lib/api";
-import { multiCustomer, useMe } from "@/lib/me";
+import { ApiError, type ServerDetail, type SnmpCredentials, api, describeError } from "@/lib/api";
+import { modifiesSite, multiCustomer, useMe } from "@/lib/me";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { FactsBox } from "@/components/ui/FactsBox";
 import { formatExact } from "@/components/ui/time";
 
 import styles from "./AdminPages.module.css";
 import { validAddress } from "./AddDevice";
+import { EditSnmp, snmpSummary } from "./SnmpCredentials";
 
 /** The Details of a device (ADR-0148): no agent, certificate or updates to speak of. */
-export function DeviceFacts({ server }: { server: ServerDetail }) {
+export function DeviceFacts({ server, onChanged }: { server: ServerDetail; onChanged?: () => void }) {
   const me = useMe();
+  // undefined while loading, null without credentials (ADR-0149).
+  const [snmp, setSnmp] = useState<SnmpCredentials | null | undefined>(undefined);
+  const [editing, setEditing] = useState(false);
+  const canEdit = !server.revoked_at && modifiesSite(me, server.customer_id, server.site_id);
+  const load = useCallback(
+    (signal?: AbortSignal) =>
+      api.deviceSnmp(server.id, signal).then(setSnmp, (e: unknown) => {
+        if (e instanceof ApiError && e.status === 404) setSnmp(null);
+      }),
+    [server.id],
+  );
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+  if (editing && snmp !== undefined) {
+    return (
+      <EditSnmp
+        server={server}
+        stored={snmp}
+        onClose={() => setEditing(false)}
+        onSaved={() => {
+          setEditing(false);
+          void load();
+          onChanged?.();
+        }}
+      />
+    );
+  }
   return (
     <FactsBox
       columns={2}
       facts={[
         ...(multiCustomer(me) ? [{ label: t("server.fact.customer"), value: server.customer_name }] : []),
         { label: t("devices.fact.address"), value: server.address ?? "", mono: true },
+        ...(snmp === undefined
+          ? []
+          : [
+              {
+                label: t("devices.snmp.fact"),
+                value: (
+                  <>
+                    {snmpSummary(snmp)}{" "}
+                    {canEdit && (
+                      <Button variant="ghost" size="small" onClick={() => setEditing(true)}>
+                        {snmp ? t("devices.snmp.change") : t("devices.snmp.set")}
+                      </Button>
+                    )}
+                  </>
+                ),
+              },
+            ]),
         { label: t("server.fact.added"), value: formatExact(new Date(server.created_at)).slice(0, 16) },
         ...(server.peer_id !== server.hostname ? [{ label: t("devices.fact.id"), value: server.peer_id, mono: true }] : []),
       ]}

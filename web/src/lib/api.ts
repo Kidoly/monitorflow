@@ -568,6 +568,54 @@ export interface DeviceRequest {
   probe?: string;
   /** Add a ping every minute and its alerts; true when absent. */
   ping?: boolean;
+  /** How to reach it over SNMP (ADR-0149); needed with `template`. */
+  snmp?: SnmpCredentialsRequest;
+  /** The kind of device whose SNMP checks and alerts it gets. */
+  template?: string;
+}
+
+/** SNMP credentials as sent; a secret left out keeps the stored one while the version stays. */
+export interface SnmpCredentialsRequest {
+  version: "v2c" | "v3";
+  port?: number;
+  community?: string;
+  user?: string;
+  auth_protocol?: string;
+  auth_password?: string;
+  priv_protocol?: string;
+  priv_password?: string;
+}
+
+/** A device's SNMP credentials as the API shows them: never a secret. */
+export interface SnmpCredentials {
+  version: "v2c" | "v3";
+  port: number;
+  user: string | null;
+  auth_protocol: string | null;
+  priv_protocol: string | null;
+  community_set: boolean;
+  auth_password_set: boolean;
+  priv_password_set: boolean;
+  updated_at: string;
+}
+
+/** A kind of SNMP device (ADR-0149). */
+export interface SnmpTemplate {
+  key: string;
+  groups: string[];
+  thresholds: { metric: string; comparison: Comparison; warning: number | null; critical: number | null; duration_s: number }[];
+}
+
+/** What an address answered over SNMP. */
+export interface Detected {
+  answers: boolean;
+  error: string | null;
+  description: string | null;
+  name: string | null;
+  object_id: string | null;
+  groups: string[];
+  template: string | null;
+  probe: string;
 }
 
 /** How often a site's built-in checks run, and whether the site set it (ADR-0097). */
@@ -3736,6 +3784,20 @@ export const api = {
 
   updateDevice: (id: string, body: { name?: string; address?: string }) =>
     request<Server>(`/api/devices/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deviceTemplates: (signal?: AbortSignal) => request<{ templates: SnmpTemplate[] }>("/api/devices/templates", { signal }),
+
+  /** What `address` answers over SNMP, asked from its probe (ADR-0149). */
+  detectDevice: (body: { site_id: string; address: string; probe?: string; snmp: SnmpCredentialsRequest }) =>
+    request<Detected>("/api/devices/detect", { method: "POST", body }),
+
+  deviceSnmp: (id: string, signal?: AbortSignal) =>
+    request<SnmpCredentials>(`/api/devices/${encodeURIComponent(id)}/snmp`, { signal }),
+
+  setDeviceSnmp: (id: string, body: SnmpCredentialsRequest) =>
+    request<SnmpCredentials>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "PUT", body }),
+
+  deleteDeviceSnmp: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "DELETE" }),
 
   /** Where the site's network checks can run from: the central server, then its relays. */
   siteProbes: (siteId: string, signal?: AbortSignal) =>
