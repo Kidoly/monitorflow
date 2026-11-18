@@ -1,13 +1,23 @@
-//! Whether a TCP port accepts connections. See ADR-0021.
+//! Whether a TCP port accepts connections (ADR-0021), or a UDP port
+//! answers or at least does not refuse (ADR-0148).
 //!
 //! Metrics (prefixed with the configured name, `port` by default), with
 //! label `target` (`host:port`):
-//! - `up`: 1 when a connection was established before the deadline;
-//! - `connect_seconds`: how long the successful connection took, omitted
-//!   when down.
+//! - `up`: TCP: 1 when a connection was established before the deadline;
+//!   UDP: 1 when the query was answered, or for `query=none` when no ICMP
+//!   "port unreachable" came back;
+//! - `connect_seconds` (TCP): how long the successful connection took,
+//!   omitted when down;
+//! - `answered` (UDP): 1 when something answered, 0 otherwise;
+//! - `response_seconds` (UDP): how long the answer took, omitted without.
 //!
 //! Parameters: `port` (required), `host` (default `127.0.0.1`, an IP
-//! address or a host name) and `protocol` (only `tcp`).
+//! address or a host name), `protocol` (`tcp`, the default, or `udp`) and,
+//! for UDP, `query`: `dns` (a query for the root name servers), `ntp` (a
+//! client request), or `none` (one empty datagram; nothing tells an open
+//! port that does not answer from a filtered one, only a refusal is
+//! certain). By default `dns` on port 53, `ntp` on 123, `none` otherwise.
+//! UDP runs from a probe only: agents refuse it (ADR-0148).
 //!
 //! A host name is resolved once per collection, on the blocking pool and
 //! bounded by the deadline; while a lookup is still running, later
@@ -24,7 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::{timeout_at, Instant};
 
 use crate::registry::{BuildError, Local, Params};
@@ -82,10 +92,66 @@ pub fn target(host: &Host, port: u16) -> String {
     }
 }
 
+/// What a UDP check sends, and what counts as an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UdpQuery {
+    Dns,
+    Ntp,
+    /// One empty datagram: up unless refused.
+    None,
+}
+
+impl UdpQuery {
+    /// The query used on `port` when none is given.
+    pub fn default_for(port: u16) -> Self {
+        match port {
+            53 => Self::Dns,
+            123 => Self::Ntp,
+            _ => Self::None,
+        }
+    }
+
+    /// The datagram, with `id` in a DNS query.
+    fn datagram(self, id: u16) -> Vec<u8> {
+        match self {
+            // Header: ID, recursion desired, one question; then the root
+            // name, type NS, class IN.
+            Self::Dns => {
+                let [hi, lo] = id.to_be_bytes();
+                vec![hi, lo, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1]
+            }
+            // Version 4, client mode, the rest zero.
+            Self::Ntp => {
+                let mut packet = vec![0u8; 48];
+                packet[0] = 0x23;
+                packet
+            }
+            Self::None => Vec::new(),
+        }
+    }
+
+    /// Whether `reply` answers the datagram sent with `id`.
+    fn answers(self, id: u16, reply: &[u8]) -> bool {
+        match self {
+            Self::Dns => {
+                reply.len() >= 12 && reply[..2] == id.to_be_bytes() && reply[2] & 0x80 != 0
+            }
+            // Server mode.
+            Self::Ntp => reply.len() >= 48 && reply[0] & 0x07 == 4,
+            Self::None => true,
+        }
+    }
+}
+
+/// Time between two sends of a UDP query that was not answered yet.
+const UDP_RESEND: Duration = Duration::from_secs(1);
+
 #[derive(Debug)]
 pub struct PortSensor {
     host: Host,
     port: u16,
+    /// `None` for TCP.
+    udp: Option<UdpQuery>,
     target: String,
     /// The addresses it may connect to, when the host is a name the
     /// agent's `sensors.port_targets` does not list itself.
@@ -109,6 +175,7 @@ impl PortSensor {
             target: target(&host, port),
             host,
             port,
+            udp: None,
             allowed: None,
             resolving: Arc::default(),
         }
@@ -120,13 +187,22 @@ impl PortSensor {
         params: &mut Params<'_>,
         local: Option<&Local>,
     ) -> Result<Self, BuildError> {
-        match params.get("protocol") {
-            None | Some("tcp") => {}
-            Some("udp") => {
-                return Err(params.bad("protocol", "`udp` is not supported, see ADR-0021"))
+        let udp = match params.get("protocol") {
+            None | Some("tcp") => false,
+            Some("udp") if local.is_some() => {
+                return Err(params.refused("UDP checks run from a probe, not an agent (ADR-0148)"))
             }
-            Some(_) => return Err(params.bad("protocol", "must be `tcp`")),
-        }
+            Some("udp") => true,
+            Some(_) => return Err(params.bad("protocol", "must be `tcp` or `udp`")),
+        };
+        let query = match params.get("query") {
+            None => None,
+            Some(_) if !udp => return Err(params.bad("query", "is for `protocol` `udp` only")),
+            Some("dns") => Some(UdpQuery::Dns),
+            Some("ntp") => Some(UdpQuery::Ntp),
+            Some("none") => Some(UdpQuery::None),
+            Some(_) => return Err(params.bad("query", "must be `dns`, `ntp` or `none`")),
+        };
         let host = match params.get("host") {
             None => Host::Ip(IpAddr::from([127, 0, 0, 1])),
             Some(host) => parse_host(host).map_err(|reason| params.bad("host", reason))?,
@@ -137,6 +213,9 @@ impl PortSensor {
         };
         let port = port.ok_or_else(|| params.bad("port", "must be between 1 and 65535"))?;
         let mut sensor = Self::new(host, port);
+        if udp {
+            sensor.udp = Some(query.unwrap_or_else(|| UdpQuery::default_for(port)));
+        }
         if let Some(targets) = local.and_then(|l| l.port_targets.as_ref()) {
             sensor.allowed = sensor
                 .check(targets)
@@ -216,6 +295,20 @@ impl Sensor for PortSensor {
                 );
             }
         }
+        if let Some(query) = self.udp {
+            let Some(addr) = addrs.first() else {
+                return Ok(vec![sample("up", 0.0), sample("answered", 0.0)]);
+            };
+            let (up, answered) = udp_check(*addr, query, cutoff).await;
+            let mut samples = vec![
+                sample("up", f64::from(u8::from(up))),
+                sample("answered", f64::from(u8::from(answered.is_some()))),
+            ];
+            if let Some(took) = answered {
+                samples.push(sample("response_seconds", took.as_secs_f64()));
+            }
+            return Ok(samples);
+        }
         for addr in addrs {
             let started = Instant::now();
             match timeout_at(cutoff, TcpStream::connect(addr)).await {
@@ -228,6 +321,60 @@ impl Sensor for PortSensor {
             }
         }
         Ok(vec![sample("up", 0.0)])
+    }
+}
+
+/// Sends `query` to `addr` until `cutoff`: whether the port is up, and
+/// how long the answer took when there was one. A refusal (ICMP port
+/// unreachable, which Linux reports on a connected socket) is down at
+/// once.
+async fn udp_check(addr: SocketAddr, query: UdpQuery, cutoff: Instant) -> (bool, Option<Duration>) {
+    let bind: SocketAddr = if addr.is_ipv4() {
+        (IpAddr::from([0, 0, 0, 0]), 0).into()
+    } else {
+        (IpAddr::from([0u16; 8]), 0).into()
+    };
+    let socket = match UdpSocket::bind(bind).await {
+        Ok(socket) => socket,
+        Err(error) => {
+            tracing::debug!(%addr, %error, "cannot open a UDP socket");
+            return (false, None);
+        }
+    };
+    if let Err(error) = socket.connect(addr).await {
+        tracing::debug!(%addr, %error, "UDP connect failed");
+        return (false, None);
+    }
+    let id = std::process::id() as u16 ^ (Instant::now().elapsed().subsec_nanos() as u16);
+    let datagram = query.datagram(id);
+    let started = Instant::now();
+    let mut buf = vec![0u8; 1500];
+    loop {
+        if socket.send(&datagram).await.is_err() {
+            return (false, None);
+        }
+        let wait = (Instant::now() + UDP_RESEND).min(cutoff);
+        loop {
+            match timeout_at(wait, socket.recv(&mut buf)).await {
+                Ok(Ok(n)) if query.answers(id, &buf[..n]) => {
+                    return (true, Some(started.elapsed()));
+                }
+                // Something else: keep waiting.
+                Ok(Ok(_)) => continue,
+                Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                    return (false, None);
+                }
+                Ok(Err(error)) => {
+                    tracing::debug!(%addr, %error, "UDP receive failed");
+                    return (false, None);
+                }
+                Err(_) => break,
+            }
+        }
+        if Instant::now() >= cutoff {
+            // No answer: only a check that expects none is up.
+            return (query == UdpQuery::None, None);
+        }
     }
 }
 

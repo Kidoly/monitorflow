@@ -19,6 +19,7 @@ import { InfoTip } from "@/components/ui/Hint";
 import { RowMenu } from "@/components/ui/RowMenu";
 import { formatDay } from "@/components/ui/time";
 
+import { MaintenanceWindowsSection, useWindowNotices } from "./MaintenanceWindows";
 import admin from "./AdminPages.module.css";
 import styles from "./Silences.module.css";
 
@@ -164,6 +165,9 @@ export function useSilenceBar(target: SilenceTarget | null): {
   const fetcher = useCallback((signal: AbortSignal) => api.silences({ [key]: id }, signal), [key, id]);
   const { data, refresh } = usePolledData(fetcher, { enabled: target !== null });
   const [custom, setCustom] = useState(false);
+  const windows = useWindowNotices(
+    target && target.scope !== "relay" ? { scope: target.scope, id: target.id, siteId: target.siteId } : null,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -234,6 +238,7 @@ export function useSilenceBar(target: SilenceTarget | null): {
           </ul>
         </Banner>
       )}
+      {windows.notices}
       {upcoming.map((s) => (
         <Banner key={s.id} tone="plain">
           {s.scope === scope
@@ -263,13 +268,17 @@ export function useSilenceBar(target: SilenceTarget | null): {
           { label: t("silences.bar.hour"), onSelect: () => void until(inOneHour(new Date())) },
           { label: t("silences.bar.tomorrow"), onSelect: () => void until(tomorrowMorning(new Date())) },
           { label: t("silences.bar.custom"), onSelect: () => setCustom(true) },
+          ...(scope === "relay" ? [] : [{ label: t("maintenance.menu.window"), onSelect: windows.openForm }]),
         ]}
       />
       {error && <span role="alert">{error}</span>}
     </span>
   );
-  const form = custom && (
-    <SilenceForm submitLabel={t("silences.bar.submit", { name })} onSubmit={silence} onCancel={() => setCustom(false)} />
+  const form = (
+    <>
+      {custom && <SilenceForm submitLabel={t("silences.bar.submit", { name })} onSubmit={silence} onCancel={() => setCustom(false)} />}
+      {windows.form}
+    </>
   );
   return { notices, menu, form, checkSilences, silenceCheck };
 }
@@ -423,6 +432,7 @@ export function SilencesPage() {
       ) : (
         <DataTable label={t("silences.title")} columns={columns} rows={silences} rowKey={(s) => s.id} loading={!data} />
       )}
+      <MaintenanceWindowsSection />
     </Page>
   );
 }
