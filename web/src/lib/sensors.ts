@@ -18,6 +18,7 @@ const PRIMARY: Record<string, { suffix: string; instance?: string }> = {
   systemd: { suffix: "active" },
   windows_service: { suffix: "active" },
   port: { suffix: "up" },
+  ping: { suffix: "up" },
   log: { suffix: "matches" },
   eventlog: { suffix: "matches" },
   script: { suffix: "status" },

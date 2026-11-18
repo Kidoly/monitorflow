@@ -207,7 +207,8 @@ describe("ServerPage of a device (ADR-0148)", () => {
       </As>,
     );
     await screen.findByRole("heading", { level: 1, name: "Core switch" });
-    expect(header()).toHaveTextContent("Device · 192.0.2.10");
+    expect(header()).toHaveTextContent("Device");
+    expect(header()).toHaveTextContent("192.0.2.10");
     expect(header()).not.toHaveTextContent(/agent|Last seen|Offline/i);
     expect(screen.queryByRole("tab", { name: /Logs|Updates|Commands/ })).toBeNull();
     expect(await screen.findByText("Ping · from central server")).toBeTruthy();

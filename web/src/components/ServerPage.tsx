@@ -339,7 +339,7 @@ function ServerHeader({
             <span className={styles.line}>
               {device ? (
                 <>
-                  {t("devices.line", { address: server.address ?? "" })}
+                  {server.address}
                   {severalSites && (
                     <>
                       {" · "}

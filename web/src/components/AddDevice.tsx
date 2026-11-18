@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { t } from "@/i18n";
 import { type Probe, type Site, api, describeError } from "@/lib/api";
@@ -103,7 +103,6 @@ export function AddDevice() {
   const me = useMe();
   const router = useRouter();
   const scope = useScope();
-  const titleId = useId();
   const [sites, setSites] = useState<Site[] | null>(null);
   const [siteId, setSiteId] = useState(scope.siteId ?? "");
   const [name, setName] = useState("");
@@ -156,10 +155,7 @@ export function AddDevice() {
 
   if (sites?.length === 0) return <p className={styles.sectionNote}>{t("devices.add.noSite")}</p>;
   return (
-    <form className={styles.panel} onSubmit={(e) => void submit(e)} aria-labelledby={titleId} noValidate>
-      <h2 id={titleId} className={styles.sectionTitle}>
-        {t("devices.add.title")}
-      </h2>
+    <form className={styles.panel} onSubmit={(e) => void submit(e)} aria-label={t("devices.add.title")} noValidate>
       <p className={styles.sectionNote}>{t("devices.add.note")}</p>
       <label className={styles.field}>
         {t("devices.add.name")}

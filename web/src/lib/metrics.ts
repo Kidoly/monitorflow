@@ -30,6 +30,9 @@ export const BUILTIN_METRICS = [
   "diskio_reads_per_second",
   "diskio_writes_per_second",
   "diskio_queue_depth",
+  "ping_up",
+  "ping_loss_ratio",
+  "ping_rtt_seconds",
 ] as const;
 
 type BuiltinMetric = (typeof BUILTIN_METRICS)[number];

@@ -145,7 +145,10 @@ export function ServerSensorsTab({
     {
       key: "rule",
       header: t("server.sensors.column.rule"),
-      cell: (row) => (rules.thresholds ? <RuleCell sensors={sensors.sensors} row={row} rule={ruleOfRow(row)} /> : null),
+      cell: (row) =>
+        rules.thresholds ? (
+          <RuleCell sensors={sensors.sensors} row={row} rule={ruleOfRow(row)} device={server.kind === "device"} />
+        ) : null,
     },
   ];
 
@@ -225,14 +228,24 @@ function own(sensor: EffectiveSensor, siteSensors: EffectiveSensor[] | null): bo
 }
 
 /** "1 min · > 85% / 95% · 5 min" and where it comes from; the sentence in a tooltip. */
-function RuleCell({ sensors, row, rule }: { sensors: EffectiveSensor[]; row: SensorRow; rule: EffectiveThreshold | undefined }) {
+function RuleCell({
+  sensors,
+  row,
+  rule,
+  device,
+}: {
+  sensors: EffectiveSensor[];
+  row: SensorRow;
+  rule: EffectiveThreshold | undefined;
+  device: boolean;
+}) {
   const shape = rule ? shapeFor(sensors, rule) : shapeOf(sensors, row.metric, row.instance || null);
   const level = ruleLevel(row.sensor, rule, perInstance(row.sensor, row.instance));
   return (
     <span className={styles.rule}>
       <Tooltip text={ruleSummary(shape, rule, row.sensor.interval_ms)}>{ruleCompact(shape, rule, row.sensor.interval_ms)}</Tooltip>
       <Label tone="neutral" small>
-        {LEVEL_LABELS[level]}
+        {device && level === "server" ? t("devices.level") : LEVEL_LABELS[level]}
       </Label>
     </span>
   );
