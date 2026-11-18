@@ -12,6 +12,11 @@
 # 3. Adds them as devices through the API with ping, TCP and UDP checks
 #    from the relay and from the central server, and checks the values,
 #    an alert that fires on the relay's check only, and its recovery.
+# 4. SNMP (ADR-0149): net-snmp's snmpd with v2c and v3 users, and
+#    snmpsim playing the recordings of snmp/data (a switch, a UPS, a
+#    printer). Runs the crate's tests against both, detects what they
+#    answer through the relay, adds them from templates, checks their
+#    values, and puts the UPS on battery to see its alert fire and recover.
 #
 # Usage: run-e2e.sh            (leaves everything running for a look)
 #        run-e2e.sh --clean    (removes the containers and data after)
@@ -78,10 +83,25 @@ docker run -d --name "$P-lossy" --network "$NET" --cap-add NET_ADMIN nginx:1.27-
 # Drops pings from the relay only, once told which address it has.
 docker run -d --name "$P-blocked" --network "$NET" --cap-add NET_ADMIN nginx:1.27-alpine \
     sh -c 'apk add -q --no-cache iptables >/dev/null && exec nginx -g "daemon off;"' >/dev/null
-for t in dns ntp web lossy blocked; do [[ -n $(ip_of $t) ]] || fail "no address for $t"; done
+# SNMP: net-snmp (with its tools, for SETs) and snmpsim.
+docker run -d --name "$P-snmpd" --network "$NET" -v "$HERE/snmp/snmpd.conf:/conf/snmpd.conf:ro" debian:trixie-slim \
+    sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends snmpd snmp >/dev/null && exec snmpd -f -Lo -C -c /conf/snmpd.conf' >/dev/null
+docker run -d --name "$P-snmpsim" --network "$NET" -v "$HERE/snmp/data:/data:ro" python:3.12-slim \
+    sh -c 'pip install -q --root-user-action=ignore snmpsim pysmi >/dev/null 2>&1 && exec snmpsim-command-responder --data-dir=/data --agent-udpv4-endpoint=0.0.0.0:161 --process-user=nobody --process-group=nogroup' >/dev/null
+for t in dns ntp web lossy blocked snmpd snmpsim; do [[ -n $(ip_of $t) ]] || fail "no address for $t"; done
 for _ in $(seq 60); do docker exec "$P-lossy" tc qdisc show dev eth0 2>/dev/null | grep -q netem && break; sleep 1; done
 for _ in $(seq 60); do docker exec "$P-blocked" sh -c 'command -v iptables' >/dev/null 2>&1 && break; sleep 1; done
 ok "dns $(ip_of dns), ntp $(ip_of ntp), web $(ip_of web), lossy $(ip_of lossy), blocked $(ip_of blocked)"
+
+for _ in $(seq 120); do docker logs "$P-snmpd" 2>&1 | grep -q "NET-SNMP version" && break; sleep 1; done
+for _ in $(seq 120); do docker logs "$P-snmpsim" 2>&1 | grep -q "Listening at" && break; sleep 1; done
+ok "snmpd $(ip_of snmpd), snmpsim $(ip_of snmpsim)"
+
+step "the SNMP checks against snmpd and snmpsim"
+(cd "$REPO" && MF_SNMPD="$(ip_of snmpd):161" MF_SNMPSIM="$(ip_of snmpsim):161" cargo test -q -p monitorflow-snmp --tests 2>&1 | tail -3)
+(cd "$REPO" && MF_SNMPD="$(ip_of snmpd):161" MF_SNMPSIM="$(ip_of snmpsim):161" cargo test -q -p monitorflow-snmp --tests >/dev/null 2>&1) \
+    || fail "the SNMP checks failed against the real agents"
+ok "v2c, v3 (SHA-256/AES-128, SHA-512/AES-256), interfaces, host resources, a switch, a UPS and a printer"
 
 step "a private MonitorFlow in $WORK"
 docker run -d --name "$P-vm" -p "127.0.0.1:$VM_PORT:8428" victoriametrics/victoria-metrics:latest >/dev/null
@@ -259,6 +279,85 @@ step "the relay is believed for its own site's devices only"
 OTHER=$(send POST "/api/customers/$DEFAULT_CUSTOMER/sites" '{"name":"elsewhere"}' | expect 201 | jq -r .id)
 send POST /api/devices "$(jq -n --arg site "$OTHER" --arg r "$RELAY" '{site_id: $site, name: "x", address: "192.0.2.1", probe: $r}')" | expect 400 >/dev/null
 ok "a check of another site cannot run from this relay"
+
+step "SNMP devices (ADR-0149)"
+SNMPD=$(ip_of snmpd); SIM=$(ip_of snmpsim)
+v3='{"version": "v3", "user": "e2e-sha512", "auth_protocol": "sha512", "auth_password": "e2e-auth-password", "priv_protocol": "aes256", "priv_password": "e2e-priv-password"}'
+detect() { # address, credentials JSON, [probe]
+    send POST /api/devices/detect "$(jq -n --arg site "$SITE" --arg a "$1" --argjson c "$2" --arg p "${3:-}" \
+        '{site_id: $site, address: $a, snmp: $c} + (if $p == "" then {} else {probe: $p} end)')" | expect 200
+}
+FOUND=$(detect "$SNMPD" "$v3")
+[[ $(jq -r .probe <<<"$FOUND") == relay-branch ]] || { echo "$FOUND"; fail "the detection did not run on the relay"; }
+[[ $(jq -r '.answers, .name, .template' <<<"$FOUND" | tr '\n' ' ') == "true nas-e2e nas " ]] || { echo "$FOUND"; fail "snmpd was not detected as a NAS"; }
+ok "the relay detects net-snmp over v3 as a NAS: $(jq -r .description <<<"$FOUND" | cut -c1-40)"
+WRONG=$(detect "$SNMPD" '{"version": "v2c", "community": "wrong"}')
+[[ $(jq -r .answers <<<"$WRONG") == false ]] || fail "a wrong community was answered"
+ok "a wrong community gets no answer: $(jq -r .error <<<"$WRONG" | cut -c1-60)"
+for device in switch ups printer; do
+    found=$(detect "$SIM" "{\"version\": \"v2c\", \"community\": \"$device\"}" central)
+    [[ $(jq -r .template <<<"$found") == "$device" || ($device == switch && $(jq -r .template <<<"$found") == switch) ]] \
+        || { echo "$found"; fail "the $device recording was detected as $(jq -r .template <<<"$found")"; }
+done
+ok "the switch, UPS and printer recordings are detected as such"
+
+add_snmp() { # name, address, template, credentials JSON, probe
+    send POST /api/devices "$(jq -n --arg site "$SITE" --arg n "$1" --arg a "$2" --arg t "$3" --argjson c "$4" --arg p "$5" \
+        '{site_id: $site, name: $n, address: $a, template: $t, snmp: $c, probe: $p, ping: false}')" | expect 201 | jq -r .id
+}
+NAS=$(add_snmp "NAS" "$SNMPD" nas "$v3" "$RELAY")
+SWITCH=$(add_snmp "Floor switch" "$SIM" switch '{"version": "v2c", "community": "switch"}' central)
+UPS=$(add_snmp "UPS" "$SIM" ups '{"version": "v2c", "community": "ups"}' central)
+PRINTER=$(add_snmp "Printer" "$SIM" printer '{"version": "v2c", "community": "printer"}' central)
+get "/api/devices/$NAS/snmp" | jq -e '.auth_password_set and (tostring | contains("e2e-auth") | not)' >/dev/null \
+    || fail "the API showed a secret, or lost one"
+ok "4 SNMP devices from templates; their credentials are never shown back"
+# Faster polls for the test, and the alerts at once.
+for d in "$NAS" "$SWITCH" "$UPS" "$PRINTER"; do
+    get "/api/servers/$d/sensor_configs" | jq -c '.entries[]' | while read -r row; do
+        body=$(jq -c '{kind, name, instance, interval_ms: 10000, timeout_ms: 9000, params, enabled, probe: (if .probe == "relay" then .probe_relay_id else .probe end)}' <<<"$row")
+        send PUT "/api/sensor_configs/$(jq -r .id <<<"$row")" "$body" | expect 200 >/dev/null
+    done
+    get "/api/servers/$d/thresholds" | jq -c '.entries[]' | while read -r row; do
+        send PUT "/api/thresholds/$(jq -r .id <<<"$row")" "$(jq -c '{metric, instance, comparison, warning, critical, duration_s: 0, hysteresis, enabled}' <<<"$row")" | expect 200 >/dev/null
+    done
+done
+metric() { # device, metric, label filter (jq): the last value
+    curl -sf -b "$JAR" -G "$API/api/metrics/query" --data-urlencode "server_id=$1" --data-urlencode "metric=$2" \
+        | jq -er "[.series[] | select($3) | .points[-1][1]] | first // empty"
+}
+near() { # device, metric, filter, low, high
+    local v; v=$(metric "$1" "$2" "$3") || return 1
+    awk -v v="$v" -v lo="$4" -v hi="$5" 'BEGIN { exit !(v >= lo && v <= hi) }'
+}
+wait_near() { # device, metric, filter, low, high, what
+    until_ok 120 near "$1" "$2" "$3" "$4" "$5" || fail "$6 ($(metric "$1" "$2" "$3" || echo nothing))"
+    ok "$6: $(metric "$1" "$2" "$3")"
+}
+wait_near "$NAS" monitorflow_snmp_up 'true' 1 1 "the NAS answers SNMP v3 through the relay"
+wait_near "$NAS" monitorflow_snmp_host_memory_used_ratio 'true' 0.01 1 "its memory in use"
+wait_near "$NAS" monitorflow_snmp_if_oper_up '.labels.instance | startswith("eth")' 1 1 "its eth interface is up"
+wait_near "$SWITCH" monitorflow_snmp_if_in_bytes_per_second '.labels.instance == "Gi0/1"' 100000 150000 "the switch's Gi0/1 traffic in, in bytes a second"
+wait_near "$SWITCH" monitorflow_snmp_if_oper_up '.labels.instance == "Gi0/12"' 0 0 "Gi0/12 is down"
+wait_near "$SWITCH" monitorflow_snmp_temp_celsius '.labels.instance == "Chassis"' 42 42 "the chassis temperature"
+wait_near "$UPS" monitorflow_snmp_ups_battery_charge_ratio 'true' 1 1 "the UPS battery charge"
+wait_near "$UPS" monitorflow_snmp_ups_runtime_seconds 'true' 2700 2700 "its runtime left"
+wait_near "$PRINTER" monitorflow_snmp_printer_supply_level_ratio '.labels.instance == "Black Toner"' 0.06 0.06 "the black toner level"
+
+open_metric() { # device, metric
+    get "/api/incidents?state=open&server_id=$1&limit=50" | jq -e --arg m "$2" '.incidents[] | select(.metric == $m)'
+}
+until_ok 90 open_metric "$PRINTER" monitorflow_snmp_printer_supply_level_ratio || fail "no alert for the low toner"
+ok "the low black toner raised an alert: $(open_metric "$PRINTER" monitorflow_snmp_printer_supply_level_ratio | jq -r .severity)"
+open_metric "$UPS" monitorflow_snmp_ups_on_battery >/dev/null && fail "the UPS is on battery before the test"
+# On battery: snmpsim's writable recording takes a SET of upsOutputSource.
+docker exec "$P-snmpd" snmpset -v2c -c ups "$SIM" 1.3.6.1.2.1.33.1.4.1.0 i 5 >/dev/null || fail "the SET was refused"
+until_ok 90 open_metric "$UPS" monitorflow_snmp_ups_on_battery || fail "no alert when the UPS went on battery"
+ok "the UPS on battery raised a $(open_metric "$UPS" monitorflow_snmp_ups_on_battery | jq -r .severity) alert"
+docker exec "$P-snmpd" snmpset -v2c -c ups "$SIM" 1.3.6.1.2.1.33.1.4.1.0 i 3 >/dev/null
+back() { ! open_metric "$UPS" monitorflow_snmp_ups_on_battery; }
+until_ok 90 back || fail "the alert did not resolve"
+ok "it resolved once the UPS was back on mains"
 
 echo
 echo "All passed. Server: $API (admin / $PASSWORD), log in $WORK/server.log."

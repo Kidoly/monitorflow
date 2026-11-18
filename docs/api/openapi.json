@@ -37666,6 +37666,34 @@
           },
           {
             "type": "object",
+            "description": "A device: an address without an agent, watched from a probe\n(ADR-0148).",
+            "required": [
+              "peer_id",
+              "hostname",
+              "address",
+              "object"
+            ],
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "What its checks reach."
+              },
+              "hostname": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "device"
+                ]
+              },
+              "peer_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A check (a sensor row) of a server.",
             "required": [
               "server",
@@ -37695,6 +37723,10 @@
               },
               "params": {
                 "type": "object"
+              },
+              "probe": {
+                "type": "boolean",
+                "description": "Run from the site's default probe, the relay of the site or the\ncentral server, rather than the agent (ADR-0148)."
               },
               "server": {
                 "type": "string",

@@ -394,7 +394,7 @@ function ServerHeader({
       {live && silences.form}
       {details &&
         (device ? (
-          <DeviceFacts server={server} />
+          <DeviceFacts server={server} onChanged={onChanged} />
         ) : (
           <ServerFacts server={server} latestAgent={latestAgent} now={now} onChanged={onChanged} />
         ))}

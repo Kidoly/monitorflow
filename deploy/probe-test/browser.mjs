@@ -55,7 +55,8 @@ ok("the relay of the site is chosen by default");
 await page.screenshot({ path: `${shots}/add-device.png`, fullPage: true });
 await page.getByRole("button", { name: "Add the device" }).click();
 await page.getByRole("heading", { level: 1, name: "Floor switch" }).waitFor({ timeout: 30_000 });
-await see(`Device · ${address}`, "the new device's page says what it is");
+await see(address, "the new device's page gives its address");
+await see("Device", "and says it is a device");
 await see("Ping · from relay-branch", "its ping runs from the relay");
 await see("answers", "its ping answers", 90_000);
 
@@ -73,6 +74,31 @@ await page.getByRole("link", { name: "Branch NAS" }).click();
 await see("Ping · from central server", "the NAS shows the central server's ping");
 await see("Ping · from relay-branch", "and the relay's");
 await page.screenshot({ path: `${shots}/nas.png`, fullPage: true });
+
+// An SNMP device (ADR-0149): detected, then added with its kind's checks.
+if (process.env.SNMPSIM) {
+  await page.goto(`${base}/devices/add/`);
+  const siteBox = page.getByRole("combobox", { name: /^Site/ });
+  if (await siteBox.count()) await siteBox.selectOption({ label: process.env.SITE ?? "main" });
+  await page.getByLabel(/^Address/).fill(process.env.SNMPSIM);
+  await page.getByLabel(/Watch it over SNMP/).check();
+  await page.getByLabel(/^Community/).fill("printer");
+  await page.getByLabel("Checked from").selectOption("central");
+  await page.getByRole("button", { name: "Detect" }).click();
+  await see(/printer-2 answers: Test office laser printer/, "Detect says what the printer answers");
+  await see(/It reports: .*Printer supplies/, "and what it reports");
+  if ((await page.getByLabel(/^Kind of device/).inputValue()) !== "printer") await fail("the printer kind is not chosen");
+  ok("the printer kind is chosen, and its name filled in");
+  await page.screenshot({ path: `${shots}/add-snmp.png`, fullPage: true });
+  await page.getByRole("button", { name: "Add the device" }).click();
+  await page.getByRole("heading", { level: 1, name: "printer-2" }).waitFor({ timeout: 30_000 });
+  await see(/Supply level Black Toner/, "its supplies are listed", 120_000);
+  await see("6%", "the black toner reads 6%", 120_000);
+  await page.getByRole("button", { name: "Details" }).click();
+  await see("v2c, port 161", "Details say how it is reached, without the community");
+  if ((await page.content()).includes(">printer<")) await fail("the community is shown");
+  await page.screenshot({ path: `${shots}/snmp-device.png`, fullPage: true });
+}
 
 // The same page in French.
 const fr = await browser.newPage({ viewport: { width: 1400, height: 1000 }, locale: "fr-FR" });

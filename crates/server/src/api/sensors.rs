@@ -1214,6 +1214,7 @@ mod tests {
                 ("cpu", "", Origin::Server, Some(entries[1].id), 5_000),
                 ("disk", "/data", Origin::Server, Some(entries[4].id), 60_000),
                 ("memory", "", Origin::Site, Some(entries[2].id), 10_000),
+                ("net", "", Origin::Default, None, 60_000),
             ]
         );
         assert_eq!(sensors[0].params["per_core"], "false");
@@ -1221,6 +1222,6 @@ mod tests {
         assert!(defaults.iter().all(|s| s.origin == Origin::Default
             && s.entry_id.is_none()
             && s.interval_ms == 300_000));
-        assert_eq!(defaults.len(), 4);
+        assert_eq!(defaults.len(), 5);
     }
 }
