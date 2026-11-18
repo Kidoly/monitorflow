@@ -198,6 +198,26 @@ impl Holds {
         self.heard.get(node).copied()
     }
 
+    /// Everything behind what the incident `id` says is down, each once.
+    pub fn behind_incident(&self, id: Uuid) -> Vec<Node> {
+        let mut found: Vec<Node> = Vec::new();
+        let mut downs: Vec<&Node> = self
+            .down
+            .iter()
+            .filter(|(_, d)| d.incident == id)
+            .map(|(n, _)| n)
+            .collect();
+        downs.sort();
+        for node in downs {
+            for child in self.behind(node) {
+                if !found.contains(&child) {
+                    found.push(child);
+                }
+            }
+        }
+        found
+    }
+
     /// Everything behind `node`, nearest first, each once. A server's
     /// checks that others depend on are behind it too.
     pub fn behind(&self, node: &Node) -> Vec<Node> {
