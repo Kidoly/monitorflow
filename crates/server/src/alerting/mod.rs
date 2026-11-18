@@ -6,6 +6,7 @@
 pub mod engine;
 pub mod history;
 pub mod offline;
+pub mod preview;
 pub mod reason;
 pub mod rules;
 pub mod state;

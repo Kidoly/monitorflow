@@ -14,7 +14,7 @@ use super::openapi::ErrorBody;
 use super::{
     ai_commands, check_interval, commands, customers, logs, metrics, offline_alerts,
     package_sources, packages, proxmox, revoke, rollback, sensors, sites, sources, third_party,
-    thresholds,
+    threshold_preview, thresholds,
 };
 
 #[derive(OpenApi)]
@@ -27,7 +27,7 @@ use super::{
         site_check_interval, server_offline_alerts, site_offline_alerts, relay_offline_alerts,
         server_thresholds_effective, server_thresholds, create_server_threshold,
         site_thresholds_effective, site_thresholds, create_site_threshold,
-        update_threshold, delete_threshold,
+        update_threshold, delete_threshold, preview_server_threshold, preview_site_threshold,
         server_metrics, server_logs, revoke_server,
         server_proxmox, set_server_proxmox, clear_server_proxmox, server_proxmox_guests,
         server_packages, server_third_party, server_rollback, server_sources, configure_server_sources,
@@ -688,6 +688,69 @@ key's areas: `api_key_scope`", body = ErrorBody),
 `conflict`", body = ErrorBody),
     ))]
 fn create_site_threshold() {}
+
+#[utoipa::path(post, path = "/api/v1/servers/{id}/thresholds/preview", tag = "thresholds",
+    summary = "Preview a threshold on a server",
+    description = "What a rule would have done to the server over the last `days` (1 to 7, 3 by default): \
+its history from the metrics store replayed through the same code MonitorFlow alerts with. For each series \
+the rule judges (at most 20), the judged value (the sample, the window's value, the ratio, the seconds left \
+or of silence; at most 300 points, the worst of each stretch) and the incidents it would have opened and \
+resolved, with their times. The rule is checked as when it is saved, and nothing is written or audited.\n\n\
+**Who**: any role on the server's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = threshold_preview::PreviewRequest, example = json!({
+        "days": 3,
+        "rule": {"metric": "monitorflow_cpu_load1", "instance": "", "kind": "window",
+                 "function": "avg", "window_s": 900, "comparison": ">", "warning": 4}
+    })),
+    responses(
+        (status = 200, description = "What the rule would have done", body = threshold_preview::ServerPreview,
+            example = json!({
+                "server_id": ex::SERVER, "from": 1763280000000_i64, "to": 1763539200000_i64, "days": 3,
+                "truncated": false,
+                "series": [{"instance": "", "points": [[1763452800000_i64, 2.1], [1763456400000_i64, 4.6]],
+                            "incidents": [{"severity": "warning", "opened_at": 1763456400000_i64,
+                                           "resolved_at": 1763460000000_i64, "peak_value": 4.6}]}]
+            })),
+        (status = 400, description = "The rule or `days` is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 502, description = "The metrics store did not answer: `metrics_unavailable`",
+            body = ErrorBody),
+    ))]
+fn preview_server_threshold() {}
+
+#[utoipa::path(post, path = "/api/v1/sites/{id}/thresholds/preview", tag = "thresholds",
+    summary = "Preview a threshold on a site",
+    description = "The same preview over up to 20 servers of the site, by name, with how many incidents \
+each would have had and when; `more_servers` says when the site has more. Points are left out. Nothing is \
+written or audited.\n\n\
+**Who**: any role on the site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    request_body(content = threshold_preview::PreviewRequest, example = json!({
+        "rule": {"metric": "monitorflow_disk_used_ratio", "kind": "forecast", "comparison": ">=",
+                 "target": 1, "window_s": 86400, "warning": 259200, "critical": 86400}
+    })),
+    responses(
+        (status = 200, description = "What the rule would have done", body = threshold_preview::SitePreview,
+            example = json!({
+                "site_id": ex::SITE, "from": 1763280000000_i64, "to": 1763539200000_i64, "days": 3,
+                "more_servers": false,
+                "servers": [{"server_id": ex::SERVER, "hostname": "web-1", "incidents": 1,
+                             "series": [{"instance": "/var", "points": [],
+                                         "incidents": [{"severity": "warning",
+                                                        "opened_at": 1763456400000_i64,
+                                                        "resolved_at": null, "peak_value": 201600.0}]}]}]
+            })),
+        (status = 400, description = "The rule or `days` is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 502, description = "The metrics store did not answer: `metrics_unavailable`",
+            body = ErrorBody),
+    ))]
+fn preview_site_threshold() {}
 
 #[utoipa::path(put, path = "/api/v1/thresholds/{id}", tag = "thresholds",
     summary = "Replace a threshold row",

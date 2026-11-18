@@ -27593,6 +27593,201 @@
         }
       }
     },
+    "/api/v1/servers/{id}/thresholds/preview": {
+      "post": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Preview a threshold on a server",
+        "description": "What a rule would have done to the server over the last `days` (1 to 7, 3 by default): its history from the metrics store replayed through the same code MonitorFlow alerts with. For each series the rule judges (at most 20), the judged value (the sample, the window's value, the ratio, the seconds left or of silence; at most 300 points, the worst of each stretch) and the incidents it would have opened and resolved, with their times. The rule is checked as when it is saved, and nothing is written or audited.\n\n**Who**: any role on the server's site. **Area**: `alerts`.",
+        "operationId": "preview_server_threshold",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              },
+              "example": {
+                "days": 3,
+                "rule": {
+                  "comparison": ">",
+                  "function": "avg",
+                  "instance": "",
+                  "kind": "window",
+                  "metric": "monitorflow_cpu_load1",
+                  "warning": 4,
+                  "window_s": 900
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the rule would have done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerPreview"
+                },
+                "example": {
+                  "days": 3,
+                  "from": 1763280000000,
+                  "series": [
+                    {
+                      "incidents": [
+                        {
+                          "opened_at": 1763456400000,
+                          "peak_value": 4.6,
+                          "resolved_at": 1763460000000,
+                          "severity": "warning"
+                        }
+                      ],
+                      "instance": "",
+                      "points": [
+                        [
+                          1763452800000,
+                          2.1
+                        ],
+                        [
+                          1763456400000,
+                          4.6
+                        ]
+                      ]
+                    }
+                  ],
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "to": 1763539200000,
+                  "truncated": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The rule or `days` is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics store did not answer: `metrics_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/website-checks": {
       "get": {
         "tags": [
@@ -32392,6 +32587,198 @@
           },
           "500": {
             "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites/{id}/thresholds/preview": {
+      "post": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Preview a threshold on a site",
+        "description": "The same preview over up to 20 servers of the site, by name, with how many incidents each would have had and when; `more_servers` says when the site has more. Points are left out. Nothing is written or audited.\n\n**Who**: any role on the site. **Area**: `alerts`.",
+        "operationId": "preview_site_threshold",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              },
+              "example": {
+                "rule": {
+                  "comparison": ">=",
+                  "critical": 86400,
+                  "kind": "forecast",
+                  "metric": "monitorflow_disk_used_ratio",
+                  "target": 1,
+                  "warning": 259200,
+                  "window_s": 86400
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the rule would have done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SitePreview"
+                },
+                "example": {
+                  "days": 3,
+                  "from": 1763280000000,
+                  "more_servers": false,
+                  "servers": [
+                    {
+                      "hostname": "web-1",
+                      "incidents": 1,
+                      "series": [
+                        {
+                          "incidents": [
+                            {
+                              "opened_at": 1763456400000,
+                              "peak_value": 201600.0,
+                              "resolved_at": null,
+                              "severity": "warning"
+                            }
+                          ],
+                          "instance": "/var",
+                          "points": []
+                        }
+                      ],
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                    }
+                  ],
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "to": 1763539200000
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The rule or `days` is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics store did not answer: `metrics_unavailable`",
             "content": {
               "application/json": {
                 "schema": {
@@ -43550,6 +43937,94 @@
           }
         }
       },
+      "PreviewIncident": {
+        "type": "object",
+        "description": "An incident the rule would have opened.",
+        "required": [
+          "severity",
+          "opened_at",
+          "peak_value"
+        ],
+        "properties": {
+          "opened_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix milliseconds."
+          },
+          "peak_value": {
+            "type": "number",
+            "format": "double",
+            "description": "The worst judged value while open."
+          },
+          "resolved_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix milliseconds; `null` when it would still be open."
+          },
+          "severity": {
+            "type": "string",
+            "description": "The highest severity it reached: `warning` or `critical`."
+          }
+        }
+      },
+      "PreviewRequest": {
+        "type": "object",
+        "description": "Body of both preview routes.",
+        "required": [
+          "rule"
+        ],
+        "properties": {
+          "days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Days back, 1 to 7, 3 by default.",
+            "minimum": 0
+          },
+          "rule": {
+            "$ref": "#/components/schemas/ThresholdRequest",
+            "description": "The rule as it would be saved."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PreviewSeries": {
+        "type": "object",
+        "description": "One series replayed.",
+        "required": [
+          "instance",
+          "points",
+          "incidents"
+        ],
+        "properties": {
+          "incidents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewIncident"
+            }
+          },
+          "instance": {
+            "type": "string",
+            "description": "`\"\"` for a series without an instance."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "description": "`[Unix ms, judged value]`, at most 300, the worst of each stretch:\nthe sample, the window's value, the ratio, the seconds left or of\nsilence."
+          }
+        }
+      },
       "Probe": {
         "type": "object",
         "description": "One place a site's checks can run from.",
@@ -45860,6 +46335,49 @@
           }
         }
       },
+      "ServerPreview": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/thresholds/preview`.",
+        "required": [
+          "server_id",
+          "from",
+          "to",
+          "days",
+          "series",
+          "truncated"
+        ],
+        "properties": {
+          "days": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "from": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix milliseconds: the range replayed."
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewSeries"
+            },
+            "description": "The series the rule judges, by instance, at most 20."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "to": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "More series matched than were replayed."
+          }
+        }
+      },
       "ServerSettings": {
         "type": "object",
         "description": "Body of `GET` and `PUT /api/settings/server`.",
@@ -46570,6 +47088,79 @@
               "$ref": "#/components/schemas/SiteView"
             },
             "description": "By name."
+          }
+        }
+      },
+      "SitePreview": {
+        "type": "object",
+        "description": "Body of `POST /api/sites/{id}/thresholds/preview`.",
+        "required": [
+          "site_id",
+          "from",
+          "to",
+          "days",
+          "servers",
+          "more_servers"
+        ],
+        "properties": {
+          "days": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "from": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "more_servers": {
+            "type": "boolean",
+            "description": "The site has more servers than were replayed."
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SitePreviewServer"
+            },
+            "description": "Up to 20 servers of the site, by name."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "to": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SitePreviewServer": {
+        "type": "object",
+        "description": "One server of a site preview.",
+        "required": [
+          "server_id",
+          "hostname",
+          "incidents",
+          "series"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "incidents": {
+            "type": "integer",
+            "description": "Incidents the rule would have opened on it, every series together.",
+            "minimum": 0
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewSeries"
+            },
+            "description": "Its series, without their points."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
