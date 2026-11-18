@@ -93,7 +93,7 @@ if (process.env.SNMPSIM) {
   await page.getByRole("button", { name: "Add the device" }).click();
   await page.getByRole("heading", { level: 1, name: "printer-2" }).waitFor({ timeout: 30_000 });
   await see(/Supply level Black Toner/, "its supplies are listed", 120_000);
-  await see("6.0%", "the black toner reads 6%", 120_000);
+  await see("6%", "the black toner reads 6%", 120_000);
   await page.getByRole("button", { name: "Details" }).click();
   await see("v2c, port 161", "Details say how it is reached, without the community");
   if ((await page.content()).includes(">printer<")) await fail("the community is shown");
