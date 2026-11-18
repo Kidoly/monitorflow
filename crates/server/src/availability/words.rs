@@ -72,6 +72,16 @@ pub fn percent(value: f64, language: Language) -> String {
     }
 }
 
+/// An SLA target as it was set: `99.9 %`, `99,95 %`.
+pub fn target(value: f64, language: Language) -> String {
+    let text = format!("{value:.3}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    match language {
+        Language::En => format!("{text} %"),
+        Language::Fr => format!("{}\u{a0}%", text.replace('.', ",")),
+    }
+}
+
 /// An availability, or "Not measured" when nothing was counted.
 pub fn availability(value: Option<f64>, language: Language) -> String {
     match value {
@@ -157,6 +167,8 @@ mod tests {
         assert_eq!(percent(100.0, Language::En), "100.000 %");
         assert_eq!(percent(99.95, Language::Fr), "99,950\u{a0}%");
         assert_eq!(availability(None, Language::Fr), "Non mesurée");
+        assert_eq!(target(99.9, Language::En), "99.9 %");
+        assert_eq!(target(100.0, Language::Fr), "100\u{a0}%");
     }
 
     #[test]

@@ -222,4 +222,28 @@ db_tests! {
             assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
         }
     }
+
+    #[sqlx::test]
+    async fn the_report_as_pdf(pool: PgPool) {
+        let (acme, _) = customer(&pool, "acme", 600, 30).await;
+        customer(&pool, "globex", 1000, 90).await;
+        let admin = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let state = ApiState::new(pool.clone(), Registry::default(), ApiSettings::default());
+        let uri = format!("/api/availability/report?{OCTOBER}&customer_id={acme}&format=pdf");
+        let request = Request::builder()
+            .uri(&uri)
+            .header(CSRF_HEADER, "1")
+            .header("cookie", &admin)
+            .body(Body::empty())
+            .unwrap();
+        let response = api::router(state).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "application/pdf");
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 22).await.unwrap();
+        assert!(bytes.starts_with(b"%PDF-"));
+        let has = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        assert!(has(b"(For acme)"));
+        assert!(has(b"(acme website)"));
+        assert!(!has(b"globex"));
+    }
 }

@@ -9,6 +9,8 @@
 
 pub mod csv;
 pub mod data;
+pub mod pdf;
+mod pdf_metrics;
 pub mod report;
 pub mod spans;
 pub mod words;

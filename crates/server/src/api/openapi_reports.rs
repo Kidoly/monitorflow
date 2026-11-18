@@ -206,8 +206,10 @@ CSV numbers are plain (seconds, dot decimals); words are in `language`; times ar
 **Who**: any role, as above. **Area**: `alerts`.",
     params(availability::FileParams),
     responses(
-        (status = 200, description = "The file, as an attachment", content_type = "text/csv",
-            body = String),
+        (status = 200, description = "The file, as an attachment", content(
+            (String = "text/csv"),
+            (Vec<u8> = "application/pdf"),
+        )),
         (status = 400, description = "An unknown format, language or time zone, or a period as above: \
 `invalid`", body = ErrorBody),
         (status = 404, description = "The customer does not exist or is outside the key's reach: \
