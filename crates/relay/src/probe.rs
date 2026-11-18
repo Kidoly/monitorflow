@@ -11,19 +11,25 @@ use std::sync::Arc;
 
 use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{ProbeConfig, ProbeConfigAck};
+use monitorflow_common::proto::v1::{ProbeConfig, ProbeConfigAck, ProbeTest, ProbeTestResult};
 use monitorflow_probe::{Check, ProbeFactory, Runner};
 use tokio::sync::mpsc;
 
 /// Configurations queued towards the probe task; a newer one replaces
 /// the whole list, so a small queue is enough.
 const CONFIG_QUEUE: usize = 4;
+/// Tests waiting to run; more are refused, and the person tries again.
+const TEST_QUEUE: usize = 8;
+/// Tests running at once.
+const TESTS_AT_ONCE: usize = 4;
 /// Messages queued towards the upstream.
 const UP_QUEUE: usize = 16;
 
 /// The control stream's side.
 pub struct ProbeEnd {
     pub configs: mpsc::Sender<ProbeConfig>,
+    /// One-off tests (ADR-0149), run as they come.
+    pub tests: mpsc::Sender<ProbeTest>,
     /// Acknowledgements and results, to send upstream.
     pub up: mpsc::Receiver<Payload>,
 }
@@ -31,9 +37,11 @@ pub struct ProbeEnd {
 /// Starts the probe task with sensors from `factory`.
 pub fn start(factory: Arc<dyn ProbeFactory>, shutdown: Shutdown) -> ProbeEnd {
     let (configs, configs_rx) = mpsc::channel(CONFIG_QUEUE);
+    let (tests, tests_rx) = mpsc::channel(TEST_QUEUE);
     let (up_tx, up) = mpsc::channel(UP_QUEUE);
+    tokio::spawn(run_tests(factory.clone(), tests_rx, up_tx.clone()));
     tokio::spawn(run(factory, configs_rx, up_tx, shutdown));
-    ProbeEnd { configs, up }
+    ProbeEnd { configs, tests, up }
 }
 
 async fn run(
@@ -69,6 +77,44 @@ async fn run(
         }
     }
     runner.shutdown().await;
+}
+
+/// Runs each test once, a few at a time, and sends its result up.
+async fn run_tests(
+    factory: Arc<dyn ProbeFactory>,
+    mut tests: mpsc::Receiver<ProbeTest>,
+    up: mpsc::Sender<Payload>,
+) {
+    let limit = Arc::new(tokio::sync::Semaphore::new(TESTS_AT_ONCE));
+    while let Some(test) = tests.recv().await {
+        let Ok(permit) = limit.clone().acquire_owned().await else {
+            return;
+        };
+        let (factory, up) = (factory.clone(), up.clone());
+        tokio::spawn(async move {
+            let _permit = permit;
+            let result = match test.check.and_then(Check::from_proto) {
+                None => Err("a test without its check".to_string()),
+                Some(check) => monitorflow_probe::test_once(&*factory, &check).await,
+            };
+            let result = match result {
+                Ok(samples) => ProbeTestResult {
+                    id: test.id,
+                    samples: samples
+                        .into_iter()
+                        .map(monitorflow_probe::sample_to_proto)
+                        .collect(),
+                    error: String::new(),
+                },
+                Err(error) => ProbeTestResult {
+                    id: test.id,
+                    samples: Vec::new(),
+                    error,
+                },
+            };
+            let _ = up.send(Payload::ProbeTestResult(result)).await;
+        });
+    }
 }
 
 async fn apply(runner: &mut Runner, config: ProbeConfig) -> ProbeConfigAck {
@@ -128,6 +174,42 @@ mod tests {
                 .collect(),
             }),
         }
+    }
+
+    #[tokio::test]
+    async fn tests_run_once_and_answer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let open = listener.local_addr().unwrap().port();
+        let (_trigger, stop) = shutdown::channel();
+        let mut end = start(Arc::new(monitorflow_probe::Builtin), stop);
+        end.tests
+            .send(ProbeTest {
+                id: "t1".into(),
+                check: Some(port("lo", open)),
+            })
+            .await
+            .unwrap();
+        end.tests
+            .send(ProbeTest {
+                id: "t2".into(),
+                check: None,
+            })
+            .await
+            .unwrap();
+        let mut results = Vec::new();
+        while results.len() < 2 {
+            let next = tokio::time::timeout(Duration::from_secs(10), end.up.recv());
+            if let Some(Payload::ProbeTestResult(r)) = next.await.unwrap() {
+                results.push(r);
+            }
+        }
+        results.sort_by(|a, b| a.id.cmp(&b.id));
+        assert!(results[0].error.is_empty(), "{:?}", results[0]);
+        assert!(results[0]
+            .samples
+            .iter()
+            .any(|s| s.sensor == "port_up" && s.value == 1.0));
+        assert!(results[1].error.contains("without its check"));
     }
 
     #[tokio::test]

@@ -163,6 +163,8 @@ struct Tenant {
     silence: Uuid,
     /// An active silence of the whole customer.
     customer_silence: Uuid,
+    /// A weekly maintenance window of the site (ADR-0151).
+    window: Uuid,
     /// A viewer of the customer with a contact, on its on-call schedule
     /// (ADR-0081), which has an override.
     member: Uuid,
@@ -341,6 +343,15 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         .fetch_one(pool)
         .await
         .unwrap();
+    let window = one(
+        "INSERT INTO maintenance_windows (site_id, repeat, weekdays, start_time,
+                                          duration_minutes, time_zone, starts_on, reason)
+         VALUES ($1, 'weekly', 64, '02:00', 60, 'UTC', '2026-01-01', 'x') RETURNING id",
+    )
+    .bind(site)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     let member = one(
         "WITH u AS (INSERT INTO users (username) VALUES ($1) RETURNING id),
               r AS (INSERT INTO user_roles (user_id, role, customer_id)
@@ -416,6 +427,7 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         follow_up,
         silence,
         customer_silence,
+        window,
         remediation,
         pending,
         campaign,
@@ -1956,6 +1968,57 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(acknowledged, 0);
         }
+        // Maintenance windows (ADR-0151): B's do not exist for A, and none
+        // can be made on B's site, servers or checks.
+        ("GET", "/api/maintenance-windows") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.window), "{body}");
+            assert!(!Ctx::mentions(&body, b.window), "{body}");
+            for query in [
+                format!("site_id={}", b.site),
+                format!("server_id={}", b.server),
+            ] {
+                let uri = format!("{path}?{query}");
+                assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            }
+        }
+        ("POST", "/api/maintenance-windows") => {
+            let window = |site: Uuid, servers: Vec<Uuid>| {
+                json!({
+                    "site_id": site, "server_ids": servers, "repeat": "weekly",
+                    "weekdays": ["sunday"], "start_time": "02:00", "duration_minutes": 60,
+                    "time_zone": "UTC", "reason": "x",
+                })
+            };
+            let body = Some(window(b.site, vec![]));
+            assert_eq!(ctx.status(method, path, body).await, not_found);
+            // A's site with B's server: refused, nothing made.
+            let body = Some(window(a.site, vec![b.server]));
+            assert_eq!(
+                ctx.status(method, path, body).await,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        ("PUT", "/api/maintenance-windows/{id}") => {
+            let body = json!({
+                "site_id": a.site, "repeat": "weekly", "weekdays": ["sunday"],
+                "start_time": "02:00", "duration_minutes": 60, "time_zone": "UTC", "reason": "x",
+            });
+            let uri = path.replace("{id}", &b.window.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, Some(body.clone())).await,
+                not_found
+            );
+            // A's window cannot be moved to B's site.
+            let mut moved = body;
+            moved["site_id"] = json!(b.site);
+            let uri = path.replace("{id}", &a.window.to_string());
+            assert_eq!(ctx.status(method, &uri, Some(moved)).await, not_found);
+        }
+        ("DELETE", "/api/maintenance-windows/{id}") => {
+            let uri = path.replace("{id}", &b.window.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
         ("POST", "/api/silences/{id}/end") => {
             for id in [b.silence, b.customer_silence] {
                 let uri = path.replace("{id}", &id.to_string());
@@ -1993,6 +2056,24 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         ("POST", "/api/devices") => {
             let body = json!({ "site_id": b.site, "name": "printer", "address": "192.0.2.9" });
             assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        // Templates are the same for everyone (ADR-0149).
+        ("GET", "/api/devices/templates") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
+        ("POST", "/api/devices/detect") => {
+            let body = json!({ "site_id": b.site, "address": "192.0.2.9",
+                               "snmp": { "version": "v2c", "community": "c" } });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("GET", "/api/devices/{id}/snmp")
+        | ("PUT", "/api/devices/{id}/snmp")
+        | ("DELETE", "/api/devices/{id}/snmp") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "version": "v2c", "community": "c" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
         ("PUT", "/api/devices/{id}") => {
             let uri = path.replace("{id}", &b.server.to_string());

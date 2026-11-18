@@ -202,6 +202,7 @@ impl Fleet {
                 groups,
                 origin: Origin::new("scrape_target", shown)
                     .with_detail(format!("job: {}", target.job)),
+                agentless: false,
             }),
         }
         key
@@ -255,6 +256,16 @@ impl Fleet {
 
     fn probe(&mut self, target: &Target, collected: &Collected) {
         let Some(probe) = &target.probe else { return };
+        // A ping, a DNS query or an SNMP walk is about the address probed,
+        // wherever the exporter runs (ADR-0148, ADR-0149).
+        let kind = match prober(&probe.module, &collected.modules) {
+            _ if target.job.to_ascii_lowercase().contains("snmp") => Prober::Snmp,
+            kind => kind,
+        };
+        if matches!(kind, Prober::Icmp | Prober::Dns | Prober::Snmp) {
+            self.probed(target, probe, kind, collected);
+            return;
+        }
         let exporter = host_of(&target.address);
         let loopback = exporter.eq_ignore_ascii_case("localhost")
             || exporter.starts_with("127.")
@@ -346,18 +357,7 @@ impl Fleet {
                 let (site, notes) = blackbox::http(&url, module);
                 make(host.clone(), Watch::web(site), first(notes))
             }
-            Prober::Icmp => match self.find(&probe.target) {
-                // Pinging a host: its agent answering says the same.
-                Some(pinged) => make(
-                    pinged,
-                    Watch::Agent,
-                    Fidelity::Approximated(Note::plain("ping_as_offline")),
-                ),
-                None => {
-                    self.unmovable(target, vec![host], Note::plain("ping"));
-                    return;
-                }
-            },
+            Prober::Icmp | Prober::Dns | Prober::Snmp => return,
             Prober::Other => {
                 self.unmovable(target, vec![host], Note::plain("no_equivalent"));
                 return;
@@ -371,6 +371,80 @@ impl Fleet {
             host: owner,
             check: Some(index),
         });
+    }
+
+    /// The checks of an address probed: on the host of that address,
+    /// which becomes a device when no node exporter runs there.
+    fn probed(
+        &mut self,
+        target: &Target,
+        probe: &super::targets::Probe,
+        kind: Prober,
+        collected: &Collected,
+    ) {
+        let subject = host_of(&probe.target);
+        // A loopback address is the exporter's own machine, which no
+        // probe reaches by that address.
+        let loopback = subject.eq_ignore_ascii_case("localhost")
+            || subject.starts_with("127.")
+            || subject == "::1";
+        if subject.is_empty() || loopback {
+            self.unmovable(target, vec![], Note::plain("no_address"));
+            return;
+        }
+        let key = match self.find(&probe.target) {
+            Some(key) => key,
+            None => {
+                let key = self.host(&subject, &probe.target, Os::Unknown, target, &probe.target);
+                if let Some(host) = self.inventory.hosts.iter_mut().find(|h| h.key == key) {
+                    host.agentless = true;
+                }
+                key
+            }
+        };
+        let origin = Origin::new("scrape_target", &probe.target)
+            .with_detail(format!("job: {}, module: {}", target.job, probe.module));
+        let interval_s = collected.intervals.get(&target.job).copied();
+        let make = |watch: Watch, fidelity: Fidelity| Check {
+            host: key.clone(),
+            watch,
+            interval_s,
+            alert: None,
+            origin: origin.clone(),
+            fidelity,
+        };
+        let checks = match kind {
+            Prober::Icmp => vec![make(Watch::Ping { address: None }, Fidelity::Exact)],
+            Prober::Dns => vec![make(
+                Watch::UdpPort {
+                    address: None,
+                    port: port_of(&probe.target).unwrap_or(53),
+                    query: Some("dns".into()),
+                },
+                Fidelity::Approximated(Note::plain("dns_as_udp")),
+            )],
+            _ => {
+                let mut checks = vec![make(
+                    Watch::Snmp {
+                        group: "system".into(),
+                    },
+                    Fidelity::Exact,
+                )];
+                if probe.module.to_ascii_lowercase().contains("if_mib") || probe.module.is_empty() {
+                    checks.push(make(Watch::Traffic, Fidelity::Exact));
+                }
+                checks
+            }
+        };
+        for check in checks {
+            let index = self.add_check(check);
+            self.probes.push(Member {
+                job: target.job.clone(),
+                instance: target.instance().to_owned(),
+                host: key.clone(),
+                check: Some(index),
+            });
+        }
     }
 
     fn exporter(&mut self, target: &Target, collected: &Collected) {
@@ -429,6 +503,10 @@ pub enum Prober {
     Http,
     Tcp,
     Icmp,
+    /// A DNS query (ADR-0148).
+    Dns,
+    /// snmp_exporter's walk of a device (ADR-0149).
+    Snmp,
     Other,
 }
 
@@ -443,7 +521,11 @@ pub fn prober(module: &str, modules: &BTreeMap<String, BlackboxModule>) -> Probe
     let has = |words: &[&str]| words.iter().any(|w| text.contains(w));
     if has(&["icmp", "ping"]) {
         Prober::Icmp
-    } else if has(&["dns", "grpc", "udp"]) {
+    } else if has(&["dns"]) {
+        Prober::Dns
+    } else if has(&["_mib", "snmp"]) {
+        Prober::Snmp
+    } else if has(&["grpc", "udp"]) {
         Prober::Other
     } else if has(&["http"]) {
         Prober::Http
@@ -496,7 +578,9 @@ mod tests {
         assert_eq!(prober("tcp_connect", &none), Prober::Tcp);
         assert_eq!(prober("ssh_banner", &none), Prober::Tcp);
         assert_eq!(prober("icmp", &none), Prober::Icmp);
-        assert_eq!(prober("dns_udp", &none), Prober::Other);
+        assert_eq!(prober("dns_udp", &none), Prober::Dns);
+        assert_eq!(prober("if_mib", &none), Prober::Snmp);
+        assert_eq!(prober("grpc", &none), Prober::Other);
         let custom = BTreeMap::from([(
             "shop".to_owned(),
             BlackboxModule {

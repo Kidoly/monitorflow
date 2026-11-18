@@ -12,13 +12,53 @@
 //! again at the next pass through [`requeue`], for that channel alone.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use uuid::Uuid;
 
 use super::message::Event;
+use crate::sensor_config::builtin_defaults;
+
+/// Most checks one silence names (ADR-0151).
+pub const MAX_CHECKS: usize = 20;
+/// The prefix of every metric agents write.
+const METRIC_PREFIX: &str = "monitorflow_";
+
+/// A check, by its identity in `sensor_configs`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = SilencedCheck)]
+#[serde(deny_unknown_fields)]
+pub struct CheckRef {
+    /// The check's name, like `service_nginx` or `disk`.
+    pub name: String,
+    /// What it watches, `""` (the default) for every instance it writes.
+    #[serde(default)]
+    pub instance: String,
+}
+
+/// Whether the check `check` wrote `metric` of `instance`: the metric,
+/// without `monitorflow_`, is its name or starts with its name and `_`, no
+/// longer name of `names` prefixes it too (`disk_data_used_ratio` is
+/// `disk_data`'s, not `disk`'s), and the instance is the check's when it
+/// has one. The SQL function `check_covers` says the same.
+pub fn check_covers(check: &CheckRef, names: &[String], metric: &str, instance: &str) -> bool {
+    let short = metric.strip_prefix(METRIC_PREFIX).unwrap_or(metric);
+    let writes = |name: &str| {
+        short == name
+            || short
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with('_'))
+    };
+    (check.instance.is_empty() || check.instance == instance)
+        && writes(&check.name)
+        && !names
+            .iter()
+            .any(|other| other.len() > check.name.len() && writes(other))
+}
 
 /// A row of `silences`, for the dispatcher.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
@@ -31,6 +71,14 @@ pub struct Silence {
     pub starts_at: DateTime<Utc>,
     /// When it is over: as planned, or earlier when ended by hand.
     pub ends_at: DateTime<Utc>,
+    /// Chosen checks of its server or site; `None` is all of it.
+    pub checks: Option<sqlx::types::Json<Vec<CheckRef>>>,
+    /// The maintenance window it is an occurrence of.
+    pub window_id: Option<Uuid>,
+    /// Every check name the central server knows, to tell which check
+    /// wrote a metric; loaded only when a silence has checks.
+    #[sqlx(skip)]
+    pub names: Arc<Vec<String>>,
 }
 
 /// The ID in `details[key].id`, like the server of an event.
@@ -42,6 +90,11 @@ impl Silence {
     /// Whether `event` is about this silence's scope. An event of the whole
     /// server, like a failed backup, is only about everything.
     pub fn concerns(&self, event: &Event) -> bool {
+        if let Some(checks) = &self.checks {
+            if !self.covers_check(&checks.0, event) {
+                return false;
+            }
+        }
         match (
             self.server_id,
             self.relay_id,
@@ -54,6 +107,22 @@ impl Silence {
             (.., Some(customer)) => event.customer_id == Some(customer),
             _ => true,
         }
+    }
+
+    /// Whether `event` is an incident of a server written by one of
+    /// `checks`. The offline incident is about the server, never a check.
+    fn covers_check(&self, checks: &[CheckRef], event: &Event) -> bool {
+        let Some(incident) = event.details.get("incident") else {
+            return false;
+        };
+        let text = |key| incident.get(key).and_then(Value::as_str).unwrap_or("");
+        let metric = text("metric");
+        event.event.starts_with("incident.")
+            && id_at(&event.details, "server").is_some()
+            && metric != "offline"
+            && checks
+                .iter()
+                .any(|check| check_covers(check, &self.names, metric, text("instance")))
     }
 
     /// From its start, included, to its end, excluded.
@@ -75,20 +144,31 @@ impl Silence {
 /// Silences started by `now` and over after `after`, without those called
 /// off before they started.
 pub async fn load(
-    db: impl PgExecutor<'_>,
+    db: &mut PgConnection,
     now: DateTime<Utc>,
     after: DateTime<Utc>,
 ) -> Result<Vec<Silence>, sqlx::Error> {
-    sqlx::query_as(
+    let mut silences: Vec<Silence> = sqlx::query_as(
         "SELECT id, server_id, relay_id, site_id, customer_id, starts_at,
-                coalesce(ended_at, ends_at) AS ends_at
+                coalesce(ended_at, ends_at) AS ends_at, checks, window_id
          FROM silences
          WHERE starts_at <= $1 AND coalesce(ended_at, ends_at) > GREATEST(starts_at, $2)",
     )
     .bind(now)
     .bind(after)
-    .fetch_all(db)
-    .await
+    .fetch_all(&mut *db)
+    .await?;
+    if silences.iter().any(|s| s.checks.is_some()) {
+        let mut names: Vec<String> = sqlx::query_scalar("SELECT DISTINCT name FROM sensor_configs")
+            .fetch_all(&mut *db)
+            .await?;
+        names.extend(builtin_defaults(0).into_iter().map(|spec| spec.name));
+        let names = Arc::new(names);
+        for silence in &mut silences {
+            silence.names = names.clone();
+        }
+    }
+    Ok(silences)
 }
 
 /// The incident an event is about.
@@ -242,7 +322,7 @@ pub async fn release(
     if held.is_empty() {
         return Ok(0);
     }
-    let silences = load(&mut *tx, now, now).await?;
+    let silences = load(&mut tx, now, now).await?;
     // Owed rows not sent yet, waiting for their window or a channel.
     let mut owed_incidents: HashMap<Option<Uuid>, usize> = HashMap::new();
     let mut owed_others = 0;
@@ -435,6 +515,9 @@ mod tests {
             customer_id: None,
             starts_at: at(0),
             ends_at: at(60),
+            checks: None,
+            window_id: None,
+            names: Arc::default(),
         }
     }
 
@@ -522,6 +605,83 @@ mod tests {
         assert!(silence().concerns(&backup));
         assert!(!scoped(None, None, Some(SITE), None).concerns(&backup));
         assert!(!scoped(None, None, None, Some(CUSTOMER)).concerns(&backup));
+    }
+
+    fn check(name: &str, instance: &str) -> CheckRef {
+        CheckRef {
+            name: name.into(),
+            instance: instance.into(),
+        }
+    }
+
+    #[test]
+    fn a_check_covers_the_metrics_it_writes() {
+        let names: Vec<String> = ["disk", "disk_data", "diskio", "service_nginx"]
+            .map(String::from)
+            .to_vec();
+        let covers = |c: &CheckRef, metric: &str, instance: &str| {
+            check_covers(c, &names, &format!("monitorflow_{metric}"), instance)
+        };
+        let disk = check("disk", "");
+        assert!(covers(&disk, "disk_used_ratio", "/"));
+        assert!(covers(&disk, "disk", ""));
+        // Another check's, by the longest name, or another name.
+        assert!(!covers(&disk, "disk_data_used_ratio", "/data"));
+        assert!(!covers(&disk, "diskio_busy_ratio", "sda"));
+        assert!(covers(
+            &check("disk_data", ""),
+            "disk_data_used_ratio",
+            "/data"
+        ));
+        // An instance narrows it.
+        let var = check("disk", "/var");
+        assert!(covers(&var, "disk_used_ratio", "/var"));
+        assert!(!covers(&var, "disk_used_ratio", "/"));
+        // Without the prefix too, as the offline rule writes its metric.
+        assert!(check_covers(&disk, &names, "disk_used_ratio", "/"));
+    }
+
+    #[test]
+    fn a_silence_of_checks_covers_their_incidents_only() {
+        let names = Arc::new(vec!["service_nginx".to_owned(), "disk".to_owned()]);
+        let narrowed = |server, site| Silence {
+            server_id: server,
+            site_id: site,
+            checks: Some(sqlx::types::Json(vec![check("service_nginx", "")])),
+            names: names.clone(),
+            ..silence()
+        };
+        let incident = |metric: &str| Event {
+            details: json!({
+                "server": {"id": SERVER, "name": "web-1"},
+                "site": {"id": SITE, "name": "paris"},
+                "incident": {"id": Uuid::from_u128(7), "metric": metric, "instance": "nginx.service"},
+            }),
+            ..event(1, "incident.opened")
+        };
+        let nginx = incident("monitorflow_service_nginx_active");
+        for silence in [narrowed(Some(SERVER), None), narrowed(None, Some(SITE))] {
+            assert!(silence.concerns(&nginx));
+            assert!(!silence.concerns(&incident("monitorflow_disk_used_ratio")));
+            // A server going offline still pages.
+            assert!(!silence.concerns(&incident("offline")));
+            // Approvals and updates are not about a check.
+            assert!(!silence.concerns(&Event {
+                details: json!({"server": {"id": SERVER}, "site": {"id": SITE}}),
+                ..event(2, "update.failed")
+            }));
+        }
+        // Another server's.
+        assert!(!narrowed(Some(Uuid::from_u128(99)), None).concerns(&nginx));
+        // A relay's incident has no server.
+        let relay = Event {
+            details: json!({
+                "server": null, "relay": {"id": RELAY}, "site": {"id": SITE},
+                "incident": {"metric": "monitorflow_service_nginx_active", "instance": ""},
+            }),
+            ..event(3, "incident.opened")
+        };
+        assert!(!narrowed(None, Some(SITE)).concerns(&relay));
     }
 
     #[test]

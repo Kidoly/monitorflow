@@ -150,6 +150,7 @@ db_tests! {
                 Column::AiApiKey,
                 Column::IdentityProviders,
                 Column::ImportRuns,
+                Column::SnmpCredentials,
                 Column::SensorConfigs,
             ]
         );
@@ -178,6 +179,7 @@ db_tests! {
                 "notification_channels.secret",
                 "sensor_configs.secret",
                 "server_settings.ai_api_key",
+                "snmp_credentials.secret",
                 "user_contacts.secret",
             ]
         );

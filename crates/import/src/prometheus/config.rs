@@ -119,6 +119,38 @@ pub struct AmConfig {
     pub global: AmGlobal,
     pub route: Option<Route>,
     pub receivers: Vec<Receiver>,
+    /// Named times routes mute or send in (ADR-0151).
+    pub time_intervals: Vec<NamedInterval>,
+    /// The same, under the older name.
+    pub mute_time_intervals: Vec<NamedInterval>,
+}
+
+/// `time_intervals` entry: a name and its times.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct NamedInterval {
+    pub name: String,
+    pub time_intervals: Vec<IntervalSpec>,
+}
+
+/// One time interval: every field narrows it, an absent one is every.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct IntervalSpec {
+    pub times: Vec<TimeRange>,
+    pub weekdays: Vec<String>,
+    pub days_of_month: Vec<String>,
+    pub months: Vec<String>,
+    pub years: Vec<String>,
+    pub location: Option<String>,
+}
+
+/// `HH:MM` to `HH:MM`, the end excluded; `24:00` ends the day.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct TimeRange {
+    pub start_time: String,
+    pub end_time: String,
 }
 
 /// Defaults of `alertmanager.yml` the receivers use.
@@ -144,6 +176,8 @@ pub struct Route {
     #[serde(rename = "match")]
     pub match_: BTreeMap<String, String>,
     pub match_re: BTreeMap<String, String>,
+    pub mute_time_intervals: Vec<String>,
+    pub active_time_intervals: Vec<String>,
 }
 
 impl Route {
