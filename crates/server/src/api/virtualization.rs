@@ -10,9 +10,11 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::access::authorize;
+use super::audit::{self, Event};
 use super::auth::CurrentUser;
-use super::sensors::parse_id;
+use super::sensors::{parse_id, RunBy};
 use super::{ApiError, ApiState};
+use crate::vmware;
 
 /// Objects not seen for this long show "Not seen since".
 pub const STALE_MINUTES: i64 = 15;
@@ -239,5 +241,65 @@ pub async fn get(
             .map(|r| object(r, now, &readable))
             .collect(),
         guest_of,
+    }))
+}
+
+/// Body of `POST /api/servers/{id}/hyperv`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct HypervWatch {
+    /// Whether the check was added now; `false` when it was there.
+    pub added: bool,
+    /// The check's name, so also its metrics' prefix: `hyperv`.
+    pub check: String,
+}
+
+/// `POST /api/servers/{id}/hyperv`: gives a Windows server the `hyperv`
+/// check every 5 minutes, with its alerts. Operators of its site.
+pub async fn watch_hyperv(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<HypervWatch>, ApiError> {
+    let id = parse_id(&id)?;
+    let mut tx = state.pool.begin().await?;
+    let row: Option<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT site_id, kind, os_family FROM servers WHERE id = $1 AND revoked_at IS NULL FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    authorize(&user, row.as_ref().map(|r| r.0), true)?;
+    let (_, kind, os) = row.ok_or(ApiError::NotFound)?;
+    if kind != "agent" || os != "windows" {
+        return Err(ApiError::Invalid(
+            "Hyper-V is read by the agent of a Windows server".into(),
+        ));
+    }
+    let added = vmware::add_check(
+        &mut tx,
+        id,
+        "hyperv",
+        vmware::HYPERV_CHECK,
+        &RunBy::default(),
+        &vmware::HYPERV_THRESHOLDS,
+    )
+    .await?;
+    let actor = user.id.to_string();
+    let target = id.to_string();
+    audit::record(
+        &mut *tx,
+        Event {
+            actor_kind: "user",
+            actor_id: &actor,
+            action: "server.hyperv_watch",
+            target: Some(("server", &target)),
+            details: serde_json::json!({ "added": added }),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(HypervWatch {
+        added,
+        check: vmware::HYPERV_CHECK.into(),
     }))
 }

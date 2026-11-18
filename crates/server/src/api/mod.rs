@@ -49,6 +49,9 @@
 //! | POST | `/api/devices/detect` | modify | body [`devices::DetectRequest`]; 200 [`devices::Detected`]: what an address answers over SNMP, from its probe |
 //! | GET, PUT, DELETE | `/api/devices/{id}/snmp` | read, modify | [`crate::snmp::View`] without secrets; body [`crate::snmp::CredentialsRequest`]; audited |
 //! | GET | `/api/servers/{id}/virtualization` | read | [`virtualization::Virtualization`]: a vCenter, ESXi or Hyper-V source's hosts, clusters, virtual machines and datastores, and the virtual machine a server is (ADR-0156) |
+//! | POST | `/api/servers/{id}/hyperv` | modify | 200 [`virtualization::HypervWatch`]: the `hyperv` check of a Windows server, with its alerts; audited |
+//! | POST | `/api/devices/vmware/test` | modify | body [`devices::VmwareTestRequest`]; 200 [`devices::VmwareTested`]: what a vCenter or ESXi host answers, its certificate, and the login when it is trusted |
+//! | GET, PUT, DELETE | `/api/devices/{id}/vmware` | read, modify | [`crate::vmware::View`] without the password; body [`crate::vmware::CredentialsRequest`]; audited |
 //! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
 //! | GET | `/api/servers/{id}/recommendations` | read | [`recommendations::RecommendationList`]: checks recommended from what the agent saw (ADR-0134) |
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
@@ -1224,6 +1227,17 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/sites/{id}/probes", get(devices::probes))
         .route("/api/servers/{id}/virtualization", get(virtualization::get))
+        .route(
+            "/api/servers/{id}/hyperv",
+            post(virtualization::watch_hyperv),
+        )
+        .route("/api/devices/vmware/test", post(devices::test_vmware))
+        .route(
+            "/api/devices/{id}/vmware",
+            get(devices::vmware_view)
+                .put(devices::set_vmware)
+                .delete(devices::delete_vmware),
+        )
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route(
             "/api/servers/{id}/recommendations",

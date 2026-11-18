@@ -5482,7 +5482,7 @@
           "devices"
         ],
         "summary": "Add a device",
-        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
+        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\nWith `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes from the same probe, and its alerts; test the connection and confirm its certificate first with `POST /api/v1/devices/vmware/test`.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
         "operationId": "create_device",
         "parameters": [
           {
@@ -5536,6 +5536,18 @@
                       "version": "v3"
                     },
                     "template": "switch"
+                  }
+                },
+                "vmware": {
+                  "summary": "A vCenter, read every 5 minutes with a Read-only account (ADR-0156)",
+                  "value": {
+                    "address": "vcenter.example.test",
+                    "name": "vcenter-1",
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                    "vmware": {
+                      "password": "a password",
+                      "user": "monitor@vsphere.local"
+                    }
                   }
                 }
               }
@@ -5906,6 +5918,170 @@
           },
           "404": {
             "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/vmware/test": {
+      "post": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Test a vCenter or ESXi host",
+        "description": "Connects once from the probe that would check the address (or the one named) and says what answers, and the certificate it has: its SHA-256 fingerprint, subject and expiry, and whether the probe's roots trust it. It logs in, and counts what the account sees, only when the certificate is trusted, by the roots or by the `fingerprint` given: the password is never sent to a certificate that is not. For a self-signed vCenter, compare the fingerprint with the one the vCenter shows, then test again with it, and send it with the credentials (`POST /api/devices` or `PUT /api/devices/{id}/vmware`). Nothing is stored.\n\n**Who**: operator or above on the site. **Area**: `servers`.",
+        "operationId": "test_vmware",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VmwareTestRequest"
+              },
+              "example": {
+                "address": "vcenter.example.test",
+                "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                "vmware": {
+                  "fingerprint": "3F:9A:1C:44:0B:7E:D2:58:91:AA:6C:03:E5:2D:7B:19:C8:40:FE:61:2A:9D:B3:07:5E:8C:11:D4:6A:F0:27:B9",
+                  "password": "a password",
+                  "user": "monitor@vsphere.local"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What answered; also when nothing did: `answers` and `error` say so",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmwareTested"
+                },
+                "example": {
+                  "answers": true,
+                  "api_type": "VirtualCenter",
+                  "certificate": {
+                    "by_roots": false,
+                    "fingerprint": "3F:9A:1C:44:0B:7E:D2:58:91:AA:6C:03:E5:2D:7B:19:C8:40:FE:61:2A:9D:B3:07:5E:8C:11:D4:6A:F0:27:B9",
+                    "not_after": "2028-03-01T12:00:00Z",
+                    "subject": "vcenter.example.test",
+                    "trusted": true
+                  },
+                  "error": null,
+                  "login": true,
+                  "objects": {
+                    "cluster": 2,
+                    "datastore": 9,
+                    "host": 12,
+                    "vm": 412
+                  },
+                  "probe": "central",
+                  "product": "VMware vCenter Server 8.0.2 build-22385739",
+                  "version": "8.0.2"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An address, port or fingerprint that is not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The relay is held by another central server now: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
             "content": {
               "application/json": {
                 "schema": {
@@ -6395,6 +6571,391 @@
         "summary": "Remove a device's SNMP credentials",
         "description": "Its SNMP checks stop being sent to its probes until credentials are set again.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.snmp_delete`.",
         "operationId": "delete_device_snmp",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, none set, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/vmware": {
+      "get": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Read a device's vCenter credentials, without the password",
+        "description": "**Who**: any role on the device's site. **Area**: `servers`.",
+        "operationId": "device_vmware",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmwareCredentials"
+                },
+                "example": {
+                  "fingerprint": "3F:9A:1C:44:0B:7E:D2:58:91:AA:6C:03:E5:2D:7B:19:C8:40:FE:61:2A:9D:B3:07:5E:8C:11:D4:6A:F0:27:B9",
+                  "password_set": true,
+                  "port": 443,
+                  "updated_at": "2026-11-18T10:20:00Z",
+                  "user": "monitor@vsphere.local"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, none set, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Set a device's vCenter credentials",
+        "description": "Replaces them; what is left out is kept, so a new certificate's `fingerprint` is confirmed without typing the password again, and `\"fingerprint\": \"\"` goes back to the roots. A device without a `vmware` check gets one, from its site's default probe, with the alerts that come with it: the API stops answering, a host disconnected, a datastore under 10% free, a snapshot older than 7 days, a red alarm on a host or datastore, a hardware sensor not green. Its probe uses them within seconds. The account needs only vCenter's Read-only role.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.vmware_update`, without the password.",
+        "operationId": "set_device_vmware",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VmwareCredentialsRequest"
+              },
+              "example": {
+                "password": "a password",
+                "user": "monitor@vsphere.local"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The credentials, without the password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmwareCredentials"
+                },
+                "example": {
+                  "fingerprint": "3F:9A:1C:44:0B:7E:D2:58:91:AA:6C:03:E5:2D:7B:19:C8:40:FE:61:2A:9D:B3:07:5E:8C:11:D4:6A:F0:27:B9",
+                  "password_set": true,
+                  "port": 443,
+                  "updated_at": "2026-11-18T10:20:00Z",
+                  "user": "monitor@vsphere.local"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Credentials that are not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Remove a device's vCenter credentials",
+        "description": "Its `vmware` check stops being sent to its probe until credentials are set again.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.vmware_delete`.",
+        "operationId": "delete_device_vmware",
         "parameters": [
           {
             "name": "id",
@@ -23597,6 +24158,143 @@
         }
       }
     },
+    "/api/v1/servers/{id}/hyperv": {
+      "post": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Watch Hyper-V on a Windows server",
+        "description": "Adds the `hyperv` check, run by the server's agent every 5 minutes, with its alerts: a warning when Hyper-V cannot be read for 15 minutes, for a checkpoint older than 7 days (`monitorflow_hyperv_vm_snapshot_age_seconds`), and on replication health (`monitorflow_hyperv_vm_replication_health`, warning at 1, critical at 2). Thresholds the server has already stay. The agent's account must be in the host's Hyper-V Administrators group, which only a person on the host can do: `Add-LocalGroupMember -Group \"Hyper-V Administrators\" -Member \"NT SERVICE\\MonitorFlowAgent\"`, then restart the agent. Until then the source reads `denied` with that sentence.\n\n**Who**: operator or above on the server's site. **Area**: `servers`. Audited as `server.hyperv_watch`.",
+        "operationId": "watch_hyperv",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A Windows server with the agent",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Watched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HypervWatch"
+                },
+                "example": {
+                  "added": true,
+                  "check": "hyperv"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a Windows server with the agent: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/logs": {
       "get": {
         "tags": [
@@ -37502,6 +38200,17 @@
               "null"
             ],
             "description": "The kind of device, whose SNMP checks and thresholds it gets, run\nfrom the same probe as its ping: `switch`, `router`, `firewall`,\n`printer`, `ups`, `nas` or `generic`. See\n`GET /api/devices/templates`, and `POST /api/devices/detect` for the\none that fits."
+          },
+          "vmware": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VmwareCredentialsRequest",
+                "description": "For a vCenter or a standalone ESXi host (ADR-0156): how its probe\nlogs in, with a Read-only account. The device then gets its\n`vmware` check every 5 minutes from the same probe as its ping,\nwith the alerts that come with it. Test it first with\n`POST /api/devices/vmware/test`. Stored sealed, never returned."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -38467,6 +39176,24 @@
           "status": {
             "type": "string",
             "description": "`ok` (live), `ready` or `unavailable` (ready)."
+          }
+        }
+      },
+      "HypervWatch": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/hyperv`.",
+        "required": [
+          "added",
+          "check"
+        ],
+        "properties": {
+          "added": {
+            "type": "boolean",
+            "description": "Whether the check was added now; `false` when it was there."
+          },
+          "check": {
+            "type": "string",
+            "description": "The check's name, so also its metrics' prefix: `hyperv`."
           }
         }
       },
@@ -47477,6 +48204,41 @@
           }
         }
       },
+      "TestedCertificate": {
+        "type": "object",
+        "description": "The certificate a test met.",
+        "required": [
+          "fingerprint",
+          "trusted",
+          "by_roots",
+          "subject"
+        ],
+        "properties": {
+          "by_roots": {
+            "type": "boolean",
+            "description": "Whether the probe's roots trust it without a fingerprint."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "`AB:CD:…`, to compare with the one the vCenter shows and send back\nas `fingerprint`."
+          },
+          "not_after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it expires; `null` when it does not read."
+          },
+          "subject": {
+            "type": "string"
+          },
+          "trusted": {
+            "type": "boolean",
+            "description": "Whether it is trusted: by the probe's roots, or by the fingerprint\ngiven."
+          }
+        }
+      },
       "ThirdPartyList": {
         "type": "object",
         "required": [
@@ -48312,6 +49074,209 @@
               {
                 "type": "null"
               }
+            ]
+          }
+        }
+      },
+      "VirtualizationThreshold": {
+        "type": "object",
+        "description": "A threshold that comes by default.",
+        "required": [
+          "metric",
+          "comparison",
+          "duration_s"
+        ],
+        "properties": {
+          "comparison": {
+            "type": "string"
+          },
+          "critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "duration_s": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "warning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "VmwareCredentials": {
+        "type": "object",
+        "description": "What the API shows of a device's credentials: never the password.",
+        "required": [
+          "port",
+          "user",
+          "password_set",
+          "updated_at"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The certificate trusted by its fingerprint; `null` when the roots\nare trusted."
+          },
+          "password_set": {
+            "type": "boolean"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user": {
+            "type": "string"
+          }
+        }
+      },
+      "VmwareCredentialsRequest": {
+        "type": "object",
+        "description": "Body of a device's vCenter or ESXi credentials. On a change, a\npassword left out keeps the stored one.",
+        "properties": {
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The SHA-256 fingerprint of a certificate the central server's or\nrelay's roots do not trust, as `POST /api/devices/vmware/test`\nshows it; an empty string forgets it. Absent: kept."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its password. Secret."
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "443 by default.",
+            "minimum": 0
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A user with the Read-only role, like `monitor@vsphere.local`.\nRequired unless kept from the stored credentials."
+          }
+        },
+        "additionalProperties": false
+      },
+      "VmwareTestRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/devices/vmware/test`.",
+        "required": [
+          "site_id",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The vCenter's or ESXi host's IP address or DNS name."
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`central` or a relay of the site; absent: the site's default."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vmware": {
+            "$ref": "#/components/schemas/VmwareCredentialsRequest",
+            "description": "What to log in with; without a user and password, only what\nanswers and its certificate are shown."
+          }
+        },
+        "additionalProperties": false
+      },
+      "VmwareTested": {
+        "type": "object",
+        "description": "What a vCenter or ESXi host answered.",
+        "required": [
+          "answers",
+          "objects",
+          "probe"
+        ],
+        "properties": {
+          "answers": {
+            "type": "boolean",
+            "description": "Whether the vSphere API answered at the address."
+          },
+          "api_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`VirtualCenter` or `HostAgent` (a standalone ESXi host)."
+          },
+          "certificate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TestedCertificate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, or why the login failed, in words; `null` otherwise."
+          },
+          "login": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the login worked; `null` when it was not tried: no\ncredentials, or a certificate not trusted yet, as the password is\nnever sent then."
+          },
+          "objects": {
+            "type": "object",
+            "description": "Objects the account sees, by kind (`vm`, `host`, `cluster`,\n`datastore`), after a login."
+          },
+          "probe": {
+            "type": "string",
+            "description": "`central` or the relay that asked."
+          },
+          "product": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Like `VMware vCenter Server 8.0.2 build-22385739`."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
             ]
           }
         }
