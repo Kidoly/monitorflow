@@ -230,7 +230,8 @@ db_tests! {
                 "user_roles",
                 "users",
                 "virtual_objects",
-                "virtual_sources"
+                "virtual_sources",
+                "vmware_credentials"
             ]
         );
     }
