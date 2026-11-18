@@ -171,12 +171,15 @@ impl SnmpSensor {
                 Ok(samples)
             }
             Group::Host => {
-                let loads: Vec<f64> = self
-                    .walk(client, mibs::HR_PROCESSOR_LOAD)
-                    .await?
-                    .iter()
-                    .filter_map(|(_, v)| v.number())
-                    .collect();
+                // Some agents answer the processor table with an error for
+                // a while after they start: memory and storage still count.
+                let loads: Vec<f64> = match self.walk(client, mibs::HR_PROCESSOR_LOAD).await {
+                    Ok(rows) => rows.iter().filter_map(|(_, v)| v.number()).collect(),
+                    Err(error) => {
+                        tracing::debug!(host = %self.target.host, %error, "no processor load");
+                        Vec::new()
+                    }
+                };
                 let storage = self.table(client, mibs::HR_STORAGE).await?;
                 Ok(mibs::host(&loads, &storage))
             }
