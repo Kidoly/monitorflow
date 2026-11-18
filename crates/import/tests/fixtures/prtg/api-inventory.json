@@ -34,6 +34,23 @@
       }
     },
     {
+      "key": "device:2003",
+      "name": "switch01",
+      "addresses": [
+        "192.0.2.2"
+      ],
+      "os": "unknown",
+      "groups": [
+        "Local Probe",
+        "Network"
+      ],
+      "origin": {
+        "kind": "device",
+        "name": "switch01"
+      },
+      "agentless": true
+    },
+    {
       "key": "device:2004",
       "name": "branch-fs",
       "addresses": [
@@ -46,25 +63,27 @@
       "origin": {
         "kind": "device",
         "name": "branch-fs"
-      }
+      },
+      "agentless": true
     }
   ],
   "checks": [
     {
       "host": "device:2001",
       "watch": {
-        "kind": "agent"
+        "kind": "ping"
       },
       "interval_s": 30,
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
       "origin": {
         "kind": "sensor",
         "name": "Ping",
         "detail": "ping"
       },
-      "fidelity": "approximated",
-      "note": {
-        "code": "prtg_ping"
-      }
+      "fidelity": "exact"
     },
     {
       "host": "device:2001",
@@ -155,18 +174,19 @@
     {
       "host": "device:2002",
       "watch": {
-        "kind": "agent"
+        "kind": "ping"
       },
       "interval_s": 60,
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
       "origin": {
         "kind": "sensor",
         "name": "Ping",
         "detail": "ping"
       },
-      "fidelity": "approximated",
-      "note": {
-        "code": "prtg_ping"
-      }
+      "fidelity": "exact"
     },
     {
       "host": "device:2002",
@@ -211,6 +231,19 @@
     {
       "host": "device:2002",
       "watch": {
+        "kind": "traffic"
+      },
+      "interval_s": 60,
+      "origin": {
+        "kind": "sensor",
+        "name": "Traffic eth0",
+        "detail": "snmptraffic"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2002",
+      "watch": {
         "kind": "disk"
       },
       "interval_s": 60,
@@ -222,20 +255,51 @@
       "fidelity": "exact"
     },
     {
-      "host": "device:2004",
+      "host": "device:2003",
       "watch": {
-        "kind": "agent"
+        "kind": "ping"
       },
       "interval_s": 60,
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
       "origin": {
         "kind": "sensor",
         "name": "Ping",
         "detail": "ping"
       },
-      "fidelity": "approximated",
-      "note": {
-        "code": "prtg_ping"
-      }
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2003",
+      "watch": {
+        "kind": "traffic"
+      },
+      "interval_s": 60,
+      "origin": {
+        "kind": "sensor",
+        "name": "Port 1",
+        "detail": "snmptraffic"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "host": "device:2004",
+      "watch": {
+        "kind": "ping"
+      },
+      "interval_s": 60,
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "exact"
     }
   ],
   "thresholds": [
@@ -323,7 +387,9 @@
     {
       "scope": {
         "kind": "hosts",
-        "hosts": []
+        "hosts": [
+          "device:2003"
+        ]
       },
       "starts_at": "2026-10-01T21:00:00Z",
       "ends_at": "2026-10-02T01:00:00Z",
@@ -368,8 +434,34 @@
       "note": {
         "code": "prtg_paused"
       }
+    },
+    {
+      "scope": {
+        "kind": "hosts",
+        "hosts": [
+          "device:2002"
+        ]
+      },
+      "checks": [
+        {
+          "kind": "disk"
+        }
+      ],
+      "starts_at": "2026-11-17T12:00:00Z",
+      "ends_at": "2026-12-17T12:00:00Z",
+      "reason": "Paused in PRTG",
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk /var",
+        "detail": "sshdiskfree"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_paused"
+      }
     }
   ],
+  "windows": [],
   "channels": [
     {
       "name": "Email ops",
@@ -405,16 +497,6 @@
     }
   ],
   "unmovable": [
-    {
-      "hosts": [],
-      "origin": {
-        "kind": "device",
-        "name": "switch01"
-      },
-      "why": {
-        "code": "snmp"
-      }
-    },
     {
       "hosts": [
         "device:2001"
@@ -485,19 +567,6 @@
       ],
       "origin": {
         "kind": "sensor",
-        "name": "Traffic eth0",
-        "detail": "snmptraffic"
-      },
-      "why": {
-        "code": "network_traffic"
-      }
-    },
-    {
-      "hosts": [
-        "device:2002"
-      ],
-      "origin": {
-        "kind": "sensor",
         "name": "Login flow",
         "detail": "httptransaction"
       },
@@ -523,11 +592,11 @@
       "hosts": [],
       "origin": {
         "kind": "sensor",
-        "name": "Disk /var",
-        "detail": "sshdiskfree"
+        "name": "Port 1",
+        "detail": "snmptraffic"
       },
       "why": {
-        "code": "prtg_paused_sensor"
+        "code": "prtg_paused_by_rule"
       }
     },
     {

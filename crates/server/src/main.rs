@@ -35,6 +35,7 @@ use monitorflow_server::mirror::{
     self, JobKind, Layout, MirrorSpec, Mirrors, ToolsRunner, Trigger,
 };
 use monitorflow_server::notify;
+use monitorflow_server::probes::{ProbeStore, Probes};
 use monitorflow_server::relay_commands::RelayCommands;
 use monitorflow_server::release_check;
 use monitorflow_server::remediation::context::Backends;
@@ -543,16 +544,28 @@ async fn main() -> anyhow::Result<()> {
     .with_sensor_configs(sensor_configs)
     .with_commands(commands.clone())
     .with_relay_commands(relay_commands.clone())
-    .with_alerts(alerts)
+    .with_alerts(alerts.clone())
     .with_ingest(Ingest {
         metrics: Some(metrics.queue()),
         events: Some(events.queue()),
     });
+    // Network checks from the central server and from relays (ADR-0148).
+    let probes = Probes::new(
+        ProbeStore::new(pool.clone()),
+        Ingest {
+            metrics: Some(metrics.queue()),
+            events: Some(events.queue()),
+        },
+        Some(alerts),
+    );
+    let service = service.with_probes(probes.clone());
+    let probe_registry = registry.clone();
     let auto_update = AutoUpdate::new(pool.clone(), api_settings.agent_releases.clone())
         .with_enabled_override(config.auto_update.enabled)
         .with_registry(registry.clone())
         .with_relay_commands(relay_commands.clone());
     let api_state = ApiState::new(pool.clone(), registry, api_settings)
+        .with_probes(probes.clone())
         .with_metrics(
             VmQuery::with_auth(&config.victoriametrics_url, QUERY_TIMEOUT, storage.as_ref())
                 .context("VictoriaMetrics query client")?,
@@ -699,6 +712,24 @@ async fn main() -> anyhow::Result<()> {
                 notify::maintenance::write::POLL,
                 until_stopped(),
             )
+            .await;
+            Ok(())
+        },
+        // Each instance sends the relays it holds their probe checks.
+        async {
+            probes
+                .clone()
+                .run_relays(probe_registry.clone(), until_stopped())
+                .await;
+            Ok(())
+        },
+        // The central server's own probe checks run once, on the leader.
+        async {
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                probes
+                    .clone()
+                    .run_central(Arc::new(monitorflow_probe::Builtin), until)
+            })
             .await;
             Ok(())
         },

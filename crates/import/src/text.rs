@@ -147,3 +147,84 @@ mod tests {
         assert_eq!(port_of("shop.example"), None);
     }
 }
+
+/// The group of MonitorFlow's SNMP checks (ADR-0149) that an OID or an
+/// object name of the common MIBs belongs to: `system`, `interfaces`,
+/// `host`, `ups`, `temperature` or `printer`; `None` for other objects.
+pub fn snmp_group(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    let numeric = |prefix: &str| {
+        lower
+            .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .any(|part| part.trim_start_matches('.').starts_with(prefix))
+    };
+    let named = |words: &[&str]| words.iter().any(|w| lower.contains(w));
+    if numeric("1.3.6.1.2.1.2.2.1")
+        || numeric("1.3.6.1.2.1.31.1.1.1")
+        || named(&[
+            "ifhcin",
+            "ifhcout",
+            "ifin",
+            "ifout",
+            "ifoperstatus",
+            "ifadminstatus",
+            "ifspeed",
+            "ifhighspeed",
+            "ifdescr",
+            "ifalias",
+            "ifname",
+        ])
+    {
+        Some("interfaces")
+    } else if numeric("1.3.6.1.2.1.25.")
+        || named(&["hrprocessorload", "hrstorage", "hrsystem", "hrdevice"])
+    {
+        Some("host")
+    } else if numeric("1.3.6.1.2.1.33.")
+        || named(&["upsbattery", "upsestimated", "upsoutput", "upsinput"])
+    {
+        Some("ups")
+    } else if numeric("1.3.6.1.2.1.99.") || named(&["entphysensor"]) {
+        Some("temperature")
+    } else if numeric("1.3.6.1.2.1.43.") || named(&["prtmarker"]) {
+        Some("printer")
+    } else if numeric("1.3.6.1.2.1.1.")
+        || named(&[
+            "sysuptime",
+            "sysdescr",
+            "sysname",
+            "syslocation",
+            "syscontact",
+            "sysobjectid",
+        ])
+    {
+        Some("system")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod snmp_tests {
+    use super::snmp_group;
+
+    #[test]
+    fn oids_and_names_find_their_group() {
+        for (text, group) in [
+            ("1.3.6.1.2.1.31.1.1.1.6.{#SNMPINDEX}", Some("interfaces")),
+            ("walk[1.3.6.1.2.1.2.2.1.8]", Some("interfaces")),
+            ("net.if.in[ifHCInOctets.{#SNMPINDEX}]", Some("interfaces")),
+            ("get[1.3.6.1.2.1.1.3.0]", Some("system")),
+            ("system.uptime[sysUpTime.0]", Some("system")),
+            ("1.3.6.1.2.1.25.3.3.1.2.196608", Some("host")),
+            ("upsBatteryStatus.0", Some("ups")),
+            (".1.3.6.1.2.1.33.1.2.4.0", Some("ups")),
+            ("1.3.6.1.2.1.99.1.1.1.4.21", Some("temperature")),
+            ("prtMarkerSuppliesLevel.1.1", Some("printer")),
+            ("1.3.6.1.4.1.9.9.13.1.3.1.3", None),
+            ("1.3.6.1.2.1.10.7.2", None),
+        ] {
+            assert_eq!(snmp_group(text), group, "{text}");
+        }
+    }
+}

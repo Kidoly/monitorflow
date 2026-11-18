@@ -43,6 +43,12 @@
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | POST | `/api/devices` | modify | body [`devices::DeviceRequest`]; 201 [`servers::ServerView`]: a device, pinged from the site's default probe unless told otherwise; audited (ADR-0148) |
+//! | PUT | `/api/devices/{id}` | modify | body [`devices::DeviceUpdate`]; 200 [`servers::ServerView`]; audited |
+//! | GET | `/api/devices/templates` | read | [`devices::TemplateList`]: the kinds of SNMP devices, their checks and thresholds (ADR-0149) |
+//! | POST | `/api/devices/detect` | modify | body [`devices::DetectRequest`]; 200 [`devices::Detected`]: what an address answers over SNMP, from its probe |
+//! | GET, PUT, DELETE | `/api/devices/{id}/snmp` | read, modify | [`crate::snmp::View`] without secrets; body [`crate::snmp::CredentialsRequest`]; audited |
+//! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
 //! | GET | `/api/servers/{id}/recommendations` | read | [`recommendations::RecommendationList`]: checks recommended from what the agent saw (ADR-0134) |
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
 //! | POST | `/api/servers/{id}/recommendations/restore` | modify | body [`recommendations::KeyRequest`], a dismissed one; 204 |
@@ -82,6 +88,10 @@
 //! | GET | `/api/silences` | any role | [`silences::SilenceList`]: active and upcoming silences of the user's scope, or with `server_id`, `relay_id` or `site_id` those covering it (ADR-0079) |
 //! | POST | `/api/silences` | modify the scope | body [`silences::CreateRequest`]; 201 [`silences::SilenceView`]; audited |
 //! | POST | `/api/silences/{id}/end` | modify the scope | 204: ended now, or called off before it started; 409 once over; audited |
+//! | GET | `/api/maintenance-windows` | any role | `site_id` or `server_id`; [`maintenance_windows::WindowList`]: silences that come back, with their next windows (ADR-0151) |
+//! | POST | `/api/maintenance-windows` | modify the site | body [`maintenance_windows::WindowRequest`]; 201 [`maintenance_windows::WindowView`]; audited |
+//! | PUT | `/api/maintenance-windows/{id}` | modify the sites | the same body; [`maintenance_windows::WindowView`]; audited |
+//! | DELETE | `/api/maintenance-windows/{id}` | modify the site | 204; the running window ends; audited |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
@@ -681,6 +691,7 @@ pub mod commands;
 pub mod customers;
 pub mod dashboard_data;
 pub mod dashboards;
+pub mod devices;
 pub mod display;
 mod error;
 pub mod follow_up;
@@ -694,6 +705,7 @@ pub mod integrations;
 pub mod license;
 pub mod login_limit;
 pub mod logs;
+pub mod maintenance_windows;
 pub mod metrics;
 pub mod mirrors;
 pub mod notifications;
@@ -706,7 +718,9 @@ pub mod openapi_campaigns;
 mod openapi_checks;
 pub mod openapi_core;
 mod openapi_dashboards;
+mod openapi_devices;
 mod openapi_imports;
+mod openapi_maintenance;
 mod openapi_plugins;
 pub mod openapi_remediation;
 mod openapi_settings;
@@ -914,6 +928,9 @@ pub struct ApiState {
     pub contact_tests: Arc<on_call::TestLimit>,
     /// Discovery and keys of OpenID Connect providers (ADR-0145).
     pub oidc: crate::sso::oidc::Cache,
+    /// Runs one-off probe tests, for "Add a device" (ADR-0149); without
+    /// it, tests run on this central server only.
+    pub probes: Option<crate::probes::Probes>,
 }
 
 impl ApiState {
@@ -938,7 +955,14 @@ impl ApiState {
             login_limits: Arc::default(),
             contact_tests: Arc::new(on_call::test_limit()),
             oidc: crate::sso::oidc::Cache::default(),
+            probes: None,
         }
+    }
+
+    /// Sends one-off tests to relays through `probes` (ADR-0149).
+    pub fn with_probes(mut self, probes: crate::probes::Probes) -> Self {
+        self.probes = Some(probes);
+        self
     }
 
     /// Shows and changes the certificate authority with `rotator`; tokens
@@ -1073,6 +1097,14 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/on-call/contact/test", post(on_call::test_contact))
         .route("/api/silences/{id}/end", post(silences::end))
+        .route(
+            "/api/maintenance-windows",
+            get(maintenance_windows::list).post(maintenance_windows::create),
+        )
+        .route(
+            "/api/maintenance-windows/{id}",
+            put(maintenance_windows::update).delete(maintenance_windows::remove),
+        )
         .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
         .route("/api/sites/{id}/check-interval", put(check_interval::site))
         .route(
@@ -1175,6 +1207,17 @@ pub fn router(state: ApiState) -> Router {
             post(approvals::reject),
         )
         .route("/api/remediation/events", get(remediation_events::list))
+        .route("/api/devices", post(devices::create))
+        .route("/api/devices/templates", get(devices::templates))
+        .route("/api/devices/detect", post(devices::detect))
+        .route("/api/devices/{id}", put(devices::update))
+        .route(
+            "/api/devices/{id}/snmp",
+            get(devices::snmp)
+                .put(devices::set_snmp)
+                .delete(devices::delete_snmp),
+        )
+        .route("/api/sites/{id}/probes", get(devices::probes))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route(
             "/api/servers/{id}/recommendations",
