@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use super::*;
-use crate::model::{Measure, SilenceScope, Target, Watch};
+use crate::model::{Fidelity, Measure, Repeat, SilenceScope, Target, Watch, WebMethod};
 use crate::zabbix::map;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -150,6 +150,12 @@ fn answer(version: &str, groups: &str, method: &str, params: &Value) -> Value {
              "url": "", "templateid": "0", "itemDiscovery": {"parent_itemid": "2100"}},
             {"itemid": "2002", "hostid": "10", "name": "PostgreSQL port", "key_": "net.tcp.port[,5432]",
              "delay": "30s", "type": "0", "status": "0", "url": "", "templateid": "0", "itemDiscovery": []},
+            {"itemid": "2003", "hostid": "10", "name": "API health", "key_": "api.health",
+             "delay": "1m", "type": "19", "status": "0", "url": "https://api.example.com/health",
+             "templateid": "0", "itemDiscovery": [], "request_method": "3",
+             "status_codes": "200,204", "follow_redirects": "0", "retrieve_mode": "0",
+             "headers": {"X-Monitor": "zabbix"}, "query_fields": [{"full": "1"}],
+             "authtype": "0", "username": "", "password": "", "posts": "", "timeout": "5s"},
         ]),
         "itemprototype.get" if for_templates => json!([
             {"itemid": "1100", "hostid": "100"},
@@ -183,7 +189,8 @@ fn answer(version: &str, groups: &str, method: &str, params: &Value) -> Value {
             {"triggerid": "3002", "description": "PostgreSQL is down",
              "expression": "max(/web-01/net.tcp.port[,5432],3m)=0", "recovery_mode": "0",
              "recovery_expression": "", "priority": "5", "status": "0",
-             "hosts": [{"hostid": "10"}], "triggerDiscovery": []},
+             "hosts": [{"hostid": "10"}], "triggerDiscovery": [],
+             "tags": [{"tag": "service", "value": "postgresql"}]},
         ]),
         "triggerprototype.get" => json!([
             {"triggerid": "3100", "description": "FS [{#FSNAME}]: Space is low",
@@ -197,7 +204,16 @@ fn answer(version: &str, groups: &str, method: &str, params: &Value) -> Value {
         ]),
         "httptest.get" => json!([{
             "httptestid": "1", "hostid": "10", "name": "Shop", "delay": "1m", "status": "0",
-            "steps": [{"no": "2", "url": "https://shop.example.com/cart"}, {"no": "1", "url": "https://shop.example.com/"}],
+            "headers": [{"name": "Accept-Language", "value": "en"}], "variables": [],
+            "authentication": "1", "http_user": "monitor", "http_password": "recorded-secret",
+            "steps": [
+                {"no": "2", "name": "Cart", "url": "https://shop.example.com/cart", "status_codes": "200",
+                 "required": "", "follow_redirects": "1", "retrieve_mode": "0", "posts": "",
+                 "headers": [], "variables": [], "query_fields": [], "timeout": "15s"},
+                {"no": "1", "name": "Home", "url": "https://shop.example.com/", "status_codes": "200",
+                 "required": "Welcome", "follow_redirects": "1", "retrieve_mode": "0", "posts": "",
+                 "headers": [], "variables": [], "query_fields": [], "timeout": "15s"},
+            ],
         }]),
         "maintenance.get" => json!([{
             "maintenanceid": "1", "name": "Patching", "description": "Kernel updates",
@@ -205,6 +221,21 @@ fn answer(version: &str, groups: &str, method: &str, params: &Value) -> Value {
             "hosts": [], (groups): [{"groupid": "2"}], "tags": [],
             "timeperiods": [{"timeperiod_type": "3", "every": "1", "month": "0", "dayofweek": "64",
                              "day": "0", "start_time": "7200", "period": "7200", "start_date": "0"}],
+        }, {
+            "maintenanceid": "2", "name": "Database work", "description": "",
+            "maintenance_type": "0", "active_since": "1767225600", "active_till": "1798761600",
+            "hosts": [{"hostid": "10"}], (groups): [], "tags_evaltype": "0",
+            "tags": [{"tag": "service", "operator": "0", "value": "postgres"}],
+            // The second Tuesday and Friday of January and July, 22:00 for 4 hours.
+            "timeperiods": [{"timeperiod_type": "4", "every": "2", "month": "65", "dayofweek": "18",
+                             "day": "0", "start_time": "79200", "period": "14400", "start_date": "0"}],
+        }, {
+            "maintenanceid": "3", "name": "Unknown tags", "description": "",
+            "maintenance_type": "0", "active_since": "1767225600", "active_till": "1798761600",
+            "hosts": [{"hostid": "10"}], (groups): [],
+            "tags": [{"tag": "team", "operator": "2", "value": "web"}],
+            "timeperiods": [{"timeperiod_type": "2", "every": "3", "month": "0", "dayofweek": "0",
+                             "day": "0", "start_time": "0", "period": "3600", "start_date": "0"}],
         }]),
         "mediatype.get" => json!([
             {"mediatypeid": "1", "type": "0", "name": "Email", "smtp_server": "mail.example.com",
@@ -280,6 +311,7 @@ async fn zabbix_7_with_a_bearer_token() {
             "system.cpu.util",
             "vfs.fs.dependent.size[/,pused]",
             "net.tcp.port[,5432]",
+            "api.health",
             "vfs.dev.read.await[{#DEVNAME}]"
         ]
     );
@@ -287,7 +319,7 @@ async fn zabbix_7_with_a_bearer_token() {
     assert_eq!(host.items[0].template, template);
     assert_eq!(host.items[1].template, template, "through its prototype");
     assert_eq!(host.items[2].template, None);
-    assert!(host.items[3].prototype);
+    assert!(host.items[4].prototype);
     let triggers: Vec<_> = host.triggers.iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         triggers,
@@ -298,10 +330,34 @@ async fn zabbix_7_with_a_bearer_token() {
             "{#DEVNAME}: Disk read is slow"
         ]
     );
+    let urls: Vec<&str> = host.web[0].steps.iter().map(|s| s.url.as_str()).collect();
     assert_eq!(
-        host.web[0].urls,
+        urls,
         ["https://shop.example.com/", "https://shop.example.com/cart"]
     );
+    let shop = &host.web[0];
+    assert_eq!(shop.steps[0].required, "Welcome");
+    assert_eq!(
+        shop.headers,
+        [("Accept-Language".to_owned(), "en".to_owned())]
+    );
+    assert_eq!(
+        (
+            shop.auth.kind.as_str(),
+            shop.auth.user.as_str(),
+            shop.auth.password
+        ),
+        ("basic", "monitor", true)
+    );
+    let http = host.items[3].http.as_deref().expect("an HTTP agent item");
+    assert_eq!(http.request.method, "HEAD");
+    assert_eq!(http.request.status_codes, "200,204");
+    assert!(!http.request.follow_redirects);
+    assert_eq!(
+        http.request.headers,
+        [("X-Monitor".to_owned(), "zabbix".to_owned())]
+    );
+    assert_eq!(http.request.query, [("full".to_owned(), "1".to_owned())]);
     assert_eq!(
         config.templates.len(),
         1,
@@ -345,10 +401,86 @@ async fn zabbix_7_with_a_bearer_token() {
         .unwrap();
     assert_eq!(port.interval_s, Some(30));
     assert_eq!(port.alert.as_ref().unwrap().for_s, 180);
-    let silence = &inventory.silences[0];
-    assert_eq!(silence.scope, SilenceScope::Hosts(vec!["web-01".into()]));
-    assert_eq!(silence.reason, "Patching: Kernel updates");
-    assert_eq!(silence.starts_at.to_rfc3339(), "2026-11-22T02:00:00+00:00");
+    // The scenario's first step, its password left for later.
+    let shop = inventory
+        .checks
+        .iter()
+        .find_map(|c| match &c.watch {
+            Watch::Web(site) if c.origin.kind == "web_scenario" => Some((site, &c.fidelity)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(shop.0.url, "https://shop.example.com/");
+    assert_eq!(shop.0.contains.as_deref(), Some("Welcome"));
+    assert_eq!(shop.0.status.as_deref(), Some("200"));
+    assert_eq!(shop.0.username.as_deref(), Some("monitor"));
+    assert!(shop.0.credentials);
+    assert_eq!(shop.0.timeout_s, Some(15));
+    assert!(matches!(shop.1, Fidelity::Approximated(n) if n.code == "web_steps"));
+    let api = inventory
+        .checks
+        .iter()
+        .find_map(|c| match &c.watch {
+            Watch::Web(site) if c.origin.name == "API health" => Some((site, &c.fidelity)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(api.0.url, "https://api.example.com/health?full=1");
+    assert_eq!(api.0.method, WebMethod::Head);
+    assert_eq!(api.0.status.as_deref(), Some("200,204"));
+    assert!(!api.0.follow_redirects);
+    assert_eq!(api.0.timeout_s, Some(5));
+    assert_eq!(api.1, &Fidelity::Exact);
+    // Weekly on Sundays at 02:00: a maintenance window, not its next one.
+    let window = &inventory.windows[0];
+    assert_eq!(window.scope, SilenceScope::Hosts(vec!["web-01".into()]));
+    assert_eq!(window.reason, "Patching: Kernel updates");
+    assert_eq!(window.rule.repeat, Repeat::Weekly);
+    assert_eq!(window.rule.weekdays, 64);
+    assert_eq!(window.rule.start_time.to_string(), "02:00:00");
+    assert_eq!(window.rule.time_zone, None);
+    // Without data collection in Zabbix: MonitorFlow only holds notifications.
+    assert!(matches!(&window.fidelity, Fidelity::Approximated(n) if n.code == "zabbix_no_data"));
+    assert!(inventory.silences.is_empty());
+    // Limited to tags: the check made from the trigger with them, on the
+    // second Tuesday and the second Friday, one window each.
+    let work: Vec<_> = inventory
+        .windows
+        .iter()
+        .filter(|w| w.reason == "Database work")
+        .collect();
+    assert_eq!(work.len(), 2);
+    for w in &work {
+        assert_eq!(
+            w.checks,
+            vec![Watch::Port {
+                address: None,
+                port: 5432
+            }]
+        );
+        assert_eq!(
+            (w.rule.repeat, w.rule.month_week, w.rule.months),
+            (Repeat::Monthly, Some(2), 65)
+        );
+        assert_eq!(w.rule.duration_minutes, 240);
+        assert_eq!(w.fidelity, Fidelity::Exact);
+    }
+    let days: Vec<u8> = work.iter().map(|w| w.rule.weekdays).collect();
+    assert_eq!(days, vec![2, 16]);
+    // Tags no check comes from: the whole server, said so.
+    let unknown = inventory
+        .windows
+        .iter()
+        .find(|w| w.reason == "Unknown tags")
+        .unwrap();
+    assert!(unknown.checks.is_empty());
+    assert_eq!(
+        (unknown.rule.repeat, unknown.rule.every),
+        (Repeat::Daily, 3)
+    );
+    assert!(
+        matches!(&unknown.fidelity, Fidelity::Approximated(n) if n.code == "zabbix_tags_unmatched")
+    );
     let names: Vec<_> = inventory.channels.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, ["Email", "MS Teams Workflow (Admin)"]);
     assert!(

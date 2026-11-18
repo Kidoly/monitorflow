@@ -1,6 +1,6 @@
 ---
 title: "Comment surveiller un site web en HTTPS"
-description: "Sachez quand votre site ne répond plus sur le port 443 ou 80, et vérifiez son code de réponse et l'expiration de son certificat avec un script."
+description: "Sachez quand votre site ne répond plus comme il le devrait : son code de réponse, le texte de la page, son temps de réponse, ses redirections et l'expiration de son certificat."
 slug: surveiller-site-web-https
 lang: fr
 translation: monitor-website-https
@@ -8,67 +8,47 @@ translation: monitor-website-https
 
 # Comment surveiller un site web en HTTPS
 
-Un site peut être inaccessible alors que son serveur semble en forme : serveur web arrêté, règle de pare-feu modifiée, certificat expiré dans la nuit. MonitorFlow vérifie que les ports du site répondent, depuis le serveur web ou une autre machine, et un court script ajoute le code de réponse et les jours restants du certificat.
+Un site peut être inaccessible alors que son serveur semble en forme : l'application répond `502 Bad Gateway`, un déploiement a laissé une page d'erreur, une redirection tourne en boucle, ou le certificat a expiré dans la nuit. MonitorFlow demande la page comme le ferait un visiteur et vous dit ce qui ne va pas, depuis le serveur web lui-même ou depuis une autre machine.
 
 ## Pourquoi c'est important
 
-Les visiteurs ne signalent pas une panne : ils partent. Un certificat expiré est pire : les navigateurs affichent un avertissement en pleine page, souvent un week-end, parce que le renouvellement a échoué sans bruit des semaines plus tôt. Vérifier depuis l'extérieur détecte aussi un changement de réseau ou de pare-feu devant le serveur.
+Les visiteurs ne signalent pas un site en panne : ils partent. Un certificat expiré est pire : les navigateurs affichent un avertissement sur toute la page, souvent un week-end, parce que le renouvellement a échoué en silence des semaines plus tôt. Vérifier depuis l'extérieur détecte aussi un changement de réseau ou de pare-feu devant le serveur.
 
 ## Ce que MonitorFlow vérifie
 
-| Entrée du catalogue | Ce qu'elle fait | Alerte par défaut |
+| Entrée du catalogue | Ce qu'elle fait | Alertes par défaut |
 | --- | --- | --- |
-| « Web server answers (HTTPS) » | Le port 443 accepte les connexions TCP. Métrique `port_443_up` | Critique en cas d'échec, pendant 1 minute |
-| « Web server answers (HTTP) » | Le port 80 accepte les connexions TCP. Métrique `port_80_up` | Critique en cas d'échec, pendant 1 minute |
-| « Your own script » | Exécute un script que vous installez, lu comme OK, avertissement ou critique | Avertissement s'il signale un problème, pendant 1 minute |
+| **« Un site web répond »** | Demande la page : son code de statut, son temps de réponse, ses redirections et, en https, son certificat | Critique en cas d'échec pendant 2 minutes |
+| **« Une page affiche le bon contenu »** | La même chose, avec un texte que la page doit contenir (un nom de produit) ou ne pas contenir (un message d'erreur) | Les mêmes |
+| **« Un certificat n'expire pas »** | La même chose, pour une adresse `https://` | Les mêmes |
+| **« Une API répond »** | La même chose, avec le code de statut attendu, des en-têtes et un mot de passe ou un jeton | Les mêmes |
 
-Une vérification de port ouvre une connexion TCP, rien de plus. Elle n'envoie aucune requête et ne lit ni le code de réponse ni le certificat : un site qui répond `502 Bad Gateway` ou dont le certificat a expiré la passe quand même. Le script ci-dessous couvre ces cas.
+Chaque contrôle de site web vient avec ces alertes, modifiables comme les autres :
 
-Par défaut, la vérification se connecte à `127.0.0.1`. Dans « Address », vous pouvez indiquer le nom du site et ajouter la vérification sur un autre serveur, dont l'agent se connecte alors à travers le réseau comme un visiteur. Chaque serveur peut limiter ces destinations avec `port_targets` dans son `agent.toml` ; tout est permis par défaut.
+- critique quand la page ne répond pas comme prévu pendant 2 minutes : pas de réponse, un code de statut inattendu, le texte absent, trop de redirections ;
+- critique quand le certificat n'est pas valide pendant 5 minutes : expiré, autosigné, signé par une autorité que la machine qui contrôle ne reconnaît pas, ou pour un autre nom ;
+- avertissement quand il reste moins de 14 jours au certificat, critique sous 7 ;
+- avertissement quand la page met plus de 3 secondes pendant 5 minutes.
+
+Un certificat expiré ne masque pas le reste : la page est tout de même lue, vous voyez donc à la fois son code de statut et ce qui ne va pas avec le certificat.
+
+Le contrôle tourne sur l'agent du serveur auquel vous l'ajoutez, sauf si **« Vérifié depuis »** désigne le serveur central ou un relais du site. Ajoutez-le au serveur web pour vérifier le site tel qu'il le sert, à un autre serveur pour le vérifier à travers le réseau, ou faites-le vérifier de l'extérieur par le serveur central ou un relais, comme un visiteur. Un équipement, qui n'a pas d'agent, reçoit aussi des contrôles de site web, lancés depuis le serveur central ou un relais. Chaque serveur peut limiter où ses contrôles se connectent avec `port_targets` dans son `agent.toml`, redirections comprises ; partout par défaut.
 
 ## Mise en place
 
-1. Ouvrez « Fleet » et cliquez sur le serveur qui fera la vérification : le serveur web, ou un autre qui joint le site.
-2. Dans l'onglet « Sensors », choisissez « Add a check ».
-3. Dans « Find a check », tapez `https` et choisissez « Web server answers (HTTPS) ».
-4. « Port » contient `443`. Dans « Address », gardez `127.0.0.1` ou saisissez le nom du site, comme `www.example.com`.
-5. Laissez « Raise critical when it fails » coché, choisissez « This server only » sous « Add to », puis cliquez sur « Add check ».
+1. Ouvrez **Fleet** et cliquez sur le serveur qui fera le contrôle : le serveur web, ou un autre qui atteint le site.
+2. Dans son onglet **« Sensors »**, choisissez **« Add a check »**.
+3. Dans **« Find a check »**, tapez `site` et choisissez **« Un site web répond »**.
+4. Dans **« Adresse de la page »**, saisissez l'adresse comme la tape un visiteur, par exemple `https://www.example.com/`. Dans **« Texte que la page doit contenir »**, saisissez un texte qui n'apparaît que quand la page fonctionne, comme `Ajouter au panier`, ou laissez vide.
+5. Laissez **« Raise critical when it fails »** coché, choisissez **« This server only »** sous **« Add to »**, et cliquez sur **« Add check »**.
 
-### Code de réponse et certificat, avec un script
+**« Plus d'options »** contient le reste : un texte que la page ne doit pas contenir, les codes de statut acceptés (`200-299` par défaut), le suivi des redirections, `GET` ou `HEAD`, IPv4 ou IPv6, des en-têtes supplémentaires, et un nom d'utilisateur et un mot de passe pour une page protégée. Le mot de passe n'est envoyé qu'en https, gardé scellé et jamais réaffiché ; sans nom d'utilisateur, il est envoyé comme jeton bearer, comme beaucoup d'API l'attendent.
 
-L'agent n'exécute que les scripts installés dans `/etc/monitorflow/scripts.d`, sans argument sauf si le serveur l'autorise : écrivez donc l'adresse dans le script. Enregistrez-le sous `check_https.sh` en adaptant les deux premières lignes :
-
-```sh
-#!/bin/sh
-URL=https://www.example.com/
-HOST=www.example.com
-
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$URL")
-end=$(timeout 5 openssl s_client -connect "$HOST:443" -servername "$HOST" </dev/null 2>/dev/null \
-  | openssl x509 -noout -enddate | cut -d= -f2)
-[ -n "$end" ] || { echo "CRITICAL: no certificate from $HOST"; exit 2; }
-days=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
-echo "http_code=$code"
-echo "cert_days=$days"
-[ "$code" = 200 ] || exit 2
-[ "$days" -ge 7 ] || exit 2
-[ "$days" -ge 21 ] || exit 1
-exit 0
-```
-
-Le code de sortie 0 signifie OK, 1 avertissement, 2 critique. curl refuse un certificat invalide, ce qui donne le code `000` et un résultat critique. Chaque ligne `nom=valeur` devient une métrique : `script_check_https_http_code` et `script_check_https_cert_days`. Installez-le et testez-le :
-
-```sh
-sudo install -d -o root -g root -m 0755 /etc/monitorflow/scripts.d
-sudo install -o root -g root -m 0755 check_https.sh /etc/monitorflow/scripts.d/
-sudo monitorflow-agent sensors probe script --param script=check_https.sh
-```
-
-Puis « Add a check », choisissez « Your own script », saisissez `check_https.sh` dans « Script », choisissez toutes les 15 minutes sous « How often » et cliquez sur « Add check ». Pour aller plus loin : [Comment surveiller avec votre propre script](surveiller-avec-votre-script.md).
+La liste **« Sites web »** de l'onglet **« Sensors »** montre ensuite chaque site : s'il répond, pourquoi sinon, son code de statut, son temps de réponse, où mènent ses redirections, et son certificat avec ses jours restants, sa date d'expiration et qui l'a émis.
 
 ## Modifier l'alerte
 
-Dans l'onglet « Sensors », ouvrez le menu de la ligne et choisissez « Edit ». « Alert » choisit critique ou avertissement, « For at least » le nombre de minutes que doit durer le problème (`0` alerte dès la première mauvaise valeur, conseillé pour un script lancé toutes les 15 minutes), et « Apply to » ce serveur seul ou tous ceux du site.
+Dans l'onglet « Sensors », ouvrez le menu de la ligne et choisissez « Edit ». « Alert » choisit critique ou avertissement, « For at least » le nombre de minutes que doit durer le problème (`0` alerte dès la première mauvaise valeur), et « Apply to » ce serveur seul ou tous ceux du site.
 
 ## Où part l'alerte
 
@@ -77,15 +57,15 @@ Chaque alerte s'affiche dans « Monitoring › Incidents » et sur la vue d'en
 ## Quand l'alerte se déclenche
 
 ```
-Critical: port_443_up is 0 on web-1 (paris)
-Warning: script_check_https_status is 1 on web-1 (paris)
+Critical: http_www_example_com_up is 0 on web-1 (paris)
+Warning: http_www_example_com_cert_days_left is 12 on web-1 (paris)
 ```
 
 Par e-mail, l'objet reprend cette ligne après `[MonitorFlow]`, avec un lien vers l'alerte. Cliquez sur « Acknowledge », puis vérifiez :
 
 1. **D'où vient l'échec :** si seule la vérification depuis un autre serveur échoue, regardez le réseau, le pare-feu ou le DNS entre les deux.
 2. **Le serveur web :** voir [nginx](surveiller-nginx.md) ou [Apache](surveiller-apache.md).
-3. **Le certificat :** lancez le script à la main pour voir `http_code` et `cert_days` ; vérifiez que le renouvellement s'exécute et que le serveur web a été rechargé ensuite.
+3. **Ce qu'il dit :** la liste **« Sites web »** dit pourquoi le dernier contrôle a échoué, par exemple « A répondu 503, qui n'est pas attendu », et ce qui ne va pas avec le certificat. Vérifiez que le renouvellement s'exécute et que le serveur web a été rechargé ensuite.
 
 ## Pas encore de MonitorFlow ?
 

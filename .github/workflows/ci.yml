@@ -281,9 +281,38 @@ jobs:
           name: sso-test-failure
           path: ${{ runner.temp }}/sso-test-failure.png
           if-no-files-found: ignore
+  # Website checks (ADR-0150) against nginx in a container: pages with
+  # chosen status codes, text and redirects, and certificates of a
+  # throwaway CA (valid, expired, another name, 5 days left, self-signed),
+  # run by an agent and by the central server; alerts opening and
+  # resolving; the server page in Chrome.
+  website:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler postgresql-client
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: deploy/website-test/run-e2e.sh
+        env:
+          MF_TEST_CHROMIUM: /usr/bin/google-chrome
+          MF_E2E_DIR: ${{ runner.temp }}/website-e2e
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: website-test-screenshots
+          path: ${{ runner.temp }}/website-e2e/out/*.png
+          if-no-files-found: ignore
   # The installer is piped to sh, so it must stay POSIX (ADR-0052).
   shellcheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: shellcheck --version && shellcheck deploy/*.sh deploy/docker/*.sh deploy/mirror-fixture/*.sh scripts/*.sh
+      - run: shellcheck --version && shellcheck deploy/*.sh deploy/docker/*.sh deploy/mirror-fixture/*.sh deploy/website-test/*.sh scripts/*.sh

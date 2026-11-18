@@ -1,0 +1,103 @@
+# Web scenarios, HTTP agent items and a certificate item, written by hand
+# in the shape of a Zabbix 7.0 hosts export (defaults left out, as Zabbix
+# leaves them out).
+zabbix_export:
+  version: '7.0'
+  host_groups:
+    - uuid: 4f9cd4d0a0f04a7ab1e6b8b8d9b0c1a2
+      name: Web
+  hosts:
+    - host: shop-01
+      name: shop-01
+      groups:
+        - name: Web
+      interfaces:
+        - ip: 192.0.2.30
+          interface_ref: if1
+      items:
+        - name: 'API health'
+          type: HTTP_AGENT
+          key: api.health
+          delay: 30s
+          url: 'https://api.example.com/health'
+          query_fields:
+            - name: full
+              value: '1'
+          request_method: HEAD
+          status_codes: '200,204'
+          follow_redirects: 'NO'
+          headers:
+            - name: X-Monitor
+              value: zabbix
+          timeout: 5s
+          triggers:
+            - expression: 'nodata(/shop-01/api.health,5m)=1'
+              name: 'API health has no data'
+              priority: HIGH
+        - name: 'Login API'
+          type: HTTP_AGENT
+          key: api.login
+          url: 'https://api.example.com/login'
+          request_method: POST
+          posts: '{"user": "monitor"}'
+          authtype: BASIC
+          username: monitor
+          password: example-password
+        - name: 'Website certificate'
+          type: ZABBIX_ACTIVE
+          key: 'web.certificate.get[{$CERT.WEBSITE.HOSTNAME},{$CERT.WEBSITE.PORT}]'
+        - name: 'Certificate expires on'
+          type: DEPENDENT
+          key: cert.not_after
+          master_item:
+            key: 'web.certificate.get[{$CERT.WEBSITE.HOSTNAME},{$CERT.WEBSITE.PORT}]'
+          triggers:
+            - expression: '(last(/shop-01/cert.not_after) - now()) / 86400 < {$CERT.EXPIRY.WARN}'
+              name: 'Certificate expires soon'
+              priority: WARNING
+      httptests:
+        - name: Shop
+          headers:
+            - name: Accept-Language
+              value: en
+          authentication: BASIC
+          http_user: monitor
+          http_password: example-password
+          steps:
+            - name: Home
+              url: 'https://{$SHOP.HOST}/'
+              required: 'Welcome to the shop'
+              status_codes: '200,301'
+              follow_redirects: 'NO'
+              timeout: 10s
+        - name: Checkout
+          delay: 5m
+          steps:
+            - name: Cart
+              url: 'https://shop.example.com/cart'
+              status_codes: '200'
+            - name: Pay
+              url: 'https://shop.example.com/pay'
+              posts:
+                - name: amount
+                  value: '1'
+              required: 'Total: \d+'
+      macros:
+        - macro: '{$SHOP.HOST}'
+          value: shop.example.com
+        - macro: '{$CERT.WEBSITE.HOSTNAME}'
+          value: www.example.com
+        - macro: '{$CERT.WEBSITE.PORT}'
+          value: '8443'
+        - macro: '{$CERT.EXPIRY.WARN}'
+          value: '14'
+  triggers:
+    - expression: 'last(/shop-01/web.test.fail[Shop])<>0'
+      name: 'Shop fails'
+      priority: HIGH
+    - expression: 'avg(/shop-01/web.test.time[Shop,Home,resp],5m)>2'
+      name: 'Shop is slow'
+      priority: WARNING
+    - expression: 'last(/shop-01/web.test.rspcode[Checkout,Pay])<>200'
+      name: 'Payment page fails'
+      priority: HIGH

@@ -23,7 +23,7 @@ Switching monitoring tools usually means typing everything again: hundreds of ho
 Every line of the preview is in one of three lists:
 
 - **Same in MonitorFlow**: it maps exactly.
-- **Approximated**: MonitorFlow does something close, and the line says how it differs. A web scenario becomes a check that the site's port answers, for example, and a recurring maintenance becomes a silence of its next window.
+- **Approximated**: MonitorFlow does something close, and the line says how it differs. A web scenario of several steps becomes a website check of its first page, for example, and a recurring maintenance becomes a silence of its next window.
 - **Cannot be moved**: the line says why, with the expression or key it came from, so you can decide what to do about it.
 
 ## Import from Zabbix
@@ -44,7 +44,7 @@ What maps how:
 
 - CPU, memory, file system and disk activity items are measured by every MonitorFlow server already. Their triggers become alerts with the same levels, macros resolved per host.
 - `net.tcp.service` and `net.tcp.port` become TCP port checks; `systemd.unit.*` and Windows `service.*` become service checks; `log[]` and `logrt[]` become log checks.
-- Web scenarios and `web.page.*` become port checks of the site; `proc.num` becomes a check of the systemd service of that name.
+- Web scenarios, HTTP agent items, `web.page.*` and `web.certificate.get` become website checks: the first step's URL, required status codes and string, redirects, headers and user name. Triggers on `web.test.fail`, `web.test.rspcode` and on those items are their alert, triggers on `web.test.time` and on a certificate's expiry thresholds on the check. Later steps, variables, a POST and a required string that is a regular expression are noted. Passwords are not imported: set them in the check afterwards. `proc.num` becomes a check of the systemd service of that name.
 - Agent availability triggers and `agent.ping` are MonitorFlow's offline alert, which every server has.
 - Network interface traffic, SNMP, `system.run` and UserParameters cannot be moved yet.
 
@@ -56,7 +56,7 @@ What maps how:
 
 What maps how:
 
-- Node exporter targets become servers. A blackbox exporter's TCP probes become port checks, its HTTP probes checks of the site's port, on the server that runs the exporter.
+- Node exporter targets become servers. A blackbox exporter's TCP probes become port checks and its HTTP probes website checks with the module's status codes, method, headers, redirects and body conditions (plain text; a real regular expression is noted), on the server that runs the exporter. TCP probes with `tls: true` become website checks of the certificate. Rules on `probe_success` and `probe_http_status_code` are their alert, rules on `probe_duration_seconds` and `probe_ssl_earliest_cert_expiry - time()` thresholds on the check.
 - The usual node rules (target down, CPU, load, memory, file system space, disk latency, systemd units) become alerts with their levels and `for:` durations, and `probe_success == 0` the alert of each probe.
 - Any other expression is listed as cannot be moved, with the expression.
 - Receivers become channels: email, webhook, Slack, Microsoft Teams and Discord. Alertmanager routes are not moved: in MonitorFlow, a channel covers everything or one site.

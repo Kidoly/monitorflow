@@ -12,7 +12,7 @@ import { type CheckUsage, type UsablePlugin } from "./api";
 
 export type Purpose = "availability" | "performance" | "disk" | "services" | "logs" | "network" | "updates" | "databases" | "web" | "containers";
 export type System = "linux" | "windows" | "proxmox";
-export type Technology = "agent" | "script" | "port" | "plugin";
+export type Technology = "agent" | "script" | "port" | "website" | "plugin";
 
 /** A filter choice whose label is read in the active language when shown. */
 const option = <T extends string>(value: T, key: PlainKey) => ({
@@ -44,6 +44,7 @@ export const SYSTEMS: { value: System; label: string }[] = [
 export const TECHNOLOGIES: { value: Technology; label: string }[] = [
   option("agent", "checks.technology.agent"),
   option("port", "checks.technology.port"),
+  option("website", "checks.technology.website"),
   option("script", "checks.technology.script"),
   option("plugin", "checks.technology.plugin"),
 ];
@@ -131,6 +132,13 @@ const logLines = (spec: Template, path: string, pattern: string): CatalogueEntry
 const eventLog = (spec: Template, channel: string): CatalogueEntry =>
   entry(spec, "agent", spec.keywords ?? [], (title) => prefill(kind("eventlog"), title, { channel }));
 
+/** A website check with some of its fields first, the rest under More options (ADR-0150). */
+const website = (spec: Template, first: string[], values: Record<string, string> = {}): CatalogueEntry =>
+  entry(spec, "website", spec.keywords ?? [], (title) => {
+    const type = prefill(kind("http"), title, values);
+    return { ...type, fields: type.fields.map((f) => ({ ...f, advanced: !first.includes(f.key) })) };
+  });
+
 const always = (spec: Template): CatalogueEntry => entry(spec, "agent", spec.keywords ?? [], () => null);
 
 /** Proxmox VE is Debian: Linux checks run there too, and a Linux server is offered the Proxmox ones. */
@@ -151,6 +159,12 @@ export const CATALOGUE: CatalogueEntry[] = [
   plainKind({ id: "log", purposes: ["logs"], systems: ANY, keywords: ["pattern", "regex", "grep"] }, "agent", "log"),
   plainKind({ id: "eventlog", purposes: ["logs"], systems: ["windows"], keywords: ["event viewer"] }, "agent", "eventlog"),
   entry({ id: "script", purposes: ["availability"], systems: ANY }, "script", ["nagios", "custom", "plugin", "powershell"], () => kind("script")),
+
+  // Websites, as a visitor sees them.
+  plainKind({ id: "website", purposes: ["web", "availability"], systems: ANY, keywords: ["http", "https", "url", "page", "status code", "redirect", "ssl", "tls", "certificate", "response time", "site"] }, "website", "http"),
+  website({ id: "website-text", purposes: ["web"], systems: ANY, keywords: ["content", "text", "keyword", "string", "error page"] }, ["url", "contains", "not_contains"]),
+  website({ id: "website-certificate", purposes: ["web", "availability"], systems: ANY, keywords: ["ssl", "tls", "https", "certificate", "expiry", "expires", "renewal", "let's encrypt"] }, ["url"]),
+  website({ id: "website-api", purposes: ["web", "availability"], systems: ANY, keywords: ["api", "rest", "json", "endpoint", "health", "token", "status code"] }, ["url", "status", "headers", "username", "password"], { status: "200" }),
 
   // Linux services.
   service({ id: "ssh-service", purposes: ["services", "availability"], systems: LINUX, keywords: ["sshd", "openssh", "remote access"] }, "ssh", true),
@@ -210,7 +224,7 @@ export const CATALOGUE: CatalogueEntry[] = [
 ];
 
 /** Shown as "Common checks" while nothing is used yet. */
-export const COMMON: string[] = ["https-port", "ssh-service", "port", "service", "log", "script"];
+export const COMMON: string[] = ["website", "ssh-service", "port", "service", "log", "script"];
 
 /** The entries for check plugins turned on at the site (ADR-0103). */
 export function pluginEntries(plugins: UsablePlugin[], siteId: string, customerId: string | null): CatalogueEntry[] {

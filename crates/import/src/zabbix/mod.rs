@@ -22,6 +22,7 @@ pub mod map;
 pub mod media;
 pub mod stock;
 pub mod triggers;
+pub mod web;
 
 use async_trait::async_trait;
 

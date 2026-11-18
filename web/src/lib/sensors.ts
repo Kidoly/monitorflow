@@ -4,6 +4,7 @@ import type { EffectiveSensor, Incident, SensorSeries, SensorValueList } from ".
 import { checkTitle } from "./alerts";
 import { formatSeconds, formatValue, unitOf } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
+import { websiteLabel } from "./website";
 
 /**
  * The metric that stands for a sensor in the server's sensor list, by
@@ -15,6 +16,7 @@ const PRIMARY: Record<string, { suffix: string; instance?: string }> = {
   memory: { suffix: "available_ratio" },
   disk: { suffix: "used_ratio" },
   diskio: { suffix: "busy_ratio" },
+  net: { suffix: "receive_bytes_per_second" },
   systemd: { suffix: "active" },
   windows_service: { suffix: "active" },
   port: { suffix: "up" },
@@ -22,10 +24,26 @@ const PRIMARY: Record<string, { suffix: string; instance?: string }> = {
   log: { suffix: "matches" },
   eventlog: { suffix: "matches" },
   script: { suffix: "status" },
+  http: { suffix: "up" },
 };
 
 /** The full name of the metric shown for `sensor`, and the instance to query, if any. */
+/** What an SNMP check stands for, by group (ADR-0149); interfaces, sensors and supplies name their own instances. */
+const SNMP_PRIMARY: Record<string, { suffix: string; own?: boolean }> = {
+  system: { suffix: "up" },
+  interfaces: { suffix: "oper_up", own: true },
+  host: { suffix: "cpu_usage_ratio" },
+  ups: { suffix: "battery_charge_ratio" },
+  temperature: { suffix: "celsius", own: true },
+  printer: { suffix: "supply_level_ratio", own: true },
+};
+
 export function primaryMetric(sensor: EffectiveSensor): { metric: string; instance?: string } {
+  if (sensor.kind === "snmp") {
+    const group = SNMP_PRIMARY[sensor.params.what ?? "system"] ?? SNMP_PRIMARY.system!;
+    const metric = `${METRIC_PREFIX}${sensor.name}_${group.suffix}`;
+    return group.own || !sensor.instance ? { metric } : { metric, instance: sensor.instance };
+  }
   const primary = PRIMARY[sensor.kind];
   const metric = `${METRIC_PREFIX}${sensor.name}${primary ? `_${primary.suffix}` : ""}`;
   const instance = sensor.instance || primary?.instance;
@@ -47,7 +65,11 @@ export function sensorOf(sensors: EffectiveSensor[], metric: string): EffectiveS
 export function seriesTitle(sensor: EffectiveSensor | undefined, metric: string, instance: string): string {
   const shown = instance === "total" ? "" : instance;
   const primary = sensor && primaryMetric(sensor).metric === metric;
-  // A check from the central server or a relay says which (ADR-0148).
+  // A check from the central server or a relay says which (ADR-0148);
+  // an SNMP check with instances of its own names them (ADR-0149).
+  if (sensor && primary && sensor.kind === "snmp" && SNMP_PRIMARY[sensor.params.what ?? ""]?.own) {
+    return `${metricTitle(metric)} ${shown}`.trim();
+  }
   if (sensor && primary && sensor.probe) return checkTitle(sensor);
   if (sensor && primary) {
     switch (sensor.kind) {
@@ -64,6 +86,8 @@ export function seriesTitle(sensor: EffectiveSensor | undefined, metric: string,
         return shown || sensor.name;
       case "port":
         return t("sensors.title.port", { port: shown || sensor.name });
+      case "http":
+        return t("sensors.title.website", { host: websiteLabel(sensor.params.url) || sensor.name });
       case "log":
       case "eventlog":
       case "script":
@@ -78,7 +102,11 @@ export function formatSensorValue(metric: string, value: number | null | undefin
   if (value === null || value === undefined) return "–";
   const short = shortMetric(metric);
   if (short.endsWith("_active")) return value === 1 ? t("sensors.value.active") : t("sensors.value.inactive");
-  if (short.startsWith("ping") && short.endsWith("_up")) return value === 1 ? t("sensors.value.answers") : t("sensors.value.noAnswer");
+  if (short.endsWith("oper_up") || short.endsWith("admin_up")) return value === 1 ? t("sensors.value.up") : t("sensors.value.down");
+  if (short.endsWith("_on_battery") || short.endsWith("_battery_low")) return value === 1 ? t("sensors.value.yes") : t("sensors.value.no");
+  if ((short.startsWith("ping") || short.startsWith("snmp")) && short.endsWith("_up")) return value === 1 ? t("sensors.value.answers") : t("sensors.value.noAnswer");
+  // A website check: "http_shop_example_com_up" (ADR-0150).
+  if (short.startsWith("http_") && short.endsWith("_up")) return value === 1 ? t("sensors.value.answers") : t("sensors.value.fails");
   if (short.endsWith("_up")) return value === 1 ? t("sensors.value.open") : t("sensors.value.closed");
   if (short.endsWith("_loaded")) return value === 1 ? t("sensors.value.loaded") : t("sensors.value.notLoaded");
   if (short.endsWith("_installed")) return value === 1 ? t("sensors.value.installed") : t("sensors.value.notInstalled");

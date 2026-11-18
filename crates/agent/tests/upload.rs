@@ -305,6 +305,6 @@ db_tests! {
         let saved = ConfigFile::in_dir(agent.dir.path()).load().await.unwrap();
         assert_eq!(saved.revision, revision as u64);
         let kinds: Vec<_> = saved.sensors.iter().map(|s| s.kind.as_str()).collect();
-        assert_eq!(kinds, ["cpu", "disk", "diskio", "fake", "memory"]);
+        assert_eq!(kinds, ["cpu", "disk", "diskio", "fake", "memory", "net"]);
     }
 }

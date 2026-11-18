@@ -75,6 +75,8 @@ pub const ORIGIN_KINDS: &[&str] = &[
     "device",
     "group",
     "probe",
+    "time_interval",
+    "schedule",
 ];
 
 /// Every note, in English. Shared notes first, then one block per reader.
@@ -89,8 +91,52 @@ pub const NOTES: &[(&str, &str)] = &[
         "MonitorFlow's offline alert tells when the agent stops answering, after {minutes} minutes.",
     ),
     (
-        "web_as_port",
-        "MonitorFlow checks that port {port} of {host} answers; it does not read the page or its status code.",
+        "web_password",
+        "Passwords are not imported: set the password of {username} in the check after the import.",
+    ),
+    (
+        "web_token",
+        "Tokens are not imported: set the token as the check's password after the import.",
+    ),
+    (
+        "web_password_http",
+        "The source sends a password over plain http; MonitorFlow sends one only over https, so the check runs without it.",
+    ),
+    (
+        "web_auth",
+        "MonitorFlow uses basic authentication, not {kind}: the check runs without it.",
+    ),
+    (
+        "web_method",
+        "MonitorFlow sends GET or HEAD requests only: the check sends GET instead of {method}, without a body.",
+    ),
+    (
+        "web_regex",
+        "MonitorFlow looks for plain text, not a pattern: the condition {pattern} is not moved.",
+    ),
+    (
+        "web_steps",
+        "Only the first of {count} steps is moved: a MonitorFlow website check reads one page.",
+    ),
+    (
+        "web_setting",
+        "The setting {setting} has no equivalent in a MonitorFlow website check; the rest is moved.",
+    ),
+    (
+        "web_header",
+        "The header {name} is not moved: MonitorFlow sets it itself or does not keep it in clear.",
+    ),
+    (
+        "web_certificate_only",
+        "The source checks only the certificate; MonitorFlow's website check also requests the page, whatever its status.",
+    ),
+    (
+        "web_response_phase",
+        "MonitorFlow measures the whole response time, redirects included, not one phase of it.",
+    ),
+    (
+        "web_no_check",
+        "It is about a website this import does not check.",
     ),
     (
         "silence_next_window",
@@ -107,6 +153,14 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "silence_whole_server",
         "MonitorFlow silences every alert of a server, not only the ones the source matched ({matchers}).",
+    ),
+    (
+        "window_cut",
+        "MonitorFlow maintenance windows last at most 7 days: this one ends 7 days after it starts.",
+    ),
+    (
+        "window_offline_kept",
+        "In MonitorFlow a server going offline still notifies: only its checks are silenced.",
     ),
     (
         "smtp_password",
@@ -157,12 +211,36 @@ pub const NOTES: &[(&str, &str)] = &[
         "It refers to a host that is not part of this import.",
     ),
     (
-        "udp",
-        "MonitorFlow checks TCP ports only.",
+        "network_traffic",
+        "MonitorFlow measures interface traffic but does not move thresholds on it: add one on the server's page.",
     ),
     (
-        "network_traffic",
-        "MonitorFlow does not measure network interface traffic yet.",
+        "snmp_object",
+        "An SNMP object outside the common MIBs MonitorFlow reads: interfaces, host resources, UPS, temperature sensors and printer supplies.",
+    ),
+    (
+        "dns_as_udp",
+        "MonitorFlow checks that the DNS server answers a query; it does not compare the record.",
+    ),
+    (
+        "no_address",
+        "There is no address MonitorFlow can check it at.",
+    ),
+    (
+        "device_no_agent",
+        "It becomes a device, which has no agent to measure this.",
+    ),
+    (
+        "snmp_of_agent",
+        "MonitorFlow polls SNMP on devices; on a server, its agent measures this itself.",
+    ),
+    (
+        "snmp_credentials",
+        "SNMP credentials are not moved: set them on the device's page, and its SNMP checks start.",
+    ),
+    (
+        "builtin_net",
+        "Every server measures the traffic of its network interfaces already.",
     ),
     (
         "no_equivalent",
@@ -179,10 +257,6 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "script",
         "Commands run by the source are not moved: put the script in the agent's scripts directory and add a custom script check.",
-    ),
-    (
-        "snmp",
-        "MonitorFlow watches servers through its agent; SNMP devices cannot be moved.",
     ),
     (
         "no_target",
@@ -230,6 +304,10 @@ pub const NOTES: &[(&str, &str)] = &[
         "An export has no users' media, so no recipients: connect to the Zabbix API to read them, or add the channel by hand.",
     ),
     (
+        "zabbix_web_step",
+        "Only the first step of a web scenario is moved; this is about the step {step}.",
+    ),
+    (
         "zabbix_not_set",
         "Its setting {setting} has no usable address in the source.",
     ),
@@ -237,14 +315,6 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "scrape_as_port",
         "MonitorFlow checks that port {port} answers; it does not read the exporter's metrics.",
-    ),
-    (
-        "ping_as_offline",
-        "The source pings the host; MonitorFlow's offline alert tells when its agent stops answering.",
-    ),
-    (
-        "ping",
-        "MonitorFlow does not ping addresses; it watches servers through their agent.",
     ),
     (
         "disk_wait",
@@ -284,16 +354,36 @@ pub const NOTES: &[(&str, &str)] = &[
     ),
     // PRTG.
     (
-        "prtg_ping",
-        "PRTG pinged it from a probe; MonitorFlow's offline alert tells when its agent stops answering. Ping times are not measured.",
+        "zabbix_no_data",
+        "Zabbix stopped collecting data during this maintenance; MonitorFlow keeps watching and only holds notifications.",
+    ),
+    (
+        "zabbix_tags_unmatched",
+        "No imported check comes from a trigger with these tags ({tags}): the whole server is silenced.",
+    ),
+    (
+        "am_active_intervals",
+        "Alertmanager sends this route only within its active time intervals, which MonitorFlow does not have.",
+    ),
+    (
+        "am_interval",
+        "This time interval cannot be said as a MonitorFlow maintenance window: {detail}.",
+    ),
+    (
+        "am_months_weekly",
+        "Weekdays of some months only: MonitorFlow's weekly windows apply every month.",
+    ),
+    (
+        "am_years",
+        "Limited to some years: the window applies from the first of them to the last.",
+    ),
+    (
+        "am_route_labels",
+        "The route also matched other labels ({matchers}): MonitorFlow holds every notification of these servers.",
     ),
     (
         "prtg_from_server",
         "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
-    ),
-    (
-        "prtg_certificate",
-        "MonitorFlow checks that port {port} answers; the certificate and its expiry are not checked.",
     ),
     (
         "prtg_sensor_type",
@@ -341,11 +431,15 @@ pub const NOTES: &[(&str, &str)] = &[
     ),
     (
         "prtg_paused_sensor",
-        "A paused sensor: MonitorFlow silences whole servers, not one check, so its check runs.",
+        "A paused sensor MonitorFlow has no check for: silencing its whole server would hide more than PRTG did.",
     ),
     (
         "prtg_local_time",
         "The file does not say PRTG's time zone: the window is read as UTC.",
+    ),
+    (
+        "prtg_schedule_unknown",
+        "Paused by the schedule {schedule}, whose periods are not in the source or are a time table: it cannot be moved.",
     ),
     (
         "prtg_triggers",
@@ -359,17 +453,14 @@ mod tests {
 
     #[test]
     fn notes_fill_their_arguments() {
-        let note = Note::new(
-            "web_as_port",
-            args! {"port" => 443, "host" => "shop.example"},
-        );
+        let note = Note::new("web_password", args! {"username" => "monitor"});
         assert_eq!(
             note.text(),
-            "MonitorFlow checks that port 443 of shop.example answers; it does not read the page or its status code."
+            "Passwords are not imported: set the password of monitor in the check after the import."
         );
         assert_eq!(
-            Note::plain("udp").text(),
-            "MonitorFlow checks TCP ports only."
+            Note::plain("builtin_net").text(),
+            "Every server measures the traffic of its network interfaces already."
         );
     }
 

@@ -15,6 +15,7 @@ pub mod prometheus;
 pub mod prtg;
 pub mod source;
 pub mod text;
+pub mod web;
 pub mod xml;
 pub mod zabbix;
 

@@ -78,6 +78,8 @@ pub struct Object {
     pub interval_s: Option<u32>,
     pub paused: Option<Paused>,
     pub maintenance: Option<Maintenance>,
+    /// The name of the schedule it follows, if any (ADR-0151).
+    pub schedule: Option<String>,
     /// The sensor's own settings, like `service` or `httpurl`, by
     /// lowercase name.
     pub settings: BTreeMap<String, String>,
@@ -96,6 +98,7 @@ impl Object {
             interval_s: None,
             paused: None,
             maintenance: None,
+            schedule: None,
             settings: BTreeMap::new(),
             channels: Vec::new(),
         }
@@ -141,6 +144,10 @@ pub struct Tree {
     /// Maintenance windows are in PRTG's local time, read as UTC: its
     /// time zone was not known.
     pub local_times: bool,
+    /// Schedules by name: their period list, the times objects that follow
+    /// them are paused, one `ww:hh:mm-ww:hh:mm` per line; `None` for a
+    /// time table.
+    pub schedules: BTreeMap<String, Option<String>>,
 }
 
 impl Tree {
@@ -196,6 +203,7 @@ mod tests {
             ],
             notifications: Vec::new(),
             local_times: false,
+            schedules: BTreeMap::new(),
         }
     }
 
