@@ -1867,6 +1867,7 @@ dependencies = [
  "monitorflow-common",
  "monitorflow-sensors",
  "monitorflow-snmp",
+ "monitorflow-vmware",
  "tokio",
  "tracing",
 ]

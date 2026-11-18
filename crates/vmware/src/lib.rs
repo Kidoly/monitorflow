@@ -15,11 +15,18 @@
 //! check it sends a probe; [`SECRET_PARAMS`] are never stored with the
 //! check nor shown.
 
+pub mod inventory;
+pub mod sensor;
 pub mod soap;
 pub mod tls;
 pub mod xml;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use monitorflow_sensors::Sensor;
+
+pub use sensor::VmwareSensor;
 
 /// The kind of the checks this crate builds.
 pub const KIND: &str = "vmware";
@@ -119,6 +126,11 @@ pub fn parse(params: &BTreeMap<String, String>) -> Result<Target, String> {
         fingerprint,
         what,
     })
+}
+
+/// Builds the sensor of a `vmware` check.
+pub fn build(params: &BTreeMap<String, String>) -> Result<Arc<dyn Sensor>, String> {
+    Ok(Arc::new(VmwareSensor::new(parse(params)?)))
 }
 
 #[cfg(test)]
