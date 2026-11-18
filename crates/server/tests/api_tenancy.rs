@@ -2072,6 +2072,20 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             moved["customer_id"] = json!(b.customer);
             assert_eq!(ctx.status(method, &uri, Some(moved)).await, not_found);
         }
+        // Availability (ADR-0155): B's servers and services never appear,
+        // and B's report does not exist for A.
+        ("GET", "/api/availability") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.server), "{body}");
+            assert!(!Ctx::mentions(&body, b.server), "{body}");
+            assert!(!Ctx::mentions(&body, b.business_service), "{body}");
+            let uri = format!("{path}?customer_id={}", b.customer);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("GET", "/api/availability/report") => {
+            let uri = format!("{path}?format=csv&customer_id={}", b.customer);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
         ("DELETE", "/api/business-services/{id}") => {
             let uri = path.replace("{id}", &b.business_service.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found);

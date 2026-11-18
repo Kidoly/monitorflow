@@ -7,13 +7,14 @@
 use serde_json::{json, Value};
 use utoipa::OpenApi;
 
-use super::business_services;
 use super::openapi::{Common, ErrorBody};
 use super::openapi_core::ex;
+use super::{availability, business_services};
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(list_services, create_service, update_service, remove_service),
+    paths(list_services, create_service, update_service, remove_service, availability_report,
+        availability_file),
     components(schemas(ErrorBody)),
     modifiers(&Common),
 )]
@@ -128,3 +129,88 @@ key's areas: `api_key_scope`", body = ErrorBody),
             body = ErrorBody),
     ))]
 fn remove_service() {}
+
+fn report() -> Value {
+    let outage = json!({
+        "start": "2026-10-14T03:10:00Z", "end": "2026-10-14T03:52:00Z", "seconds": 2520.0,
+        "ongoing": false,
+        "causes": [{"kind": "check", "server_id": ex::SERVER, "server_name": "mail-1",
+                    "check": "service_postfix", "instance": "", "via": null}]
+    });
+    let numbers = json!({
+        "availability": 99.9059, "counted_seconds": 2_678_400.0, "down_seconds": 2520.0,
+        "maintenance_seconds": 7200.0, "outages": 1, "longest_seconds": 2520.0
+    });
+    json!({
+        "customer_id": null, "customer_name": null,
+        "from": "2026-10-01T00:00:00Z", "to": "2026-11-01T00:00:00Z",
+        "generated_at": "2026-11-01T06:00:00Z",
+        "summary": {"services": 1, "services_met": 1, "services_missed": 0, "machines": 1,
+                    "outages": 1, "down_seconds": 2520.0, "maintenance_seconds": 7200.0},
+        "services": [{
+            "id": SERVICE, "name": "Email", "customer_id": ex::CUSTOMER, "rule": "all",
+            "at_least": null, "target": 99.9, "met": true, "budget_seconds": 158.4,
+            "members": [{"server_id": ex::SERVER, "server_name": "mail-1", "check": null}],
+            "numbers": numbers, "outage_list": [outage]
+        }],
+        "machines": [{
+            "id": ex::SERVER, "name": "mail-1", "device": false, "site_id": ex::SITE,
+            "site_name": "paris", "customer_id": ex::CUSTOMER, "numbers": numbers,
+            "outage_list": [outage]
+        }],
+        "checks": [{
+            "server_id": ex::SERVER, "server_name": "mail-1", "name": "service_postfix",
+            "instance": "", "numbers": numbers, "outage_list": [outage]
+        }],
+        "maintenance": [{
+            "start": "2026-10-05T01:00:00Z", "end": "2026-10-05T03:00:00Z",
+            "reason": "Patches", "servers": ["mail-1"], "checks": [], "window": true
+        }]
+    })
+}
+
+#[utoipa::path(get, path = "/api/v1/availability", tag = "alerts",
+    summary = "Availability over a period",
+    description = "How available the business services, servers, devices and checks the key reads were \
+over a period, from one hour to 13 months: this month so far when `from` and `to` are absent.\n\n\
+**What counts as down**: any time a critical incident was open: a check failing at its critical \
+threshold, a server offline, or a server unreachable because what it is reached through was down (an \
+offline relay). Warnings never count. **Planned maintenance**, time under a silence or a maintenance \
+window, is given apart (`maintenance_seconds`) and left out of `counted_seconds`; a silence counts from \
+when it started or was made, whichever is later. `availability` is the share of `counted_seconds` that \
+was up, in percent, or `null` when nothing was counted. An outage is one unbroken stretch of down time, \
+with its causes.\n\n\
+Services give their SLA `target`, whether it was `met`, and `budget_seconds`: the down time the target \
+allowed minus the down time there was, negative once exceeded. `checks` lists only checks that had \
+outages. Computed from the incident history on each request, so a past period gives the same numbers \
+later, unless something was removed since.\n\n\
+**Who**: any role. With `customer_id`, only that customer's sites the key reads; business services only \
+of customers the key is granted as a whole. **Area**: `alerts`.",
+    params(availability::Params),
+    responses(
+        (status = 200, description = "The report", body = crate::availability::report::Report,
+            example = json!(report())),
+        (status = 400, description = "A period shorter than an hour, longer than 13 months or starting \
+in the future, or an unknown parameter: `invalid`", body = ErrorBody),
+        (status = 404, description = "The customer does not exist or is outside the key's reach: \
+`not_found`", body = ErrorBody),
+    ))]
+fn availability_report() {}
+
+#[utoipa::path(get, path = "/api/v1/availability/report", tag = "alerts",
+    summary = "Download an availability report",
+    description = "The same report as a file to keep or send: `pdf`, a document to send to a customer \
+as it is (a summary in plain words, then the details), or `csv`, one row per service, server, device \
+and check with its numbers, then one row per outage and per planned maintenance, with a `kind` column. \
+CSV numbers are plain (seconds, dot decimals); words are in `language`; times are in `time_zone`.\n\n\
+**Who**: any role, as above. **Area**: `alerts`.",
+    params(availability::FileParams),
+    responses(
+        (status = 200, description = "The file, as an attachment", content_type = "text/csv",
+            body = String),
+        (status = 400, description = "An unknown format, language or time zone, or a period as above: \
+`invalid`", body = ErrorBody),
+        (status = 404, description = "The customer does not exist or is outside the key's reach: \
+`not_found`", body = ErrorBody),
+    ))]
+fn availability_file() {}

@@ -166,6 +166,9 @@ pub struct Summary {
 #[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
 #[schema(as = AvailabilityReport)]
 pub struct Report {
+    /// The customer it is for; `null` for everything the reader sees.
+    pub customer_id: Option<Uuid>,
+    pub customer_name: Option<String>,
     pub from: DateTime<Utc>,
     pub to: DateTime<Utc>,
     pub generated_at: DateTime<Utc>,
@@ -417,6 +420,8 @@ pub fn build(data: &Data, period: Span, now: DateTime<Utc>) -> Report {
     let maintenance_seconds =
         Spans::from_spans(maintenance.iter().map(|m| (m.start, m.end))).seconds();
     Report {
+        customer_id: None,
+        customer_name: None,
         from: period.0,
         to: period.1,
         generated_at: now,

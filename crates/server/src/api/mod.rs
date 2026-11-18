@@ -97,6 +97,8 @@
 //! | POST | `/api/business-services` | modify the whole customer | body [`business_services::ServiceRequest`]; 201 [`business_services::ServiceView`]; 409 for a name in use; audited |
 //! | PUT | `/api/business-services/{id}` | modify the whole customer | the same body; [`business_services::ServiceView`]; audited |
 //! | DELETE | `/api/business-services/{id}` | modify the whole customer | 204; audited |
+//! | GET | `/api/availability` | any role | `from`, `to`, `customer_id`; [`crate::availability::report::Report`] of what the user reads (ADR-0155) |
+//! | GET | `/api/availability/report` | any role | the same and `format` (`csv` or `pdf`), `language`, `time_zone`; the report as a file |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
@@ -686,6 +688,7 @@ pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
 pub mod auto_update;
+pub mod availability;
 pub mod backups;
 pub mod business_services;
 pub mod campaigns;
@@ -1113,6 +1116,8 @@ pub fn router(state: ApiState) -> Router {
             "/api/maintenance-windows/{id}",
             put(maintenance_windows::update).delete(maintenance_windows::remove),
         )
+        .route("/api/availability", get(availability::get))
+        .route("/api/availability/report", get(availability::file))
         .route(
             "/api/business-services",
             get(business_services::list).post(business_services::create),

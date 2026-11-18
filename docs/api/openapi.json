@@ -890,6 +890,417 @@
         }
       }
     },
+    "/api/v1/availability": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Availability over a period",
+        "description": "How available the business services, servers, devices and checks the key reads were over a period, from one hour to 13 months: this month so far when `from` and `to` are absent.\n\n**What counts as down**: any time a critical incident was open: a check failing at its critical threshold, a server offline, or a server unreachable because what it is reached through was down (an offline relay). Warnings never count. **Planned maintenance**, time under a silence or a maintenance window, is given apart (`maintenance_seconds`) and left out of `counted_seconds`; a silence counts from when it started or was made, whichever is later. `availability` is the share of `counted_seconds` that was up, in percent, or `null` when nothing was counted. An outage is one unbroken stretch of down time, with its causes.\n\nServices give their SLA `target`, whether it was `met`, and `budget_seconds`: the down time the target allowed minus the down time there was, negative once exceeded. `checks` lists only checks that had outages. Computed from the incident history on each request, so a past period gives the same numbers later, unless something was removed since.\n\n**Who**: any role. With `customer_id`, only that customer's sites the key reads; business services only of customers the key is granted as a whole. **Area**: `alerts`.",
+        "operationId": "availability_report",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Start of the period, RFC 3339; the start of this month (UTC) when\nabsent.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "End of the period, excluded; now when absent. A period still going\non counts until now.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only this customer's sites and services.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailabilityReport"
+                },
+                "example": {
+                  "checks": [
+                    {
+                      "instance": "",
+                      "name": "service_postfix",
+                      "numbers": {
+                        "availability": 99.9059,
+                        "counted_seconds": 2678400.0,
+                        "down_seconds": 2520.0,
+                        "longest_seconds": 2520.0,
+                        "maintenance_seconds": 7200.0,
+                        "outages": 1
+                      },
+                      "outage_list": [
+                        {
+                          "causes": [
+                            {
+                              "check": "service_postfix",
+                              "instance": "",
+                              "kind": "check",
+                              "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                              "server_name": "mail-1",
+                              "via": null
+                            }
+                          ],
+                          "end": "2026-10-14T03:52:00Z",
+                          "ongoing": false,
+                          "seconds": 2520.0,
+                          "start": "2026-10-14T03:10:00Z"
+                        }
+                      ],
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    }
+                  ],
+                  "customer_id": null,
+                  "customer_name": null,
+                  "from": "2026-10-01T00:00:00Z",
+                  "generated_at": "2026-11-01T06:00:00Z",
+                  "machines": [
+                    {
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "device": false,
+                      "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "name": "mail-1",
+                      "numbers": {
+                        "availability": 99.9059,
+                        "counted_seconds": 2678400.0,
+                        "down_seconds": 2520.0,
+                        "longest_seconds": 2520.0,
+                        "maintenance_seconds": 7200.0,
+                        "outages": 1
+                      },
+                      "outage_list": [
+                        {
+                          "causes": [
+                            {
+                              "check": "service_postfix",
+                              "instance": "",
+                              "kind": "check",
+                              "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                              "server_name": "mail-1",
+                              "via": null
+                            }
+                          ],
+                          "end": "2026-10-14T03:52:00Z",
+                          "ongoing": false,
+                          "seconds": 2520.0,
+                          "start": "2026-10-14T03:10:00Z"
+                        }
+                      ],
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "site_name": "paris"
+                    }
+                  ],
+                  "maintenance": [
+                    {
+                      "checks": [],
+                      "end": "2026-10-05T03:00:00Z",
+                      "reason": "Patches",
+                      "servers": [
+                        "mail-1"
+                      ],
+                      "start": "2026-10-05T01:00:00Z",
+                      "window": true
+                    }
+                  ],
+                  "services": [
+                    {
+                      "at_least": null,
+                      "budget_seconds": 158.4,
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                      "members": [
+                        {
+                          "check": null,
+                          "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                          "server_name": "mail-1"
+                        }
+                      ],
+                      "met": true,
+                      "name": "Email",
+                      "numbers": {
+                        "availability": 99.9059,
+                        "counted_seconds": 2678400.0,
+                        "down_seconds": 2520.0,
+                        "longest_seconds": 2520.0,
+                        "maintenance_seconds": 7200.0,
+                        "outages": 1
+                      },
+                      "outage_list": [
+                        {
+                          "causes": [
+                            {
+                              "check": "service_postfix",
+                              "instance": "",
+                              "kind": "check",
+                              "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                              "server_name": "mail-1",
+                              "via": null
+                            }
+                          ],
+                          "end": "2026-10-14T03:52:00Z",
+                          "ongoing": false,
+                          "seconds": 2520.0,
+                          "start": "2026-10-14T03:10:00Z"
+                        }
+                      ],
+                      "rule": "all",
+                      "target": 99.9
+                    }
+                  ],
+                  "summary": {
+                    "down_seconds": 2520.0,
+                    "machines": 1,
+                    "maintenance_seconds": 7200.0,
+                    "outages": 1,
+                    "services": 1,
+                    "services_met": 1,
+                    "services_missed": 0
+                  },
+                  "to": "2026-11-01T00:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A period shorter than an hour, longer than 13 months or starting in the future, or an unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/availability/report": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Download an availability report",
+        "description": "The same report as a file to keep or send: `pdf`, a document to send to a customer as it is (a summary in plain words, then the details), or `csv`, one row per service, server, device and check with its numbers, then one row per outage and per planned maintenance, with a `kind` column. CSV numbers are plain (seconds, dot decimals); words are in `language`; times are in `time_zone`.\n\n**Who**: any role, as above. **Area**: `alerts`.",
+        "operationId": "availability_file",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "`csv` or `pdf`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "`en` (the default) or `fr`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_zone",
+            "in": "query",
+            "description": "IANA time zone the times are written in, like `Europe/Paris`; UTC\nwhen absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file, as an attachment",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown format, language or time zone, or a period as above: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backups": {
       "get": {
         "tags": [
@@ -35374,6 +35785,471 @@
           "waiting_for_relay": {
             "type": "integer",
             "description": "Of `waiting`, agents whose relay runs an older version or is being\nupdated.",
+            "minimum": 0
+          }
+        }
+      },
+      "AvailabilityCause": {
+        "type": "object",
+        "description": "What made something down for a while.",
+        "required": [
+          "kind",
+          "server_id",
+          "server_name",
+          "instance"
+        ],
+        "properties": {
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The check, for `check` and for a `member` that is a check."
+          },
+          "instance": {
+            "type": "string",
+            "description": "What the check watched, like a mount point; `\"\"` when nothing."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`check`: an incident of a check; `offline`: the server stopped\nreporting; `unreachable`: what it is reached through was down\n(`via`); `member`: a member of a business service was down."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The server or device."
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "via": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What it depends on, for `unreachable`: a relay's name."
+          }
+        }
+      },
+      "AvailabilityCheck": {
+        "type": "object",
+        "description": "A check that had outages.",
+        "required": [
+          "server_id",
+          "server_name",
+          "name",
+          "instance",
+          "numbers",
+          "outage_list"
+        ],
+        "properties": {
+          "instance": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "numbers": {
+            "$ref": "#/components/schemas/AvailabilityNumbers"
+          },
+          "outage_list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityOutage"
+            }
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "server_name": {
+            "type": "string"
+          }
+        }
+      },
+      "AvailabilityMachine": {
+        "type": "object",
+        "description": "A server or device.",
+        "required": [
+          "id",
+          "name",
+          "device",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "numbers",
+          "outage_list"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "device": {
+            "type": "boolean",
+            "description": "A device, watched from a probe, rather than a server with an agent."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "numbers": {
+            "$ref": "#/components/schemas/AvailabilityNumbers"
+          },
+          "outage_list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityOutage"
+            }
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          }
+        }
+      },
+      "AvailabilityMaintenance": {
+        "type": "object",
+        "description": "Planned maintenance during the period.",
+        "required": [
+          "start",
+          "end",
+          "reason",
+          "servers",
+          "checks",
+          "window"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SilencedCheck"
+            },
+            "description": "Only these checks of them; empty for all of them."
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What it covered: servers and devices of the report, by name."
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "window": {
+            "type": "boolean",
+            "description": "An occurrence of a maintenance window."
+          }
+        }
+      },
+      "AvailabilityMember": {
+        "type": "object",
+        "description": "A member of a business service, by name.",
+        "required": [
+          "server_id",
+          "server_name"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SilencedCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "server_name": {
+            "type": "string"
+          }
+        }
+      },
+      "AvailabilityNumbers": {
+        "type": "object",
+        "description": "The numbers of one thing over the period.",
+        "required": [
+          "counted_seconds",
+          "down_seconds",
+          "maintenance_seconds",
+          "outages",
+          "longest_seconds"
+        ],
+        "properties": {
+          "availability": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Percentage of the counted time that was up, 0 to 100; `null` when\nnothing was counted (all of it planned maintenance)."
+          },
+          "counted_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "The period without planned maintenance, seconds."
+          },
+          "down_seconds": {
+            "type": "number",
+            "format": "double"
+          },
+          "longest_seconds": {
+            "type": "number",
+            "format": "double"
+          },
+          "maintenance_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Planned maintenance, left out of the count, seconds."
+          },
+          "outages": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "AvailabilityOutage": {
+        "type": "object",
+        "description": "One outage.",
+        "required": [
+          "start",
+          "end",
+          "seconds",
+          "ongoing",
+          "causes"
+        ],
+        "properties": {
+          "causes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityCause"
+            },
+            "description": "What was down, the earliest first."
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ongoing": {
+            "type": "boolean",
+            "description": "Whether it was still going on when the report was made."
+          },
+          "seconds": {
+            "type": "number",
+            "format": "double"
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AvailabilityReport": {
+        "type": "object",
+        "description": "A whole report.",
+        "required": [
+          "from",
+          "to",
+          "generated_at",
+          "summary",
+          "services",
+          "machines",
+          "checks",
+          "maintenance"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityCheck"
+            },
+            "description": "Only checks that had outages; the others were up all along."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it is for; `null` for everything the reader sees."
+          },
+          "customer_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "machines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityMachine"
+            }
+          },
+          "maintenance": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityMaintenance"
+            }
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityService"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/AvailabilitySummary"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AvailabilityService": {
+        "type": "object",
+        "description": "A business service.",
+        "required": [
+          "id",
+          "name",
+          "customer_id",
+          "rule",
+          "members",
+          "numbers",
+          "outage_list"
+        ],
+        "properties": {
+          "at_least": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "budget_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The down time the target allowed, minus the down time there was,\nseconds; negative when it was exceeded."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityMember"
+            }
+          },
+          "met": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the target was met; `null` without a target or when\nnothing was counted."
+          },
+          "name": {
+            "type": "string"
+          },
+          "numbers": {
+            "$ref": "#/components/schemas/AvailabilityNumbers"
+          },
+          "outage_list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityOutage"
+            }
+          },
+          "rule": {
+            "type": "string",
+            "description": "`all` or `at_least`."
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The SLA target, a percentage; `null` without one."
+          }
+        }
+      },
+      "AvailabilitySummary": {
+        "type": "object",
+        "description": "The overall line of a report.",
+        "required": [
+          "services",
+          "services_met",
+          "services_missed",
+          "machines",
+          "outages",
+          "down_seconds",
+          "maintenance_seconds"
+        ],
+        "properties": {
+          "down_seconds": {
+            "type": "number",
+            "format": "double"
+          },
+          "machines": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maintenance_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Planned maintenance of the period, its own time once."
+          },
+          "outages": {
+            "type": "integer",
+            "description": "Outages of servers and devices, and their down time in all.",
+            "minimum": 0
+          },
+          "services": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "services_met": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "services_missed": {
+            "type": "integer",
             "minimum": 0
           }
         }
