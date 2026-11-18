@@ -43596,6 +43596,7 @@
             "type": "object",
             "required": [
               "alerts",
+              "unreachable",
               "kind"
             ],
             "properties": {
@@ -43610,6 +43611,13 @@
                 "enum": [
                   "alerts"
                 ]
+              },
+              "unreachable": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/UnreachableServer"
+                },
+                "description": "Its servers behind a parent that is down (ADR-0152): they open\nno incident of their own meanwhile."
               }
             }
           },
@@ -48649,6 +48657,30 @@
           }
         ],
         "description": "A check of a page's server that is unreachable, while the server is not."
+      },
+      "UnreachableServer": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Unreachable"
+          },
+          {
+            "type": "object",
+            "required": [
+              "server_id",
+              "hostname"
+            ],
+            "properties": {
+              "hostname": {
+                "type": "string"
+              },
+              "server_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ],
+        "description": "A server of an alerts panel that is unreachable now."
       },
       "UpdateChannel": {
         "type": "string",

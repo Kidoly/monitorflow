@@ -402,7 +402,8 @@ export type PanelData = { id: string; servers: number; unavailable: number } & (
   | { kind: "chart"; series: ChartLine[] }
   | { kind: "figure"; value: number | null }
   | { kind: "top"; rows: TopRow[] }
-  | { kind: "alerts"; alerts: PanelAlert[] }
+  /** `unreachable`: its servers behind a parent that is down (ADR-0152); absent before it. */
+  | { kind: "alerts"; alerts: PanelAlert[]; unreachable?: (Unreachable & { server_id: string; hostname: string })[] }
   | { kind: "error"; error: string }
 );
 

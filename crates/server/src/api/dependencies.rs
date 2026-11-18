@@ -434,6 +434,28 @@ pub(super) async fn hides(
         .collect())
 }
 
+/// Why each of `servers` that is unreachable now is, for dashboards.
+pub(super) async fn unreachable_notes(
+    state: &ApiState,
+    servers: &[Uuid],
+) -> Result<HashMap<Uuid, UnreachableNote>, sqlx::Error> {
+    let mut found = HashMap::new();
+    if servers.is_empty() {
+        return Ok(found);
+    }
+    let mut conn = state.pool.acquire().await?;
+    let holds = holds(state, &mut conn).await?;
+    let mut places = HashMap::new();
+    for id in servers {
+        if let Some(note) =
+            note(&mut conn, &holds, holds.of(&Node::Server(*id)), &mut places).await?
+        {
+            found.insert(*id, note);
+        }
+    }
+    Ok(found)
+}
+
 /// Whether `server` is unreachable in `holds`, for the summary.
 pub(super) fn unreachable(holds: &Holds, server: Uuid) -> bool {
     holds

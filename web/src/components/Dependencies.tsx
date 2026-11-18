@@ -30,11 +30,16 @@ import { Label } from "@/components/ui/StatusLabel";
 import { formatDay } from "@/components/ui/time";
 
 import admin from "./AdminPages.module.css";
+import detail from "./DetailPages.module.css";
 import styles from "./Silences.module.css";
 
 /** A link to an end: "ping on sw-core", "relay gw-1". */
 function EndLink({ end }: { end: DependencyEnd }) {
-  return <Link href={endHref(end)}>{endWords(end)}</Link>;
+  return (
+    <Link href={endHref(end)} className={detail.underline}>
+      {endWords(end)}
+    </Link>
+  );
 }
 
 /**
@@ -568,7 +573,7 @@ export function IncidentDependencies({ incident }: { incident: IncidentDetail })
         <section aria-label={t("dependencies.incident.hides", { count: hides.length })} className={styles.section}>
           <h2 className={styles.sectionTitle}>{t("dependencies.incident.hides", { count: hides.length })}</h2>
           <p className={admin.fieldNote}>{t("dependencies.incident.hidesNote")}</p>
-          <ul className={admin.linkList}>
+          <ul className={admin.linkList} aria-label={t("dependencies.incident.hides", { count: hides.length })}>
             {hides.map((end) => (
               <li key={`${end.server_id ?? end.relay_id}\t${end.check?.name ?? ""}\t${end.check?.instance ?? ""}`}>
                 <EndLink end={end} />

@@ -326,7 +326,7 @@ function ServerHeader({
       <PageHeader
         detail
         title={server.hostname}
-        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.awaiting_agent ? "waiting" : server.status} />}
+        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.awaiting_agent ? "waiting" : server.unreachable ? "unreachable" : server.status} />}
         meta={<RefreshLine updatedAt={now} stale={stale} />}
         actions={
           <>
