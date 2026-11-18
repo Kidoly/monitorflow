@@ -4,6 +4,7 @@
 //! of servers and relays come from [`offline`] (ADR-0072).
 
 pub mod engine;
+pub mod history;
 pub mod offline;
 pub mod reason;
 pub mod rules;

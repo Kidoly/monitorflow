@@ -482,9 +482,15 @@ async fn main() -> anyhow::Result<()> {
     );
     // Threshold engine (ADR-0017): open incidents and pending timers are
     // reloaded before any stream can deliver samples.
+    // Richer rules read their history from VictoriaMetrics (ADR-0153).
+    let history = VmQuery::with_auth(&config.victoriametrics_url, QUERY_TIMEOUT, storage.as_ref())
+        .context("VictoriaMetrics query client")?;
     let alerts = Alerts::start(
         AlertStore::new(pool.clone()),
-        EngineSettings::default(),
+        EngineSettings {
+            history: Some(Arc::new(history)),
+            ..EngineSettings::default()
+        },
         Arc::new(LogNotifier),
     )
     .await
