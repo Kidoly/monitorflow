@@ -215,7 +215,7 @@ impl Dispatcher {
                 targets.people.insert(id, user);
             }
         }
-        let silences = silence::load(&mut *tx, now, oldest).await?;
+        let silences = silence::load(&mut tx, now, oldest).await?;
         let held = silence::held_incidents(&mut *tx).await?;
         let mut events = Vec::with_capacity(pending.len());
         for event in pending {

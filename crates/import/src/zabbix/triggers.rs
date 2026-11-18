@@ -53,6 +53,16 @@ pub trait Host {
     fn macros(&self) -> &Macros;
     /// The item of `key` on the host, if it has one.
     fn item(&self, key: &str) -> Option<&Item>;
+    /// The name of the first step of the web scenario `name`, and the URL
+    /// its website check requests, if the host has that scenario.
+    fn scenario(&self, _name: &str) -> Option<(String, String)> {
+        None
+    }
+    /// The URL of the host's certificate check (`web.certificate.get`),
+    /// if it has one.
+    fn certificate_url(&self) -> Option<String> {
+        None
+    }
 }
 
 /// What `trigger` becomes on `host`.
@@ -320,6 +330,9 @@ fn period(call: &Call, macros: &Macros) -> Result<Period, Note> {
 }
 
 fn part(expr: &Expr, host: &impl Host) -> Part {
+    if let Some(part) = certificate(expr, host) {
+        return part;
+    }
     let macros = host.macros();
     let comparison = match comparison(expr, macros) {
         Ok(c) => c,
@@ -329,11 +342,8 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
     let key = item_ref.key.as_str();
     let (name, _) = split_key(key);
     // Web scenarios' own items.
-    if let Some(scenario) = web_scenario(&name, key) {
-        return Part::Alert {
-            key: format!("web:{scenario}"),
-            for_s: 0,
-        };
+    if let Some(part) = web_test(&comparison, &name, key, host) {
+        return part;
     }
     let mapped = match host.item(key) {
         Some(item) => items::map(item, macros),
@@ -345,7 +355,8 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
                 delay: None,
                 enabled: true,
                 prototype: false,
-                url: None,
+                http: None,
+                snmp_oid: None,
                 template: None,
             },
             macros,
@@ -364,9 +375,20 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
         Period::Values(n) => interval.map_or(0, |i| i.saturating_mul(*n)),
     };
     match mapped {
-        // A port or a service doing more than a value is no failure: a
-        // response time too long, too many processes.
-        Mapped::Check(Watch::Port { .. } | Watch::Service { .. }, _)
+        // The response time of a page.
+        Mapped::Check(Watch::Web(site), _)
+            if name == "web.page.perf" && matches!(comparison.op, Op::Gt | Op::Ge) =>
+        {
+            response_level(
+                &comparison,
+                Measure::WebResponseTime { url: site.url },
+                &period,
+                seconds(&period),
+            )
+        }
+        // A port, a service or a page doing more than a value is no
+        // failure: a response time too long, too many processes.
+        Mapped::Check(Watch::Port { .. } | Watch::Service { .. } | Watch::Web(_), _)
             if matches!(comparison.op, Op::Gt | Op::Ge)
                 && matches!(comparison.constant, Constant::Number { value, .. } if value > 0.0) =>
         {
@@ -396,17 +418,160 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
     }
 }
 
-/// The scenario a web scenario item belongs to, for the items whose
-/// failure is the scenario failing.
-fn web_scenario(name: &str, key: &str) -> Option<String> {
-    if !matches!(
-        name,
-        "web.test.fail" | "web.test.rspcode" | "web.test.error"
-    ) {
+/// What a trigger on a web scenario's own item becomes: the scenario
+/// failing is its check's alert, a step's response time a threshold on
+/// it. Only the first step has a check.
+fn web_test(comparison: &Comparison<'_>, name: &str, key: &str, host: &impl Host) -> Option<Part> {
+    if !name.starts_with("web.test.") {
         return None;
     }
-    let (_, params) = split_key(key);
-    Some(param(&params, 0).to_owned()).filter(|s| !s.is_empty())
+    let expanded = host.macros().expand(key).unwrap_or_else(|_| key.to_owned());
+    let (_, params) = split_key(&expanded);
+    let scenario = param(&params, 0);
+    if scenario.is_empty() {
+        return Some(Part::Fails(Note::plain("expression")));
+    }
+    let alert = Part::Alert {
+        key: format!("web:{scenario}"),
+        for_s: 0,
+    };
+    match name {
+        "web.test.fail" | "web.test.error" => Some(alert),
+        "web.test.rspcode" | "web.test.time" => {
+            let step = param(&params, 1);
+            let first = host.scenario(scenario);
+            if let Some((first_step, _)) = &first {
+                if !step.is_empty() && step != first_step {
+                    return Some(Part::Fails(Note::new(
+                        "zabbix_web_step",
+                        args! {"step" => step},
+                    )));
+                }
+            }
+            if name == "web.test.rspcode" {
+                return Some(alert);
+            }
+            let Some((_, url)) = first else {
+                return Some(Part::Fails(Note::plain("web_no_check")));
+            };
+            let period = match period(comparison.call, host.macros()) {
+                Ok(p) => p,
+                Err(note) => return Some(Part::Fails(note)),
+            };
+            let seconds = match period {
+                Period::Seconds(s) => s,
+                Period::Latest | Period::Values(_) => 0,
+            };
+            Some(response_level(
+                comparison,
+                Measure::WebResponseTime { url },
+                &period,
+                seconds,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// A response time above a value, in seconds as Zabbix measures it.
+fn response_level(
+    comparison: &Comparison<'_>,
+    measure: Measure,
+    period: &Period,
+    period_s: u32,
+) -> Part {
+    let Constant::Number { value, .. } = &comparison.constant else {
+        return Part::Fails(Note::plain("expression"));
+    };
+    let function = comparison.call.name.as_str();
+    let latest = matches!(period, Period::Latest);
+    if !matches!(comparison.op, Op::Gt | Op::Ge)
+        || !matches!(function, "last" | "min" | "max" | "avg")
+        || (function == "last" && !latest)
+    {
+        return Part::Fails(Note::plain("expression"));
+    }
+    let sustained = matches!(function, "min" | "avg");
+    Part::Levels(vec![Level {
+        measure,
+        direction: Direction::Above,
+        value: round(*value),
+        for_s: if sustained { period_s } else { 0 },
+        recovery: None,
+        note: None,
+    }])
+}
+
+/// `last(cert.not_after) - now()`, the seconds a certificate has left as
+/// Zabbix's certificate template computes them, times the factor it is
+/// divided or multiplied by.
+fn seconds_left(expr: &Expr) -> Option<f64> {
+    match expr {
+        Expr::Binary(Op::Sub, a, b) => {
+            let after = matches!(&**a, Expr::Call(c) if c.name == "last"
+                && c.item.as_ref().is_some_and(|i| split_key(&i.key).0 == "cert.not_after"));
+            let now = matches!(&**b, Expr::Call(c) if c.name == "now" && c.item.is_none());
+            (after && now).then_some(1.0)
+        }
+        Expr::Binary(Op::Div, a, b) => {
+            let factor = seconds_left(a)?;
+            let Expr::Number(n) = &**b else { return None };
+            let n = text::number(n).filter(|n| *n != 0.0)?;
+            Some(factor / n)
+        }
+        _ => None,
+    }
+}
+
+/// The value of a constant expression: numbers and macros with `*` and
+/// `/`, such as `{$CERT.EXPIRY.WARN} * 86400`.
+fn value(expr: &Expr, macros: &Macros) -> Option<f64> {
+    match expr {
+        Expr::Binary(op @ (Op::Mul | Op::Div), a, b) => {
+            let (a, b) = (value(a, macros)?, value(b, macros)?);
+            match op {
+                Op::Mul => Some(a * b),
+                _ => (b != 0.0).then(|| a / b),
+            }
+        }
+        other => match constant(other, macros).ok()?.0 {
+            Constant::Number { value, .. } => Some(value),
+            Constant::Text(_) => None,
+        },
+    }
+}
+
+/// A certificate expiring in fewer days than a value: a threshold on the
+/// days left of the host's certificate check.
+fn certificate(expr: &Expr, host: &impl Host) -> Option<Part> {
+    let Expr::Binary(op, a, b) = expr else {
+        return None;
+    };
+    if !op.is_comparison() {
+        return None;
+    }
+    let (factor, other, op) = match (seconds_left(a), seconds_left(b)) {
+        (Some(factor), _) => (factor, &**b, *op),
+        (None, Some(factor)) => (factor, &**a, op.flipped()),
+        (None, None) => return None,
+    };
+    if !matches!(op, Op::Lt | Op::Le) {
+        return Some(Part::Fails(Note::plain("expression")));
+    }
+    let Some(limit) = value(other, host.macros()) else {
+        return Some(Part::Fails(Note::plain("expression")));
+    };
+    let Some(url) = host.certificate_url() else {
+        return Some(Part::Fails(Note::plain("web_no_check")));
+    };
+    Some(Part::Levels(vec![Level {
+        measure: Measure::CertificateDays { url },
+        direction: Direction::Below,
+        value: round(limit / factor / 86_400.0),
+        for_s: 0,
+        recovery: None,
+        note: None,
+    }]))
 }
 
 /// A threshold from a comparison on a measure every server has.
@@ -629,7 +794,8 @@ mod tests {
                     delay: Some("30s".into()),
                     enabled: true,
                     prototype: false,
-                    url: None,
+                    http: None,
+                    snmp_oid: None,
                     template: None,
                 },
                 Item {
@@ -639,7 +805,8 @@ mod tests {
                     delay: None,
                     enabled: true,
                     prototype: false,
-                    url: None,
+                    http: None,
+                    snmp_oid: None,
                     template: None,
                 },
             ],
@@ -655,6 +822,7 @@ mod tests {
             enabled: true,
             prototype: false,
             template: None,
+            tags: vec![],
         }
     }
 

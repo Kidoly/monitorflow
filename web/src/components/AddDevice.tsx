@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { t } from "@/i18n";
-import { type Probe, type Site, api, describeError } from "@/lib/api";
+import { type Detected, type Probe, type Site, type SnmpCredentialsRequest, type SnmpTemplate, api, describeError } from "@/lib/api";
 import { placeLabel } from "@/lib/customers";
 import { modifiesSite, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { serverHref } from "@/lib/routes";
@@ -15,6 +15,7 @@ import { Page } from "@/components/ui/Page";
 import { PageHeader } from "@/components/ui/PageState";
 
 import styles from "./AdminPages.module.css";
+import { NEW_CREDENTIALS, SnmpFields, snmpProblem, snmpRequest } from "./SnmpCredentials";
 
 /** An IP address (v4, or v6 with or without brackets) or a DNS name, as the server checks it. */
 export function validAddress(value: string): boolean {
@@ -109,6 +110,13 @@ export function AddDevice() {
   const [address, setAddress] = useState("");
   const [probe, setProbe] = useState("");
   const [ping, setPing] = useState(true);
+  const [snmp, setSnmp] = useState(false);
+  const [credentials, setCredentials] = useState<SnmpCredentialsRequest>(NEW_CREDENTIALS);
+  const [templates, setTemplates] = useState<SnmpTemplate[]>([]);
+  const [template, setTemplate] = useState("");
+  const [detected, setDetected] = useState<Detected | null>(null);
+  const [detecting, setDetecting] = useState(false);
+  const [snmpError, setSnmpError] = useState<string | null>(null);
   const [errors, setErrors] = useState<{ name?: string; address?: string }>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +136,39 @@ export function AddDevice() {
     return () => controller.abort();
   }, [me]);
 
+  useEffect(() => {
+    if (!snmp || templates.length > 0) return;
+    const controller = new AbortController();
+    api
+      .deviceTemplates(controller.signal)
+      .then((list) => setTemplates(list.templates))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [snmp, templates.length]);
+
+  async function detect() {
+    const problem = (!validAddress(address) && t("devices.error.address")) || snmpProblem(credentials, false);
+    setSnmpError(problem || null);
+    if (problem) return;
+    setDetecting(true);
+    setDetected(null);
+    try {
+      const result = await api.detectDevice({
+        site_id: siteId,
+        address: address.trim(),
+        snmp: snmpRequest(credentials),
+        ...(probe && { probe }),
+      });
+      setDetected(result);
+      if (result.template) setTemplate(result.template);
+      if (result.name && !name.trim()) setName(result.name);
+    } catch (e) {
+      setSnmpError(t("devices.snmp.detectFailed", { error: describeError(e) }));
+    } finally {
+      setDetecting(false);
+    }
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     const found = {
@@ -136,6 +177,11 @@ export function AddDevice() {
     };
     setErrors(found);
     if (Object.keys(found).length > 0) return;
+    if (snmp) {
+      const problem = snmpProblem(credentials, false) ?? (template ? null : t("devices.snmp.needTemplate"));
+      setSnmpError(problem);
+      if (problem) return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -144,7 +190,8 @@ export function AddDevice() {
         name: name.trim(),
         address: address.trim(),
         ping,
-        ...(ping && probe && { probe }),
+        ...((ping || snmp) && probe && { probe }),
+        ...(snmp && { snmp: snmpRequest(credentials), template }),
       });
       router.push(scopedHref(serverHref(device.id), scope));
     } catch (e) {
@@ -207,7 +254,40 @@ export function AddDevice() {
       <label className={styles.check}>
         <input type="checkbox" checked={ping} onChange={(e) => setPing(e.target.checked)} /> {t("devices.add.ping")}
       </label>
-      {ping && siteId && <ProbeSelect key={siteId} siteId={siteId} value={probe} onChange={setProbe} label={t("devices.add.from")} />}
+      <label className={styles.check}>
+        <input type="checkbox" checked={snmp} onChange={(e) => setSnmp(e.target.checked)} /> {t("devices.snmp.watch")}
+      </label>
+      {(ping || snmp) && siteId && (
+        <ProbeSelect key={siteId} siteId={siteId} value={probe} onChange={setProbe} label={t("devices.add.from")} />
+      )}
+      {snmp && (
+        <fieldset className={styles.panel} aria-label={t("devices.snmp.title")}>
+          <SnmpFields value={credentials} onChange={setCredentials} />
+          <div className={styles.formFoot}>
+            <Button onClick={() => void detect()} disabled={detecting || !siteId}>
+              {detecting ? t("devices.snmp.detecting") : t("devices.snmp.detect")}
+            </Button>
+          </div>
+          {detected && <DetectedLine detected={detected} />}
+          <label className={styles.field}>
+            {t("devices.snmp.template")}
+            <select className={fieldClass} value={template} onChange={(e) => setTemplate(e.target.value)}>
+              <option value="">{"–"}</option>
+              {templates.map((tpl) => (
+                <option key={tpl.key} value={tpl.key}>
+                  {t(`devices.template.${tpl.key as "switch"}`)}
+                </option>
+              ))}
+            </select>
+            <span className={styles.sectionNote}>{t("devices.snmp.templateHint")}</span>
+          </label>
+          {snmpError && (
+            <p className={styles.formError} role="alert">
+              {snmpError}
+            </p>
+          )}
+        </fieldset>
+      )}
       <div className={styles.formFoot}>
         <Button variant="k" type="submit" disabled={busy || !siteId}>
           {busy ? t("devices.add.adding") : t("devices.add.button")}
@@ -222,5 +302,32 @@ export function AddDevice() {
         </p>
       )}
     </form>
+  );
+}
+
+/** What a detection found, in words. */
+function DetectedLine({ detected }: { detected: Detected }) {
+  if (!detected.answers) {
+    return (
+      <p className={styles.formError} role="status">
+        {t("devices.snmp.noAnswer", {
+          probe: detected.probe === "central" ? t("devices.from.short.central") : detected.probe,
+          error: detected.error ?? "",
+        })}
+      </p>
+    );
+  }
+  const description = detected.description ?? "";
+  const groups = detected.groups.map((g) => t(`devices.snmp.group.${g as "interfaces"}`)).join(", ");
+  return (
+    <p className={styles.sectionNote} role="status">
+      {detected.name ? t("devices.snmp.answersNamed", { name: detected.name, description }) : t("devices.snmp.answers", { description })}
+      {groups && (
+        <>
+          <br />
+          {t("devices.snmp.groups", { groups })}
+        </>
+      )}
+    </p>
   );
 }

@@ -42,8 +42,11 @@ step() { echo; echo "== $*"; }
 # Builds the server and agent of this checkout.
 step "build"
 (cd "$REPO" && cargo build -q -p monitorflow-server -p monitorflow-agent)
-SERVER_BIN=$REPO/${CARGO_TARGET_DIR:-target}/debug/monitorflow-server
-AGENT_BIN=$REPO/${CARGO_TARGET_DIR:-target}/debug/monitorflow-agent
+# CARGO_TARGET_DIR may be absolute, or relative to the checkout.
+TARGET=${CARGO_TARGET_DIR:-target}
+[[ $TARGET == /* ]] || TARGET=$REPO/$TARGET
+SERVER_BIN=$TARGET/debug/monitorflow-server
+AGENT_BIN=$TARGET/debug/monitorflow-agent
 
 # The Docker bridge's gateway: what containers reach the host at.
 BRIDGE=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
@@ -166,10 +169,25 @@ if [[ $WHICH == all || $WHICH == zabbix ]]; then
     import_and_check zabbix-files "$(files_request zabbix "$ZBX_OUT"/*.yaml)"
     ZBX_URL=$(cat "$ZBX_OUT/url"); ZBX_TOKEN=$(cat "$ZBX_OUT/token")
     import_and_check zabbix-api "$(jq -n --arg site "$SITE" --arg u "$ZBX_URL" --arg t "$ZBX_TOKEN" \
-        '{source: "zabbix", site_id: $site, connection: {url: $u, token: $t}}')"
+        '{source: "zabbix", site_id: $site, connection: {url: $u, token: $t}, time_zone: "Europe/Paris"}')"
     check_server web-01 port_80 monitorflow_cpu_usage_ratio
+    # Web scenarios and HTTP agent items are website checks (ADR-0150).
+    check_server web-01 http_ monitorflow_http_127_0_0_1_up
     check_server db-01 service_postgresql monitorflow_port_5432_up
     get /api/silences | jq -e '.silences | length > 0' >/dev/null || fail "zabbix: no silence from the maintenances"
+    # Recurring maintenances are maintenance windows (ADR-0151), in the
+    # zone the import was given, and tags give the checks.
+    windows=$(get /api/maintenance-windows)
+    echo "$windows" >"$WORK/zabbix-windows.json"
+    jq -e '.windows[] | select(.reason == "Weekly patching" and .repeat == "weekly" and .weekdays == ["sunday"]
+        and .start_time == "02:00" and .time_zone == "Europe/Paris")' <<<"$windows" >/dev/null \
+        || fail "zabbix: no weekly window for Weekly patching"
+    [[ $(jq '[.windows[] | select(.reason == "Database work" and .month_week == 2 and .months == [1, 7]
+        and (.checks | map(.name) | index("port_5432")))] | length' <<<"$windows") == 2 ]] \
+        || fail "zabbix: Database work is not the second Tuesday and Friday of port_5432"
+    jq -e '.windows[] | select(.reason == "Nightly backups" and .repeat == "daily" and .start_time == "01:00")' <<<"$windows" >/dev/null \
+        || fail "zabbix: no daily window for Nightly backups"
+    ok "zabbix: recurring maintenances are maintenance windows"
     get /api/notifications/channels | jq -e '[.channels[] | select(.kind == "email" or .kind == "webhook")] | length > 0' >/dev/null \
         || fail "zabbix: no channel"
     ok "zabbix: silences and channels"
@@ -183,6 +201,17 @@ if [[ $WHICH == all || $WHICH == prometheus ]]; then
     import_and_check prometheus-api "$(jq -n --arg site "$SITE" '{source: "prometheus", site_id: $site,
         connection: {url: "http://127.0.0.1:19090", alertmanager_url: "http://127.0.0.1:19093"}}')"
     check_server web-01 "" monitorflow_cpu_usage_ratio
+    # The blackbox http probe is a website check now (ADR-0150).
+    found=""
+    for id in $(get "/api/servers?limit=500" | jq -r '.servers[].id'); do
+        if get "/api/servers/$id/sensor_configs" | jq -e '.entries[] | select(.kind == "http" and .params.url == "http://shop/")' >/dev/null; then
+            found=$id; break
+        fi
+    done
+    [[ -n "$found" ]] || fail "prometheus: no website check of http://shop/"
+    get "/api/servers/$found/thresholds" | jq -e '[.entries[] | select(.metric == "monitorflow_http_shop_up" or .metric == "monitorflow_http_shop_response_seconds")] | length == 2' >/dev/null \
+        || fail "prometheus: the website check of http://shop/ lacks its alerts"
+    ok "prometheus: the blackbox http probe is a website check with its alerts"
     get /api/notifications/channels | jq -e '[.channels[] | select(.kind == "slack" or .kind == "teams" or .kind == "discord")] | length > 0' >/dev/null \
         || fail "prometheus: no chat channel"
     ok "prometheus: channels"

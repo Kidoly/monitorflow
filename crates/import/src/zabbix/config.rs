@@ -110,8 +110,11 @@ pub struct Item {
     pub enabled: bool,
     /// An item prototype of a discovery rule.
     pub prototype: bool,
-    /// The URL of an HTTP agent item.
-    pub url: Option<String>,
+    /// The request of an HTTP agent item.
+    pub http: Option<Box<HttpAgent>>,
+    /// The OID of an SNMP item, as written (`1.3.6.1.2.1.1.3.0`,
+    /// `walk[1.3.6.1.2.1.2.2.1.8]`).
+    pub snmp_oid: Option<String>,
     /// The template it comes from, when the API says.
     pub template: Option<String>,
 }
@@ -164,6 +167,52 @@ pub struct Trigger {
     pub prototype: bool,
     /// The template it comes from, when the API says.
     pub template: Option<String>,
+    /// Its tags, name and value, which maintenances may select.
+    pub tags: Vec<(String, String)>,
+}
+
+/// One HTTP request, as a web scenario's step or an HTTP agent item
+/// makes it. Values are as written, macros unexpanded.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebRequest {
+    /// The step's name; empty for an item.
+    pub name: String,
+    pub url: String,
+    /// Query fields Zabbix adds to the URL.
+    pub query: Vec<(String, String)>,
+    /// `GET`, `POST`, `PUT` or `HEAD`.
+    pub method: String,
+    /// Whether it sends a body (post fields or raw data).
+    pub body: bool,
+    /// Codes that pass, `200,301-302`; empty passes any.
+    pub status_codes: String,
+    /// A regular expression the answer must match; empty for none.
+    pub required: String,
+    pub follow_redirects: bool,
+    /// Whether only the headers are read (retrieve mode Headers).
+    pub headers_only: bool,
+    pub headers: Vec<(String, String)>,
+    /// Whether it extracts variables, which later steps use.
+    pub variables: bool,
+    /// As written: `15s`, `{$TIMEOUT}`; `None` for the default.
+    pub timeout: Option<String>,
+}
+
+/// How a request authenticates.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebAuth {
+    /// `basic`, `ntlm`, `kerberos`, `digest`; empty for none.
+    pub kind: String,
+    pub user: String,
+    /// Whether the source has a password. Its value is never kept.
+    pub password: bool,
+}
+
+/// An HTTP agent item's request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HttpAgent {
+    pub request: WebRequest,
+    pub auth: WebAuth,
 }
 
 #[derive(Debug, Clone)]
@@ -171,8 +220,13 @@ pub struct WebScenario {
     pub name: String,
     pub delay: Option<String>,
     pub enabled: bool,
-    /// URLs of its steps, in order.
-    pub urls: Vec<String>,
+    /// Its steps, in order.
+    pub steps: Vec<WebRequest>,
+    /// Headers every step sends.
+    pub headers: Vec<(String, String)>,
+    /// Whether the scenario defines variables for its steps.
+    pub variables: bool,
+    pub auth: WebAuth,
 }
 
 /// How a maintenance period repeats.
@@ -216,8 +270,35 @@ pub struct Maintenance {
     /// Names of its host groups.
     pub groups: Vec<String>,
     pub periods: Vec<Period>,
-    /// Problem tags it is limited to, as `tag=value`.
+    /// Problem tags it is limited to, as `tag=value`, for people.
     pub tags: Vec<String>,
+    /// The same, to match: name, value, and whether the value is only
+    /// contained (Zabbix's "contains") rather than equal.
+    pub tag_filters: Vec<TagFilter>,
+    /// Problems need every tag name (Zabbix's "And/Or"), not one of them.
+    pub tags_all: bool,
+    /// Zabbix keeps collecting data during it.
+    pub collect_data: bool,
+}
+
+/// One tag condition of a maintenance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagFilter {
+    pub tag: String,
+    pub value: String,
+    pub contains: bool,
+}
+
+impl TagFilter {
+    /// Whether a problem tag passes it.
+    pub fn matches(&self, tag: &str, value: &str) -> bool {
+        tag == self.tag
+            && if self.contains {
+                value.contains(&self.value)
+            } else {
+                value == self.value
+            }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

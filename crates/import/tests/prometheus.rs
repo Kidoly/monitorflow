@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use monitorflow_import::model::{
     Alert, Check, Direction, Fidelity, Inventory, Measure, Os, Severity, SilenceScope, Target,
-    Threshold, Watch,
+    Threshold, Watch, WebMethod,
 };
 use monitorflow_import::prometheus::Prometheus;
 use monitorflow_import::source::{self, Connection, File, Input};
@@ -105,16 +105,45 @@ fn assert_common(inventory: &Inventory) {
     assert!(monitor.groups.contains(&"blackbox-exporter".to_owned()));
 
     // Probes of the blackbox exporter, each with BlackboxProbeFailed.
-    let web_check = check(
-        inventory,
-        "monitor-01",
-        &Watch::Web {
-            url: "http://shop/".into(),
-        },
-    );
+    let web_check = inventory
+        .checks
+        .iter()
+        .find(|c| matches!(&c.watch, Watch::Web(site) if site.url == "http://shop/"))
+        .expect("the website check of http://shop/");
+    assert_eq!(web_check.host, "monitor-01");
     assert_eq!(web_check.interval_s, Some(15));
+    // BlackboxProbeFailed and BlackboxProbeHttpFailure, both critical.
     assert_eq!(web_check.alert, critical(0));
     assert_eq!(web_check.fidelity, Fidelity::Exact);
+    let Watch::Web(site) = &web_check.watch else {
+        unreachable!()
+    };
+    assert_eq!(site.status, None, "the exporter's 2xx, the check's default");
+    assert_eq!(site.method, WebMethod::Get);
+    // BlackboxSlowProbe and BlackboxSslCertificateWillExpireSoon.
+    let url = "http://shop/".to_owned();
+    let t = threshold(inventory, "BlackboxSlowProbe");
+    assert_eq!(
+        (&t.measure, t.direction, t.warning, t.for_s, &t.fidelity),
+        (
+            &Measure::WebResponseTime { url: url.clone() },
+            Direction::Above,
+            Some(1.0),
+            60,
+            &Fidelity::Exact
+        )
+    );
+    assert_eq!(t.hosts, ["monitor-01"]);
+    let t = threshold(inventory, "BlackboxSslCertificateWillExpireSoon");
+    assert_eq!(
+        (&t.measure, t.direction, t.warning, &t.fidelity),
+        (
+            &Measure::CertificateDays { url },
+            Direction::Below,
+            Some(20.0),
+            &Fidelity::Approximated(Note::plain("extra_condition"))
+        )
+    );
     let port = check(
         inventory,
         "monitor-01",
@@ -232,7 +261,7 @@ fn assert_common(inventory: &Inventory) {
             Some(0.1)
         )
     );
-    assert_eq!(inventory.thresholds.len(), 7);
+    assert_eq!(inventory.thresholds.len(), 9);
 
     // What cannot be moved, and why.
     assert_eq!(unmovable(inventory, "HostSystemSaturated"), "per_cpu_load");
@@ -242,9 +271,6 @@ fn assert_common(inventory: &Inventory) {
         "HostUnusualNetworkThroughputIn",
         "HostOomKillDetected",
         "HostSystemdServiceCrashed",
-        "BlackboxSlowProbe",
-        "BlackboxProbeHttpFailure",
-        "BlackboxSslCertificateWillExpireSoon",
     ] {
         assert_eq!(unmovable(inventory, rule), "expression", "{rule}");
     }
@@ -257,7 +283,13 @@ fn assert_common(inventory: &Inventory) {
         expression.origin.detail.as_deref(),
         Some("increase(node_vmstat_oom_kill[1m]) > 0")
     );
-    assert_eq!(unmovable(inventory, "127.0.0.11"), "no_equivalent");
+    // Docker's resolver, a loopback address no probe reaches.
+    assert_eq!(unmovable(inventory, "127.0.0.11"), "no_address");
+    // db-01 runs a node exporter and is pinged too: a ping from a probe.
+    assert_eq!(
+        check(inventory, "db-01", &Watch::Ping { address: None }).fidelity,
+        Fidelity::Exact
+    );
     assert_eq!(unmovable(inventory, "localhost:9090"), "unknown_host");
     assert_eq!(unmovable(inventory, "route"), "routes");
     // The recording rule is skipped silently.
@@ -359,8 +391,31 @@ async fn files_of_a_real_setup() {
     };
     assert!(url.expose().contains(".logic.azure.com/workflows/"));
     assert_eq!(unmovable(&inventory, "on-call"), "no_target");
-    // No silences in files.
+    // No silences in files, but the muted time intervals of routes are
+    // maintenance windows (ADR-0151).
     assert!(inventory.silences.is_empty());
+    let backups = inventory
+        .windows
+        .iter()
+        .find(|w| w.reason == "sunday-backups")
+        .unwrap();
+    assert!(
+        matches!(&backups.scope, SilenceScope::Hosts(h) if h.iter().all(|h| h.starts_with("db-")))
+    );
+    assert_eq!(
+        (backups.rule.weekdays, backups.rule.duration_minutes),
+        (1 << 6, 240)
+    );
+    assert_eq!(backups.rule.time_zone.as_deref(), Some("UTC"));
+    let batch = inventory
+        .windows
+        .iter()
+        .find(|w| w.reason == "nightly-batch")
+        .unwrap();
+    assert_eq!(batch.scope, SilenceScope::Hosts(vec!["web-01".into()]));
+    assert_eq!(batch.checks, vec![Watch::Cpu]);
+    assert_eq!(batch.rule.time_zone.as_deref(), Some("Europe/Paris"));
+    assert_eq!(batch.fidelity, Fidelity::Exact);
 }
 
 #[tokio::test]
@@ -373,8 +428,10 @@ async fn missing_files_are_reported() {
         .read(Input::Files(only_config), &context())
         .await
         .unwrap();
-    // web-01 is a static target; db-01 came from a file not uploaded.
-    assert_eq!(names(&inventory), vec!["monitor-01", "web-01"]);
+    // web-01 is a static target; db-01's node exporter came from a file
+    // not uploaded, so the address pinged alone becomes a device.
+    assert_eq!(names(&inventory), vec!["db-01", "monitor-01", "web-01"]);
+    assert!(inventory.host("db-01").is_some_and(|h| h.agentless));
     let missing: Vec<_> = inventory
         .unmovable
         .iter()
@@ -539,13 +596,9 @@ fn assert_live(inventory: &Inventory) {
     assert!(upgrade.ends_at > upgrade.starts_at);
     let batch = silence("Nightly batch on the web server");
     assert_eq!(batch.scope, SilenceScope::Hosts(vec!["web-01".into()]));
-    assert_eq!(
-        batch.fidelity,
-        Fidelity::Approximated(Note::new(
-            "silence_whole_server",
-            args! {"matchers" => "alertname=\"HostHighCpuLoad\""}
-        ))
-    );
+    // The alert rule's check only, not the whole server (ADR-0151).
+    assert_eq!(batch.checks, vec![Watch::Cpu]);
+    assert_eq!(batch.fidelity, Fidelity::Exact);
     assert_eq!(unmovable(inventory, "Old staging machines"), "no_hosts");
 }
 

@@ -23,6 +23,7 @@ use super::sensors::{body, default_probe, parse_id, RunBy};
 use super::servers::{self, ServerView};
 use super::{ApiError, ApiState};
 use crate::enroll::{identity, install_key};
+use crate::snmp;
 
 /// Longest name of a device.
 pub const MAX_NAME: usize = 128;
@@ -51,6 +52,17 @@ pub struct DeviceRequest {
     /// above 20% packet loss for 5 minutes. `true` by default.
     #[serde(default = "yes")]
     pub ping: bool,
+    /// How to reach it over SNMP (ADR-0149); needed with `template`.
+    /// Stored sealed, never returned.
+    #[serde(default)]
+    pub snmp: Option<snmp::CredentialsRequest>,
+    /// The kind of device, whose SNMP checks and thresholds it gets, run
+    /// from the same probe as its ping: `switch`, `router`, `firewall`,
+    /// `printer`, `ups`, `nas` or `generic`. See
+    /// `GET /api/devices/templates`, and `POST /api/devices/detect` for the
+    /// one that fits.
+    #[serde(default)]
+    pub template: Option<String>,
 }
 
 fn yes() -> bool {
@@ -207,20 +219,43 @@ pub async fn create(
     let site = authorize(&user, exists, true)?;
     let name = check_name(&request.name)?;
     let address = check_address(&request.address)?;
+    let template = match request.template.as_deref() {
+        None => None,
+        Some(key) => Some(snmp::template(key).ok_or_else(|| {
+            ApiError::Invalid("`template` must be `switch`, `router`, `firewall`, `printer`, `ups`, `nas` or `generic`".into())
+        })?),
+    };
+    let credentials = match (&request.snmp, template) {
+        (Some(request), _) => Some(snmp::check(request, None).map_err(ApiError::Invalid)?),
+        (None, Some(_)) => {
+            return Err(ApiError::Invalid(
+                "a `template` needs `snmp` credentials".into(),
+            ))
+        }
+        (None, None) => None,
+    };
     let mut tx = state.pool.begin().await?;
     let (id, peer_id) = insert(&mut tx, site, &name, &address).await?;
+    let probe = super::sensors::run_by(
+        &mut tx,
+        super::sensors::Owner::Server(id),
+        request.probe.as_deref(),
+    )
+    .await?;
     let by = if request.ping {
-        let by = super::sensors::run_by(
-            &mut tx,
-            super::sensors::Owner::Server(id),
-            request.probe.as_deref(),
-        )
-        .await?;
-        add_ping(&mut tx, id, &by).await?;
-        Some(by)
+        add_ping(&mut tx, id, &probe).await?;
+        Some(&probe)
     } else {
         None
     };
+    if let Some(credentials) = &credentials {
+        snmp::save(&mut tx, id, credentials)
+            .await
+            .map_err(save_error)?;
+    }
+    if let Some(template) = template {
+        add_template(&mut tx, id, template, &probe).await?;
+    }
     record(
         &mut tx,
         &user,
@@ -228,7 +263,9 @@ pub async fn create(
         id,
         json!({
             "peer_id": peer_id, "site_id": site, "name": name, "address": address,
-            "ping": by.as_ref().map(|b| json!({"probe": b.probe, "probe_relay_id": b.relay})),
+            "ping": by.map(|b| json!({"probe": b.probe, "probe_relay_id": b.relay})),
+            "template": template.map(|t| t.key),
+            "snmp": credentials.as_ref().map(snmp::audit),
         }),
     )
     .await?;
@@ -289,6 +326,317 @@ pub async fn update(
     .await?;
     tx.commit().await?;
     Ok(Json(view(&state, id).await?))
+}
+
+fn save_error(error: snmp::SaveError) -> ApiError {
+    match error {
+        snmp::SaveError::Database(error) => ApiError::Database(error),
+        snmp::SaveError::Seal(error) => ApiError::Internal(error),
+    }
+}
+
+/// Adds the checks of `template`'s groups, run by `by` every minute, and
+/// its thresholds; what the device has already stays.
+pub async fn add_template(
+    db: &mut PgConnection,
+    device: Uuid,
+    template: &snmp::Template,
+    by: &RunBy,
+) -> Result<(), sqlx::Error> {
+    for group in template.groups {
+        sqlx::query(
+            "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, params, probe, probe_relay_id)
+             VALUES ($1, 'snmp', $2, $3, 60000, $4, $5, $6)
+             ON CONFLICT ON CONSTRAINT sensor_configs_key DO NOTHING",
+        )
+        .bind(device)
+        .bind(snmp::check_name(*group))
+        .bind(&by.key)
+        .bind(json!({ "what": group.as_str() }))
+        .bind(by.probe)
+        .bind(by.relay)
+        .execute(&mut *db)
+        .await?;
+    }
+    for t in template.thresholds {
+        sqlx::query(
+            "INSERT INTO thresholds (server_id, metric, comparison, warning, critical, duration_s)
+             SELECT $1, $2, $3, $4, $5, $6
+             WHERE NOT EXISTS (SELECT 1 FROM thresholds
+                               WHERE server_id = $1 AND metric = $2 AND instance IS NULL)",
+        )
+        .bind(device)
+        .bind(t.metric)
+        .bind(t.comparison)
+        .bind(t.warning)
+        .bind(t.critical)
+        .bind(t.duration_s)
+        .execute(&mut *db)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Body of `GET /api/devices/templates`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TemplateList {
+    pub templates: Vec<snmp::Template>,
+}
+
+/// `GET /api/devices/templates`: the kinds of SNMP devices. Any role.
+pub async fn templates(user: CurrentUser) -> Result<Json<TemplateList>, ApiError> {
+    if !user.can_read() {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(Json(TemplateList {
+        templates: snmp::TEMPLATES.to_vec(),
+    }))
+}
+
+/// Body of `POST /api/devices/detect`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DetectRequest {
+    pub site_id: Uuid,
+    /// An IP address or a DNS name.
+    pub address: String,
+    /// `central` or a relay of the site; absent: the site's default.
+    #[serde(default)]
+    pub probe: Option<String>,
+    pub snmp: snmp::CredentialsRequest,
+}
+
+/// What an address answered over SNMP.
+#[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
+pub struct Detected {
+    /// Whether it answered at all with these credentials.
+    pub answers: bool,
+    /// Why not, in words; `null` when it answered.
+    pub error: Option<String>,
+    /// sysDescr, sysName and sysObjectID.
+    pub description: Option<String>,
+    pub name: Option<String>,
+    pub object_id: Option<String>,
+    /// The groups that answer, among `interfaces`, `host`, `ups`,
+    /// `temperature`, `printer`.
+    pub groups: Vec<String>,
+    /// The template that fits it; `null` when it did not answer.
+    pub template: Option<String>,
+    /// `central` or the relay that asked.
+    pub probe: String,
+}
+
+/// What the samples of a `detect` check say.
+pub fn detected(samples: &[monitorflow_common::proto::v1::Sample], probe: &str) -> Detected {
+    let answers = samples.iter().find(|s| s.sensor.ends_with("answers"));
+    let label = |name: &str| {
+        answers
+            .and_then(|s| s.labels.get(name))
+            .filter(|v| !v.is_empty())
+            .cloned()
+    };
+    let groups: Vec<String> = samples
+        .iter()
+        .filter(|s| s.sensor.ends_with("has") && s.value == 1.0)
+        .map(|s| s.instance.clone())
+        .collect();
+    let has = |g: monitorflow_snmp::Group| groups.iter().any(|x| x == g.as_str());
+    Detected {
+        answers: answers.is_some(),
+        error: None,
+        template: answers
+            .map(|_| snmp::suggest(&label("descr").unwrap_or_default(), has).to_owned()),
+        description: label("descr"),
+        name: label("name"),
+        object_id: label("object_id"),
+        groups,
+        probe: probe.to_owned(),
+    }
+}
+
+/// `POST /api/devices/detect`: runs a detection once from the probe
+/// that would check the address, and suggests a template. Operators of
+/// the site, as it sends credentials to the probe. 200 also when nothing
+/// answered: `answers` and `error` say so.
+pub async fn detect(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    request: Result<Json<DetectRequest>, JsonRejection>,
+) -> Result<Json<Detected>, ApiError> {
+    let request = body(request)?;
+    let exists: Option<Uuid> = sqlx::query_scalar("SELECT id FROM sites WHERE id = $1")
+        .bind(request.site_id)
+        .fetch_optional(&state.pool)
+        .await?;
+    let site = authorize(&user, exists, true)?;
+    let address = check_address(&request.address)?;
+    let credentials = snmp::check(&request.snmp, None).map_err(ApiError::Invalid)?;
+    let mut conn = state.pool.acquire().await?;
+    let by = match request.probe.as_deref() {
+        None => default_probe(&mut *conn, site).await?,
+        Some(probe) if probe == monitorflow_probe::CENTRAL => RunBy {
+            probe: Some("central"),
+            key: probe.into(),
+            ..RunBy::default()
+        },
+        Some(relay) => {
+            let id: Option<Uuid> = relay.parse().ok();
+            let peer: Option<String> = sqlx::query_scalar(
+                "SELECT peer_id FROM relays WHERE id = $1 AND site_id = $2 AND revoked_at IS NULL",
+            )
+            .bind(id)
+            .bind(site)
+            .fetch_optional(&mut *conn)
+            .await?;
+            RunBy {
+                probe: Some("relay"),
+                relay: id,
+                key: peer.ok_or_else(|| {
+                    ApiError::Invalid(
+                        "`probe` must be `central` or the ID of a relay of the site".into(),
+                    )
+                })?,
+                address: None,
+            }
+        }
+    };
+    drop(conn);
+    let mut params = credentials.params();
+    params.insert("host".into(), address);
+    params.insert("what".into(), "detect".into());
+    let mut config =
+        monitorflow_sensors::SensorConfig::new("snmp", std::time::Duration::from_secs(60));
+    config.timeout = Some(std::time::Duration::from_secs(15));
+    config.params = params;
+    let check = monitorflow_probe::Check {
+        device: "detect".into(),
+        kind: monitorflow_snmp::KIND.into(),
+        config,
+    };
+    let outcome = match &state.probes {
+        Some(probes) => probes.test(&state.registry, &by.key, check).await,
+        None if by.probe == Some("central") => {
+            monitorflow_probe::test_once(&monitorflow_probe::Builtin, &check)
+                .await
+                .map(|s| {
+                    s.into_iter()
+                        .map(monitorflow_probe::sample_to_proto)
+                        .collect()
+                })
+                .map_err(crate::probes::TestError::Failed)
+        }
+        None => Err(crate::probes::TestError::NotConnected),
+    };
+    let result = match outcome {
+        Ok(samples) => detected(&samples, &by.key),
+        Err(crate::probes::TestError::NotConnected) => {
+            return Err(ApiError::Conflict(format!(
+                "the relay {} is not connected to this central server now; try again in a moment",
+                by.key
+            )))
+        }
+        Err(error) => Detected {
+            answers: false,
+            error: Some(error.to_string()),
+            description: None,
+            name: None,
+            object_id: None,
+            groups: Vec::new(),
+            template: None,
+            probe: by.key.clone(),
+        },
+    };
+    Ok(Json(result))
+}
+
+/// The device `id` locked, after checking the user's right on its site.
+async fn device_site(
+    tx: &mut PgConnection,
+    user: &CurrentUser,
+    id: Uuid,
+    modify: bool,
+) -> Result<Uuid, ApiError> {
+    let row: Option<(Uuid, String)> =
+        sqlx::query_as("SELECT site_id, kind FROM servers WHERE id = $1 AND revoked_at IS NULL")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    authorize(user, row.as_ref().map(|r| r.0), modify)?;
+    match row {
+        Some((site, kind)) if kind == "device" => Ok(site),
+        _ => Err(ApiError::NotFound),
+    }
+}
+
+/// `GET /api/devices/{id}/snmp`: its credentials without secrets; 404
+/// when it has none.
+pub async fn snmp(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<snmp::View>, ApiError> {
+    let id = parse_id(&id)?;
+    let mut conn = state.pool.acquire().await?;
+    device_site(&mut conn, &user, id, false).await?;
+    Ok(Json(
+        snmp::view(&mut conn, id).await?.ok_or(ApiError::NotFound)?,
+    ))
+}
+
+/// `PUT /api/devices/{id}/snmp`: sets its credentials; a secret left out
+/// keeps the stored one when the version stays.
+pub async fn set_snmp(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    request: Result<Json<snmp::CredentialsRequest>, JsonRejection>,
+) -> Result<Json<snmp::View>, ApiError> {
+    let id = parse_id(&id)?;
+    let request = body(request)?;
+    let mut tx = state.pool.begin().await?;
+    device_site(&mut tx, &user, id, true).await?;
+    sqlx::query("SELECT 1 FROM servers WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    let before = snmp::load(&mut tx, id).await?.and_then(Result::ok);
+    let credentials = snmp::check(&request, before.as_ref()).map_err(ApiError::Invalid)?;
+    snmp::save(&mut tx, id, &credentials)
+        .await
+        .map_err(save_error)?;
+    record(
+        &mut tx,
+        &user,
+        "device.snmp_update",
+        id,
+        snmp::audit(&credentials),
+    )
+    .await?;
+    let view = snmp::view(&mut tx, id).await?.ok_or(ApiError::NotFound)?;
+    tx.commit().await?;
+    Ok(Json(view))
+}
+
+/// `DELETE /api/devices/{id}/snmp`: 204; its SNMP checks stop.
+pub async fn delete_snmp(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let id = parse_id(&id)?;
+    let mut tx = state.pool.begin().await?;
+    device_site(&mut tx, &user, id, true).await?;
+    let deleted = sqlx::query("DELETE FROM snmp_credentials WHERE server_id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if deleted == 0 {
+        return Err(ApiError::NotFound);
+    }
+    record(&mut tx, &user, "device.snmp_delete", id, json!({})).await?;
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /api/sites/{id}/probes`: where the site's network checks can run

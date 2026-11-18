@@ -278,6 +278,7 @@ const SELECT_SERVERS: &str = concat!(
             silenced_until(s.id, NULL, s.site_id, si.customer_id) AS silenced_until,
             o.open_incidents, o.unacknowledged, o.unacknowledged_critical,
             sl.reason AS silence_reason, sl.username AS silence_by,
+            sl.window_id IS NOT NULL AS silence_window,
             ak.username AS acknowledged_by, ak.acknowledged_at, ak.note AS acknowledged_note,
             -- One probe of the partial index on active certificates.
             (SELECT max(c.not_after) FROM certificates c
@@ -291,9 +292,10 @@ const SELECT_SERVERS: &str = concat!(
     "
      -- The silence covering it that ends last, as silenced_until picks.
      LEFT JOIN LATERAL (
-         SELECT x.reason, u.username FROM silences x
+         SELECT x.reason, u.username, x.window_id FROM silences x
          LEFT JOIN users u ON u.id = x.created_by
          WHERE x.starts_at <= now() AND coalesce(x.ended_at, x.ends_at) > now()
+           AND x.checks IS NULL
            AND (num_nonnulls(x.server_id, x.relay_id, x.site_id, x.customer_id) = 0
                 OR x.server_id = s.id OR x.site_id = s.site_id
                 OR x.customer_id = si.customer_id)
@@ -313,6 +315,9 @@ pub struct SilenceNote {
     pub by: Option<String>,
     pub until: DateTime<Utc>,
     pub reason: String,
+    /// An occurrence of a maintenance window (ADR-0151): "In maintenance
+    /// until 04:00".
+    pub window: bool,
 }
 
 /// Who acknowledged a server's latest acknowledged open incident, when,
@@ -454,6 +459,7 @@ struct Row {
     unacknowledged_critical: i64,
     silence_reason: Option<String>,
     silence_by: Option<String>,
+    silence_window: bool,
     acknowledged_by: Option<String>,
     acknowledged_at: Option<DateTime<Utc>>,
     acknowledged_note: Option<String>,
@@ -669,6 +675,7 @@ impl ServerView {
                     by: row.silence_by,
                     until,
                     reason,
+                    window: row.silence_window,
                 }),
             acknowledgement: row
                 .acknowledged_by

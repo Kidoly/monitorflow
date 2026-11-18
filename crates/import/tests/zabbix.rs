@@ -13,8 +13,8 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use monitorflow_import::model::{
-    Check, Direction, Fidelity, Inventory, Measure, Os, Severity, SilenceScope, Target, Threshold,
-    Watch,
+    Alert, Check, Direction, Fidelity, Inventory, Measure, Os, Severity, SilenceScope, Target,
+    Threshold, Watch, WebMethod, Website,
 };
 use monitorflow_import::source::{check_input, Connection, File};
 use monitorflow_import::zabbix::Zabbix;
@@ -132,7 +132,17 @@ fn hosts_and_custom_items(inventory: &Inventory, live: bool) {
     assert_eq!(note(&process.fidelity), Some("process_as_service"));
     assert_eq!(process.alert.as_ref().unwrap().severity, Severity::Critical);
 
-    assert_eq!(why(inventory, "item", "NTP answers"), "udp");
+    // Checked from a probe now (ADR-0148).
+    let ntp = check(
+        inventory,
+        "db-01",
+        &Watch::UdpPort {
+            address: None,
+            port: 123,
+            query: Some("ntp".into()),
+        },
+    );
+    assert_eq!(ntp.interval_s, Some(300));
     assert_eq!(why(inventory, "item", "Backup age"), "script");
     assert_eq!(why(inventory, "trigger", "Backup is old"), "script");
 
@@ -152,12 +162,14 @@ fn hosts_and_custom_items(inventory: &Inventory, live: bool) {
         .filter(|c| matches!(c.watch, Watch::Web { .. }) && c.origin.kind == "web_scenario")
         .collect();
     assert_eq!(web_checks.len(), 1, "{web_checks:#?}");
-    assert_eq!(
-        web_checks[0].watch,
-        Watch::Web {
-            url: "http://127.0.0.1/".into()
-        }
-    );
+    // Its first step, with the codes it requires; the second is noted.
+    let Watch::Web(site) = &web_checks[0].watch else {
+        unreachable!()
+    };
+    assert_eq!(site.url, "http://127.0.0.1/");
+    assert_eq!(site.status.as_deref(), Some("200"));
+    assert!(site.follow_redirects && !site.credentials);
+    assert_eq!(note(&web_checks[0].fidelity), Some("web_steps"));
     assert_eq!(web_checks[0].origin.name, "Shop home");
     assert_eq!(web_checks[0].interval_s, Some(120));
     assert_eq!(
@@ -345,6 +357,113 @@ async fn zabbix_6_0_exports() {
     every_format("6.0", true).await;
 }
 
+/// The website check of `name`, by its origin.
+fn site<'a>(inventory: &'a Inventory, name: &str) -> (&'a Website, &'a Check) {
+    inventory
+        .checks
+        .iter()
+        .find_map(|c| match &c.watch {
+            Watch::Web(site) if c.origin.name == name => Some((&**site, c)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no website check from {name}: {:#?}", inventory.checks))
+}
+
+#[tokio::test]
+async fn web_scenarios_and_http_agent_items_are_website_checks() {
+    let inventory = read(vec![fixture("7.0", "web.yaml")]).await;
+
+    // One step: every setting maps, the password is left for later.
+    let (shop, check) = site(&inventory, "Shop");
+    let mut expected = Website::new("https://shop.example.com/");
+    expected.status = Some("200,301".into());
+    expected.contains = Some("Welcome to the shop".into());
+    expected.follow_redirects = false;
+    expected.headers = vec![("Accept-Language".into(), "en".into())];
+    expected.username = Some("monitor".into());
+    expected.credentials = true;
+    expected.timeout_s = Some(10);
+    assert_eq!(shop, &expected);
+    assert_eq!(check.fidelity, Fidelity::Exact);
+    assert_eq!(check.interval_s, Some(60));
+    assert_eq!(
+        check.alert,
+        Some(Alert {
+            severity: Severity::Critical,
+            for_s: 0
+        })
+    );
+    let slow = thresholds(&inventory, "Shop is slow");
+    assert_eq!(slow.len(), 1);
+    assert_eq!(
+        (
+            &slow[0].measure,
+            slow[0].direction,
+            slow[0].warning,
+            slow[0].for_s
+        ),
+        (
+            &Measure::WebResponseTime {
+                url: "https://shop.example.com/".into()
+            },
+            Direction::Above,
+            Some(2.0),
+            300
+        )
+    );
+
+    // Two steps: the first is the check.
+    let (checkout, check) = site(&inventory, "Checkout");
+    assert_eq!(checkout.url, "https://shop.example.com/cart");
+    assert_eq!(checkout.status.as_deref(), Some("200"));
+    assert_eq!(note(&check.fidelity), Some("web_steps"));
+    assert_eq!(check.interval_s, Some(300));
+    assert_eq!(
+        why(&inventory, "trigger", "Payment page fails"),
+        "zabbix_web_step"
+    );
+
+    // An HTTP agent item.
+    let (api, check) = site(&inventory, "API health");
+    assert_eq!(api.url, "https://api.example.com/health?full=1");
+    assert_eq!(api.method, WebMethod::Head);
+    assert_eq!(api.status.as_deref(), Some("200,204"));
+    assert!(!api.follow_redirects);
+    assert_eq!(api.headers, vec![("X-Monitor".into(), "zabbix".into())]);
+    assert_eq!(api.timeout_s, Some(5));
+    assert_eq!(check.fidelity, Fidelity::Exact);
+    assert_eq!(
+        check.alert,
+        Some(Alert {
+            severity: Severity::Critical,
+            for_s: 300
+        })
+    );
+    // A POST, with a password.
+    let (login, check) = site(&inventory, "Login API");
+    assert_eq!(login.method, WebMethod::Get);
+    assert_eq!(login.status.as_deref(), Some("200"));
+    assert!(login.credentials);
+    assert_eq!(note(&check.fidelity), Some("web_method"));
+
+    // The certificate item, and the template's trigger on its expiry.
+    let (certificate, check) = site(&inventory, "Website certificate");
+    assert_eq!(certificate.url, "https://www.example.com:8443/");
+    assert_eq!(note(&check.fidelity), Some("web_certificate_only"));
+    let soon = thresholds(&inventory, "Certificate expires soon");
+    assert_eq!(soon.len(), 1);
+    assert_eq!(
+        (&soon[0].measure, soon[0].direction, soon[0].warning),
+        (
+            &Measure::CertificateDays {
+                url: "https://www.example.com:8443/".into()
+            },
+            Direction::Below,
+            Some(14.0)
+        )
+    );
+}
+
 #[tokio::test]
 async fn the_nginx_template_is_missing_from_a_hosts_export() {
     let inventory = read(vec![fixture("7.0", "hosts.yaml")]).await;
@@ -418,8 +537,9 @@ async fn a_live_zabbix() {
     );
     assert_eq!(nginx.origin.kind, "item");
 
-    // Maintenances: the one-time window, and the next Sunday 02:00 of
-    // the weekly one, on both hosts of "Linux servers".
+    // Maintenances: the one-time window as a silence, and the weekly one
+    // as a maintenance window on Sundays at 02:00, on both hosts of
+    // "Linux servers" (ADR-0151).
     let upgrade = inventory
         .silences
         .iter()
@@ -430,20 +550,16 @@ async fn a_live_zabbix() {
     assert_eq!((upgrade.ends_at - upgrade.starts_at).num_hours(), 4);
     assert_eq!(upgrade.fidelity, Fidelity::Exact);
     let weekly = inventory
-        .silences
+        .windows
         .iter()
-        .find(|s| s.origin.name == "Weekly patching")
+        .find(|w| w.origin.name == "Weekly patching")
         .unwrap();
     let SilenceScope::Hosts(hosts) = &weekly.scope else {
         panic!("hosts expected")
     };
     assert!(hosts.contains(&"db-01".into()) && hosts.contains(&"web-01".into()));
-    assert_eq!(
-        weekly.starts_at.format("%a %H:%M").to_string(),
-        "Sun 02:00",
-        "{weekly:?}"
-    );
-    assert_eq!(note(&weekly.fidelity), Some("silence_next_window"));
+    assert_eq!(weekly.rule.weekdays, 1 << 6, "{weekly:?}");
+    assert_eq!(weekly.rule.start_time.to_string(), "02:00:00");
 
     // Channels: the mail server with Admin's two addresses, the webhook,
     // and the chat webhooks from Admin's "send to".

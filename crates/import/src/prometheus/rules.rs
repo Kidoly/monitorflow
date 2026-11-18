@@ -87,7 +87,18 @@ fn apply_one(fleet: &mut Fleet, rule: &Rule) {
             why,
         });
     };
-    let Some(reading) = promql::read(&rule.expr) else {
+    // A status code outside a range: two comparisons joined by `or`.
+    let alternatives = || {
+        promql::read_alternatives(&rule.expr)
+            .filter(|parts| {
+                parts.len() > 1
+                    && parts
+                        .iter()
+                        .all(|p| p.condition.is(&[(LeafKind::ProbeStatusCode, 1)]))
+            })
+            .and_then(|parts| parts.into_iter().next())
+    };
+    let Some(reading) = promql::read(&rule.expr).or_else(alternatives) else {
         unmovable(fleet, vec![], Note::plain("expression"));
         return;
     };
@@ -153,6 +164,65 @@ fn apply_one(fleet: &mut Fleet, rule: &Rule) {
         let note = extra.or(severity_note);
         for index in probes {
             set_alert(fleet, index, &alert, note.as_ref());
+        }
+        return;
+    }
+
+    // A website's answer, response time or certificate.
+    let website = condition.is(&[(ProbeStatusCode, 1)])
+        || condition.is(&[(ProbeDuration { whole: true }, 1)])
+        || condition.is(&[(ProbeDuration { whole: false }, 1)])
+        || condition.is(&[(CertSecondsLeft, 1)]);
+    if website {
+        let probes = web_probes(fleet, &reading);
+        if probes.is_empty() {
+            unmovable(fleet, vec![], Note::plain("no_hosts"));
+            return;
+        }
+        if condition.is(&[(ProbeStatusCode, 1)]) {
+            let note = extra.or(severity_note);
+            for (index, _, _) in probes {
+                set_alert(fleet, index, &alert, note.as_ref());
+            }
+            return;
+        }
+        let whole = !condition.is(&[(ProbeDuration { whole: false }, 1)]);
+        let (measure, direction, value, measure_note): (fn(String) -> Measure, _, _, _) =
+            match condition.cmp {
+                Cmp::Gt | Cmp::Ge if !condition.is(&[(CertSecondsLeft, 1)]) => (
+                    |url| Measure::WebResponseTime { url },
+                    Direction::Above,
+                    condition.value,
+                    (!whole).then(|| Note::plain("web_response_phase")),
+                ),
+                Cmp::Lt | Cmp::Le if condition.is(&[(CertSecondsLeft, 1)]) => (
+                    |url| Measure::CertificateDays { url },
+                    Direction::Below,
+                    promql::round(condition.value / 86_400.0),
+                    None,
+                ),
+                _ => {
+                    unmovable(fleet, vec![], Note::plain("expression"));
+                    return;
+                }
+            };
+        let note = extra.or(measure_note).or(severity_note);
+        let (warning, critical) = match level {
+            Severity::Warning => (Some(value), None),
+            Severity::Critical => (None, Some(value)),
+        };
+        for (_, host, url) in probes {
+            fleet.inventory.thresholds.push(Threshold {
+                hosts: vec![host],
+                measure: measure(url),
+                direction,
+                warning,
+                critical,
+                for_s: rule.for_s,
+                recovery: None,
+                origin: origin.clone(),
+                fidelity: note.clone().map_or(Fidelity::Exact, Fidelity::Approximated),
+            });
         }
         return;
     }
@@ -291,6 +361,21 @@ fn threshold_of(reading: &Reading) -> Option<(Measure, Direction, f64, Option<No
         return None;
     };
     Some(found)
+}
+
+/// The website checks of the probes a rule selects: their index, host
+/// and URL.
+fn web_probes(fleet: &Fleet, reading: &Reading) -> Vec<(usize, String, String)> {
+    select(&fleet.probes, reading)
+        .iter()
+        .filter_map(|m| {
+            let index = m.check?;
+            match &fleet.inventory.checks.get(index)?.watch {
+                Watch::Web(site) => Some((index, m.host.clone(), site.url.clone())),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 /// Adds `check`, or when its host has the same check already, gives it
@@ -523,8 +608,8 @@ mod tests {
                     900,
                 ),
                 rule(
-                    "CertificateExpiry",
-                    "probe_ssl_earliest_cert_expiry - time() < 86400 * 20",
+                    "TcpProbeSlow",
+                    "probe_success < 0 or probe_duration_seconds > 2",
                     "warning",
                     0,
                 ),
@@ -558,12 +643,149 @@ mod tests {
             vec![
                 ("UnitFailed", "expression", 3),
                 ("SystemSaturated", "per_cpu_load", 3),
-                ("CertificateExpiry", "expression", 0),
+                ("TcpProbeSlow", "expression", 0),
             ]
         );
         assert_eq!(
             fleet.inventory.unmovable[2].origin.detail.as_deref(),
-            Some("probe_ssl_earliest_cert_expiry - time() < 86400 * 20")
+            Some("probe_success < 0 or probe_duration_seconds > 2")
         );
+    }
+
+    #[test]
+    fn website_rules_give_alerts_and_thresholds() {
+        let mut fleet = fleet();
+        apply(
+            &mut fleet,
+            &[
+                rule(
+                    "HttpFailure",
+                    "probe_http_status_code <= 199 OR probe_http_status_code >= 400",
+                    "critical",
+                    60,
+                ),
+                rule(
+                    "SlowProbe",
+                    "avg_over_time(probe_duration_seconds[1m]) > 1",
+                    "warning",
+                    60,
+                ),
+                rule(
+                    "SlowPhase",
+                    "probe_http_duration_seconds > 2",
+                    "critical",
+                    0,
+                ),
+                rule(
+                    "CertificateExpiry",
+                    "probe_ssl_earliest_cert_expiry - time() < 86400 * 20",
+                    "warning",
+                    0,
+                ),
+                rule(
+                    "CertificateSoon",
+                    "3 <= round((last_over_time(probe_ssl_earliest_cert_expiry[10m]) - time()) / 86400, 0.1) < 20",
+                    "critical",
+                    0,
+                ),
+                rule(
+                    "CertificateLong",
+                    "probe_ssl_earliest_cert_expiry - time() > 86400",
+                    "warning",
+                    0,
+                ),
+            ],
+        );
+        let web = fleet
+            .inventory
+            .checks
+            .iter()
+            .find(|c| matches!(c.watch, Watch::Web(_)))
+            .unwrap();
+        assert_eq!(
+            web.alert,
+            Some(Alert {
+                severity: Severity::Critical,
+                for_s: 60
+            })
+        );
+        let url = "https://shop.example.com".to_owned();
+        let t = &fleet.inventory.thresholds;
+        let got: Vec<_> = t
+            .iter()
+            .map(|t| {
+                (
+                    t.origin.name.as_str(),
+                    t.hosts.clone(),
+                    t.measure.clone(),
+                    t.direction,
+                    t.warning,
+                    t.critical,
+                    t.for_s,
+                )
+            })
+            .collect();
+        let response = Measure::WebResponseTime { url: url.clone() };
+        let days = Measure::CertificateDays { url };
+        let host = vec!["monitor-01".to_owned()];
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "SlowProbe",
+                    host.clone(),
+                    response.clone(),
+                    Direction::Above,
+                    Some(1.0),
+                    None,
+                    60
+                ),
+                (
+                    "SlowPhase",
+                    host.clone(),
+                    response,
+                    Direction::Above,
+                    None,
+                    Some(2.0),
+                    0
+                ),
+                (
+                    "CertificateExpiry",
+                    host.clone(),
+                    days.clone(),
+                    Direction::Below,
+                    Some(20.0),
+                    None,
+                    0
+                ),
+                (
+                    "CertificateSoon",
+                    host,
+                    days,
+                    Direction::Below,
+                    None,
+                    Some(20.0),
+                    0
+                ),
+            ]
+        );
+        assert_eq!(t[0].fidelity, Fidelity::Exact);
+        assert_eq!(
+            t[1].fidelity,
+            Fidelity::Approximated(Note::plain("web_response_phase"))
+        );
+        assert_eq!(t[2].fidelity, Fidelity::Exact);
+        // The lower bound is a condition MonitorFlow does not check.
+        assert_eq!(
+            t[3].fidelity,
+            Fidelity::Approximated(Note::plain("extra_condition"))
+        );
+        let codes: Vec<_> = fleet
+            .inventory
+            .unmovable
+            .iter()
+            .map(|u| (u.origin.name.as_str(), u.why.code.as_str()))
+            .collect();
+        assert_eq!(codes, vec![("CertificateLong", "expression")]);
     }
 }

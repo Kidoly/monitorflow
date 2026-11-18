@@ -107,8 +107,13 @@ pub struct IncidentView {
     /// "hysteresis"}`, or `{"metric": "offline", "after_s"}`.
     pub threshold: Value,
     /// While open and covered by a silence, when the last one ends
-    /// (ADR-0079).
+    /// (ADR-0079): one of its server, relay, site or customer, of
+    /// everything, or of its check (ADR-0151).
     pub silenced_until: Option<DateTime<Utc>>,
+    /// While open, whether a maintenance window covers it now (ADR-0151):
+    /// "In maintenance until 04:00". Silences of chosen checks count, for
+    /// the incidents of those checks.
+    pub in_maintenance: bool,
     /// Whether a silence ever held back a notification of it.
     pub silenced: bool,
     /// Who said they are on it, and when (ADR-0082); `null` until someone
@@ -229,8 +234,14 @@ const SELECT: &str = "SELECT i.id, i.server_id, i.relay_id,
                              i.resolved_at, i.last_value, i.last_value_at, i.peak_value,
                              i.threshold,
                              CASE WHEN i.state = 'open' THEN
-                                 silenced_until(i.server_id, i.relay_id, si.id, si.customer_id)
+                                 (SELECT max(coalesce(x.ended_at, x.ends_at))
+                                  FROM covering_silences(i.server_id, i.relay_id, si.id,
+                                                         si.customer_id, i.metric, i.instance) x)
                              END AS silenced_until,
+                             i.state = 'open' AND EXISTS (
+                                 SELECT 1 FROM covering_silences(i.server_id, i.relay_id, si.id,
+                                                                 si.customer_id, i.metric, i.instance) x
+                                 WHERE x.window_id IS NOT NULL) AS in_maintenance,
                              EXISTS (SELECT 1 FROM incident_events e
                                      WHERE e.incident_id = i.id AND e.kind = 'silenced') AS silenced,
                              a.username AS acknowledged_by, a.acknowledged_at,
