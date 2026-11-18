@@ -336,6 +336,16 @@ pub async fn add_check(
     .await?
     .rows_affected()
         > 0;
+    add_thresholds(db, server, thresholds).await?;
+    Ok(added)
+}
+
+/// Adds `thresholds` to `server` where it has none of that metric.
+pub async fn add_thresholds(
+    db: &mut PgConnection,
+    server: Uuid,
+    thresholds: &[Threshold],
+) -> Result<(), sqlx::Error> {
     for t in thresholds {
         sqlx::query(
             "INSERT INTO thresholds (server_id, metric, comparison, warning, critical, duration_s)
@@ -352,7 +362,7 @@ pub async fn add_check(
         .execute(&mut *db)
         .await?;
     }
-    Ok(added)
+    Ok(())
 }
 
 #[cfg(test)]

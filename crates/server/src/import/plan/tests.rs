@@ -1468,3 +1468,86 @@ fn devices_and_probe_checks() {
         .iter()
         .any(|i| i.kind == "builtin" && i.note.as_ref().is_some_and(|n| n.code == "builtin_net")));
 }
+
+/// VMware and Hyper-V (ADR-0156): a vCenter is a device with its
+/// `vmware` check waiting for its password, a Hyper-V host a Windows
+/// server with its `hyperv` check, and a datastore threshold a vCenter's.
+#[test]
+fn vcenters_and_hyperv_hosts_get_their_checks() {
+    let vcenter = Host {
+        agentless: true,
+        addresses: vec!["vcenter-1.example.test".into()],
+        ..host("1", "vcenter-1", Os::Unknown)
+    };
+    let mut low = threshold(
+        &["1"],
+        Measure::DatastoreFree,
+        Some(0.2),
+        Some(0.1),
+        "Free space is low",
+    );
+    low.direction = Direction::Below;
+    let inventory = Inventory {
+        hosts: vec![
+            vcenter,
+            host("2", "hv-01", Os::Windows),
+            host("3", "web-01", Os::Debian),
+        ],
+        checks: vec![
+            check("1", Watch::Vmware, None),
+            check("2", Watch::HyperV, None),
+            check("3", Watch::HyperV, None),
+            check("3", Watch::Vmware, None),
+        ],
+        thresholds: vec![low],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let vmware = by_id(&planned, "check:vcenter-1:vmware");
+    assert_eq!(vmware.list, List::Approximated);
+    assert_eq!(vmware.note.as_ref().unwrap().code, "vmware_password");
+    let Some(Create::Check {
+        kind,
+        probe,
+        params,
+        ..
+    }) = &vmware.create
+    else {
+        panic!("{vmware:?}")
+    };
+    assert_eq!((kind.as_str(), *probe), ("vmware", true));
+    assert!(
+        params.is_empty(),
+        "the credentials come from the device's page"
+    );
+    let hyperv = by_id(&planned, "check:hv-01:hyperv");
+    assert_eq!(hyperv.note.as_ref().unwrap().code, "hyperv_group");
+    let Some(Create::Check { kind, probe, .. }) = &hyperv.create else {
+        panic!()
+    };
+    assert_eq!((kind.as_str(), *probe), ("hyperv", false));
+    let refused: Vec<&str> = planned
+        .items
+        .iter()
+        .filter(|i| i.list == List::NotMovable && i.hosts == ["web-01"])
+        .filter_map(|i| i.note.as_ref().map(|n| n.code.as_str()))
+        .collect();
+    assert_eq!(refused, ["hyperv_windows", "vmware_of_agent"]);
+    let datastore = planned
+        .items
+        .iter()
+        .find(|i| {
+            i.id.starts_with("threshold:vcenter-1:monitorflow_vmware_datastore_free_ratio")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{:#?}",
+                planned.items.iter().map(|i| &i.id).collect::<Vec<_>>()
+            )
+        });
+    assert!(matches!(
+        &datastore.create,
+        Some(Create::Threshold { comparison, warning: Some(w), critical: Some(c), .. })
+            if comparison == "<" && *w == 0.2 && *c == 0.1
+    ));
+}

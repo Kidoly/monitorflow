@@ -286,7 +286,39 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
         return;
     }
     let view = view(config, host);
+    // Hypervisors and virtual machines Zabbix's VMware discovery made are
+    // in their vCenter's inventory (ADR-0156).
+    let named = |names: &[&str]| {
+        view.template_names
+            .iter()
+            .chain(&view.missing)
+            .any(|n| names.contains(&n.as_str()))
+    };
+    if named(&["VMware Hypervisor", "VMware Guest"]) && !named(&["VMware", "VMware FQDN"]) {
+        out.unmovable.push(Unmovable {
+            hosts: vec![key],
+            origin: Origin::new("host", &host.host),
+            why: Note::plain("vmware_discovered"),
+        });
+        return;
+    }
     let mut addresses = Vec::new();
+    // A vCenter is reached at the host of `{$VMWARE.URL}`.
+    if view
+        .items
+        .iter()
+        .any(|(item, _)| item.key.starts_with("vmware."))
+    {
+        if let Some(address) = view
+            .macros
+            .expand("{$VMWARE.URL}")
+            .ok()
+            .as_deref()
+            .and_then(url_host)
+        {
+            addresses.push(address);
+        }
+    }
     for interface in &host.interfaces {
         for address in [&interface.ip, &interface.dns] {
             let address = address.trim();
@@ -507,6 +539,18 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
     }
     out.checks
         .extend(builtins.into_iter().chain(pending).map(|p| p.check));
+}
+
+/// The host of `https://vcenter.example.com/sdk`, without its port.
+fn url_host(url: &str) -> Option<String> {
+    let rest = url.trim().split_once("://").map_or(url.trim(), |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let authority = authority.rsplit('@').next().unwrap_or_default();
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => authority.split(':').next().unwrap_or_default(),
+    };
+    (!host.is_empty() && !host.contains('{')).then(|| host.to_owned())
 }
 
 /// An item's key as written and with its macros expanded, which is how

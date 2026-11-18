@@ -31,6 +31,11 @@ pub enum Family {
     Ntp,
     /// Another SNMP sensor: uptime, UPS, printer, temperature, custom.
     Snmp,
+    /// A VMware sensor over SOAP or WBEM: the device is a vCenter or an
+    /// ESXi host (ADR-0156).
+    Vmware,
+    /// A Hyper-V sensor of a Windows host.
+    HyperV,
     Other,
 }
 
@@ -38,6 +43,13 @@ pub enum Family {
 pub fn family(sensor_type: &str) -> Family {
     let t = sensor_type.to_ascii_lowercase();
     let has = |s: &str| t.contains(s);
+    // By words, as raw types and the names PRTG shows both carry them.
+    if has("vmware") || has("vcenter") || has("esx") {
+        return Family::Vmware;
+    }
+    if has("hyperv") || has("hyper-v") {
+        return Family::HyperV;
+    }
     if t.starts_with("ping") {
         Family::Ping
     } else if t.starts_with("dns") {
@@ -94,7 +106,8 @@ pub fn wanted(sensor_type: &str) -> (&'static [&'static str], bool) {
             true,
         ),
         Family::Cpu | Family::Memory | Family::Disk => (&[], true),
-        Family::Dns | Family::Ntp | Family::Snmp => (&[], false),
+        Family::Dns | Family::Ntp | Family::Snmp | Family::HyperV => (&[], false),
+        Family::Vmware => (&[], true),
         Family::Ping | Family::Traffic | Family::Other => (&[], false),
     }
 }
@@ -229,7 +242,66 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
         Family::EventLog => event_log(sensor),
         // A server's own `net` check, a device's SNMP interfaces (ADR-0149).
         Family::Traffic => builtin(Watch::Traffic, sensor, Vec::new()),
+        Family::Vmware => vmware(sensor, sensor_type),
+        Family::HyperV => {
+            let t = sensor_type.to_ascii_lowercase();
+            let note = if t.contains("storage") || t.contains("network") || t.contains("adapter") {
+                "virtual_partial"
+            } else {
+                "hyperv_group"
+            };
+            Mapped::Watch {
+                watch: Watch::HyperV,
+                alert: None,
+                fidelity: approximated(note, args! {}),
+                limits: Vec::new(),
+                lost: lost(sensor, &[]),
+            }
+        }
         Family::Other => Mapped::Not(Note::new("prtg_sensor_type", args! {"type" => sensor_type})),
+    }
+}
+
+/// A VMware sensor: the device's `vmware` check, and a datastore's limit
+/// on free space as the alert on every datastore (ADR-0156).
+fn vmware(sensor: &Object, sensor_type: &str) -> Mapped {
+    let t = sensor_type.to_ascii_lowercase();
+    let mut limits = Vec::new();
+    if t.contains("datastore") {
+        for (channel, l) in limited(sensor) {
+            let free = channel.name.to_ascii_lowercase().contains("free");
+            if !free || !is_percent(channel) || (l.min_warning.is_none() && l.min_error.is_none()) {
+                continue;
+            }
+            limits.push(Limit {
+                measure: Measure::DatastoreFree,
+                direction: Direction::Below,
+                warning: l.min_warning.map(|v| v / 100.0),
+                critical: l.min_error.map(|v| v / 100.0),
+                fidelity: approximated("vmware_every_datastore", args! {}),
+                channel: channel.name.clone(),
+            });
+        }
+    }
+    let note = if t.contains("wbem") {
+        "vmware_wbem"
+    } else if t.contains("datastore") || t.contains("hardware") || t.contains("health") {
+        "vmware_password"
+    } else {
+        "virtual_partial"
+    };
+    let used: Vec<i64> = sensor
+        .channels
+        .iter()
+        .filter(|c| limits.iter().any(|l| l.channel == c.name))
+        .map(|c| c.id)
+        .collect();
+    Mapped::Watch {
+        watch: Watch::Vmware,
+        alert: None,
+        fidelity: approximated(note, args! {}),
+        lost: lost(sensor, &used),
+        limits,
     }
 }
 
@@ -683,6 +755,91 @@ mod tests {
         assert_eq!(family("httpadvanced"), Family::Web);
         assert_eq!(family("httptransaction"), Family::Other);
         assert_eq!(family("wineventlog"), Family::EventLog);
+    }
+
+    /// VMware and Hyper-V sensors (ADR-0156), by their raw types and the
+    /// names PRTG shows alike.
+    #[test]
+    fn virtualization_sensors() {
+        for t in [
+            "vmwaredatastoreextern",
+            "VMware Virtual Machine (SOAP)",
+            "esxserversensorextern",
+            "vcenter",
+        ] {
+            assert_eq!(family(t), Family::Vmware, "{t}");
+        }
+        for t in ["hypervvm", "Hyper-V Virtual Storage Device"] {
+            assert_eq!(family(t), Family::HyperV, "{t}");
+        }
+        let mut datastore = Object::new(1, Kind::Sensor, "Datastore ds1", Some(0));
+        datastore.sensor_type = Some("vmware datastore (soap)".into());
+        datastore.channels = vec![
+            crate::prtg::tree::Channel {
+                id: 1,
+                name: "Free Space".into(),
+                unit: "%".into(),
+                limits: Some(crate::prtg::tree::Limits {
+                    max_error: None,
+                    max_warning: None,
+                    min_error: Some(5.0),
+                    min_warning: Some(15.0),
+                }),
+            },
+            crate::prtg::tree::Channel {
+                id: 2,
+                name: "Read Latency".into(),
+                unit: "msec".into(),
+                limits: Some(crate::prtg::tree::Limits {
+                    max_error: Some(50.0),
+                    max_warning: None,
+                    min_error: None,
+                    min_warning: None,
+                }),
+            },
+        ];
+        let Mapped::Watch {
+            watch,
+            fidelity,
+            limits,
+            lost,
+            ..
+        } = map(&datastore, None)
+        else {
+            panic!("not mapped");
+        };
+        assert_eq!(watch, Watch::Vmware);
+        assert_eq!(fidelity, approximated("vmware_password", args! {}));
+        assert_eq!(limits.len(), 1);
+        assert_eq!(limits[0].measure, Measure::DatastoreFree);
+        assert_eq!(
+            (limits[0].warning, limits[0].critical),
+            (Some(0.15), Some(0.05))
+        );
+        assert_eq!(lost, ["Read Latency"]);
+
+        let mut wbem = Object::new(2, Kind::Sensor, "Hardware", Some(0));
+        wbem.sensor_type = Some("vmware host hardware (wbem)".into());
+        let Mapped::Watch { fidelity, .. } = map(&wbem, None) else {
+            panic!()
+        };
+        assert_eq!(fidelity, approximated("vmware_wbem", args! {}));
+
+        let mut vm = Object::new(3, Kind::Sensor, "VM web-01", Some(0));
+        vm.sensor_type = Some("hyper-v virtual machine".into());
+        let Mapped::Watch {
+            watch, fidelity, ..
+        } = map(&vm, None)
+        else {
+            panic!()
+        };
+        assert_eq!(watch, Watch::HyperV);
+        assert_eq!(fidelity, approximated("hyperv_group", args! {}));
+        vm.sensor_type = Some("hyper-v virtual network adapter".into());
+        let Mapped::Watch { fidelity, .. } = map(&vm, None) else {
+            panic!()
+        };
+        assert_eq!(fidelity, approximated("virtual_partial", args! {}));
     }
 
     #[test]

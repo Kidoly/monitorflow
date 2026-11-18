@@ -373,9 +373,12 @@ fn watch_spec(watch: &Watch, os: Os) -> Spec {
         Watch::Agent => return Spec::Agent,
         // Probe and SNMP checks depend on the server; the plan names them
         // when it makes them.
-        Watch::Ping { .. } | Watch::UdpPort { .. } | Watch::Snmp { .. } | Watch::Traffic => {
-            return Spec::NoPort
-        }
+        Watch::Ping { .. }
+        | Watch::UdpPort { .. }
+        | Watch::Snmp { .. }
+        | Watch::Traffic
+        | Watch::Vmware
+        | Watch::HyperV => return Spec::NoPort,
         Watch::Service { name } => {
             let (kind, key) = if os == Os::Windows {
                 ("windows_service", "services")
@@ -687,6 +690,41 @@ impl Planner<'_> {
             Watch::Traffic => {
                 self.builtin(origin, &server, &check.fidelity, "builtin_net", args! {});
                 return;
+            }
+            // A vCenter or ESXi host is a device read from a probe; its
+            // password comes after the import (ADR-0156).
+            Watch::Vmware => {
+                if server.device.is_none() {
+                    self.not_movable(
+                        "check",
+                        origin,
+                        vec![server.name.clone()],
+                        note("vmware_of_agent", args! {}),
+                    );
+                    return;
+                }
+                probe = true;
+                if list == List::Exact {
+                    list = List::Approximated;
+                    why = note("vmware_password", args! {});
+                }
+                ("vmware", Map::new(), ("vmware".into(), String::new()))
+            }
+            Watch::HyperV => {
+                if server.device.is_some() || server.os != Os::Windows {
+                    self.not_movable(
+                        "check",
+                        origin,
+                        vec![server.name.clone()],
+                        note("hyperv_windows", args! {}),
+                    );
+                    return;
+                }
+                if list == List::Exact {
+                    list = List::Approximated;
+                    why = note("hyperv_group", args! {});
+                }
+                ("hyperv", Map::new(), ("hyperv".into(), String::new()))
             }
             Watch::Cpu | Watch::Memory | Watch::Disk | Watch::DiskIo => {
                 self.builtin(origin, &server, &check.fidelity, "builtin", args! {});
@@ -1069,6 +1107,10 @@ impl Planner<'_> {
                 ),
                 Measure::WebResponseTime { url } => (None, Some((url, "response_seconds"))),
                 Measure::CertificateDays { url } => (None, Some((url, "cert_days_left"))),
+                Measure::DatastoreFree => (
+                    Some(("monitorflow_vmware_datastore_free_ratio".to_owned(), None)),
+                    None,
+                ),
             };
             let comparison = match threshold.direction {
                 Direction::Above => ">",

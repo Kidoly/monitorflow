@@ -1,0 +1,31 @@
+# A vCenter watched with the stock VMware template, and a hypervisor its
+# discovery made, written by hand in the shape of a Zabbix 7.0 hosts
+# export (defaults left out, as Zabbix leaves them out). The template is
+# linked but not exported: the reader takes the stock one.
+zabbix_export:
+  version: '7.0'
+  host_groups:
+    - uuid: 7a1c2b3d4e5f40718293a4b5c6d7e8f9
+      name: Virtualization
+  hosts:
+    - host: vcenter-1
+      name: vcenter-1
+      templates:
+        - name: VMware
+      groups:
+        - name: Virtualization
+      macros:
+        - macro: '{$VMWARE.URL}'
+          value: 'https://vcenter-1.example.test/sdk'
+        - macro: '{$VMWARE.USERNAME}'
+          value: monitor@vsphere.local
+        - macro: '{$VMWARE.PASSWORD}'
+          type: SECRET_TEXT
+        - macro: '{$VMWARE.DATASTORE.SPACE.CRIT}'
+          value: '5'
+    - host: 4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01
+      name: esx-01.example.test
+      templates:
+        - name: VMware Hypervisor
+      groups:
+        - name: Hypervisors

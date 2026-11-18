@@ -394,6 +394,10 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
         {
             Part::Fails(Note::plain("expression"))
         }
+        // A vCenter's measures compare values, as a server's do (ADR-0156).
+        Mapped::Check(Watch::Vmware, _) => {
+            level(&comparison, &name, key, &period, seconds(&period), macros)
+        }
         Mapped::Check(..) | Mapped::Agent(_) => {
             // A check failing, or the agent gone: the check's alert.
             let for_s = match comparison.call.name.as_str() {
@@ -654,6 +658,19 @@ fn level(
                 _ => return Part::Fails(Note::new("zabbix_bytes", args! {"value" => written})),
             }
         }
+        // Free space of a vCenter's datastores, in percent (ADR-0156).
+        "vmware.datastore.size" if p(2) == "pfree" => (
+            Measure::DatastoreFree,
+            false,
+            percent,
+            Some(Note::plain("vmware_every_datastore")),
+        ),
+        "vmware.hv.datastore.size" if p(3) == "pfree" => (
+            Measure::DatastoreFree,
+            false,
+            percent,
+            Some(Note::plain("vmware_every_datastore")),
+        ),
         "vfs.dev.read.await" | "vfs.dev.write.await" => (
             Measure::DiskWait {
                 device: named(p(0)),

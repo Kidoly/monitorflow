@@ -67,7 +67,7 @@ fn network_device(tree: &Tree, device: &Object) -> bool {
             .unwrap_or("")
             .to_ascii_lowercase();
         match sensors::family(&t) {
-            Family::Service | Family::EventLog => false,
+            Family::Service | Family::EventLog | Family::HyperV => false,
             Family::Cpu | Family::Memory | Family::Disk | Family::Traffic => t.starts_with("snmp"),
             Family::Other => {
                 !(t.starts_with("wmi") || t.starts_with("ssh") || t.starts_with("exe"))
