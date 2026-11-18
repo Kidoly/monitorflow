@@ -7,6 +7,8 @@
 //! excuse it, and [`combine`] applies a business service's rule to its
 //! members. Loading incidents and silences is apart.
 
+pub mod data;
+pub mod report;
 pub mod spans;
 
 use chrono::{DateTime, Utc};

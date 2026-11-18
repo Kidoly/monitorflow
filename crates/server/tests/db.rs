@@ -145,6 +145,8 @@ db_tests! {
                 "api_keys",
                 "audit_log",
                 "auto_rollouts",
+        "business_service_members",
+        "business_services",
                 "campaign_snapshots",
                 "campaign_targets",
                 "campaign_waves",
