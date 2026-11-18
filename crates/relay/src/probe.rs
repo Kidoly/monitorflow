@@ -178,12 +178,14 @@ mod tests {
 
     #[tokio::test]
     async fn tests_run_once_and_answer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let open = listener.local_addr().unwrap().port();
         let (_trigger, stop) = shutdown::channel();
         let mut end = start(Arc::new(monitorflow_probe::Builtin), stop);
         end.tests
             .send(ProbeTest {
                 id: "t1".into(),
-                check: Some(ping("lo", "127.0.0.1")),
+                check: Some(port("lo", open)),
             })
             .await
             .unwrap();
@@ -206,7 +208,7 @@ mod tests {
         assert!(results[0]
             .samples
             .iter()
-            .any(|s| s.sensor == "ping_up" && s.value == 1.0));
+            .any(|s| s.sensor == "port_up" && s.value == 1.0));
         assert!(results[1].error.contains("without its check"));
     }
 
