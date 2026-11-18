@@ -1945,6 +1945,7 @@ dependencies = [
  "monitorflow-probe",
  "monitorflow-sensors",
  "monitorflow-server-ee",
+ "monitorflow-snmp",
  "pem",
  "percent-encoding",
  "prost",

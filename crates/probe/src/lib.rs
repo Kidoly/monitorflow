@@ -284,6 +284,43 @@ async fn stop(running: Running) {
     let _ = running.forward.await;
 }
 
+/// Longest a one-off test may take.
+pub const MAX_TEST: Duration = Duration::from_secs(30);
+
+/// Runs `check` once, with sensors from `factory`, within its timeout
+/// (at most [`MAX_TEST`]): the samples with their full names, or why it
+/// could not run.
+pub async fn test_once(factory: &dyn ProbeFactory, check: &Check) -> Result<Vec<Sample>, String> {
+    check.config.validate().map_err(|e| e.to_string())?;
+    let sensor = guarded(factory, check)?;
+    let deadline = tokio::time::Instant::now() + check.config.timeout().min(MAX_TEST);
+    let samples = tokio::time::timeout_at(deadline, sensor.collect(deadline))
+        .await
+        .map_err(|_| "no answer in time".to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(samples
+        .into_iter()
+        .map(|mut sample| {
+            sample.sensor = monitorflow_sensors::metric_name(&check.config.name, &sample.sensor);
+            if sample.instance.is_empty() {
+                sample.instance.clone_from(&check.config.instance);
+            }
+            sample
+        })
+        .collect())
+}
+
+/// A sample in the protocol's form.
+pub fn sample_to_proto(sample: Sample) -> proto::Sample {
+    proto::Sample {
+        sensor: sample.sensor,
+        instance: sample.instance,
+        timestamp_unix_ms: sample.timestamp_unix_ms,
+        value: sample.value,
+        labels: sample.labels.into_iter().collect(),
+    }
+}
+
 /// Waits for the next sample, then takes what else is queued, up to
 /// [`MAX_BATCH`]; `None` once the runner is gone.
 pub async fn next_batch(rx: &mut mpsc::Receiver<DeviceSample>) -> Option<Vec<DeviceSample>> {
@@ -302,13 +339,7 @@ pub async fn next_batch(rx: &mut mpsc::Receiver<DeviceSample>) -> Option<Vec<Dev
 pub fn to_results(batch: Vec<DeviceSample>) -> proto::ProbeResults {
     let mut devices: Vec<proto::DeviceSamples> = Vec::new();
     for DeviceSample { device, sample } in batch {
-        let sample = proto::Sample {
-            sensor: sample.sensor,
-            instance: sample.instance,
-            timestamp_unix_ms: sample.timestamp_unix_ms,
-            value: sample.value,
-            labels: sample.labels.into_iter().collect(),
-        };
+        let sample = sample_to_proto(sample);
         match devices.iter_mut().find(|d| d.device == device) {
             Some(entry) => entry.samples.push(sample),
             None => devices.push(proto::DeviceSamples {

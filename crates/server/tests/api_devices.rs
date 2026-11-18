@@ -254,4 +254,106 @@ db_tests! {
         assert_eq!(moved["probe"], "central");
         assert_eq!(moved["probe_relay_id"], Value::Null);
     }
+
+    /// SNMP devices (ADR-0149): a template gives checks and thresholds,
+    /// credentials are sealed and never come back, and probes get them.
+    #[sqlx::test]
+    async fn snmp_devices_from_a_template(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let operator = session(&pool, "op", Role::Operator, Some(paris)).await;
+        let viewer = session(&pool, "viewer", Role::Viewer, Some(paris)).await;
+        let (_, templates) = call(&pool, &viewer, "GET", "/api/devices/templates", None).await;
+        let keys: Vec<_> = templates["templates"].as_array().unwrap().iter().map(|t| t["key"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(keys, ["switch", "router", "firewall", "printer", "ups", "nas", "generic"]);
+
+        let body = json!({"site_id": paris, "name": "UPS room", "address": "192.0.2.30", "template": "ups",
+                          "snmp": {"version": "v3", "user": "monitor", "auth_protocol": "sha256",
+                                   "auth_password": "secret-auth-1", "priv_protocol": "aes128", "priv_password": "secret-priv-1"}});
+        let (status, ups) = call(&pool, &operator, "POST", "/api/devices", Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "{ups}");
+        assert!(!ups.to_string().contains("secret-"), "{ups}");
+        let id = ups["id"].as_str().unwrap().to_owned();
+        let (_, rows) = call(&pool, &viewer, "GET", &format!("/api/servers/{id}/sensor_configs"), None).await;
+        let mut names: Vec<_> = rows["entries"].as_array().unwrap().iter()
+            .map(|r| (r["name"].as_str().unwrap().to_owned(), r["params"]["what"].as_str().unwrap_or("").to_owned()))
+            .collect();
+        names.sort();
+        assert_eq!(names, [("ping".into(), String::new()), ("snmp".into(), "system".into()), ("snmp_ups".into(), "ups".into())]);
+        assert!(!rows.to_string().contains("secret-"));
+        let (_, thresholds) = call(&pool, &viewer, "GET", &format!("/api/servers/{id}/thresholds"), None).await;
+        let metrics: Vec<_> = thresholds["entries"].as_array().unwrap().iter().map(|t| t["metric"].as_str().unwrap().to_owned()).collect();
+        assert!(metrics.contains(&"monitorflow_snmp_ups_on_battery".to_string()), "{metrics:?}");
+        assert!(metrics.contains(&"monitorflow_snmp_up".to_string()));
+
+        // What the API shows: never a secret.
+        let (status, view) = call(&pool, &viewer, "GET", &format!("/api/devices/{id}/snmp"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!((view["user"].as_str(), view["auth_password_set"].as_bool()), (Some("monitor"), Some(true)));
+        assert!(!view.to_string().contains("secret-"), "{view}");
+        let stored: String = sqlx::query_scalar("SELECT secret FROM snmp_credentials").fetch_one(&pool).await.unwrap();
+        assert!(stored.starts_with("mfs1:") && !stored.contains("secret-"), "sealed");
+        let audit: Vec<String> = sqlx::query_scalar("SELECT details::text FROM audit_log").fetch_all(&pool).await.unwrap();
+        assert!(audit.iter().all(|d| !d.contains("secret-")), "{audit:?}");
+
+        // What the probe gets: the opened credentials with each SNMP check.
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let snmp_check = sets["central"].checks.iter().find(|c| c.kind == "snmp").unwrap();
+        assert_eq!(snmp_check.config.params["auth_password"], "secret-auth-1");
+        assert_eq!(snmp_check.config.params["host"], "192.0.2.30");
+
+        // A change of port keeps the passwords; a viewer cannot change.
+        let (status, view) = call(&pool, &operator, "PUT", &format!("/api/devices/{id}/snmp"),
+            Some(json!({"version": "v3", "user": "monitor", "port": 1161, "auth_protocol": "sha256", "priv_protocol": "aes128"}))).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!((view["port"].as_u64(), view["priv_password_set"].as_bool()), (Some(1161), Some(true)));
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let snmp_check = sets["central"].checks.iter().find(|c| c.kind == "snmp").unwrap();
+        assert_eq!((snmp_check.config.params["port"].as_str(), snmp_check.config.params["priv_password"].as_str()), ("1161", "secret-priv-1"));
+        assert_eq!(call(&pool, &viewer, "PUT", &format!("/api/devices/{id}/snmp"), Some(json!({"version": "v2c", "community": "x"}))).await.0, StatusCode::FORBIDDEN);
+
+        // Rows never hold credentials, and SNMP is for devices.
+        let (status, error) = call(&pool, &operator, "POST", &format!("/api/servers/{id}/sensor_configs"),
+            Some(json!({"kind": "snmp", "name": "snmp_if", "interval_ms": 60000, "params": {"what": "interfaces", "community": "x"}}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(error["error"].as_str().unwrap().contains("/snmp"), "{error}");
+        let (status, _) = call(&pool, &operator, "POST", &format!("/api/servers/{id}/sensor_configs"),
+            Some(json!({"kind": "snmp", "name": "snmp_if", "interval_ms": 60000, "params": {"what": "interfaces"}}))).await;
+        assert_eq!(status, StatusCode::CREATED);
+        for bad in [
+            json!({"site_id": paris, "name": "x", "address": "192.0.2.31", "template": "toaster", "snmp": {"version": "v2c", "community": "c"}}),
+            json!({"site_id": paris, "name": "x", "address": "192.0.2.31", "template": "ups"}),
+            json!({"site_id": paris, "name": "x", "address": "192.0.2.31", "snmp": {"version": "v3", "user": "u", "auth_protocol": "sha", "auth_password": "short"}}),
+        ] {
+            assert_eq!(call(&pool, &operator, "POST", "/api/devices", Some(bad)).await.0, StatusCode::BAD_REQUEST);
+        }
+        assert_eq!(call(&pool, &operator, "DELETE", &format!("/api/devices/{id}/snmp"), None).await.0, StatusCode::NO_CONTENT);
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        assert!(sets["central"].checks.iter().all(|c| c.kind != "snmp"), "no credentials, no SNMP checks");
+    }
+
+    /// Detection from the central server against net-snmp, when
+    /// `MF_SNMPD` names one (deploy/probe-test/run-e2e.sh starts it).
+    #[sqlx::test]
+    async fn detection_suggests_a_template(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let operator = session(&pool, "op", Role::Operator, Some(paris)).await;
+        // Nothing listens on this port: no answer, said plainly.
+        let closed = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let (status, result) = call(&pool, &operator, "POST", "/api/devices/detect",
+            Some(json!({"site_id": paris, "address": "127.0.0.1", "probe": "central",
+                        "snmp": {"version": "v2c", "community": "c", "port": closed}}))).await;
+        assert_eq!(status, StatusCode::OK, "{result}");
+        assert_eq!((result["answers"].as_bool(), result["template"].clone()), (Some(false), Value::Null));
+        assert!(result["error"].as_str().is_some(), "{result}");
+        let Ok(addr) = std::env::var("MF_SNMPD") else { return };
+        let (host, port) = addr.rsplit_once(':').unwrap();
+        let (status, result) = call(&pool, &operator, "POST", "/api/devices/detect",
+            Some(json!({"site_id": paris, "address": host, "probe": "central",
+                        "snmp": {"version": "v2c", "community": "e2e-community", "port": port.parse::<u16>().unwrap()}}))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(result["answers"], true, "{result}");
+        assert_eq!(result["name"], "nas-e2e");
+        assert_eq!(result["template"], "nas");
+    }
 }
