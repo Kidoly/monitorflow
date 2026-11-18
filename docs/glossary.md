@@ -61,6 +61,8 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Everything | Tout | For a channel or a silence: all customers and sites, plus news about the central server: failed backups, automatic updates, new versions | global, all customers | both columns null; a silence with no target |
 | Silence | Silence, mettre en silence | Stop notifications about a server, relay, site, customer or everything for a while, whatever channel they go to, or about chosen checks of a server or site: "Silence this check". Incidents still open and show; what is still open at the end is sent | mute, snooze, maintenance mode, downtime | `silences`, `checks` |
 | Maintenance window | Fenêtre de maintenance ; « En maintenance jusqu’à 04:00 » | A silence that comes back on its own, every day, week or month, at local times in a time zone: "Every Sunday, 02:00 to 04:00 (Europe/Paris)". Covers a site, chosen servers or chosen checks. While one runs: "In maintenance until 04:00". For a campaign, the times updates may run in | recurring silence, downtime, schedule, blackout | `maintenance_windows`, `window_id` |
+| Depends on, behind it | Dépend de, derrière | A server, device or check that cannot be checked when another one is down: "web-1 depends on sw-core", "12 servers are behind sw-core". Several are allowed. The relay of a server is one without being set: "Automatic" | parent, child, dependency (on screen), upstream | `dependencies`, `parent` |
+| Unreachable | Injoignable | A server, device or check behind something that is down: "Unreachable: sw-core is down". It opens no incident and notifies nobody until 2 minutes after what it depends on is back | suppressed, masked, hidden | `state = 'unreachable'`, `unreachable_because` |
 | Sent together | Envoyés ensemble | Incidents told in one notification: the same check on several machines, the rest of a site, or what a silence held back. Each incident still has its own page | group, batch, digest, bundle, aggregate | `notification_groups`, `?group=` |
 | On call | Astreinte | Who is told of each alert of a place in person, besides the channels, in turns. A page under Monitoring | pager, duty, rota (on screen) | `on_call_schedules` |
 | Schedule | Planning | The people who take turns being on call for everything, a customer or a site, and when they hand off | rotation, layer, policy | `on_call_schedules`, `on_call_members` |
@@ -134,6 +136,6 @@ The French column is what the French interface says for each word, so a term rea
 | Approval, approve | Approbation, approuver |
 | Audit log | Journal d’audit |
 | Administrator, operator, approver, viewer | Administrateur, opérateur, approbateur, lecteur |
-| Critical, Warning, Offline, OK | Critique, Avertissement, Hors ligne, OK |
+| Critical, Warning, Unreachable, Offline, OK | Critique, Avertissement, Injoignable, Hors ligne, OK |
 
 The French interface says "vous", keeps labels as short as the English ones, and follows French typography: a no-break space before `:` and inside `« »`, a narrow no-break space before `; ? !`, a curly apostrophe (’). Numbers, dates and units follow the language: "1 234,5", "85,3 %", "3 j 4 h", "Gio".
