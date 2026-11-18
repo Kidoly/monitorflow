@@ -27,9 +27,10 @@ pub const MAX_FUTURE: Duration = Duration::from_secs(10 * 60);
 pub const MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Label names the server sets or keeps for itself; the first two are
-/// already reserved by the agent (ADR-0012). Names starting with `__` or
-/// `mf_` are reserved as well.
-pub const RESERVED_LABELS: [&str; 5] = ["sensor", "instance", "peer", "site", "job"];
+/// already reserved by the agent (ADR-0012), `probe` names who ran a probe
+/// check (ADR-0148). Names starting with `__` or `mf_` are reserved as
+/// well.
+pub const RESERVED_LABELS: [&str; 6] = ["sensor", "instance", "peer", "site", "job", "probe"];
 
 /// Who a stream speaks for, as known by the server.
 #[derive(Debug, Clone, PartialEq, Eq)]

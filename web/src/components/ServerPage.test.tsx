@@ -162,6 +162,62 @@ async function heading() {
   return title;
 }
 
+describe("ServerPage of a device (ADR-0148)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(NOW);
+    setUrl(`/servers/view/?id=${ID}`);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("shows its checks alone, with its address and where they run from", async () => {
+    const device: ServerDetail = {
+      ...web1,
+      hostname: "Core switch",
+      peer_id: "core-switch",
+      kind: "device",
+      address: "192.0.2.10",
+      os_family: "device",
+      os_version: null,
+      agent_version: null,
+      status: "device",
+      state: "ok",
+      certificate: null,
+      command_kinds: null,
+      package_updates: false,
+    };
+    const ping = {
+      origin: "server", entry_id: "e1", kind: "ping", name: "ping", instance: "central", interval_ms: 60_000,
+      timeout_ms: null, params: {}, probe: "central", probe_relay_id: null,
+    };
+    stubFetch(
+      routes({
+        [`GET /api/servers/${ID}`]: ok(device),
+        [`GET /api/servers/${ID}/sensors`]: ok(config({ sensors: [ping] as never, applied_revision: null, in_sync: false })),
+        [`GET /api/servers/${ID}/sensor-values`]: ok({ start: T - 3600, end: T, step: 120, sensors: [
+          { name: "ping", instance: "central", metric: "monitorflow_ping_up", reason: null,
+            series: [{ instance: "central", points: [[T - 60, 1]], last_value: 1, last_at: NOW.toISOString(), reason: null }] },
+        ] }),
+        [`GET /api/incidents?state=open&server_id=${ID}&limit=500`]: ok({ incidents: [], next_cursor: null }),
+      }),
+    );
+    render(
+      <As user={customerAdmin}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    await screen.findByRole("heading", { level: 1, name: "Core switch" });
+    expect(header()).toHaveTextContent("Device");
+    expect(header()).toHaveTextContent("192.0.2.10");
+    expect(header()).not.toHaveTextContent(/agent|Last seen|Offline/i);
+    expect(screen.queryByRole("tab", { name: /Logs|Updates|Commands/ })).toBeNull();
+    expect(await screen.findByText("Ping · from central server")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(document.querySelector("dl")!).toHaveTextContent("192.0.2.10");
+    expect(document.querySelector("dl")!).not.toHaveTextContent(/Certificate|AI commands/);
+  });
+});
+
 describe("ServerPage", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -627,16 +683,48 @@ describe("ServerPage", () => {
       await user.keyboard("{Enter}");
       const menu = screen.getByRole("menu", { name: "Actions for CPU usage" });
       const items = within(menu).getAllByRole("menuitem");
-      expect(items.map((i) => i.textContent)).toEqual(["Edit", "Open chart", "Turn off…"]);
+      expect(items.map((i) => i.textContent)).toEqual([
+        "Edit",
+        "Open chart",
+        "Silence this check for 1 hour",
+        "Silence this check until tomorrow, 8:00",
+        "Turn off…",
+      ]);
       expect(items[0]).toHaveFocus();
       expect(items[0]).toHaveAttribute("href", expect.stringMatching(/sensor=cpu_usage_ratio&instance=total&edit=1$/));
       await user.keyboard("{ArrowDown}");
       expect(items[1]).toHaveFocus();
       await user.keyboard("{ArrowUp}{ArrowUp}");
-      expect(items[2]).toHaveFocus();
+      expect(items[4]).toHaveFocus();
       await user.keyboard("{Escape}");
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(button).toHaveFocus();
+    });
+
+    it("silences one check in one click and says so on its row", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const silence = {
+        id: "x1", scope: "server", target_id: ID, target_name: "web-1", site_id: "site-1", customer_id: "c1",
+        starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 3_600_000).toISOString(), active: true,
+        reason: "Planned maintenance", created_by_username: "olga", created_at: new Date().toISOString(),
+        checks: [{ name: "cpu", instance: "" }], window_id: null, can_end: true,
+      };
+      const fetchMock = open(operator, {
+        [`GET /api/silences?server_id=${ID}`]: [ok({ silences: [] }), ok({ silences: [silence] })],
+        "POST /api/silences": { status: 201, body: silence },
+      });
+      await user.click(await screen.findByRole("button", { name: "Actions for CPU usage" }));
+      await user.click(screen.getByRole("menuitem", { name: "Silence this check for 1 hour" }));
+      await vi.waitFor(() =>
+        expect(sent(fetchMock, "POST", "/api/silences")).toMatchObject({
+          scope: "server",
+          target_id: ID,
+          checks: [{ name: "cpu", instance: "" }],
+        }),
+      );
+      expect(await screen.findByText(/^Silenced until/)).toBeInTheDocument();
+      // The server itself is not silenced: its menu still says Silence.
+      expect(screen.getByText(/Checks silenced: cpu\./)).toBeInTheDocument();
     });
 
     it("offers readers the chart only", async () => {

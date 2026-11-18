@@ -232,6 +232,7 @@ fn item_of(value: &Value, prototype: bool) -> Item {
         enabled: !disabled(value),
         prototype,
         url: Some(text(value, "url")).filter(|u| !u.is_empty()),
+        snmp_oid: Some(text(value, "snmp_oid")).filter(|o| !o.is_empty()),
         template: None,
     }
 }
@@ -253,6 +254,10 @@ fn trigger_of(value: &Value) -> Trigger {
         enabled: !disabled(value),
         prototype: false,
         template: None,
+        tags: list(value, "tags")
+            .into_iter()
+            .map(|t| (text(t, "tag"), text(t, "value")))
+            .collect(),
     }
 }
 

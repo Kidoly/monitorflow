@@ -23,7 +23,7 @@ import { metricsError } from "@/lib/charts";
 import { aiCommands, aiSwitch, commandSummary, unsupportedReason } from "@/lib/commandKinds";
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
-import { administersCustomer, administersSite, multiCustomer, multiSite, useMe } from "@/lib/me";
+import { administersCustomer, administersSite, modifiesSite, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { serverHref, siteHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorValues, sensorRows, valuesBySensor } from "@/lib/sensors";
@@ -45,6 +45,7 @@ import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { formatExact } from "@/components/ui/time";
 
 import { AllowCommandsLine } from "./AllowCommands";
+import { DeviceFacts, EditDevice } from "./DeviceDetails";
 import { serverSiblings } from "./breadcrumbSiblings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
@@ -54,7 +55,7 @@ import { ServerLogsTab } from "./ServerLogsTab";
 import { type SensorRules, ServerSensorsTab } from "./ServerSensorsTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
 import styles from "./ServerPage.module.css";
-import { useSilenceBar } from "./Silences";
+import { type SilenceBarParts, useSilenceBar } from "./Silences";
 
 /** Commands loaded at first; "Load more" adds pages of this size. */
 export const COMMANDS_PAGE = 50;
@@ -159,6 +160,12 @@ export function ServerPage({ id }: { id: string | null }) {
   const [details, setDetails] = useState(false);
   const fetcher = useCallback((signal: AbortSignal) => loadServer(id ?? "", commandLimit, signal), [id, commandLimit]);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { enabled: valid });
+  const loaded = data?.server;
+  const silences = useSilenceBar(
+    loaded
+      ? { scope: "server", id: loaded.id, name: loaded.hostname, customerId: loaded.customer_id, siteId: loaded.site_id }
+      : null,
+  );
 
   useEffect(() => {
     if (data) document.title = `${data.server.hostname} · MonitorFlow`;
@@ -181,6 +188,7 @@ export function ServerPage({ id }: { id: string | null }) {
   }
 
   const { server, sensors, values, incidents, commands, latestAgent } = data;
+  const device = server.kind === "device";
   const rows = "sensors" in sensors ? sensorRows(sensors.sensors, values, incidents ?? []) : [];
   const active = "commands" in commands ? commands.commands.filter(isActive).length : 0;
 
@@ -196,6 +204,7 @@ export function ServerPage({ id }: { id: string | null }) {
         onChanged={refresh}
         details={details}
         onDetails={setDetails}
+        silences={silences}
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {server.awaiting_agent && !server.revoked_at && <WaitingForAgent server={server} />}
@@ -205,7 +214,7 @@ export function ServerPage({ id }: { id: string | null }) {
           name={server.hostname}
           osFamily={server.os_family}
           removedAt={server.revoked_at}
-          canAdminister={administersCustomer(me, server.customer_id)}
+          canAdminister={!device && administersCustomer(me, server.customer_id)}
         />
       )}
       <Tabs
@@ -222,17 +231,22 @@ export function ServerPage({ id }: { id: string | null }) {
             label: t("server.tab.sensors"),
             extra: "sensors" in sensors ? t("server.tab.count", { count: rows.length }) : undefined,
           },
-          { id: "logs", label: t("server.tab.logs") },
-          { id: "updates", label: t("server.tab.updates") },
-          {
-            id: "commands",
-            label: t("server.tab.commands"),
-            extra: active > 0 ? t("server.tab.running", { count: active }) : undefined,
-          },
+          // A device has no agent: no logs, updates or commands (ADR-0148).
+          ...(device
+            ? []
+            : [
+                { id: "logs" as const, label: t("server.tab.logs") },
+                { id: "updates" as const, label: t("server.tab.updates") },
+                {
+                  id: "commands" as const,
+                  label: t("server.tab.commands"),
+                  extra: active > 0 ? t("server.tab.running", { count: active }) : undefined,
+                },
+              ]),
         ]}
       />
-      <TabPanel idBase="server" id={tab}>
-        {tab === "sensors" && (
+      <TabPanel idBase="server" id={device ? "sensors" : tab}>
+        {(tab === "sensors" || device) && (
           <ServerSensorsTab
             server={server}
             sensors={sensors}
@@ -241,15 +255,17 @@ export function ServerPage({ id }: { id: string | null }) {
             rules={data.rules}
             incidentsFailed={incidents === null}
             onChanged={refresh}
+            checkSilences={silences.checkSilences}
+            onSilenceCheck={silences.silenceCheck}
           />
         )}
-        {tab === "logs" && <ServerLogsTab server={server} />}
-        {tab === "updates" && <ServerUpdatesTab server={server} />}
-        {tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} onOpenDetails={() => {
+        {!device && tab === "logs" && <ServerLogsTab server={server} />}
+        {!device && tab === "updates" && <ServerUpdatesTab server={server} />}
+        {!device && tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} onOpenDetails={() => {
           setDetails(true);
           window.scrollTo({ top: 0 });
         }} />}
-        {tab === "commands" && (
+        {!device && tab === "commands" && (
           <ServerCommandsTab
             serverId={server.id}
             commands={commands}
@@ -278,6 +294,7 @@ function ServerHeader({
   onChanged,
   details,
   onDetails: setDetails,
+  silences,
 }: {
   server: ServerDetail;
   latestAgent: string | null;
@@ -287,19 +304,16 @@ function ServerHeader({
   onChanged: () => void;
   details: boolean;
   onDetails: (open: boolean) => void;
+  silences: SilenceBarParts;
 }) {
   const me = useMe();
   const severalSites = multiSite(me);
   const [removing, setRemoving] = useState(false);
   const live = !server.revoked_at;
-  const silences = useSilenceBar({
-    scope: "server",
-    id: server.id,
-    name: server.hostname,
-    customerId: server.customer_id,
-    siteId: server.site_id,
-  });
   const canRemove = live && administersCustomer(me, server.customer_id);
+  const device = server.kind === "device";
+  const canEditDevice = device && live && modifiesSite(me, server.customer_id, server.site_id);
+  const [editing, setEditing] = useState(false);
   return (
     <>
       <PageHeader
@@ -311,10 +325,15 @@ function ServerHeader({
           <>
             <UpdateAgent server={server} latest={latestAgent} commands={commands} onQueued={onChanged} />
             {live && silences.menu}
-            {canRemove && (
+            {(canRemove || canEditDevice) && (
               <RowMenu
                 label={t("server.more", { name: server.hostname })}
-                items={[{ label: t("server.remove.trigger", { name: server.hostname }), onSelect: () => setRemoving(true), danger: true }]}
+                items={[
+                  ...(canEditDevice ? [{ label: t("devices.edit.trigger"), onSelect: () => setEditing(true) }] : []),
+                  ...(canRemove
+                    ? [{ label: t("server.remove.trigger", { name: server.hostname }), onSelect: () => setRemoving(true), danger: true }]
+                    : []),
+                ]}
               />
             )}
           </>
@@ -322,6 +341,18 @@ function ServerHeader({
         sub={
           <>
             <span className={styles.line}>
+              {device ? (
+                <>
+                  {server.address}
+                  {severalSites && (
+                    <>
+                      {" · "}
+                      <Link href={siteHref(server.site_id)}>{server.site_name}</Link>
+                    </>
+                  )}
+                </>
+              ) : (
+              <>
               {[
                 formatOs(server.os_family, server.os_version),
                 t("server.line.agent", { version: server.agent_version ?? t("server.fact.unknown") }),
@@ -340,8 +371,10 @@ function ServerHeader({
               ) : (
                 t("server.line.neverSeen")
               )}
+              </>
+              )}
             </span>
-            {live && !server.awaiting_agent && <ServerBadges server={server} now={now} />}
+            {live && !server.awaiting_agent && !device && <ServerBadges server={server} now={now} />}
             <Button variant="ghost" size="small" aria-expanded={details} onClick={() => setDetails(!details)}>
               {t("ui.details")}
             </Button>
@@ -349,11 +382,26 @@ function ServerHeader({
         }
       />
       {removing && canRemove && (
-        <RemovePeer kind="servers" id={server.id} name={server.hostname} onRemoved={onChanged} onClose={() => setRemoving(false)} />
+        <RemovePeer kind="servers" id={server.id} name={server.hostname} device={device} onRemoved={onChanged} onClose={() => setRemoving(false)} />
+      )}
+      {editing && canEditDevice && (
+        <EditDevice
+          server={server}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            onChanged();
+          }}
+        />
       )}
       {live && silences.notices}
       {live && silences.form}
-      {details && <ServerFacts server={server} latestAgent={latestAgent} now={now} onChanged={onChanged} />}
+      {details &&
+        (device ? (
+          <DeviceFacts server={server} onChanged={onChanged} />
+        ) : (
+          <ServerFacts server={server} latestAgent={latestAgent} now={now} onChanged={onChanged} />
+        ))}
     </>
   );
 }

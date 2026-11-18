@@ -179,9 +179,11 @@ export function IncidentPage({ id }: { id: string | null }) {
             </span>
             {incident.silenced_until ? (
               <>
-                <Label tone="neutral">{t("incidents.silenced")}</Label>
+                <Label tone="neutral">{incident.in_maintenance ? t("incidents.inMaintenance") : t("incidents.silenced")}</Label>
                 <span className={styles.muted}>
-                  {t("incidents.silencedText", { when: formatDay(new Date(incident.silenced_until), now) })}
+                  {incident.in_maintenance
+                    ? t("incidents.inMaintenanceText", { when: formatDay(new Date(incident.silenced_until), now) })
+                    : t("incidents.silencedText", { when: formatDay(new Date(incident.silenced_until), now) })}
                 </span>
               </>
             ) : (

@@ -159,6 +159,12 @@ pub struct AlertRow {
     /// `warning` or `critical`.
     pub severity: String,
     pub opened_at: DateTime<Utc>,
+    /// When the last silence covering it ends, if one does now (ADR-0079,
+    /// ADR-0151).
+    pub silenced_until: Option<DateTime<Utc>>,
+    /// Whether a maintenance window covers it now: "In maintenance until
+    /// 04:00".
+    pub in_maintenance: bool,
 }
 
 /// What a panel shows, by its `kind`.
@@ -597,8 +603,15 @@ pub(super) async fn compute(
         Vec::new()
     } else {
         sqlx::query_as(
-            "SELECT i.id, i.server_id, s.hostname, i.metric, i.instance, i.severity, i.opened_at
+            "SELECT i.id, i.server_id, s.hostname, i.metric, i.instance, i.severity, i.opened_at,
+                    (SELECT max(coalesce(x.ended_at, x.ends_at)) FROM covering_silences(
+                         s.id, NULL, s.site_id, si.customer_id, i.metric, i.instance) x)
+                        AS silenced_until,
+                    EXISTS (SELECT 1 FROM covering_silences(
+                         s.id, NULL, s.site_id, si.customer_id, i.metric, i.instance) x
+                        WHERE x.window_id IS NOT NULL) AS in_maintenance
              FROM incidents i JOIN servers s ON s.id = i.server_id
+             JOIN sites si ON si.id = s.site_id
              WHERE i.state = 'open' AND i.server_id = ANY($1)
              ORDER BY i.severity = 'critical' DESC, i.opened_at DESC, i.id",
         )
@@ -706,6 +719,8 @@ pub(super) async fn compute(
                                 instance: a.instance.clone(),
                                 severity: a.severity.clone(),
                                 opened_at: a.opened_at,
+                                silenced_until: a.silenced_until,
+                                in_maintenance: a.in_maintenance,
                             })
                             .collect(),
                     }

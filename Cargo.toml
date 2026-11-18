@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/common",
     "crates/sensors",
+    "crates/probe",
+    "crates/snmp",
     "crates/import",
     "crates/ai",
     "crates/agent",
@@ -29,6 +31,8 @@ rust-version = "1.99"
 if-addrs = "0.15"
 monitorflow-common = { path = "crates/common" }
 monitorflow-sensors = { path = "crates/sensors" }
+monitorflow-probe = { path = "crates/probe" }
+monitorflow-snmp = { path = "crates/snmp" }
 monitorflow-ai = { path = "crates/ai" }
 monitorflow-server-ee = { path = "ee/crates/server-ee" }
 monitorflow-plugin = { path = "crates/plugin" }
@@ -100,6 +104,9 @@ quick-xml = "0.42"
 crc = "3"
 # Linear-time matching for the log sensor's patterns, set by the server.
 regex = "1"
+# ICMP echo of the probes' ping checks (ADR-0148).
+surge-ping = "0.9"
+socket2 = "0.6"
 # LDAP directories for sign-in, over rustls only (ADR-0145).
 ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
 webpki-roots = "1"

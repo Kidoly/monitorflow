@@ -82,6 +82,8 @@ pub enum Status {
     /// The agent has an open stream to this server, directly or via a relay.
     Online,
     Offline,
+    /// A device: it has no agent and is watched from a probe (ADR-0148).
+    Device,
 }
 
 /// The one status of a server on the fleet's pages, worst first
@@ -139,8 +141,15 @@ pub struct ServerView {
     pub customer_name: String,
     /// The relay its last connection came through; `null` when direct.
     pub relay_id: Option<Uuid>,
-    /// `debian`, `rhel`, `windows`, or `linux` for any other distribution.
+    /// `debian`, `rhel`, `windows`, or `linux` for any other distribution;
+    /// `device` for a device.
     pub os_family: String,
+    /// `agent`: the machine runs the agent; `device`: an address without
+    /// one, watched by network checks from a probe (ADR-0148).
+    #[schema(example = "agent")]
+    pub kind: String,
+    /// A device's address, which its checks reach; `null` for an agent.
+    pub address: Option<String>,
     /// Like `12` or `9.4`; `null` until the agent reports it.
     pub os_version: Option<String>,
     /// Whether the host can take package updates and sources (ADR-0063).
@@ -264,11 +273,12 @@ const SELECT_SERVERS: &str = concat!(
     "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name,
             si.customer_id, c.name AS customer_name, s.relay_id,
             s.os_family, s.os_version, s.package_updates, s.command_kinds, s.agent_version,
-            s.created_at, s.last_seen_at, s.awaiting_agent,
+            s.created_at, s.last_seen_at, s.awaiting_agent, s.kind, s.address,
             s.revoked_at, s.offline_alerts, si.offline_alerts AS site_offline_alerts,
             silenced_until(s.id, NULL, s.site_id, si.customer_id) AS silenced_until,
             o.open_incidents, o.unacknowledged, o.unacknowledged_critical,
             sl.reason AS silence_reason, sl.username AS silence_by,
+            sl.window_id IS NOT NULL AS silence_window,
             ak.username AS acknowledged_by, ak.acknowledged_at, ak.note AS acknowledged_note,
             -- One probe of the partial index on active certificates.
             (SELECT max(c.not_after) FROM certificates c
@@ -282,9 +292,10 @@ const SELECT_SERVERS: &str = concat!(
     "
      -- The silence covering it that ends last, as silenced_until picks.
      LEFT JOIN LATERAL (
-         SELECT x.reason, u.username FROM silences x
+         SELECT x.reason, u.username, x.window_id FROM silences x
          LEFT JOIN users u ON u.id = x.created_by
          WHERE x.starts_at <= now() AND coalesce(x.ended_at, x.ends_at) > now()
+           AND x.checks IS NULL
            AND (num_nonnulls(x.server_id, x.relay_id, x.site_id, x.customer_id) = 0
                 OR x.server_id = s.id OR x.site_id = s.site_id
                 OR x.customer_id = si.customer_id)
@@ -304,6 +315,9 @@ pub struct SilenceNote {
     pub by: Option<String>,
     pub until: DateTime<Utc>,
     pub reason: String,
+    /// An occurrence of a maintenance window (ADR-0151): "In maintenance
+    /// until 04:00".
+    pub window: bool,
 }
 
 /// Who acknowledged a server's latest acknowledged open incident, when,
@@ -361,6 +375,7 @@ impl ServerSummary {
 struct SummaryRow {
     peer_id: String,
     awaiting_agent: bool,
+    device: bool,
     silenced: bool,
     open_incidents: i64,
     unacknowledged: i64,
@@ -381,7 +396,7 @@ pub async fn summary(
     }
     let (all_sites, sites) = user.readable_sites().bind();
     let rows: Vec<SummaryRow> = sqlx::query_as(concat!(
-        "SELECT s.peer_id, s.awaiting_agent,
+        "SELECT s.peer_id, s.awaiting_agent, s.kind = 'device' AS device,
                 silenced_until(s.id, NULL, s.site_id, si.customer_id) IS NOT NULL AS silenced,
                 o.open_incidents, o.unacknowledged, o.unacknowledged_critical
          FROM servers s
@@ -405,7 +420,8 @@ pub async fn summary(
             summary.add(ServerState::Waiting);
             continue;
         }
-        let online = state.registry.live(PeerRole::Agent, &row.peer_id).is_some();
+        // A device is never offline: its checks say what is wrong.
+        let online = row.device || state.registry.live(PeerRole::Agent, &row.peer_id).is_some();
         summary.add(ServerState::of(
             row.silenced,
             online,
@@ -443,11 +459,14 @@ struct Row {
     unacknowledged_critical: i64,
     silence_reason: Option<String>,
     silence_by: Option<String>,
+    silence_window: bool,
     acknowledged_by: Option<String>,
     acknowledged_at: Option<DateTime<Utc>>,
     acknowledged_note: Option<String>,
     cert_not_after: Option<DateTime<Utc>>,
     awaiting_agent: bool,
+    kind: String,
+    address: Option<String>,
 }
 
 /// `GET /api/servers`: one page of the servers of the sites the user may
@@ -534,6 +553,19 @@ pub async fn detail(
     }))
 }
 
+/// The listing row of the server `id`, removed or not, without access
+/// checks.
+pub(super) async fn view(state: &ApiState, id: Uuid) -> Result<Option<ServerView>, ApiError> {
+    // SQL-safe: interpolates only the constant SELECT_SERVERS.
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT_SERVERS} WHERE s.id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?;
+    Ok(row.map(|row| ServerView::new(state, row)))
+}
+
 /// The certificate the CA issued last to `role`/`peer_id`, revoked or not.
 pub(super) async fn latest_certificate(
     pool: &sqlx::PgPool,
@@ -560,6 +592,9 @@ impl ServerView {
     fn new(state: &ApiState, row: Row) -> Self {
         // On any server instance (ADR-0089).
         let live = state.registry.live(PeerRole::Agent, &row.peer_id);
+        if row.kind == "device" {
+            return Self::device(row);
+        }
         match live {
             Some(peer) => Self {
                 status: Status::Online,
@@ -577,6 +612,21 @@ impl ServerView {
                 ..Self::offline(row)
             },
             None => Self::offline(row),
+        }
+    }
+
+    /// A device: its state from its incidents alone, as if online.
+    fn device(row: Row) -> Self {
+        Self {
+            status: Status::Device,
+            state: ServerState::of(
+                row.silenced_until.is_some(),
+                true,
+                row.open_incidents,
+                row.unacknowledged,
+                row.unacknowledged_critical,
+            ),
+            ..Self::offline(row)
         }
     }
 
@@ -603,6 +653,8 @@ impl ServerView {
             customer_name: row.customer_name,
             relay_id: row.relay_id,
             os_family: row.os_family,
+            kind: row.kind,
+            address: row.address,
             os_version: row.os_version,
             package_updates: row.package_updates,
             command_kinds: row.command_kinds.map(|kinds| kinds.0),
@@ -623,6 +675,7 @@ impl ServerView {
                     by: row.silence_by,
                     until,
                     reason,
+                    window: row.silence_window,
                 }),
             acknowledgement: row
                 .acknowledged_by
