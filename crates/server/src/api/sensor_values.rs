@@ -80,6 +80,7 @@ fn primary(sensor: &EffectiveSensor) -> (String, Option<String>, Rollup) {
         "memory" => (Some("available_ratio"), None, Rollup::Min),
         "disk" => (Some("used_ratio"), None, Rollup::Max),
         "diskio" => (Some("busy_ratio"), None, Rollup::Max),
+        "net" => (Some("receive_bytes_per_second"), None, Rollup::Max),
         "systemd" | "windows_service" => (Some("active"), None, Rollup::Min),
         "port" | "ping" => (Some("up"), None, Rollup::Min),
         // An SNMP check stands for what its group watches most (ADR-0149).

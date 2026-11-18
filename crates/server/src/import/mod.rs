@@ -101,6 +101,14 @@ pub enum Create {
         /// Addresses the source had, for the person who installs the agent.
         addresses: Vec<String>,
     },
+    /// A device: an address without an agent, watched from a probe
+    /// (ADR-0148).
+    Device {
+        peer_id: String,
+        hostname: String,
+        /// What its checks reach.
+        address: String,
+    },
     /// A check (a sensor row) of a server.
     Check {
         /// The server's ID.
@@ -110,6 +118,10 @@ pub enum Create {
         interval_ms: u64,
         #[schema(value_type = Object)]
         params: Map<String, Value>,
+        /// Run from the site's default probe, the relay of the site or the
+        /// central server, rather than the agent (ADR-0148).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        probe: bool,
     },
     /// A threshold of a server.
     Threshold {
@@ -150,7 +162,7 @@ impl Create {
     /// `server`, `check`, `threshold`, `silence` or `channel`.
     pub fn object(&self) -> &'static str {
         match self {
-            Self::Server { .. } => "server",
+            Self::Server { .. } | Self::Device { .. } => "server",
             Self::Check { .. } => "check",
             Self::Threshold { .. } => "threshold",
             Self::Silence { .. } => "silence",

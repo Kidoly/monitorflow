@@ -1367,7 +1367,18 @@ export interface ImportNote {
 /** What an import item creates. */
 export type ImportCreate =
   | { object: "server"; peer_id: string; hostname: string; os_family: string; addresses: string[] }
-  | { object: "check"; server: string; kind: string; name: string; interval_ms: number; params: Record<string, string> }
+  /** A device, watched from a probe (ADR-0148). */
+  | { object: "device"; peer_id: string; hostname: string; address: string }
+  | {
+      object: "check";
+      server: string;
+      kind: string;
+      name: string;
+      interval_ms: number;
+      params: Record<string, string>;
+      /** Run from the site's default probe (ADR-0148). */
+      probe?: boolean;
+    }
   | {
       object: "threshold";
       server: string;
