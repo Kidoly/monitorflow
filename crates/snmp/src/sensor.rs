@@ -123,18 +123,40 @@ impl SnmpSensor {
             .collect())
     }
 
-    /// Every row under `root`, at most [`MAX_ROWS`].
+    /// Every row under `root`, at most [`MAX_ROWS`]: with GETBULK, or
+    /// GETNEXT when the agent answers GETBULK with an error, as net-snmp
+    /// does to some bulk requests over v3.
     async fn walk(
         &self,
         client: &Client,
         root: &[u32],
     ) -> Result<Vec<(Vec<u32>, Val)>, SensorError> {
-        let mut stream = client
-            .walk(oid(root))
-            .map_err(|e| SensorError::Transient(format!("SNMP walk failed: {e}")))?;
+        match self.walk_with(client, root, true).await {
+            Ok(rows) => Ok(rows),
+            Err(error) => {
+                tracing::debug!(host = %self.target.host, %error, "bulk walk failed; walking one row at a time");
+                self.walk_with(client, root, false).await
+            }
+        }
+    }
+
+    async fn walk_with(
+        &self,
+        client: &Client,
+        root: &[u32],
+        bulk: bool,
+    ) -> Result<Vec<(Vec<u32>, Val)>, SensorError> {
+        let failed =
+            |e: &dyn std::fmt::Display| SensorError::Transient(format!("SNMP walk failed: {e}"));
+        let mut stream = if bulk {
+            client.walk(oid(root))
+        } else {
+            client.walk_getnext(oid(root))
+        }
+        .map_err(|e| failed(&e))?;
         let mut rows = Vec::new();
         while let Some(item) = stream.next().await {
-            let vb = item.map_err(|e| SensorError::Transient(format!("SNMP walk failed: {e}")))?;
+            let vb = item.map_err(|e| failed(&e))?;
             if let Some(value) = val(&vb.value) {
                 rows.push((vb.oid.arcs().to_vec(), value));
             }

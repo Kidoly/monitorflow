@@ -148,6 +148,15 @@ async fn v3_with_authentication_and_privacy() {
             "{user}"
         );
     }
+    // Every group reads over v3 as over v2c.
+    let pairs = v3("e2e-sha512", "sha512", "aes256", "e2e-auth-password");
+    let mut host: Vec<(&str, &str)> = pairs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    host.push(("what", "host"));
+    let samples = collect(&host).await.unwrap();
+    assert!(
+        !metric(&samples, "memory_used_ratio").is_empty(),
+        "{samples:?}"
+    );
     // A wrong password gets no answer: the system check says down.
     let wrong = v3("e2e-sha256", "sha256", "aes128", "not-the-password");
     let wrong: Vec<(&str, &str)> = wrong.iter().map(|(k, v)| (*k, v.as_str())).collect();
