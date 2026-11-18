@@ -40,6 +40,7 @@ import { UUID } from "@/lib/uuid";
 import { ConfirmRelayNames } from "./AddRelay";
 import { AdminLayout } from "./AdminLayout";
 import styles from "./AdminPages.module.css";
+import { RelayDependencies } from "./Dependencies";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { SilenceBar } from "./Silences";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
@@ -406,6 +407,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
           <DataTable bare label={t("relays.attached.title", { name: relay.peer_id })} columns={columns} rows={rows} rowKey={(row) => row.id} />
         )}
       </section>
+      {!relay.revoked_at && <RelayDependencies relay={relay} />}
     </div>
   );
 }
