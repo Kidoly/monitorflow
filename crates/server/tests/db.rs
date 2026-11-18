@@ -223,6 +223,7 @@ db_tests! {
                 "setup_tokens",
                 "silences",
                 "sites",
+                "snmp_credentials",
                 "thresholds",
                 "user_contacts",
                 "user_preferences",

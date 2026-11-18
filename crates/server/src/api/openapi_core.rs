@@ -247,6 +247,12 @@ macro_rules! sensor_config_rules {
 `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a \
 check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is \
 wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\n\
+A server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the \
+server's site, which then runs it instead of the agent. Probes run `ping` and `port` (TCP or UDP) checks; a \
+device's rows always have one, and default to the relay of its site, else the central server. A probe check \
+of a server with an agent names its `host`; a device's checks default to its address. Its `instance` \
+defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep \
+apart. `ping` and UDP never run on an agent.\n\n\
 Audited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the \
 parameters but never their values. Connected agents get the change within seconds."
     };

@@ -36,6 +36,7 @@ import {
   DASHBOARD,
   INCIDENTS,
   INTEGRATIONS,
+  MAINTENANCE_WINDOWS,
   MIRRORS,
   REMEDIATIONS,
   SILENCES,
@@ -219,6 +220,10 @@ const ROUTES: [RegExp, Handler][] = [
       servers: SERVERS.filter((s) => s.relay_id === RELAY.id).map((s) => ({ id: s.id, peer_id: s.peer_id, hostname: s.hostname, status: s.status })),
       updates: [],
     };
+  }],
+  [/^\/api\/maintenance-windows$/, (_, q) => {
+    const site = q.get("site_id") ?? SERVERS.find((s) => s.id === q.get("server_id"))?.site_id;
+    return { windows: MAINTENANCE_WINDOWS.filter((w) => !site || w.site_id === site) };
   }],
   [/^\/api\/silences$/, (_, q) => {
     const target = q.get("server_id") ?? q.get("relay_id") ?? q.get("site_id");

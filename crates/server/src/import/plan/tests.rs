@@ -1,7 +1,8 @@
 use chrono::TimeZone;
 use monitorflow_common::redact::Secret;
 use monitorflow_import::model::{
-    Alert, Channel, Host, Origin, Silence, Smtp, Threshold, Unmovable,
+    Alert, Channel, Host, Origin, Repeat, Rule, Silence, Smtp, Threshold, Unmovable, Window,
+    EVERY_MONTH,
 };
 
 use super::*;
@@ -19,6 +20,7 @@ fn host(key: &str, name: &str, os: Os) -> Host {
         os,
         groups: vec!["Linux servers".into()],
         origin: Origin::new("host", name),
+        agentless: false,
     }
 }
 
@@ -439,6 +441,7 @@ fn a_recovery_value_becomes_hysteresis_and_crossed_levels_are_fixed() {
 fn silences_are_cut_skipped_or_per_server() {
     let silence = |scope, starts: i64, ends: i64, name: &str| Silence {
         scope,
+        checks: vec![],
         starts_at: now() + TimeDelta::hours(starts),
         ends_at: now() + TimeDelta::hours(ends),
         reason: format!("{name} window"),
@@ -827,4 +830,305 @@ fn event_logs_become_eventlog_checks() {
         Value::Object(params.clone()),
         json!({"channel": "Application"})
     );
+}
+
+#[test]
+fn a_silence_of_checks_names_the_checks_planned() {
+    let inventory = Inventory {
+        hosts: vec![host("1", "a", Os::Linux)],
+        checks: vec![check(
+            "1",
+            Watch::Service {
+                name: "nginx.service".into(),
+            },
+            Some(Severity::Critical),
+        )],
+        silences: vec![Silence {
+            scope: SilenceScope::Hosts(vec!["1".into()]),
+            checks: vec![
+                Watch::Service {
+                    name: "nginx.service".into(),
+                },
+                Watch::Disk,
+                // The offline alert is no check: left out.
+                Watch::Agent,
+            ],
+            starts_at: now() + TimeDelta::hours(1),
+            ends_at: now() + TimeDelta::hours(2),
+            reason: "Rebuild".into(),
+            origin: Origin::new("silence", "Rebuild"),
+            fidelity: Fidelity::Exact,
+        }],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let silence = planned.items.iter().find(|i| i.kind == "silence").unwrap();
+    let Some(Create::Silence { checks, .. }) = &silence.create else {
+        panic!()
+    };
+    let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["service_nginx", "disk"]);
+}
+
+fn weekly(zone: Option<&str>) -> Rule {
+    Rule {
+        repeat: Repeat::Weekly,
+        every: 1,
+        weekdays: 1 << 6,
+        month_day: None,
+        month_week: None,
+        months: EVERY_MONTH,
+        start_time: chrono::NaiveTime::from_hms_opt(2, 0, 0).unwrap(),
+        duration_minutes: 120,
+        time_zone: zone.map(str::to_owned),
+        starts_on: None,
+        ends_on: None,
+    }
+}
+
+#[test]
+fn windows_go_to_the_site_in_the_zone_chosen() {
+    let window = |scope, rule, name: &str| Window {
+        scope,
+        checks: vec![],
+        rule,
+        reason: format!("{name} window"),
+        origin: Origin::new("maintenance", name),
+        fidelity: Fidelity::Exact,
+    };
+    let mut over = weekly(Some("UTC"));
+    over.ends_on = Some(chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+    let inventory = Inventory {
+        hosts: vec![host("1", "a", Os::Linux), host("2", "b", Os::Linux)],
+        windows: vec![
+            window(
+                SilenceScope::Hosts(vec!["1".into(), "2".into()]),
+                weekly(None),
+                "Patch",
+            ),
+            window(
+                SilenceScope::Everything,
+                weekly(Some("America/New_York")),
+                "Freeze",
+            ),
+            window(
+                SilenceScope::Everything,
+                weekly(Some("Mars/Olympus")),
+                "Mars",
+            ),
+            window(SilenceScope::Everything, over, "Old"),
+        ],
+        ..Inventory::default()
+    };
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let planned = plan_in(
+        &inventory,
+        site(),
+        false,
+        &Existing::default(),
+        now(),
+        paris,
+    );
+    let patch = planned
+        .items
+        .iter()
+        .find(|i| i.origin.name == "Patch")
+        .unwrap();
+    let Some(Create::Window {
+        servers,
+        time_zone,
+        weekdays,
+        start_time,
+        ..
+    }) = &patch.create
+    else {
+        panic!()
+    };
+    assert_eq!(servers, &["a", "b"]);
+    assert_eq!(
+        (time_zone.as_str(), weekdays.as_slice(), start_time.as_str()),
+        ("Europe/Paris", &["sunday".to_owned()][..], "02:00")
+    );
+    assert_eq!(
+        patch.needs,
+        vec!["server:a".to_owned(), "server:b".to_owned()]
+    );
+    let freeze = planned
+        .items
+        .iter()
+        .find(|i| i.origin.name == "Freeze")
+        .unwrap();
+    assert!(
+        matches!(&freeze.create, Some(Create::Window { servers, time_zone, .. })
+        if servers.is_empty() && time_zone == "America/New_York")
+    );
+    for (name, code) in [("Mars", "refused"), ("Old", "silence_over")] {
+        let item = planned
+            .items
+            .iter()
+            .find(|i| i.origin.name == name)
+            .unwrap();
+        assert_eq!(
+            (item.list, item.note.as_ref().unwrap().code.as_str()),
+            (List::NotMovable, code)
+        );
+    }
+    // The same window again is there already.
+    let existing = Existing {
+        windows: [window_key(patch.create.as_ref().unwrap()).unwrap()].into(),
+        ..Existing::default()
+    };
+    let again = plan_in(&inventory, site(), false, &existing, now(), paris);
+    assert!(
+        again
+            .items
+            .iter()
+            .find(|i| i.origin.name == "Patch")
+            .unwrap()
+            .present
+    );
+}
+
+/// Hosts without an agent become devices, and pings, UDP ports and SNMP
+/// become checks a probe runs (ADR-0148, ADR-0149).
+#[test]
+fn devices_and_probe_checks() {
+    let switch = Host {
+        agentless: true,
+        addresses: vec!["192.0.2.2".into()],
+        ..host("sw", "core-switch", Os::Unknown)
+    };
+    let nameless = Host {
+        agentless: true,
+        addresses: vec!["not an address".into()],
+        ..host("x", "bad name!", Os::Unknown)
+    };
+    let inventory = Inventory {
+        hosts: vec![switch, nameless, host("web", "web-01", Os::Debian)],
+        checks: vec![
+            check(
+                "sw",
+                Watch::Ping { address: None },
+                Some(Severity::Critical),
+            ),
+            check("sw", Watch::Traffic, None),
+            check(
+                "sw",
+                Watch::Snmp {
+                    group: "system".into(),
+                },
+                Some(Severity::Critical),
+            ),
+            check("sw", Watch::Cpu, None),
+            check("sw", Watch::Agent, None),
+            check(
+                "web",
+                Watch::Ping { address: None },
+                Some(Severity::Critical),
+            ),
+            check(
+                "web",
+                Watch::UdpPort {
+                    address: Some("192.0.2.53".into()),
+                    port: 53,
+                    query: Some("dns".into()),
+                },
+                None,
+            ),
+            check(
+                "web",
+                Watch::Snmp {
+                    group: "host".into(),
+                },
+                None,
+            ),
+            check("web", Watch::Traffic, None),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    assert_eq!(
+        by_id(&planned, "server:core-switch").create,
+        Some(Create::Device {
+            peer_id: "core-switch".into(),
+            hostname: "core-switch".into(),
+            address: "192.0.2.2".into()
+        })
+    );
+    // An agentless host the name of which is no address and with none.
+    assert!(planned.items.iter().any(|i| i.kind == "server"
+        && i.list == List::NotMovable
+        && i.note.as_ref().is_some_and(|n| n.code == "no_address")));
+    let create = |id: &str| by_id(&planned, id).create.clone().unwrap();
+    let Create::Check {
+        kind,
+        params,
+        probe,
+        ..
+    } = create("check:core-switch:ping")
+    else {
+        panic!()
+    };
+    assert_eq!((kind.as_str(), probe), ("ping", true));
+    assert!(params.is_empty(), "a device's ping checks its address");
+    let Create::Check { kind, params, .. } = create("check:core-switch:snmp_if") else {
+        panic!()
+    };
+    assert_eq!(
+        (kind.as_str(), params["what"].as_str()),
+        ("snmp", Some("interfaces"))
+    );
+    let Create::Check { params, .. } = create("check:core-switch:snmp_host") else {
+        panic!()
+    };
+    assert_eq!(
+        params["what"], "host",
+        "what an agent measures comes from SNMP on a device"
+    );
+    assert_eq!(
+        by_id(&planned, "check:core-switch:snmp")
+            .note
+            .as_ref()
+            .unwrap()
+            .code,
+        "snmp_credentials"
+    );
+    let alert = planned
+        .items
+        .iter()
+        .find(|i| {
+            i.id.starts_with("threshold:core-switch:monitorflow_snmp_up")
+        })
+        .unwrap();
+    assert!(
+        matches!(&alert.create, Some(Create::Threshold { comparison, critical: Some(c), .. }) if comparison == "<" && *c == 1.0)
+    );
+    assert!(planned
+        .items
+        .iter()
+        .any(|i| i.note.as_ref().is_some_and(|n| n.code == "device_no_agent")));
+    // A server is pinged at its address, and its own traffic is built in.
+    let Create::Check { params, probe, .. } = create("check:web-01:ping_10_0_0_5") else {
+        panic!()
+    };
+    assert_eq!((params["host"].as_str(), probe), (Some("10.0.0.5"), true));
+    let Create::Check { params, .. } = create("check:web-01:udp_53") else {
+        panic!()
+    };
+    assert_eq!(
+        (
+            params["protocol"].as_str(),
+            params["query"].as_str(),
+            params["host"].as_str()
+        ),
+        (Some("udp"), Some("dns"), Some("192.0.2.53"))
+    );
+    assert!(planned
+        .items
+        .iter()
+        .any(|i| i.note.as_ref().is_some_and(|n| n.code == "snmp_of_agent")));
+    assert!(planned
+        .items
+        .iter()
+        .any(|i| i.kind == "builtin" && i.note.as_ref().is_some_and(|n| n.code == "builtin_net")));
 }

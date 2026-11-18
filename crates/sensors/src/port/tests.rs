@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::net::Ipv6Addr;
 
-use tokio::net::{TcpListener, TcpSocket};
+use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 
 use super::*;
 use crate::registry;
@@ -73,8 +73,18 @@ fn params_are_checked() {
         (&[("port", "0")][..], "between 1 and 65535"),
         (&[("port", "65536")][..], "between 1 and 65535"),
         (&[("port", "ssh")][..], "between 1 and 65535"),
-        (&[("port", "53"), ("protocol", "udp")][..], "not supported"),
-        (&[("port", "53"), ("protocol", "sctp")][..], "must be `tcp`"),
+        (
+            &[("port", "53"), ("protocol", "sctp")][..],
+            "must be `tcp` or `udp`",
+        ),
+        (
+            &[("port", "53"), ("query", "dns")][..],
+            "for `protocol` `udp` only",
+        ),
+        (
+            &[("port", "53"), ("protocol", "udp"), ("query", "x")][..],
+            "must be `dns`",
+        ),
         (&[("port", "22"), ("host", "a b")][..], "neither"),
         (&[("port", "22"), ("timeout", "1")][..], "unknown parameter"),
     ] {
@@ -266,4 +276,114 @@ async fn resolved_addresses_outside_port_targets_are_skipped() {
     let loopback = build_local(&pairs, &limited(&["127.0.0.0/8", "::1"])).unwrap();
     let samples = loopback.collect(deadline()).await.unwrap();
     assert_eq!(values(&samples)["up"], 1.0);
+}
+
+fn udp(port: u16, query: Option<&str>) -> PortSensor {
+    let port = port.to_string();
+    let mut pairs = vec![("port", port.as_str()), ("protocol", "udp")];
+    if let Some(query) = query {
+        pairs.push(("query", query));
+    }
+    let params = pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    PortSensor::from_params(&mut registry::Params::new("port", &params).unwrap(), None).unwrap()
+}
+
+#[test]
+fn udp_queries_default_by_port() {
+    assert_eq!(udp(53, None).udp, Some(UdpQuery::Dns));
+    assert_eq!(udp(123, None).udp, Some(UdpQuery::Ntp));
+    assert_eq!(udp(161, None).udp, Some(UdpQuery::None));
+    assert_eq!(udp(5353, Some("dns")).udp, Some(UdpQuery::Dns));
+    assert_eq!(local(22).udp, None);
+}
+
+#[test]
+fn udp_answers_are_recognised() {
+    let dns = UdpQuery::Dns.datagram(0x1234);
+    assert_eq!(&dns[..4], &[0x12, 0x34, 1, 0]);
+    let mut reply = dns.clone();
+    reply[2] |= 0x80;
+    assert!(UdpQuery::Dns.answers(0x1234, &reply));
+    assert!(
+        !UdpQuery::Dns.answers(0x1235, &reply),
+        "another query's answer"
+    );
+    assert!(!UdpQuery::Dns.answers(0x1234, &dns), "a query is no answer");
+    let ntp = UdpQuery::Ntp.datagram(0);
+    assert_eq!((ntp.len(), ntp[0]), (48, 0x23));
+    let mut reply = ntp.clone();
+    reply[0] = 0x24;
+    assert!(UdpQuery::Ntp.answers(0, &reply));
+    assert!(!UdpQuery::Ntp.answers(0, &ntp));
+    assert!(UdpQuery::None.datagram(0).is_empty());
+}
+
+/// A loopback UDP server answering `reply(request)` once per datagram.
+async fn udp_server(reply: fn(&[u8]) -> Option<Vec<u8>>) -> u16 {
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let port = socket.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let mut buf = [0u8; 1500];
+        while let Ok((n, from)) = socket.recv_from(&mut buf).await {
+            if let Some(answer) = reply(&buf[..n]) {
+                let _ = socket.send_to(&answer, from).await;
+            }
+        }
+    });
+    port
+}
+
+#[tokio::test]
+async fn udp_dns_and_ntp_answers_are_up() {
+    let dns = udp_server(|q| {
+        let mut a = q.to_vec();
+        a[2] |= 0x80;
+        Some(a)
+    })
+    .await;
+    let samples = udp(dns, Some("dns")).collect(in_ms(3000)).await.unwrap();
+    let v = values(&samples);
+    assert_eq!((v["up"], v["answered"]), (1.0, 1.0));
+    assert!(v["response_seconds"] < 2.0);
+    let ntp = udp_server(|q| {
+        let mut a = q.to_vec();
+        a[0] = 0x24;
+        Some(a)
+    })
+    .await;
+    let samples = udp(ntp, Some("ntp")).collect(in_ms(3000)).await.unwrap();
+    let v = values(&samples);
+    assert_eq!((v["up"], v["answered"]), (1.0, 1.0));
+}
+
+#[tokio::test]
+async fn udp_silence_and_refusals() {
+    // Answers nothing: a query expecting an answer is down, `none` is up.
+    let silent = udp_server(|_| None).await;
+    let samples = udp(silent, Some("dns")).collect(in_ms(1500)).await.unwrap();
+    let v = values(&samples);
+    assert_eq!((v["up"], v["answered"]), (0.0, 0.0));
+    let samples = udp(silent, Some("none"))
+        .collect(in_ms(1500))
+        .await
+        .unwrap();
+    let v = values(&samples);
+    assert_eq!((v["up"], v["answered"]), (1.0, 0.0));
+    assert!(!v.contains_key("response_seconds"));
+    // Nothing bound: the kernel answers port unreachable.
+    let closed = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let samples = udp(closed, Some("none"))
+        .collect(in_ms(3000))
+        .await
+        .unwrap();
+    let v = values(&samples);
+    assert_eq!(v["up"], 0.0);
 }

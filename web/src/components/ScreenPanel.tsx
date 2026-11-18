@@ -11,7 +11,7 @@ import { niceTicks, segments, timeTicks } from "@/components/ui/chartScale";
 import { SkeletonLines } from "@/components/ui/PageState";
 import { formatSince } from "@/components/ui/time";
 
-import { emptyReason } from "./DashboardPanel";
+import { emptyReason, quiet } from "./DashboardPanel";
 import styles from "./Display.module.css";
 
 /** Chart text in SVG units; the drawing is scaled so it matches the panel's text. */
@@ -224,6 +224,7 @@ export function ScreenPanel({
                   </span>
                   <span className={styles.muted}>
                     {t("display.panel.since", { time: formatSince(new Date(alert.opened_at), now) })}
+                    {alert.silenced_until && ` · ${quiet(alert, now)}`}
                   </span>
                 </li>
               ))}
