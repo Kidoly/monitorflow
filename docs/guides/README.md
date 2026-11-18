@@ -25,6 +25,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor log files for errors on Linux and Windows](monitor-log-files.md): Get alerted when an error, a failed login or any pattern you choose appears in a log file, and read your servers' system logs in one place.
 - [How to monitor anything with your own script (Bash or PowerShell)](monitor-with-your-own-script.md): Turn any shell or PowerShell script into a check with an alert: exit codes for OK, warning and critical, and name=value lines as metrics.
 - [How to monitor switches, printers, UPSs and other network devices](monitor-network-devices.md): Watch what cannot run the agent: ping, TCP and UDP ports, and SNMP v2c or v3 for interfaces, traffic, UPS battery, temperatures and printer supplies, checked from a relay of the site or the central server.
+- [How to find what is on your network](scan-the-network.md): Scan a range of addresses from the central server or a relay, see which machines can take the agent and which devices to watch, and add them in one click. Scans can run every day and say what is new.
 
 ## Databases
 
