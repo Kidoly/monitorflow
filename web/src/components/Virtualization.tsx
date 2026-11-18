@@ -319,7 +319,7 @@ function VmTable({
           <PrimaryCell
             title={o.server.hostname}
             href={scopedHref(serverHref(o.server.id), scope)}
-            sub={o.server.awaiting_agent ? t("virtualization.server.waiting") : matchedBy(o)}
+            sub={o.server.awaiting_agent ? `${matchedBy(o)} · ${t("virtualization.server.waiting")}` : matchedBy(o)}
           />
         ) : (
           t("virtualization.server.none")
