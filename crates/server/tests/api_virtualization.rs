@@ -409,4 +409,55 @@ db_tests! {
         assert_eq!(refused["login"], false);
         assert!(refused["error"].as_str().is_some(), "{refused}");
     }
+
+    /// A person corrects a match, which matching then keeps, and gives a
+    /// virtual machine without an agent a server waiting for it.
+    #[sqlx::test]
+    async fn people_tie_virtual_machines_and_install_the_agent(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let lyon = site(&pool, "lyon").await;
+        server(&pool, paris, "vcenter-1", "device", Some("192.0.2.50")).await;
+        let web = server(&pool, paris, "web-01", "agent", None).await;
+        let other = server(&pool, lyon, "web-02", "agent", None).await;
+        let now = chrono::Utc::now().timestamp_millis();
+        let vms = vec![
+            vm("vm-1", "web-01"),
+            Vm { guest_hostname: Some("build-7.corp.example".into()), guest_os: Some("Microsoft Windows Server 2022 (64-bit)".into()), ..vm("vm-2", "build") },
+        ];
+        monitorflow_server::virt::apply(&pool, &[series("vcenter-1", "vmware", &vms, &[], &[], now)]).await.unwrap();
+        let ids: Vec<(String, Uuid)> = sqlx::query_as("SELECT instance, id FROM virtual_objects ORDER BY instance")
+            .fetch_all(&pool).await.unwrap();
+        let (build, matched) = (ids[0].1, ids[1].1);
+
+        let operator = session(&pool, "op", Role::Operator, Some(paris)).await;
+        // Matched by name; a person says it is none, which sticks.
+        let (status, view) = call(&pool, &operator, "PUT", &format!("/api/virtual-objects/{matched}/server"), Some(json!({"server_id": null}))).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!((view["server"].clone(), view["link_fixed"].clone()), (Value::Null, json!(true)));
+        monitorflow_server::virt::apply(&pool, &[series("vcenter-1", "vmware", &vms, &[], &[], now + 1000)]).await.unwrap();
+        let kept: Option<Uuid> = sqlx::query_scalar("SELECT server_id FROM virtual_objects WHERE id = $1").bind(matched).fetch_one(&pool).await.unwrap();
+        assert_eq!(kept, None);
+        // A server the operator cannot read is refused; back to automatic.
+        let (status, _) = call(&pool, &operator, "PUT", &format!("/api/virtual-objects/{matched}/server"), Some(json!({"server_id": other}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (_, view) = call(&pool, &operator, "PUT", &format!("/api/virtual-objects/{matched}/server"), Some(json!({"automatic": true}))).await;
+        assert_eq!((view["server"]["id"].as_str(), view["matched_by"].as_str()), (Some(web.to_string().as_str()), Some("name")));
+        let (_, view) = call(&pool, &operator, "PUT", &format!("/api/virtual-objects/{matched}/server"), Some(json!({"server_id": web}))).await;
+        assert_eq!(view["matched_by"], "person");
+
+        // Installing the agent takes an administrator of the site.
+        assert_eq!(call(&pool, &operator, "POST", &format!("/api/virtual-objects/{build}/install-agent"), None).await.0, StatusCode::FORBIDDEN);
+        let admin = session(&pool, "admin", Role::Administrator, None).await;
+        let (status, waiting) = call(&pool, &admin, "POST", &format!("/api/virtual-objects/{build}/install-agent"), None).await;
+        assert_eq!(status, StatusCode::CREATED, "{waiting}");
+        assert_eq!(waiting["hostname"], "build-7");
+        assert_eq!(waiting["awaiting_agent"], true);
+        assert_eq!(waiting["os_family"], "windows");
+        let (_, page) = call(&pool, &admin, "GET", &format!("/api/servers/{}/virtualization", waiting["id"].as_str().unwrap()), None).await;
+        assert_eq!(page["guest_of"][0]["object"]["name"], "build");
+        assert_eq!(call(&pool, &admin, "POST", &format!("/api/virtual-objects/{build}/install-agent"), None).await.0, StatusCode::CONFLICT);
+        let actions: Vec<String> = sqlx::query_scalar("SELECT action FROM audit_log WHERE action LIKE 'virt.%' ORDER BY id")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(actions, ["virt.link", "virt.link", "virt.link", "virt.install_agent"]);
+    }
 }

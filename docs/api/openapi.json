@@ -34613,6 +34613,355 @@
           }
         }
       }
+    },
+    "/api/v1/virtual-objects/{id}/install-agent": {
+      "post": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Install the agent on a virtual machine",
+        "description": "Adds a server waiting for its agent in the source's site, named after the virtual machine's guest host name (else its name), a Windows server when its guest system says so, and ties the virtual machine to it. Its page then shows the install command; the agent takes it over when it enrolls with that name (ADR-0146).\n\n**Who**: administrator of the source's customer, as for install keys. **Area**: `servers`. Audited as `virt.install_agent`.",
+        "operationId": "install_agent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The virtual machine",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The server waiting for its agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerView"
+                },
+                "example": {
+                  "agent_version": "0.9.2",
+                  "awaiting_agent": true,
+                  "cert_not_after": "2027-02-12T06:12:40Z",
+                  "command_kinds": {
+                    "apply_updates": "accepted",
+                    "self_update": "accepted",
+                    "shell": "off"
+                  },
+                  "connected_at": "2026-11-14T06:12:40Z",
+                  "created_at": "2026-09-01T08:00:00Z",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "acme",
+                  "hostname": "web-1",
+                  "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "last_heartbeat": "2026-11-14T09:29:55Z",
+                  "offline_alerts": true,
+                  "open_incidents": 1,
+                  "os_family": "debian",
+                  "os_version": "12",
+                  "package_updates": true,
+                  "peer_id": "web-1",
+                  "relay_id": null,
+                  "revoked_at": null,
+                  "silenced_until": null,
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "site_offline_alerts": true,
+                  "status": "waiting",
+                  "via_relay": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a virtual machine: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such virtual machine, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It is already a server: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/virtual-objects/{id}/server": {
+      "put": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Tie a virtual machine to a server by hand",
+        "description": "Says which server or device of the source's customer a virtual machine is, or that it is none (`\"server_id\": null`); matching then never changes it. `\"automatic\": true` hands it back to matching, which runs at once.\n\n**Who**: operator or above on the source's site, for a server they can read. **Area**: `servers`. Audited as `virt.link`, with the server before and after.",
+        "operationId": "link_virtual_machine",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The virtual machine, from `objects` or `guest_of`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkRequest"
+              },
+              "example": {
+                "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The virtual machine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectView"
+                },
+                "example": {
+                  "collected_at": "2026-11-18T10:20:00Z",
+                  "details": {
+                    "addresses": "192.0.2.21",
+                    "guest_hostname": "web-1.example.test",
+                    "guest_os": "Debian GNU/Linux 12 (64-bit)",
+                    "host": "esx-02",
+                    "macs": "00:50:56:aa:bb:01",
+                    "power_state": "poweredOn",
+                    "uuid": "4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"
+                  },
+                  "id": "8a1f3c52-6b7d-4e9f-a0b1-c2d3e4f5a6b7",
+                  "key": "vm-42",
+                  "kind": "vm",
+                  "link_fixed": true,
+                  "matched_by": "person",
+                  "metrics": {
+                    "alarms_critical": 0.0,
+                    "alarms_warning": 0.0,
+                    "cpu_count": 2.0,
+                    "cpu_usage_ratio": 0.12,
+                    "memory_bytes": 4294967296.0,
+                    "memory_usage_ratio": 0.4,
+                    "powered_on": 1.0,
+                    "snapshot_age_seconds": 864000.0,
+                    "snapshots": 1.0,
+                    "status": 0.0,
+                    "storage_used_bytes": 21474836480.0
+                  },
+                  "name": "web-1",
+                  "seen_at": "2026-11-18T10:20:03Z",
+                  "server": {
+                    "awaiting_agent": false,
+                    "hostname": "web-1",
+                    "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                    "kind": "agent"
+                  },
+                  "stale": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a virtual machine, or a server of another customer: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such virtual machine, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -41374,6 +41723,25 @@
             "$ref": "#/components/schemas/LicenseState"
           }
         }
+      },
+      "LinkRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/virtual-objects/{id}/server`.",
+        "properties": {
+          "automatic": {
+            "type": "boolean",
+            "description": "`true` hands the virtual machine back to automatic matching;\n`server_id` is then ignored."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The server or device the virtual machine is, of the source's\ncustomer; `null` for none. Kept until changed: matching leaves it."
+          }
+        },
+        "additionalProperties": false
       },
       "LinkedServer": {
         "type": "object",

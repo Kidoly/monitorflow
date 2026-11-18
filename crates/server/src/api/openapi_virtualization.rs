@@ -14,7 +14,7 @@ use crate::vmware;
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(server_virtualization, watch_hyperv, test_vmware, device_vmware, set_device_vmware,
+    paths(server_virtualization, link_virtual_machine, install_agent, watch_hyperv, test_vmware, device_vmware, set_device_vmware,
           delete_device_vmware),
     components(schemas(ErrorBody, crate::vmware::Threshold, devices::TestedCertificate)),
     modifiers(&Common),
@@ -158,3 +158,38 @@ fn set_device_vmware() {}
             body = ErrorBody),
     ))]
 fn delete_device_vmware() {}
+
+#[utoipa::path(put, path = "/api/v1/virtual-objects/{id}/server", tag = "virtualization",
+    summary = "Tie a virtual machine to a server by hand",
+    description = "Says which server or device of the source's customer a virtual machine is, or that it is \
+none (`\"server_id\": null`); matching then never changes it. `\"automatic\": true` hands it back to \
+matching, which runs at once.\n\n**Who**: operator or above on the source's site, for a server they can read. \
+**Area**: `servers`. Audited as `virt.link`, with the server before and after.",
+    params(("id" = uuid::Uuid, Path, description = "The virtual machine, from `objects` or `guest_of`")),
+    request_body(content = virtualization::LinkRequest, example = json!({"server_id": ex::SERVER})),
+    responses(
+        (status = 200, description = "The virtual machine", body = virtualization::ObjectView,
+            example = json!(ex::merge(vm(), json!({"matched_by": "person", "link_fixed": true})))),
+        (status = 400, description = "Not a virtual machine, or a server of another customer: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may only read the site: `forbidden`", body = ErrorBody),
+        (status = 404, description = "No such virtual machine, or outside the key's reach: `not_found`", body = ErrorBody),
+    ))]
+fn link_virtual_machine() {}
+
+#[utoipa::path(post, path = "/api/v1/virtual-objects/{id}/install-agent", tag = "virtualization",
+    summary = "Install the agent on a virtual machine",
+    description = "Adds a server waiting for its agent in the source's site, named after the virtual \
+machine's guest host name (else its name), a Windows server when its guest system says so, and ties the \
+virtual machine to it. Its page then shows the install command; the agent takes it over when it enrolls \
+with that name (ADR-0146).\n\n**Who**: administrator of the source's customer, as for install keys. **Area**: `servers`. Audited as \
+`virt.install_agent`.",
+    params(("id" = uuid::Uuid, Path, description = "The virtual machine")),
+    responses(
+        (status = 201, description = "The server waiting for its agent", body = super::servers::ServerView,
+            example = json!(ex::merge(ex::server(), json!({"awaiting_agent": true, "status": "waiting"})))),
+        (status = 400, description = "Not a virtual machine: `invalid`", body = ErrorBody),
+        (status = 403, description = "Not an administrator of the site: `forbidden`", body = ErrorBody),
+        (status = 404, description = "No such virtual machine, or outside the key's reach: `not_found`", body = ErrorBody),
+        (status = 409, description = "It is already a server: `conflict`", body = ErrorBody),
+    ))]
+fn install_agent() {}

@@ -11,6 +11,8 @@
 pub mod matching;
 mod store;
 
+pub use store::match_source;
+
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
