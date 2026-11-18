@@ -823,6 +823,8 @@ mod tests {
             prototype: false,
             template: None,
             tags: vec![],
+            id: None,
+            dependencies: vec![],
         }
     }
 
