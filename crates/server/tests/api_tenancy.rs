@@ -1663,6 +1663,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             );
         }
         ("GET", "/api/servers/{id}/sensors")
+        | ("GET", "/api/servers/{id}/website-checks")
         | ("GET", "/api/servers/{id}/thresholds/effective")
         | ("GET", "/api/servers/{id}/sensor_configs")
         | ("GET", "/api/servers/{id}/thresholds") => {

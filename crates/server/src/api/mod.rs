@@ -49,6 +49,7 @@
 //! | GET | `/api/servers/{id}/recommendations` | read | [`recommendations::RecommendationList`]: checks recommended from what the agent saw (ADR-0134) |
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
 //! | POST | `/api/servers/{id}/recommendations/restore` | modify | body [`recommendations::KeyRequest`], a dismissed one; 204 |
+//! | GET | `/api/servers/{id}/website-checks` | read | [`website_checks::WebsiteChecks`]: each website check with its last status, time, final URL and certificate (ADR-0150) |
 //! | GET | `/api/checks/usage` | read | [`checks::UsageList`]: servers running each check, over the sites read, for the catalogue's "Most used" |
 //! | GET | `/api/sites/{id}/sensors` | read | [`sensors::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | PUT | `/api/sites/{id}/check-interval` | modify | body and answer [`check_interval::CheckInterval`] `{"interval_ms"}`, 10 s to 24 h or `null` for the built-in one: how often the site's built-in checks run; audited (ADR-0097) |
@@ -753,6 +754,7 @@ pub mod tokens;
 pub mod user_admin;
 pub mod users;
 pub mod v1;
+pub mod website_checks;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -1202,6 +1204,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/servers/{id}/sensor-values",
             get(sensor_values::sensor_values),
+        )
+        .route(
+            "/api/servers/{id}/website-checks",
+            get(website_checks::list),
         )
         .route("/api/servers/{id}/logs", get(logs::list))
         .route("/api/metrics/query", get(metrics::query))

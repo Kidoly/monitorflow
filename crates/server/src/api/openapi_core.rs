@@ -106,7 +106,7 @@ pub mod ex {
             "kind": "systemd", "name": "services", "instance": "",
             "interval_ms": 30000, "timeout_ms": null,
             "params": {"units": "nginx.service,postgresql.service"},
-            "enabled": true,
+            "enabled": true, "secret_set": false,
             "created_at": "2026-11-02T10:15:00Z", "updated_at": "2026-11-02T10:15:00Z"
         })
     }
@@ -248,11 +248,16 @@ macro_rules! sensor_config_rules {
 check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is \
 wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\n\
 A server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the \
-server's site, which then runs it instead of the agent. Probes run `ping` and `port` (TCP or UDP) checks; a \
-device's rows always have one, and default to the relay of its site, else the central server. A probe check \
-of a server with an agent names its `host`; a device's checks default to its address. Its `instance` \
+server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP) and `http` \
+checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe \
+check of a server with an agent names its `host`; a device's checks default to its address. A website check \
+names its `url` and takes no address. Its `instance` \
 defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep \
 apart. `ping` and UDP never run on an agent.\n\n\
+A website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, \
+`not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over \
+`https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the \
+stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\n\
 Audited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the \
 parameters but never their values. Connected agents get the change within seconds."
     };
@@ -305,6 +310,9 @@ that its site or the built-in checks give; with `enabled: false`, removes that s
         ("port" = (summary = "Check that a port answers",
             value = json!({"kind": "port", "name": "https", "interval_ms": 30000,
                            "params": {"host": "127.0.0.1", "port": 443}}))),
+        ("website" = (summary = "Check that a website answers with its shop",
+            value = json!({"kind": "http", "name": "http", "instance": "shop", "interval_ms": 60000,
+                           "params": {"url": "https://shop.example.com/", "contains": "Add to cart"}}))),
         ("remove" = (summary = "Stop checking disk activity on this server",
             value = json!({"kind": "diskio", "interval_ms": 60000, "enabled": false}))),
     )),

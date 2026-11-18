@@ -9,7 +9,7 @@ use monitorflow_sensors::SensorConfig;
 use sqlx::PgPool;
 
 use super::ProbeSet;
-use crate::sensor_config::params;
+use crate::sensor_config::{params, with_secret};
 
 #[derive(Debug, Clone)]
 pub struct ProbeStore {
@@ -29,6 +29,7 @@ type Line = (
     serde_json::Value,
     String,
     Option<String>,
+    Option<String>,
 );
 
 impl ProbeStore {
@@ -40,7 +41,7 @@ impl ProbeStore {
     pub async fn load(&self) -> Result<HashMap<String, ProbeSet>, sqlx::Error> {
         let lines: Vec<Line> = sqlx::query_as(
             "SELECT s.peer_id, si.name, s.address, c.kind, c.name, c.instance,
-                    c.interval_ms, c.timeout_ms, c.params, c.probe, r.peer_id
+                    c.interval_ms, c.timeout_ms, c.params, c.probe, r.peer_id, c.secret
              FROM sensor_configs c
              JOIN servers s ON s.id = c.server_id
              JOIN sites si ON si.id = s.site_id
@@ -64,14 +65,29 @@ fn non_negative(value: i64) -> u64 {
 fn group(lines: Vec<Line>) -> HashMap<String, ProbeSet> {
     let mut sets: HashMap<String, ProbeSet> = HashMap::new();
     for line in lines {
-        let (device, site, address, kind, name, instance, interval, timeout, raw, probe, relay) =
-            line;
+        let (
+            device,
+            site,
+            address,
+            kind,
+            name,
+            instance,
+            interval,
+            timeout,
+            raw,
+            probe,
+            relay,
+            secret,
+        ) = line;
         let probe = match (probe.as_str(), relay) {
             ("central", _) => CENTRAL.to_owned(),
             (_, Some(relay)) => relay,
             _ => continue,
         };
         let mut params: BTreeMap<String, String> = params(raw);
+        // The password of a website check, opened for the probe that runs
+        // it, which gets it over its mTLS stream like an agent.
+        with_secret(&kind, &mut params, secret);
         // A website check names its URL itself (ADR-0150).
         if let Some(address) = address.filter(|_| kind != monitorflow_webcheck::KIND) {
             params.entry("host".into()).or_insert(address);
@@ -115,6 +131,7 @@ mod tests {
             params,
             probe.into(),
             relay.map(str::to_owned),
+            None,
         )
     }
 

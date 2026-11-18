@@ -10,11 +10,37 @@ use uuid::Uuid;
 
 use super::{params, resolve, site_interval, Layer, Resolved, Row, Spec};
 use crate::ca::CertificateAuthority;
+use crate::secrets::{self, Column};
 
 /// Most bytes of plugin packages in one configuration, under the stream's
 /// 4 MiB per message; a plugin past it is not granted, and its checks show
 /// as refused.
 const MAX_GRANTED_BYTES: usize = 3 * 1024 * 1024;
+
+/// Adds the opened password of a website check to its `params`, as the
+/// check reads it (ADR-0150). One that does not open is left out, so the
+/// check runs without it and its failure shows.
+pub(crate) fn with_secret(
+    kind: &str,
+    params: &mut std::collections::BTreeMap<String, String>,
+    secret: Option<String>,
+) {
+    if kind != monitorflow_webcheck::KIND {
+        return;
+    }
+    match secrets::open_stored(Column::SensorConfigs, secret) {
+        Some(Ok(secret)) => {
+            params.insert(
+                monitorflow_webcheck::SECRET_PARAM.into(),
+                secret.expose().to_owned(),
+            );
+        }
+        Some(Err(error)) => {
+            tracing::warn!(%error, "the password of a website check does not open; sent without it")
+        }
+        None => {}
+    }
+}
 
 /// Reads configurations and records what agents applied.
 #[derive(Clone)]
@@ -146,13 +172,15 @@ impl SensorConfigStore {
             Option<serde_json::Value>,
             Option<bool>,
             bool,
+            Option<String>,
         );
         // Checks a probe runs are not the agent's (ADR-0148); a device
         // runs none of the site's, nor the built-in ones.
         let lines: Vec<Line> = sqlx::query_as(
             "SELECT si.sensor_revision + s.sensor_revision, si.id, si.check_interval_ms,
                     c.server_id IS NOT NULL, c.kind, c.name, c.instance,
-                    c.interval_ms, c.timeout_ms, c.params, c.enabled, s.kind = 'device'
+                    c.interval_ms, c.timeout_ms, c.params, c.enabled, s.kind = 'device',
+                    c.secret
              FROM servers s
              JOIN sites si ON si.id = s.site_id
              LEFT JOIN sensor_configs c
@@ -170,38 +198,41 @@ impl SensorConfigStore {
         let site = first.1;
         let builtin_interval = site_interval(first.2.map(i64::from));
         let device = first.11;
-        let rows =
-            lines
-                .into_iter()
-                .filter_map(|line| {
-                    let (
-                        _,
-                        _,
-                        _,
-                        server,
+        let rows = lines
+            .into_iter()
+            .filter_map(|line| {
+                let (
+                    _,
+                    _,
+                    _,
+                    server,
+                    kind,
+                    name,
+                    instance,
+                    interval,
+                    timeout,
+                    params_,
+                    enabled,
+                    _,
+                    secret,
+                ) = line;
+                let kind = kind?;
+                let mut params = params(params_?);
+                with_secret(&kind, &mut params, secret);
+                Some(Row {
+                    layer: if server? { Layer::Server } else { Layer::Site },
+                    spec: Spec {
                         kind,
-                        name,
-                        instance,
-                        interval,
-                        timeout,
-                        params_,
-                        enabled,
-                        _,
-                    ) = line;
-                    Some(Row {
-                        layer: if server? { Layer::Server } else { Layer::Site },
-                        spec: Spec {
-                            kind: kind?,
-                            name: name?,
-                            instance: instance?,
-                            interval_ms: non_negative(interval?),
-                            timeout_ms: timeout.map(non_negative),
-                            params: params(params_?),
-                        },
-                        enabled: enabled?,
-                    })
+                        name: name?,
+                        instance: instance?,
+                        interval_ms: non_negative(interval?),
+                        timeout_ms: timeout.map(non_negative),
+                        params,
+                    },
+                    enabled: enabled?,
                 })
-                .collect();
+            })
+            .collect();
         let mut sensors = resolve(rows, builtin_interval);
         if device {
             sensors.clear();
