@@ -2098,6 +2098,35 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 );
             }
         }
+        // Previews (ADR-0153): B is 404 and never queried; A only with A's
+        // matchers and filters.
+        ("POST", "/api/servers/{id}/thresholds/preview")
+        | ("POST", "/api/sites/{id}/thresholds/preview") => {
+            let body = || Some(json!({ "rule": threshold_body(), "days": 1 }));
+            let server = path.starts_with("/api/servers");
+            let (theirs, ours) = if server {
+                (b.server, a.server)
+            } else {
+                (b.site, a.site)
+            };
+            let before = ctx.vm.seen().len();
+            let uri = path.replace("{id}", &theirs.to_string());
+            assert_eq!(ctx.status(method, &uri, body()).await, not_found, "{uri}");
+            assert_eq!(ctx.vm.seen().len(), before, "{uri} queried the store");
+            let uri = path.replace("{id}", &ours.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, body()).await,
+                StatusCode::OK,
+                "{uri}"
+            );
+            let last = ctx.vm_seen_last();
+            assert!(
+                !server
+                    || (last.contains("site=\"site-a\"")
+                        && last.contains("extra_label=site=site-a")),
+                "{last}"
+            );
+        }
         ("POST", "/api/servers/{id}/thresholds") | ("POST", "/api/sites/{id}/thresholds") => {
             for id in [b.server, b.site] {
                 let uri = path.replace("{id}", &id.to_string());
