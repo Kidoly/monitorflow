@@ -42,8 +42,8 @@ step() { echo; echo "== $*"; }
 # Builds the server and agent of this checkout.
 step "build"
 (cd "$REPO" && cargo build -q -p monitorflow-server -p monitorflow-agent)
-SERVER_BIN=$REPO/${CARGO_TARGET_DIR:-target}/debug/monitorflow-server
-AGENT_BIN=$REPO/${CARGO_TARGET_DIR:-target}/debug/monitorflow-agent
+SERVER_BIN=${CARGO_TARGET_DIR:-$REPO/target}/debug/monitorflow-server
+AGENT_BIN=${CARGO_TARGET_DIR:-$REPO/target}/debug/monitorflow-agent
 
 # The Docker bridge's gateway: what containers reach the host at.
 BRIDGE=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
@@ -168,6 +168,8 @@ if [[ $WHICH == all || $WHICH == zabbix ]]; then
     import_and_check zabbix-api "$(jq -n --arg site "$SITE" --arg u "$ZBX_URL" --arg t "$ZBX_TOKEN" \
         '{source: "zabbix", site_id: $site, connection: {url: $u, token: $t}}')"
     check_server web-01 port_80 monitorflow_cpu_usage_ratio
+    # Web scenarios and HTTP agent items are website checks (ADR-0150).
+    check_server web-01 http_ monitorflow_http_127_0_0_1_up
     check_server db-01 service_postgresql monitorflow_port_5432_up
     get /api/silences | jq -e '.silences | length > 0' >/dev/null || fail "zabbix: no silence from the maintenances"
     get /api/notifications/channels | jq -e '[.channels[] | select(.kind == "email" or .kind == "webhook")] | length > 0' >/dev/null \
@@ -183,6 +185,17 @@ if [[ $WHICH == all || $WHICH == prometheus ]]; then
     import_and_check prometheus-api "$(jq -n --arg site "$SITE" '{source: "prometheus", site_id: $site,
         connection: {url: "http://127.0.0.1:19090", alertmanager_url: "http://127.0.0.1:19093"}}')"
     check_server web-01 "" monitorflow_cpu_usage_ratio
+    # The blackbox http probe is a website check now (ADR-0150).
+    found=""
+    for id in $(get "/api/servers?limit=500" | jq -r '.servers[].id'); do
+        if get "/api/servers/$id/sensor_configs" | jq -e '.entries[] | select(.kind == "http" and .params.url == "http://shop/")' >/dev/null; then
+            found=$id; break
+        fi
+    done
+    [[ -n "$found" ]] || fail "prometheus: no website check of http://shop/"
+    get "/api/servers/$found/thresholds" | jq -e '[.entries[] | select(.metric == "monitorflow_http_shop_up" or .metric == "monitorflow_http_shop_response_seconds")] | length == 2' >/dev/null \
+        || fail "prometheus: the website check of http://shop/ lacks its alerts"
+    ok "prometheus: the blackbox http probe is a website check with its alerts"
     get /api/notifications/channels | jq -e '[.channels[] | select(.kind == "slack" or .kind == "teams" or .kind == "discord")] | length > 0' >/dev/null \
         || fail "prometheus: no chat channel"
     ok "prometheus: channels"
