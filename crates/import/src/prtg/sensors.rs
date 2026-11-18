@@ -332,7 +332,7 @@ fn web(sensor: &Object, host: Option<&str>) -> Mapped {
     };
     // The planner adds its own note: the port only, not the page.
     Mapped::Watch {
-        watch: Watch::Web { url },
+        watch: Watch::web(crate::model::Website::new(&url)),
         alert: down(),
         fidelity: exact(),
         limits: Vec::new(),
@@ -486,9 +486,7 @@ mod tests {
         };
         assert_eq!(
             watch,
-            Watch::Web {
-                url: "http://[fd00::1]/status".into()
-            }
+            Watch::web(crate::model::Website::new("http://[fd00::1]/status"))
         );
     }
 }

@@ -144,9 +144,9 @@ fn port_target(watch: &Watch) -> Option<(String, u16)> {
                 .to_ascii_lowercase(),
             *port,
         )),
-        Watch::Web { url } => Some((
-            crate::text::host_of(url).to_ascii_lowercase(),
-            crate::text::port_of(url)?,
+        Watch::Web(site) => Some((
+            crate::text::host_of(&site.url).to_ascii_lowercase(),
+            crate::text::port_of(&site.url)?,
         )),
         _ => None,
     }

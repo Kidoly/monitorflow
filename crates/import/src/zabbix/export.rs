@@ -9,8 +9,8 @@
 use serde_json::Value;
 
 use super::config::{
-    Config, Host, Interface, InterfaceKind, Item, ItemKind, Macro, MediaKind, MediaType, Priority,
-    Template, Trigger, WebScenario,
+    Config, Host, HttpAgent, Interface, InterfaceKind, Item, ItemKind, Macro, MediaKind, MediaType,
+    Priority, Template, Trigger, WebAuth, WebRequest, WebScenario,
 };
 use super::expression;
 use crate::source::{File, ReadError};
@@ -231,7 +231,7 @@ fn item_of(value: &Value, prototype: bool) -> Item {
         delay,
         enabled: !disabled(value),
         prototype,
-        url: Some(text(value, "url")).filter(|u| !u.is_empty()),
+        http: (kind == ItemKind::HttpAgent).then(|| Box::new(http_agent_of(value))),
         template: None,
     }
 }
@@ -256,6 +256,75 @@ fn trigger_of(value: &Value) -> Trigger {
     }
 }
 
+/// `name` and `value` pairs, as exports write headers and query fields.
+fn pairs(value: &Value, key: &str) -> Vec<(String, String)> {
+    list(value, key)
+        .into_iter()
+        .map(|p| (text(p, "name"), text(p, "value")))
+        .filter(|(n, _)| !n.is_empty())
+        .collect()
+}
+
+/// Whether `key` holds anything: a non-empty text or list.
+fn has(value: &Value, key: &str) -> bool {
+    !text(value, key).trim().is_empty() || !list(value, key).is_empty()
+}
+
+/// The authentication of a scenario or an item, by its export keys.
+fn auth_of(value: &Value, kind: &str, user: &str, password: &str) -> WebAuth {
+    let kind = match text(value, kind).as_str() {
+        "BASIC" => "basic",
+        "NTLM" => "ntlm",
+        "KERBEROS" => "kerberos",
+        "DIGEST" => "digest",
+        _ => "",
+    };
+    WebAuth {
+        kind: kind.into(),
+        user: if kind.is_empty() {
+            String::new()
+        } else {
+            text(value, user)
+        },
+        password: !kind.is_empty() && !text(value, password).is_empty(),
+    }
+}
+
+/// A request as exports write a step or an HTTP agent item; `status`
+/// is the default of its required codes, which exports leave out.
+fn request_of(value: &Value, status: &str) -> WebRequest {
+    let status_codes = match value.get("status_codes") {
+        Some(_) => text(value, "status_codes"),
+        None => status.to_owned(),
+    };
+    let method = match text(value, "request_method").as_str() {
+        "" => "GET".to_owned(),
+        other => other.to_owned(),
+    };
+    WebRequest {
+        name: text(value, "name"),
+        url: text(value, "url"),
+        query: pairs(value, "query_fields"),
+        method,
+        body: has(value, "posts"),
+        status_codes,
+        required: text(value, "required"),
+        follow_redirects: text(value, "follow_redirects") != "NO",
+        headers_only: text(value, "retrieve_mode") == "HEADERS",
+        headers: pairs(value, "headers"),
+        variables: has(value, "variables"),
+        timeout: Some(text(value, "timeout")).filter(|t| !t.is_empty()),
+    }
+}
+
+/// An HTTP agent item's request: its codes default to `200`.
+fn http_agent_of(value: &Value) -> HttpAgent {
+    HttpAgent {
+        request: request_of(value, "200"),
+        auth: auth_of(value, "authtype", "username", "password"),
+    }
+}
+
 fn web_of(value: &Value) -> WebScenario {
     WebScenario {
         name: text(value, "name"),
@@ -263,11 +332,14 @@ fn web_of(value: &Value) -> WebScenario {
             .filter(|d| !d.is_empty())
             .or(Some("1m".into())),
         enabled: !disabled(value),
-        urls: list(value, "steps")
+        // A step without codes passes any.
+        steps: list(value, "steps")
             .into_iter()
-            .map(|s| text(s, "url"))
-            .filter(|u| !u.is_empty())
+            .map(|s| request_of(s, ""))
             .collect(),
+        headers: pairs(value, "headers"),
+        variables: has(value, "variables"),
+        auth: auth_of(value, "authentication", "http_user", "http_password"),
     }
 }
 

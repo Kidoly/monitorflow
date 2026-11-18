@@ -393,7 +393,8 @@ impl Planner<'_> {
                     }
                     ("eventlog", params, ("eventlog".into(), channel.clone()))
                 }
-                Watch::Web { url } => {
+                Watch::Web(site) => {
+                    let url = &site.url;
                     let host = monitorflow_import::text::host_of(url);
                     let Some(port) = monitorflow_import::text::port_of(url) else {
                         self.not_movable(
@@ -625,6 +626,10 @@ impl Planner<'_> {
                 }
                 Measure::DiskWait { device } => {
                     ("monitorflow_diskio_wait_seconds".to_owned(), device.clone())
+                }
+                Measure::WebResponseTime { .. } | Measure::CertificateDays { .. } => {
+                    self.not_movable("threshold", origin, vec![], note("no_equivalent", args! {}));
+                    continue;
                 }
             };
             let comparison = match threshold.direction {

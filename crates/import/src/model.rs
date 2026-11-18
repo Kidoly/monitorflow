@@ -196,9 +196,122 @@ pub enum Watch {
         providers: Vec<String>,
         event_ids: Vec<u32>,
     },
-    /// A web page or API answering. MonitorFlow checks that its port
-    /// answers, which the preview says.
-    Web { url: String },
+    /// A web page or API answering as expected: a website check
+    /// (ADR-0150).
+    Web(Box<Website>),
+}
+
+impl Watch {
+    /// The website check of `site`.
+    pub fn web(site: Website) -> Self {
+        Self::Web(Box::new(site))
+    }
+}
+
+/// GET reads the page; HEAD only its status and headers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum WebMethod {
+    #[default]
+    Get,
+    Head,
+}
+
+impl WebMethod {
+    fn is_get(&self) -> bool {
+        *self == Self::Get
+    }
+}
+
+/// Which addresses of a host name a website check tries.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpFamily {
+    #[default]
+    Any,
+    V4,
+    V6,
+}
+
+impl IpFamily {
+    fn is_any(&self) -> bool {
+        *self == Self::Any
+    }
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// Every status code: a check that only needs an answer.
+pub const ANY_STATUS: &str = "100-599";
+
+/// What a website check asks for and expects, as the source has it.
+/// Readers note what they could not keep; the planner turns it into the
+/// parameters of a check of kind `http`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Website {
+    pub url: String,
+    #[serde(skip_serializing_if = "WebMethod::is_get")]
+    pub method: WebMethod,
+    /// Status codes and ranges that pass, `200-299,301`; the check's
+    /// default (`200-299`, or `200-399` without following redirects)
+    /// when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Plain text the page must hold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contains: Option<String>,
+    /// Plain text the page must not hold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_contains: Option<String>,
+    #[serde(skip_serializing_if = "is_true")]
+    pub follow_redirects: bool,
+    /// Extra request headers, name and value, in order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<(String, String)>,
+    /// The user name of basic authentication, when the source has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Whether the source sends a password or a token. Its value is never
+    /// read into the inventory: the person sets it after the import.
+    #[serde(skip_serializing_if = "is_false")]
+    pub credentials: bool,
+    #[serde(skip_serializing_if = "IpFamily::is_any")]
+    pub ip: IpFamily,
+    /// How long one run may take, when the source says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_s: Option<u32>,
+}
+
+impl Website {
+    /// A check of `url` with MonitorFlow's defaults: GET, a 2xx answer
+    /// after following redirects.
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            method: WebMethod::Get,
+            status: None,
+            contains: None,
+            not_contains: None,
+            follow_redirects: true,
+            headers: Vec::new(),
+            username: None,
+            credentials: false,
+            ip: IpFamily::Any,
+            timeout_s: None,
+        }
+    }
+
+    /// Any answer passes: what a check of the certificate alone needs.
+    pub fn any_status(mut self) -> Self {
+        self.status = Some(ANY_STATUS.to_owned());
+        self
+    }
 }
 
 /// The alert that comes with a check: when it fails, an incident of this
@@ -248,6 +361,10 @@ pub enum Measure {
         #[serde(skip_serializing_if = "Option::is_none")]
         device: Option<String>,
     },
+    /// How long the website check of `url` takes, in seconds.
+    WebResponseTime { url: String },
+    /// Days until the certificate of the website check of `url` expires.
+    CertificateDays { url: String },
 }
 
 /// Above or below.

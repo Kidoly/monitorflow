@@ -1,7 +1,7 @@
 use chrono::TimeZone;
 use monitorflow_common::redact::Secret;
 use monitorflow_import::model::{
-    Alert, Channel, Host, Origin, Silence, Smtp, Threshold, Unmovable,
+    Alert, Channel, Host, Origin, Silence, Smtp, Threshold, Unmovable, Website,
 };
 
 use super::*;
@@ -188,9 +188,7 @@ fn checks_become_sensor_rows_with_their_alert() {
             ),
             check(
                 "l",
-                Watch::Web {
-                    url: "https://shop.example/health".into(),
-                },
+                Watch::web(Website::new("https://shop.example/health")),
                 Some(Severity::Critical),
             ),
         ],

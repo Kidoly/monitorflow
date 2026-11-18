@@ -330,8 +330,12 @@ impl Fleet {
                 } else {
                     format!("http://{}", probe.target)
                 };
-                // The server says how a web check is approximated.
-                make(host.clone(), Watch::Web { url }, Fidelity::Exact)
+                // Its module's settings are read in the next change.
+                make(
+                    host.clone(),
+                    Watch::web(crate::model::Website::new(&url)),
+                    Fidelity::Exact,
+                )
             }
             Prober::Icmp => match self.find(&probe.target) {
                 // Pinging a host: its agent answering says the same.

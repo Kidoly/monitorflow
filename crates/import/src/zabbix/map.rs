@@ -24,6 +24,7 @@ use super::maintenance;
 use super::media;
 use super::stock;
 use super::triggers::{self, Outcome};
+use super::web;
 
 /// Keys named in a built-in check's origin before "and N more".
 const KEYS_SHOWN: usize = 6;
@@ -85,6 +86,25 @@ impl triggers::Host for View {
         items()
             .find(|i| i.key == key)
             .or_else(|| items().find(|i| self.macros.expand(&i.key).is_ok_and(|k| k == key)))
+    }
+
+    fn scenario(&self, name: &str) -> Option<(String, String)> {
+        let (scenario, _) = self.web.iter().find(|(w, _)| w.name == name)?;
+        let first = scenario.steps.first()?.name.clone();
+        let (site, _) = web::scenario(scenario, &self.macros).ok()?;
+        Some((first, site.url))
+    }
+
+    fn certificate_url(&self) -> Option<String> {
+        self.items.iter().find_map(|(item, _)| {
+            if items::split_key(&item.key).0 != "web.certificate.get" {
+                return None;
+            }
+            match items::map(item, &self.macros) {
+                Mapped::Check(Watch::Web(site), _) => Some(site.url),
+                _ => None,
+            }
+        })
     }
 }
 
@@ -348,40 +368,34 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory) {
             });
             continue;
         }
-        // One check per address the steps reach.
-        let mut reached: Vec<(String, Option<u16>)> = Vec::new();
-        for url in &scenario.urls {
-            let url = match view.macros.expand(url) {
-                Ok(url) => url,
-                Err(name) => {
-                    out.unmovable.push(Unmovable {
-                        hosts: vec![key.clone()],
-                        origin: origin.clone().with_detail(url),
-                        why: Note::new("unresolved_macro", args! {"macro" => name}),
-                    });
-                    continue;
-                }
-            };
-            let address = (crate::text::host_of(&url), crate::text::port_of(&url));
-            if reached.contains(&address) {
+        // One check of its first step.
+        let first_url = scenario.steps.first().map(|s| s.url.clone());
+        let (site, notes) = match web::scenario(scenario, &view.macros) {
+            Ok(found) => found,
+            Err(why) => {
+                out.unmovable.push(Unmovable {
+                    hosts: vec![key.clone()],
+                    origin: origin.with_detail(first_url.unwrap_or_default()),
+                    why,
+                });
                 continue;
             }
-            reached.push(address);
-            add(
-                &mut pending,
-                Pending {
-                    check: Check {
-                        host: key.clone(),
-                        watch: Watch::Web { url: url.clone() },
-                        interval_s: items::interval(scenario.delay.as_deref(), &view.macros),
-                        alert: None,
-                        origin: origin.clone().with_detail(&url),
-                        fidelity: fidelity([owner.note()]),
-                    },
-                    keys: vec![format!("web:{}", scenario.name)],
+        };
+        let detail = site.url.clone();
+        add(
+            &mut pending,
+            Pending {
+                check: Check {
+                    host: key.clone(),
+                    watch: Watch::web(site),
+                    interval_s: items::interval(scenario.delay.as_deref(), &view.macros),
+                    alert: None,
+                    origin: origin.with_detail(detail),
+                    fidelity: fidelity(notes.into_iter().map(Some).chain([owner.note()])),
                 },
-            );
-        }
+                keys: vec![format!("web:{}", scenario.name)],
+            },
+        );
     }
     let mut builtins: Vec<Pending> = groups
         .into_values()

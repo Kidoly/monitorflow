@@ -12,6 +12,30 @@ export const en = {
     "MonitorFlow's offline alert tells when the agent stops answering, after {minutes} minutes.",
   "note.web_as_port":
     "MonitorFlow checks that port {port} of {host} answers; it does not read the page or its status code.",
+  "note.web_password":
+    "Passwords are not imported: set the password of {username} in the check after the import.",
+  "note.web_token":
+    "Tokens are not imported: set the token as the check's password after the import.",
+  "note.web_password_http":
+    "The source sends a password over plain http; MonitorFlow sends one only over https, so the check runs without it.",
+  "note.web_auth":
+    "MonitorFlow uses basic authentication, not {kind}: the check runs without it.",
+  "note.web_method":
+    "MonitorFlow sends GET or HEAD requests only: the check sends GET instead of {method}, without a body.",
+  "note.web_regex":
+    "MonitorFlow looks for plain text, not a pattern: the condition {pattern} is not moved.",
+  "note.web_steps":
+    "Only the first of {count} steps is moved: a MonitorFlow website check reads one page.",
+  "note.web_setting":
+    "The setting {setting} has no equivalent in a MonitorFlow website check; the rest is moved.",
+  "note.web_header":
+    "The header {name} is not moved: MonitorFlow sets it itself or does not keep it in clear.",
+  "note.web_certificate_only":
+    "The source checks only the certificate; MonitorFlow's website check also requests the page, whatever its status.",
+  "note.web_response_phase":
+    "MonitorFlow measures the whole response time, redirects included, not one phase of it.",
+  "note.web_no_check":
+    "It is about a website this import does not check.",
   "note.silence_next_window":
     "Recurring in the source: only the next window is added, from {starts} to {ends}.",
   "note.silence_cut":
@@ -71,6 +95,8 @@ export const en = {
     "MonitorFlow compares shares of memory and disk space, not amounts such as {value}.",
   "note.zabbix_no_recipients":
     "An export has no users' media, so no recipients: connect to the Zabbix API to read them, or add the channel by hand.",
+  "note.zabbix_web_step":
+    "Only the first step of a web scenario is moved; this is about the step {step}.",
   "note.zabbix_not_set":
     "Its setting {setting} has no usable address in the source.",
   "note.scrape_as_port":
@@ -248,6 +274,30 @@ export const fr: Translation<typeof en> = {
     "L’alerte hors ligne de MonitorFlow prévient quand l’agent ne répond plus, après {minutes} minutes.",
   "note.web_as_port":
     "MonitorFlow vérifie que le port {port} de {host} répond ; il ne lit ni la page ni son code de statut.",
+  "note.web_password":
+    "Les mots de passe ne sont pas importés : saisissez le mot de passe de {username} dans le contrôle après l’import.",
+  "note.web_token":
+    "Les jetons ne sont pas importés : saisissez le jeton comme mot de passe du contrôle après l’import.",
+  "note.web_password_http":
+    "La source envoie un mot de passe en http non chiffré ; MonitorFlow n’en envoie qu’en https, donc le contrôle tourne sans.",
+  "note.web_auth":
+    "MonitorFlow utilise l’authentification basique, pas {kind} : le contrôle tourne sans.",
+  "note.web_method":
+    "MonitorFlow n’envoie que des requêtes GET ou HEAD : le contrôle envoie GET au lieu de {method}, sans corps.",
+  "note.web_regex":
+    "MonitorFlow cherche du texte simple, pas un motif : la condition {pattern} n’est pas reprise.",
+  "note.web_steps":
+    "Seule la première des {count} étapes est reprise : un contrôle de site web MonitorFlow lit une seule page.",
+  "note.web_setting":
+    "Le réglage {setting} n’a pas d’équivalent dans un contrôle de site web MonitorFlow ; le reste est repris.",
+  "note.web_header":
+    "L’en-tête {name} n’est pas repris : MonitorFlow le pose lui-même ou ne le garde pas en clair.",
+  "note.web_certificate_only":
+    "La source ne vérifie que le certificat ; le contrôle de site web de MonitorFlow demande aussi la page, quel que soit son statut.",
+  "note.web_response_phase":
+    "MonitorFlow mesure le temps de réponse entier, redirections comprises, pas une de ses phases.",
+  "note.web_no_check":
+    "Il porte sur un site web que cet import ne contrôle pas.",
   "note.silence_next_window":
     "Récurrente dans la source : seule la prochaine fenêtre est ajoutée, du {starts} au {ends}.",
   "note.silence_cut":
@@ -310,6 +360,8 @@ export const fr: Translation<typeof en> = {
     "MonitorFlow compare des parts de mémoire et d’espace disque, pas des quantités comme {value}.",
   "note.zabbix_no_recipients":
     "Un export ne contient pas les médias des utilisateurs, donc aucun destinataire : connectez-vous à l’API de Zabbix pour les lire, ou ajoutez le canal à la main.",
+  "note.zabbix_web_step":
+    "Seule la première étape d’un scénario web est reprise ; celui-ci porte sur l’étape {step}.",
   "note.zabbix_not_set":
     "Son paramètre {setting} n’a pas d’adresse utilisable dans la source.",
   "note.scrape_as_port":

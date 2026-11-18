@@ -1,11 +1,12 @@
 //! Items: what each Zabbix item key becomes in MonitorFlow.
 
 use crate::args;
-use crate::model::Watch;
+use crate::model::{Watch, Website};
 use crate::notes::Note;
 
 use super::config::{Item, ItemKind};
 use super::macros::Macros;
+use super::web;
 
 /// What an item becomes.
 #[derive(Debug, Clone, PartialEq)]
@@ -164,12 +165,17 @@ pub fn map(item: &Item, macros: &Macros) -> Mapped {
         ItemKind::Ipmi | ItemKind::Jmx | ItemKind::Other => return unmovable("no_equivalent"),
         ItemKind::Command => return unmovable("script"),
         ItemKind::HttpAgent => {
-            let Some(url) = &item.url else {
+            let Some(http) = item
+                .http
+                .as_deref()
+                .filter(|h| !h.request.url.trim().is_empty())
+            else {
                 return unmovable("no_equivalent");
             };
-            return check(macros, url, |url| Watch::Web {
-                url: url.to_owned(),
-            });
+            return match web::item(http, macros) {
+                Ok((site, notes)) => Mapped::Check(Watch::web(site), notes.into_iter().next()),
+                Err(note) => Mapped::Unmovable(note),
+            };
         }
         _ => {}
     }
@@ -244,6 +250,7 @@ const CHECK_KEYS: &[&str] = &[
     "web.page.get",
     "web.page.regexp",
     "web.page.perf",
+    "web.certificate.get",
 ];
 
 /// What a key that is not a measure every server has becomes, from its
@@ -346,7 +353,19 @@ fn check_of(name: &str, params: &[String], kind: ItemKind) -> Mapped {
                 let scheme = if port == 443 { "https" } else { "http" };
                 format!("{scheme}://{host}:{port}/{path}")
             };
-            Mapped::Check(Watch::Web { url }, None)
+            Mapped::Check(Watch::web(Website::new(url)), None)
+        }
+        // Zabbix agent 2 reads the certificate of host:port.
+        "web.certificate.get" => {
+            let host = p(0).trim();
+            if host.is_empty() {
+                return unmovable("no_equivalent");
+            }
+            let url = crate::web::https_url(host, port(p(1)).unwrap_or(443));
+            Mapped::Check(
+                Watch::web(Website::new(url).any_status()),
+                Some(Note::plain("web_certificate_only")),
+            )
         }
         "system.run" => unmovable("script"),
         _ => {
@@ -358,18 +377,6 @@ fn check_of(name: &str, params: &[String], kind: ItemKind) -> Mapped {
                 unmovable("no_equivalent")
             }
         }
-    }
-}
-
-/// A check built from `text` with its macros expanded.
-fn check(macros: &Macros, text: &str, watch: impl Fn(&str) -> Watch) -> Mapped {
-    match macros.expand(text) {
-        Ok(text) if text.contains("{#") => Mapped::Unmovable(Note::new(
-            "unresolved_macro",
-            args! {"macro" => lld_macro(std::slice::from_ref(&text)).unwrap_or(text)},
-        )),
-        Ok(text) => Mapped::Check(watch(&text), None),
-        Err(name) => Mapped::Unmovable(Note::new("unresolved_macro", args! {"macro" => name})),
     }
 }
 
@@ -393,7 +400,7 @@ pub fn interval(delay: Option<&str>, macros: &Macros) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::config::Macro;
+    use super::super::config::{HttpAgent, Macro, WebAuth, WebRequest};
     use super::super::macros::HostValues;
     use super::*;
 
@@ -405,7 +412,7 @@ mod tests {
             delay: Some("1m".into()),
             enabled: true,
             prototype: false,
-            url: None,
+            http: None,
             template: None,
         }
     }
@@ -594,21 +601,44 @@ mod tests {
                 r#"web.page.get["{$NGINX.STUB_STATUS.HOST}","basic_status","{$NGINX.STUB_STATUS.PORT}"]"#
             ),
             Mapped::Check(
-                Watch::Web {
-                    url: "http://localhost:8080/basic_status".into()
-                },
+                Watch::web(Website::new("http://localhost:8080/basic_status")),
                 None
             )
         );
         let mut http = item("shop.health", ItemKind::HttpAgent);
-        http.url = Some("https://shop.example.com/health".into());
+        http.http = Some(Box::new(HttpAgent {
+            request: WebRequest {
+                url: "https://shop.example.com/health".into(),
+                method: "GET".into(),
+                status_codes: "200".into(),
+                follow_redirects: true,
+                ..WebRequest::default()
+            },
+            auth: WebAuth::default(),
+        }));
+        let mut expected = Website::new("https://shop.example.com/health");
+        expected.status = Some("200".into());
         assert_eq!(
             map(&http, &macros()),
+            Mapped::Check(Watch::web(expected), None)
+        );
+        // A PUT: approximated.
+        http.http.as_mut().unwrap().request.method = "PUT".into();
+        let Mapped::Check(_, note) = map(&http, &macros()) else {
+            panic!()
+        };
+        assert_eq!(
+            note,
+            Some(Note::new("web_method", args! {"method" => "PUT"}))
+        );
+        // Without a URL there is nothing to check.
+        http.http = None;
+        assert_eq!(code(map(&http, &macros())), "no_equivalent");
+        assert_eq!(
+            agent("web.certificate.get[shop.example.com,8443]"),
             Mapped::Check(
-                Watch::Web {
-                    url: "https://shop.example.com/health".into()
-                },
-                None
+                Watch::web(Website::new("https://shop.example.com:8443/").any_status()),
+                Some(Note::plain("web_certificate_only"))
             )
         );
     }

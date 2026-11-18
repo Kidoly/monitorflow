@@ -108,9 +108,7 @@ fn assert_common(inventory: &Inventory) {
     let web_check = check(
         inventory,
         "monitor-01",
-        &Watch::Web {
-            url: "http://shop/".into(),
-        },
+        &Watch::web(monitorflow_import::model::Website::new("http://shop/")),
     );
     assert_eq!(web_check.interval_s, Some(15));
     assert_eq!(web_check.alert, critical(0));
