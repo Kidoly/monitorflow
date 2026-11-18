@@ -545,7 +545,10 @@ mod tests {
         let mut ping = config.clone();
         ping.params.insert("host".into(), "192.0.2.1".into());
         let error = builtin.build("ping", &ping).err().unwrap();
-        assert!(matches!(&error, FactoryError::Refused(m) if m.contains("from a probe")), "{error}");
+        assert!(
+            matches!(&error, FactoryError::Refused(m) if m.contains("from a probe")),
+            "{error}"
+        );
         // Valid for the server, refused by this host's limits.
         let mut missing = config.clone();
         missing.params.insert("script".into(), "missing".into());
