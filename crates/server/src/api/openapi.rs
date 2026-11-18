@@ -73,6 +73,7 @@ pub fn build() -> Document {
     doc.merge(super::openapi_auto_update::Doc::openapi());
     doc.merge(super::openapi_checks::Doc::openapi());
     doc.merge(super::openapi_imports::Doc::openapi());
+    doc.merge(super::openapi_devices::Doc::openapi());
     doc
 }
 

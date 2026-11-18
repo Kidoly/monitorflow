@@ -27,6 +27,10 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Checked from | Vérifié depuis | Where a network check runs: "the central server" or a relay of the site. "Ping, checked from relay-paris" | probe, poller, vantage point (on screen) | `probe`, `probe_relay_id` |
 | Packet loss | Perte de paquets | The share of pings that got no answer, out of the few sent each time | drop rate | `ping_loss_ratio` |
 | Round trip | Aller-retour | How long a ping took to come back, on average | RTT, latency (on screen) | `ping_rtt_seconds` |
+| SNMP | SNMP | How switches, printers and UPSs say what they measure. Name the version: "SNMP v2c", "SNMP v3" | | `snmp` |
+| Community | Communauté | The password of SNMP v2c, like `public`. Kept sealed and never shown again | community string | `community` |
+| Template | Modèle | The checks and alerts a kind of device gets when added: Switch, Router, Firewall, Printer, UPS, NAS or Generic | profile, preset | `template` |
+| Traffic | Trafic | What goes through a network interface, in and out, per second | bandwidth, throughput | `in_bytes_per_second`, `net_receive_bytes_per_second` |
 | Watches | Surveille | The disk, port or service a sensor measures | instance | `instance` |
 | Every 30 s, every 1 h | Toutes les 30 s, toutes les 5 min | How often a check runs: "Checked every 5 min". The built-in checks run at their site's interval | interval, frequency, polling rate, scrape interval (on screen) | `interval_ms`, `check_interval_ms` |
 | Log folders | Dossiers de journaux | The folders whose files a server's log checks may read, set by its administrator in `agent.toml`: `/var/log` on Linux by default, none on Windows | log directories, allowlist | `sensors.log_dirs` |

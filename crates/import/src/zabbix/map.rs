@@ -284,6 +284,16 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory) {
         os,
         groups: host.groups.clone(),
         origin: Origin::new("host", &host.host),
+        // No agent interface and no agent item: a device Zabbix pings or
+        // polls over SNMP (ADR-0148).
+        agentless: !host
+            .interfaces
+            .iter()
+            .any(|i| i.kind == InterfaceKind::Agent)
+            && !view
+                .items
+                .iter()
+                .any(|(item, _)| item.kind == config::ItemKind::Agent),
     });
     for name in &view.missing {
         out.unmovable.push(Unmovable {

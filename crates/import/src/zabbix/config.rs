@@ -112,6 +112,9 @@ pub struct Item {
     pub prototype: bool,
     /// The URL of an HTTP agent item.
     pub url: Option<String>,
+    /// The OID of an SNMP item, as written (`1.3.6.1.2.1.1.3.0`,
+    /// `walk[1.3.6.1.2.1.2.2.1.8]`).
+    pub snmp_oid: Option<String>,
     /// The template it comes from, when the API says.
     pub template: Option<String>,
 }
