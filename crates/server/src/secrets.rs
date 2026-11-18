@@ -84,6 +84,8 @@ pub enum Column {
     SnmpCredentials,
     /// The password of a website check (ADR-0150).
     SensorConfigs,
+    /// A network scan's own SNMP credentials (ADR-0154).
+    NetworkScans,
 }
 
 impl Column {
@@ -99,6 +101,7 @@ impl Column {
             Self::ImportRuns => "import_runs.secrets",
             Self::SnmpCredentials => "snmp_credentials.secret",
             Self::SensorConfigs => "sensor_configs.secret",
+            Self::NetworkScans => "network_scans.snmp_secret",
         }
     }
 

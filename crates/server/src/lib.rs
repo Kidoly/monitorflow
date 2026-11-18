@@ -21,6 +21,7 @@ pub mod ingest;
 pub mod integrations;
 pub mod live_settings;
 pub mod mirror;
+pub mod netscan;
 pub mod notify;
 pub mod plugins;
 pub mod probes;

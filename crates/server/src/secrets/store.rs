@@ -14,6 +14,7 @@ pub const SEALED: &[Column] = &[
     Column::ImportRuns,
     Column::SnmpCredentials,
     Column::SensorConfigs,
+    Column::NetworkScans,
 ];
 
 #[derive(Debug, thiserror::Error)]

@@ -23,7 +23,7 @@ pub struct Event {
     /// `incident.opened`, `incident.escalated`, `incident.resolved`,
     /// `approval.waiting`, `update.failed`, `backup.failed`,
     /// `update.available`, `ai_commands.changed`, `integration.disabled`
-    /// (ADR-0102), or `test`.
+    /// (ADR-0102), `network_scan.changed` (ADR-0154), or `test`.
     pub event: String,
     pub customer_id: Option<Uuid>,
     /// The site named in `details`, `None` when it names none.
@@ -240,6 +240,7 @@ fn path(event: &Event) -> String {
         "backup.failed" => "/settings/backups/".into(),
         "update.available" => "/settings/server-update/".into(),
         "integration.disabled" => crate::integrations::PAGE.into(),
+        "network_scan.changed" => format!("/discovery/view/?id={}", id(&["network_scan", "id"])),
         "update.failed" => match str_at(d, &["update", "kind"]) {
             Some("campaign") => format!("/campaigns/view/?id={}", id(&["update", "campaign_id"])),
             Some("automatic_rollout") => "/admin/updates/".into(),
@@ -299,7 +300,51 @@ fn raw_event_text(event: &Event) -> String {
             str_at(d, &["integration", "host"]).unwrap_or("its address"),
             str_at(d, &["integration", "error"]).unwrap_or("none recorded")
         ),
+        "network_scan.changed" => network_scan_text(d),
         e => incident_text(e, d),
+    }
+}
+
+/// "Network scan Office network (paris): 2 new addresses (192.0.2.5,
+/// 192.0.2.9), 1 gone (192.0.2.40)".
+fn network_scan_text(d: &Value) -> String {
+    let list = |key: &str| -> Vec<String> {
+        d["network_scan"][key]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let shown = |addresses: &[String]| {
+        let mut text = addresses
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if addresses.len() > 5 {
+            text.push_str(&format!(" and {} more", addresses.len() - 5));
+        }
+        text
+    };
+    let (new, gone) = (list("new"), list("gone"));
+    let mut parts = Vec::new();
+    match new.len() {
+        0 => {}
+        1 => parts.push(format!("1 new address ({})", shown(&new))),
+        n => parts.push(format!("{n} new addresses ({})", shown(&new))),
+    }
+    if !gone.is_empty() {
+        parts.push(format!("{} gone ({})", gone.len(), shown(&gone)));
+    }
+    let name = str_at(d, &["network_scan", "name"]).unwrap_or("a network scan");
+    match site_place(d) {
+        Some(place) => format!("Network scan {name} ({place}): {}", parts.join(", ")),
+        None => format!("Network scan {name}: {}", parts.join(", ")),
     }
 }
 
@@ -563,6 +608,36 @@ mod tests {
         );
         assert_eq!(available.url, "https://mf.example/settings/server-update/");
         assert_eq!(available.payload["release"]["version"], "0.3.0");
+    }
+
+    #[test]
+    fn a_network_scan_says_what_is_new_and_gone() {
+        let scan = Uuid::new_v4();
+        let new: Vec<String> = (1..=7).map(|i| format!("192.0.2.{i}")).collect();
+        let changed = render(
+            &event(
+                "network_scan.changed",
+                json!({"site": {"id": Uuid::nil(), "name": "paris"},
+                       "network_scan": {"id": scan, "name": "Office", "new": new, "gone": ["192.0.2.40"]}}),
+            ),
+            WEB,
+        );
+        assert_eq!(
+            changed.text,
+            "Network scan Office (paris): 7 new addresses (192.0.2.1, 192.0.2.2, 192.0.2.3, 192.0.2.4, 192.0.2.5 and 2 more), 1 gone (192.0.2.40)"
+        );
+        assert_eq!(
+            changed.url,
+            format!("https://mf.example/discovery/view/?id={scan}")
+        );
+        let one = render(
+            &event(
+                "network_scan.changed",
+                json!({"network_scan": {"id": scan, "name": "Lab\nx", "new": ["192.0.2.9"], "gone": []}}),
+            ),
+            WEB,
+        );
+        assert_eq!(one.text, "Network scan Lab\\nx: 1 new address (192.0.2.9)");
     }
 
     #[test]

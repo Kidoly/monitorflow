@@ -560,6 +560,14 @@ async fn main() -> anyhow::Result<()> {
     );
     let service = service.with_probes(probes.clone());
     let probe_registry = registry.clone();
+    // Network scans run on the instance that reaches their probe
+    // (ADR-0154).
+    let scan_pool = pool.clone();
+    let scan_tester: Arc<dyn monitorflow_server::netscan::Tester> =
+        Arc::new(monitorflow_server::netscan::Live {
+            probes: Some(probes.clone()),
+            registry: registry.clone(),
+        });
     let auto_update = AutoUpdate::new(pool.clone(), api_settings.agent_releases.clone())
         .with_enabled_override(config.auto_update.enabled)
         .with_registry(registry.clone())
@@ -721,6 +729,15 @@ async fn main() -> anyhow::Result<()> {
                 .clone()
                 .run_relays(probe_registry.clone(), until_stopped())
                 .await;
+            Ok(())
+        },
+        async {
+            monitorflow_server::netscan::run(
+                scan_pool.clone(),
+                scan_tester.clone(),
+                until_stopped(),
+            )
+            .await;
             Ok(())
         },
         // The central server's own probe checks run once, on the leader.
