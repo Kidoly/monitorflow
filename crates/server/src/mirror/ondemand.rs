@@ -25,6 +25,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use monitorflow_common::mirror::origin::{Origin, ORIGIN};
 use monitorflow_common::mirror::packages::{ListError, PackageList, PACKAGES};
+use monitorflow_common::mirror::repo::compress::{self, Compression};
 use monitorflow_common::mirror::repo::fetch::{Expect, FetchError, Fetcher};
 use monitorflow_common::mirror::repo::meta::{Algorithm, Entry, MetaError, Package};
 use monitorflow_common::mirror::repo::{apt, dnf};
@@ -229,6 +230,7 @@ impl Staging {
                     .ok_or_else(|| {
                         SyncError::NoIndex(format!("{component}/binary-{arch}/Packages"))
                     })?;
+                kept.extend(self.plain_entry(&entry, &stored).await?);
                 let file = entry.path.clone();
                 packages
                     .extend(blocking(move || Ok(apt::read_package_list(&file, &stored)?)).await?);
@@ -239,10 +241,11 @@ impl Staging {
             }
             let i18n = format!("{dists}/{component}/i18n");
             let translations = [".xz", ".bz2", ".gz", ""];
-            if let Some((entry, _)) = self
+            if let Some((entry, stored)) = self
                 .first_of(&listed, &i18n, "Translation-en", &translations)
                 .await?
             {
+                kept.extend(self.plain_entry(&entry, &stored).await?);
                 kept.push(entry);
             }
         }
@@ -348,6 +351,16 @@ impl Staging {
         Ok(None)
     }
 
+    /// The entry of the decompressed form of the compressed index `entry`,
+    /// stored at `stored`; `None` when it is not compressed. apt checks an
+    /// index by its decompressed form and skips one whose form the Release
+    /// does not list, so ours lists it, as Debian's do, though only the
+    /// compressed file is served.
+    async fn plain_entry(&self, entry: &Entry, stored: &Path) -> Result<Option<Entry>, SyncError> {
+        let (file, stored) = (entry.path.clone(), stored.to_owned());
+        blocking(move || Ok(plain_entry(&file, &stored)?)).await
+    }
+
     /// Puts the index file `entry` in the store unless it is there,
     /// checked against its size and checksum, links it into the tree and
     /// returns its stored path; `None` when the upstream does not have it.
@@ -403,6 +416,32 @@ impl Staging {
         })
         .await
     }
+}
+
+/// See [`Staging::plain_entry`]. Blocking.
+fn plain_entry(file: &str, stored: &Path) -> Result<Option<Entry>, MetaError> {
+    let (compression, plain) = Compression::of(file);
+    if compression == Compression::Plain {
+        return Ok(None);
+    }
+    let mut reader = compress::open(file, stored)?;
+    let mut hasher = Algorithm::Sha256.hasher();
+    let mut size = 0;
+    let mut buf = vec![0; 64 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut reader, &mut buf)
+            .map_err(|e| MetaError::invalid(file, e.to_string()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+        size += read as u64;
+    }
+    Ok(Some(Entry {
+        path: plain.to_owned(),
+        size,
+        checksum: hasher.finish(),
+    }))
 }
 
 /// The value of the single-line field `name` of a deb822 paragraph.
@@ -535,6 +574,33 @@ mod tests {
         assert_eq!(
             listed[0].path,
             "dists/trixie-security/main/binary-amd64/Packages.xz"
+        );
+    }
+
+    #[test]
+    fn a_compressed_index_is_also_listed_decompressed() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = b"Package: mf-fixture\nVersion: 1.0\n";
+        // `text`, gzipped.
+        let gzipped: &[u8] = &[
+            31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 11, 72, 76, 206, 78, 76, 79, 181, 82, 200, 77, 211,
+            77, 203, 172, 40, 41, 45, 74, 229, 10, 75, 45, 42, 206, 204, 207, 179, 82, 48, 212, 51,
+            224, 2, 0, 79, 27, 202, 67, 33, 0, 0, 0,
+        ];
+        let gz = dir.path().join("stored");
+        std::fs::write(&gz, gzipped).unwrap();
+        let mut hasher = Algorithm::Sha256.hasher();
+        hasher.update(text);
+        let entry = plain_entry("dists/f/main/binary-amd64/Packages.gz", &gz)
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.path, "dists/f/main/binary-amd64/Packages");
+        assert_eq!(entry.size, text.len() as u64);
+        assert_eq!(entry.checksum, hasher.finish());
+        // A plain index is listed once, as it is.
+        assert_eq!(
+            plain_entry("dists/f/main/binary-amd64/Packages", &gz).unwrap(),
+            None
         );
     }
 
