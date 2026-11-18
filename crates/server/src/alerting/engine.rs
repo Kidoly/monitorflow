@@ -306,11 +306,7 @@ impl Engine {
                 continue;
             };
             let max_gap = series_max_gap(max_gap, server.intervals.of(&point.metric));
-            let key = SeriesKey {
-                server_id: server.server_id,
-                metric: point.metric,
-                instance: point.instance,
-            };
+            let key = SeriesKey::value(server.server_id, point.metric, point.instance);
             let tracked = self.series.entry(key.clone()).or_default();
             let Some(evaluation) = tracked.state.evaluate(rule, point.at, point.value, max_gap)
             else {
@@ -432,7 +428,10 @@ impl Engine {
             .keys()
             .filter(|k| {
                 k.server_id == server.server_id
-                    && server.rules.lookup(&k.metric, &k.instance).is_none()
+                    && server
+                        .rules
+                        .lookup_kind(&k.metric, &k.instance, k.kind)
+                        .is_none()
             })
             .cloned()
             .collect();
@@ -505,9 +504,7 @@ impl Output {
                 IncidentStep::Open { severity, rule }
             }
             (Some(severity), Some((id, peak)), Some(rule)) => {
-                let peak = change
-                    .value
-                    .map_or(peak, |v| rule.comparison.worst(peak, v));
+                let peak = change.value.map_or(peak, |v| rule.judged().worst(peak, v));
                 tracked.incident = Some((id, peak));
                 IncidentStep::Update { id, severity, peak }
             }

@@ -560,6 +560,7 @@ fn effective_thresholds(entries: &[Entry]) -> Vec<EffectiveThreshold> {
                     critical: e.critical,
                     duration_s: u32::try_from(e.duration_s).unwrap_or(0),
                     hysteresis: e.hysteresis,
+                    ..Rule::default()
                 },
                 enabled: e.enabled,
             })
@@ -567,7 +568,7 @@ fn effective_thresholds(entries: &[Entry]) -> Vec<EffectiveThreshold> {
         .collect();
     rules::resolve(rows)
         .entries()
-        .filter_map(|(metric, instance, rule)| {
+        .filter_map(|(metric, instance, _, rule)| {
             let of = |server: bool| {
                 entries.iter().find(|e| {
                     e.server_id.is_some() == server

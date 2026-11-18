@@ -5,28 +5,61 @@ use serde_json::json;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
-use super::rules::{resolve, Row, Rule, Rules};
+use std::collections::BTreeMap;
+
+use super::rules::{resolve, Condition, Kind, Row, Rule, Rules};
 use super::state::{SeriesState, Transition};
+use super::summary::{needs, Need};
 use super::Severity;
+use crate::api::metrics::Target;
 use crate::ingest::validate::METRIC_PREFIX;
 use crate::sensor_config::{Layer, SensorConfigStore, Spec};
 
-/// One series: server row, full metric name, instance (`''` for none).
+/// One series under one kind of rule: server row, full metric name,
+/// instance (`''` for none) and the rule's kind (ADR-0153).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SeriesKey {
     pub server_id: Uuid,
     pub metric: String,
     pub instance: String,
+    pub kind: Kind,
+}
+
+impl SeriesKey {
+    /// The `value` rule's key of a series, as before ADR-0153.
+    pub fn value(server_id: Uuid, metric: impl Into<String>, instance: impl Into<String>) -> Self {
+        Self {
+            server_id,
+            metric: metric.into(),
+            instance: instance.into(),
+            kind: Kind::Value,
+        }
+    }
 }
 
 /// The effective thresholds of one server, and how often its checks run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerRules {
     pub server_id: Uuid,
+    /// The agent ID and site name, as series are labelled (ADR-0013).
+    pub peer: String,
+    pub site: String,
     /// Threshold and sensor revisions together: either moving reloads.
     pub revision: u64,
     pub rules: Rules,
     pub intervals: CheckIntervals,
+    /// What richer rules keep of each metric (ADR-0153).
+    pub needs: BTreeMap<String, Need>,
+}
+
+impl ServerRules {
+    /// The labels of the server's series, for history queries.
+    pub fn target(&self) -> Target {
+        Target {
+            peer: self.peer.clone(),
+            site: self.site.clone(),
+        }
+    }
 }
 
 /// The collection interval of each check of a server, by sensor name; the
@@ -109,6 +142,67 @@ pub struct Step<'a> {
     pub state: Option<&'a SeriesState>,
 }
 
+/// One line of [`AlertStore::load_rules`]: the server, and one of its
+/// threshold rows when it has any.
+#[derive(sqlx::FromRow)]
+struct RuleLine {
+    id: Uuid,
+    revision: i64,
+    site: String,
+    server_row: Option<bool>,
+    metric: Option<String>,
+    instance: Option<String>,
+    comparison: Option<String>,
+    warning: Option<f64>,
+    critical: Option<f64>,
+    duration_s: Option<i32>,
+    hysteresis: Option<f64>,
+    enabled: Option<bool>,
+    kind: Option<String>,
+    function: Option<String>,
+    window_s: Option<i32>,
+    offset_s: Option<i32>,
+    target: Option<f64>,
+    conditions: Option<serde_json::Value>,
+}
+
+impl RuleLine {
+    /// The row, or `None` without one or for one this version cannot read.
+    fn row(self) -> Option<Row> {
+        let seconds = |v: Option<i32>| v.and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
+        let conditions: Vec<Condition> = match self.conditions {
+            Some(value) => serde_json::from_value(value).ok()?,
+            None => Vec::new(),
+        };
+        Some(Row {
+            layer: if self.server_row? {
+                Layer::Server
+            } else {
+                Layer::Site
+            },
+            rule: Rule {
+                metric: self.metric?,
+                instance: self.instance,
+                kind: self.kind?.parse().ok()?,
+                comparison: self.comparison?.parse().ok()?,
+                warning: self.warning,
+                critical: self.critical,
+                duration_s: seconds(self.duration_s),
+                hysteresis: self.hysteresis?,
+                function: match self.function {
+                    Some(f) => Some(f.parse().ok()?),
+                    None => None,
+                },
+                window_s: seconds(self.window_s),
+                offset_s: seconds(self.offset_s),
+                target: self.target,
+                conditions,
+            },
+            enabled: self.enabled?,
+        })
+    }
+}
+
 fn time(ms: i64) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(ms).unwrap_or_default()
 }
@@ -133,24 +227,12 @@ impl AlertStore {
     /// the checks are read after it, so a change in between is newer than
     /// the revision and only causes one more reload.
     pub async fn load_rules(&self, peer_id: &str) -> Result<Option<ServerRules>, sqlx::Error> {
-        type Line = (
-            Uuid,
-            i64,
-            Option<bool>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<f64>,
-            Option<f64>,
-            Option<i32>,
-            Option<f64>,
-            Option<bool>,
-        );
-        let lines: Vec<Line> = sqlx::query_as(
+        let lines: Vec<RuleLine> = sqlx::query_as(
             "SELECT s.id, si.threshold_revision + s.threshold_revision
-                          + si.sensor_revision + s.sensor_revision,
-                    t.server_id IS NOT NULL, t.metric, t.instance, t.comparison,
-                    t.warning, t.critical, t.duration_s, t.hysteresis, t.enabled
+                          + si.sensor_revision + s.sensor_revision AS revision,
+                    si.name AS site, t.server_id IS NOT NULL AS server_row, t.metric, t.instance, t.comparison,
+                    t.warning, t.critical, t.duration_s, t.hysteresis, t.enabled, t.kind,
+                    t.function, t.window_s, t.offset_s, t.target, t.conditions
              FROM servers s
              JOIN sites si ON si.id = s.site_id
              LEFT JOIN thresholds t ON t.site_id = s.site_id OR t.server_id = s.id
@@ -159,40 +241,11 @@ impl AlertStore {
         .bind(peer_id)
         .fetch_all(&self.pool)
         .await?;
-        let Some(&(server_id, revision, ..)) = lines.first() else {
+        let Some(first) = lines.first() else {
             return Ok(None);
         };
-        let rows = lines
-            .into_iter()
-            .filter_map(|line| {
-                let (
-                    _,
-                    _,
-                    server,
-                    metric,
-                    instance,
-                    comparison,
-                    warning,
-                    critical,
-                    duration,
-                    hysteresis,
-                    enabled,
-                ) = line;
-                Some(Row {
-                    layer: if server? { Layer::Server } else { Layer::Site },
-                    rule: Rule {
-                        metric: metric?,
-                        instance,
-                        comparison: comparison?.parse().ok()?,
-                        warning,
-                        critical,
-                        duration_s: u32::try_from(duration?).unwrap_or(0),
-                        hysteresis: hysteresis?,
-                    },
-                    enabled: enabled?,
-                })
-            })
-            .collect();
+        let (server_id, revision, site) = (first.id, first.revision, first.site.clone());
+        let rows = lines.into_iter().filter_map(RuleLine::row).collect();
         let mut sensors = SensorConfigStore::new(self.pool.clone())
             .load(peer_id)
             .await?
@@ -210,10 +263,14 @@ impl AlertStore {
             name,
             ..Spec::new("probe", non_negative(interval))
         }));
+        let rules = resolve(rows);
         Ok(Some(ServerRules {
             server_id,
+            peer: peer_id.to_owned(),
+            site,
             revision: non_negative(revision),
-            rules: resolve(rows),
+            needs: needs(&rules),
+            rules,
             intervals: CheckIntervals::new(&sensors),
         }))
     }
@@ -253,6 +310,7 @@ impl AlertStore {
             Uuid,
             String,
             String,
+            String,
             Option<DateTime<Utc>>,
             Option<DateTime<Utc>>,
             Option<DateTime<Utc>>,
@@ -262,12 +320,12 @@ impl AlertStore {
             Option<DateTime<Utc>>,
         );
         let lines: Vec<Line> = sqlx::query_as(
-            "SELECT server_id, metric, instance, a.warning_since, a.critical_since,
+            "SELECT server_id, metric, instance, kind, a.warning_since, a.critical_since,
                     a.last_sample_at, i.id, i.severity, i.peak_value, i.last_value_at
              FROM alert_states a
              -- Offline incidents belong to their own task (ADR-0072).
              FULL JOIN (SELECT * FROM incidents WHERE state = 'open' AND metric <> 'offline') i
-                 USING (server_id, metric, instance)
+                 USING (server_id, metric, instance, kind)
              WHERE $1::uuid IS NULL OR server_id = $1",
         )
         .bind(server_id)
@@ -280,6 +338,7 @@ impl AlertStore {
                     server_id,
                     metric,
                     instance,
+                    kind,
                     warning,
                     critical,
                     sampled,
@@ -294,6 +353,7 @@ impl AlertStore {
                         server_id,
                         metric,
                         instance,
+                        kind: kind.parse().unwrap_or_default(),
                     },
                     state: SeriesState {
                         firing: severity.and_then(|s| s.parse().ok()),
@@ -390,9 +450,9 @@ async fn open(
     let value = step.value.unwrap_or_default();
     let inserted: Option<Uuid> = sqlx::query_scalar(
         "INSERT INTO incidents (server_id, metric, instance, severity, opened_at, last_value,
-                                last_value_at, peak_value, threshold)
-         VALUES ($1, $2, $3, $4, $5, $6, $5, $6, $7)
-         ON CONFLICT (server_id, metric, instance) WHERE state = 'open' DO NOTHING
+                                last_value_at, peak_value, threshold, kind)
+         VALUES ($1, $2, $3, $4, $5, $6, $5, $6, $7, $8)
+         ON CONFLICT (server_id, metric, instance, kind) WHERE state = 'open' DO NOTHING
          RETURNING id",
     )
     .bind(key.server_id)
@@ -402,6 +462,7 @@ async fn open(
     .bind(at)
     .bind(value)
     .bind(rule.snapshot())
+    .bind(key.kind.as_str())
     .fetch_optional(&mut **tx)
     .await?;
     if let Some(id) = inserted {
@@ -414,7 +475,8 @@ async fn open(
                               last_value_at = GREATEST($6, last_value_at),
                               peak_value = CASE WHEN $7 THEN GREATEST(peak_value, $5)
                                                 ELSE LEAST(peak_value, $5) END
-         WHERE server_id = $1 AND metric = $2 AND instance = $3 AND state = 'open'
+         WHERE server_id = $1 AND metric = $2 AND instance = $3 AND kind = $8
+               AND state = 'open'
          RETURNING id, peak_value",
     )
     .bind(key.server_id)
@@ -423,7 +485,8 @@ async fn open(
     .bind(severity.as_str())
     .bind(value)
     .bind(at)
-    .bind(rule.comparison.above())
+    .bind(rule.judged().above())
+    .bind(key.kind.as_str())
     .fetch_one(&mut **tx)
     .await?;
     Ok((id, peak, false))
@@ -436,20 +499,22 @@ async fn save_state(
 ) -> Result<(), sqlx::Error> {
     if state.is_ok() {
         sqlx::query(
-            "DELETE FROM alert_states WHERE server_id = $1 AND metric = $2 AND instance = $3",
+            "DELETE FROM alert_states
+             WHERE server_id = $1 AND metric = $2 AND instance = $3 AND kind = $4",
         )
         .bind(key.server_id)
         .bind(&key.metric)
         .bind(&key.instance)
+        .bind(key.kind.as_str())
         .execute(&mut **tx)
         .await?;
         return Ok(());
     }
     sqlx::query(
         "INSERT INTO alert_states (server_id, metric, instance, severity, warning_since,
-                                   critical_since, last_sample_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (server_id, metric, instance) DO UPDATE
+                                   critical_since, last_sample_at, kind)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (server_id, metric, instance, kind) DO UPDATE
          SET severity = $4, warning_since = $5, critical_since = $6, last_sample_at = $7,
              updated_at = now()",
     )
@@ -460,6 +525,7 @@ async fn save_state(
     .bind(state.warning_since.map(time))
     .bind(state.critical_since.map(time))
     .bind(time(state.last_at.unwrap_or_default()))
+    .bind(key.kind.as_str())
     .execute(&mut **tx)
     .await?;
     Ok(())

@@ -9,12 +9,15 @@ pub mod reason;
 pub mod rules;
 pub mod state;
 pub mod store;
+pub mod summary;
 
 use std::fmt;
 use std::str::FromStr;
 
 pub use engine::{Alerts, EngineSettings, LogNotifier, Notification, Notifier, Stats};
-pub use rules::{builtin_defaults, resolve, Comparison, Row, Rule, Rules};
+pub use rules::{
+    builtin_defaults, resolve, Comparison, Condition, Function, Kind, Row, Rule, Rules,
+};
 pub use state::{Evaluation, SeriesState, Transition};
 pub use store::{AlertStore, SeriesKey};
 
