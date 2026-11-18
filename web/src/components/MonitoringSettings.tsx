@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { rich, t } from "@/i18n";
 import {
+  type CheckField,
   type CheckType,
   DEVICE_CHECK_TYPES,
   type FormErrors,
@@ -836,13 +837,14 @@ function CheckForm({
     setErrors(found);
     if (Object.keys(found).length > 0) return;
     const owner = scope === "site" ? siteOwner(target) : ownerOf(target);
-    const { sensor, threshold } = checkRequests(type, values, intervalMs);
+    const { sensor, threshold, more } = checkRequests(type, values, intervalMs);
     if (type.probe && probe) sensor.probe = probe;
     setBusy(true);
     setFailure(null);
     try {
       await api.createSensor(owner, sensor);
       if (alert && threshold) await saveThreshold(owner, threshold);
+      if (alert) for (const rule of more) await saveThreshold(owner, rule);
       onDone();
     } catch (e) {
       setFailure(
@@ -864,18 +866,36 @@ function CheckForm({
         </Button>
       </div>
       <div className={styles.fields}>
-        {type.fields.map((field) => (
-          <TextField
-            key={`${type.label}/${field.key}`}
-            label={field.label}
-            placeholder={field.placeholder}
-            hint={field.hint}
-            value={values[field.key] ?? ""}
-            error={errors[field.key]}
-            onChange={(value) => setValues((v) => ({ ...v, [field.key]: value }))}
-          />
-        ))}
+        {type.fields
+          .filter((field) => !field.advanced)
+          .map((field) => (
+            <FormField
+              key={`${type.label}/${field.key}`}
+              field={field}
+              value={values[field.key] ?? ""}
+              error={errors[field.key]}
+              onChange={(value) => setValues((v) => ({ ...v, [field.key]: value }))}
+            />
+          ))}
       </div>
+      {type.fields.some((field) => field.advanced) && (
+        <details className={styles.more} open={type.fields.some((f) => f.advanced && errors[f.key])}>
+          <summary>{t("monitoring.moreOptions")}</summary>
+          <div className={styles.fields}>
+            {type.fields
+              .filter((field) => field.advanced)
+              .map((field) => (
+                <FormField
+                  key={`${type.label}/${field.key}`}
+                  field={field}
+                  value={values[field.key] ?? ""}
+                  error={errors[field.key]}
+                  onChange={(value) => setValues((v) => ({ ...v, [field.key]: value }))}
+                />
+              ))}
+          </div>
+        </details>
+      )}
       <div className={admin.field}>
         <span>{t("monitoring.howOften")}</span>
         <IntervalSelect label={t("monitoring.howOftenToCheck")} value={intervalMs} onChange={(ms) => setIntervalMs(ms ?? initialInterval)} />
@@ -928,6 +948,53 @@ export const stringParams = (params: SensorConfigEntry["params"]) =>
   Object.fromEntries(Object.entries(params).map(([key, value]) => [key, String(value)]));
 
 const initialValues = (type: CheckType) => Object.fromEntries(type.fields.map((f) => [f.key, f.initial ?? ""]));
+
+/** One field of the form, typed as it says: a line, a password, several lines or a choice. */
+function FormField({
+  field,
+  value,
+  error,
+  onChange,
+}: {
+  field: CheckField;
+  value: string;
+  error?: string;
+  onChange: (value: string) => void;
+}) {
+  const id = useId();
+  const hintId = `${id}-hint`;
+  if (!field.input || field.input === "text") {
+    return <TextField label={field.label} placeholder={field.placeholder} hint={field.hint} value={value} error={error} onChange={onChange} />;
+  }
+  const common = {
+    id,
+    className: cx(fieldClass, error && admin.fieldError),
+    value,
+    "aria-invalid": error ? true : undefined,
+    "aria-describedby": hintId,
+  } as const;
+  return (
+    <div className={admin.field}>
+      <label htmlFor={id}>{field.label}</label>
+      {field.input === "select" ? (
+        <select {...common} onChange={(e) => onChange(e.target.value)}>
+          {field.options?.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      ) : field.input === "lines" ? (
+        <textarea {...common} rows={3} placeholder={field.placeholder} spellCheck={false} onChange={(e) => onChange(e.target.value)} />
+      ) : (
+        <input {...common} type="password" autoComplete="new-password" placeholder={field.placeholder} onChange={(e) => onChange(e.target.value)} />
+      )}
+      <span id={hintId} className={error ? styles.error : admin.fieldNote} role={error ? "alert" : undefined}>
+        {error ?? field.hint ?? " "}
+      </span>
+    </div>
+  );
+}
 
 function TextField({
   label,

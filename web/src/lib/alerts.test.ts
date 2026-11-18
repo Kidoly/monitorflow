@@ -14,6 +14,7 @@ import {
   formOf,
   pluginCheckTypes,
   shapeFor,
+  shapeOf,
   thresholdRequest,
 } from "./alerts";
 
@@ -143,8 +144,8 @@ describe("the threshold form", () => {
 
 describe("adding a check", () => {
   it("offers what the server's system runs, everything for a site", () => {
-    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script"]);
-    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script"]);
+    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script", "http"]);
+    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script", "http"]);
     expect(checkTypesFor(null)).toHaveLength(CHECK_TYPES.length);
     const path = (os: string | null) => checkTypesFor(os).find((t) => t.kind === "log")!.fields[0]!;
     expect(path("windows").placeholder).toBe("C:\\Logs\\app.log");
@@ -187,10 +188,45 @@ describe("adding a check", () => {
         hysteresis: 0,
         enabled: true,
       },
+      more: [],
     });
     const { sensor: row, threshold } = checkRequests(type("eventlog"), { channel: "System" }, 60_000);
     expect(row.params).toEqual({ channel: "System", levels: "critical,error" });
     expect(threshold).toMatchObject({ metric: "monitorflow_eventlog_system_matches", comparison: ">", warning: 0, critical: null });
+  });
+
+  it("adds a website check with its certificate and response time alerts", () => {
+    const http = type("http");
+    expect(checkName(http, { url: "https://shop.example.com/cart?x=1" })).toBe("http_shop_example_com");
+    expect(checkName(http, { url: "http://10.0.0.5:8080/" })).toBe("http_10_0_0_5_8080");
+    const values = { url: "https://shop.example.com/", contains: "Add to cart", follow_redirects: "true", method: "GET", ip: "any", password: "" };
+    const { sensor: row, threshold, more } = checkRequests(http, values, 60_000);
+    expect(row.params).toEqual({ url: "https://shop.example.com/", contains: "Add to cart", follow_redirects: "true", method: "GET", ip: "any" });
+    expect(threshold).toMatchObject({ metric: "monitorflow_http_shop_example_com_up", comparison: "<", critical: 1, duration_s: 120 });
+    expect(more.map((r) => [r.metric, r.comparison, r.warning, r.critical, r.duration_s])).toEqual([
+      ["monitorflow_http_shop_example_com_cert_ok", "<", null, 1, 300],
+      ["monitorflow_http_shop_example_com_cert_days_left", "<", 14, 7, 0],
+      ["monitorflow_http_shop_example_com_response_seconds", ">", 3, null, 300],
+    ]);
+    // No certificate over http.
+    expect(checkRequests(http, { url: "http://intranet/" }, 60_000).more.map((r) => r.metric)).toEqual([
+      "monitorflow_http_intranet_response_seconds",
+    ]);
+    expect(checkErrors(http, { url: "ftp://x" }).url).toMatch(/http:\/\//);
+    expect(checkErrors(http, { url: "https://u:p@x/" }).url).toMatch(/own fields/);
+    expect(checkErrors(http, { url: "https://x/", status: "2xx" }).status).toMatch(/ranges/);
+    expect(checkErrors(http, { url: "https://x/", status: "200, 301-302" })).toEqual({});
+    expect(http.fields.filter((f) => !f.advanced).map((f) => f.key)).toEqual(["url", "contains"]);
+  });
+
+  it("reads a website's alerts in words", () => {
+    const sensors = [sensor("http", "http_shop_example_com", { url: "https://shop.example.com/" })];
+    const shape = (suffix: string) => shapeOf(sensors, `monitorflow_http_shop_example_com_${suffix}`, null);
+    expect(shape("up")).toMatchObject({ type: "event", noun: "website shop.example.com", text: "does not answer as expected" });
+    expect(shape("cert_ok")).toMatchObject({ type: "event", noun: "the certificate of shop.example.com", text: "is not valid" });
+    expect(shape("cert_days_left")).toMatchObject({ type: "number", noun: "the days left on the certificate of shop.example.com" });
+    expect(shape("response_seconds")).toMatchObject({ type: "number", noun: "the response time of shop.example.com", unit: "s" });
+    expect(checkTitle(sensors[0]!)).toBe("Website shop.example.com");
   });
 
   it("titles checks in the list", () => {

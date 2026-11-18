@@ -4,6 +4,7 @@ import type { EffectiveSensor, Incident, SensorSeries, SensorValueList } from ".
 import { checkTitle } from "./alerts";
 import { formatSeconds, formatValue, unitOf } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
+import { websiteHost } from "./website";
 
 /**
  * The metric that stands for a sensor in the server's sensor list, by
@@ -22,6 +23,7 @@ const PRIMARY: Record<string, { suffix: string; instance?: string }> = {
   log: { suffix: "matches" },
   eventlog: { suffix: "matches" },
   script: { suffix: "status" },
+  http: { suffix: "up" },
 };
 
 /** The full name of the metric shown for `sensor`, and the instance to query, if any. */
@@ -64,6 +66,8 @@ export function seriesTitle(sensor: EffectiveSensor | undefined, metric: string,
         return shown || sensor.name;
       case "port":
         return t("sensors.title.port", { port: shown || sensor.name });
+      case "http":
+        return t("sensors.title.website", { host: websiteHost(sensor.params.url) || sensor.name });
       case "log":
       case "eventlog":
       case "script":
@@ -79,6 +83,8 @@ export function formatSensorValue(metric: string, value: number | null | undefin
   const short = shortMetric(metric);
   if (short.endsWith("_active")) return value === 1 ? t("sensors.value.active") : t("sensors.value.inactive");
   if (short.startsWith("ping") && short.endsWith("_up")) return value === 1 ? t("sensors.value.answers") : t("sensors.value.noAnswer");
+  // A website check: "http_shop_example_com_up" (ADR-0150).
+  if (short.startsWith("http_") && short.endsWith("_up")) return value === 1 ? t("sensors.value.answers") : t("sensors.value.fails");
   if (short.endsWith("_up")) return value === 1 ? t("sensors.value.open") : t("sensors.value.closed");
   if (short.endsWith("_loaded")) return value === 1 ? t("sensors.value.loaded") : t("sensors.value.notLoaded");
   if (short.endsWith("_installed")) return value === 1 ? t("sensors.value.installed") : t("sensors.value.notInstalled");

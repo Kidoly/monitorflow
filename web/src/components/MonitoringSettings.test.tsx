@@ -210,6 +210,63 @@ describe("MonitoringSettings", () => {
     expect(bodyOf(fetchMock, "POST /api/sites/site-1/thresholds")).toMatchObject({ metric: "monitorflow_port_5432_up", critical: 1 });
   });
 
+  it("adds a website check with a password and the alerts that come with it", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      ...serverRoutes([disk()], [sensor({})]),
+      "GET /api/plugins/usable": { status: 200, body: { plugins: [] } },
+      "POST /api/servers/srv-1/sensor_configs": { status: 201, body: {} },
+      "GET /api/servers/srv-1/thresholds": { status: 200, body: { entries: [] } },
+      "POST /api/servers/srv-1/thresholds": { status: 201, body: {} },
+    });
+    render(<MonitoringSettings target={SERVER} canEdit />);
+
+    await user.click(await screen.findByRole("button", { name: "Add a check" }));
+    const catalogue = screen.getByRole("group", { name: "Check catalogue" });
+    await user.type(within(catalogue).getByLabelText("Find a check"), "certificate");
+    await user.click(within(catalogue).getByRole("button", { name: /^A website answers/ }));
+    const form = screen.getByRole("form", { name: "Add a check" });
+    // The address and the text first; the rest under More options.
+    expect(within(form).getByLabelText("Text the page must hold")).toBeVisible();
+    expect(within(form).getByText("More options").closest("details")).not.toHaveAttribute("open");
+    await user.type(within(form).getByLabelText("Page address"), "ftp://shop");
+    await user.click(within(form).getByRole("button", { name: "Add check" }));
+    expect(within(form).getByRole("alert")).toHaveTextContent("Enter an address that starts with http:// or https://.");
+    await user.clear(within(form).getByLabelText("Page address"));
+    await user.type(within(form).getByLabelText("Page address"), "https://shop.example.com/");
+    await user.type(within(form).getByLabelText("Text the page must hold"), "Add to cart");
+    await user.click(within(form).getByText("More options"));
+    await user.selectOptions(within(form).getByLabelText("Redirects"), "false");
+    await user.type(within(form).getByLabelText("User name"), "monitor");
+    await user.type(within(form).getByLabelText("Password"), "s3cret");
+    expect(within(form).getByLabelText("Password")).toHaveAttribute("type", "password");
+    await user.click(within(form).getByRole("button", { name: "Add check" }));
+    expect(await screen.findByRole("button", { name: "Add a check" })).toBeInTheDocument();
+    expect(bodyOf(fetchMock, "POST /api/servers/srv-1/sensor_configs")).toEqual({
+      kind: "http",
+      name: "http_shop_example_com",
+      interval_ms: 60_000,
+      params: {
+        url: "https://shop.example.com/",
+        contains: "Add to cart",
+        follow_redirects: "false",
+        method: "GET",
+        ip: "any",
+        username: "monitor",
+        password: "s3cret",
+      },
+    });
+    const thresholds = fetchMock.mock.calls
+      .filter(([input, init]) => init?.method === "POST" && String(input) === "/api/servers/srv-1/thresholds")
+      .map(([, init]) => (JSON.parse(String(init?.body)) as { metric: string }).metric);
+    expect(thresholds).toEqual([
+      "monitorflow_http_shop_example_com_up",
+      "monitorflow_http_shop_example_com_cert_ok",
+      "monitorflow_http_shop_example_com_cert_days_left",
+      "monitorflow_http_shop_example_com_response_seconds",
+    ]);
+  });
+
   it("removes a check added here with its alerts, and turns off an inherited one", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({

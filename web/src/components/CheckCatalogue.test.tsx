@@ -26,7 +26,7 @@ describe("CheckCatalogue", () => {
     expect(screen.getByRole("group", { name: "Catalogue des contrôles" })).toBeInTheDocument();
     expect(screen.getByText(`${CATALOGUE.length} résultats`)).toBeInTheDocument();
     const common = screen.getByRole("region", { name: "Contrôles courants" });
-    expect(within(common).getAllByRole("button")[0]).toHaveTextContent("Le serveur web répond (HTTPS)");
+    expect(within(common).getAllByRole("button")[0]).toHaveTextContent("Un site web répond");
     expect(screen.getByRole("group", { name: "Ce qu’il faut surveiller" })).toHaveTextContent(/Disponibilité/);
   });
 

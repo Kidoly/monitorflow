@@ -15,6 +15,7 @@ import {
 import { formatNumber, formatPercent, formatSeconds } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
 import { sensorOf } from "./sensors";
+import { websiteHost } from "./website";
 import { SEVERITY_LABELS, type Severity } from "./thresholds";
 
 /**
@@ -26,7 +27,7 @@ export type Shape =
   | { type: "percent" | "number"; noun: string; suffix: string; unit?: string }
   | { type: "event"; noun: string; text: string; brief: string; comparison: Comparison; value: number };
 
-type EventWords = "port" | "ping" | "service" | "log" | "eventlog" | "script";
+type EventWords = "port" | "ping" | "service" | "log" | "eventlog" | "script" | "website" | "certificate";
 
 /**
  * The fixed trigger of an event, by sensor kind and metric suffix; its
@@ -41,7 +42,14 @@ const EVENTS: Record<string, { suffix: string; words: EventWords; comparison: Co
   log: { suffix: "matches", words: "log", comparison: ">", value: 0 },
   eventlog: { suffix: "matches", words: "eventlog", comparison: ">", value: 0 },
   script: { suffix: "status", words: "script", comparison: ">=", value: 1 },
+  http: { suffix: "up", words: "website", comparison: "<", value: 1 },
 };
+
+/** Other events of a kind than its own, like a website's certificate (ADR-0150). */
+const MORE_EVENTS: Record<string, { suffix: string; words: EventWords; comparison: Comparison; value: number }[]> = {
+  http: [{ suffix: "cert_ok", words: "certificate", comparison: "<", value: 1 }],
+};
+
 
 /** A port check's host, when it is not this server. */
 const remoteHost = (params: Record<string, string>) => (params.host && params.host !== "127.0.0.1" ? params.host : null);
@@ -68,6 +76,8 @@ function checkNoun(sensor: EffectiveSensor): string {
       return t("checks.noun.eventlog", { channel: params.channel ?? "" });
     case "script":
       return t("checks.noun.script", { name: params.script ?? sensor.name });
+    case "http":
+      return t("checks.noun.website", { host: websiteHost(params.url) || sensor.name });
     default:
       return sensor.name;
   }
@@ -86,12 +96,24 @@ export function shapeOf(sensors: EffectiveSensor[], metric: string, instance: st
     return { type: "number", noun, suffix: "", unit: t("format.unit.second") };
   }
   const sensor = sensorOf(sensors, metric);
-  const event = sensor && EVENTS[sensor.kind];
-  if (sensor && event && short === `${sensor.name}_${event.suffix}`) {
+  const event =
+    sensor && [EVENTS[sensor.kind], ...(MORE_EVENTS[sensor.kind] ?? [])].find((e) => e && short === `${sensor.name}_${e.suffix}`);
+  if (sensor?.kind === "http") {
+    const host = websiteHost(sensor.params.url) || sensor.name;
+    if (short === `${sensor.name}_cert_days_left`) {
+      return { type: "number", noun: t("checks.noun.certificateDays", { host }), suffix: "" };
+    }
+    if (short === `${sensor.name}_response_seconds`) {
+      return { type: "number", noun: t("checks.noun.responseTime", { host }), suffix: "", unit: t("format.unit.second") };
+    }
+  }
+  if (sensor && event) {
     const { words, comparison, value } = event;
     const text = t(`checks.event.${words}.text`);
     const brief = t(`checks.event.${words}.brief`);
-    return { type: "event", noun: checkNoun(sensor), text, brief, comparison, value };
+    const noun =
+      words === "certificate" ? t("checks.noun.certificate", { host: websiteHost(sensor.params.url) || sensor.name }) : checkNoun(sensor);
+    return { type: "event", noun, text, brief, comparison, value };
   }
   const noun = `${metricTitle(metric)}${instance ? ` ${instance}` : ""}`;
   if (short.endsWith("_ratio")) return { type: "percent", noun, suffix: "" };
@@ -222,6 +244,12 @@ export interface CheckField {
   check?: (value: string) => string | null;
   /** May be left empty. */
   optional?: boolean;
+  /** Shown under "More options". */
+  advanced?: boolean;
+  /** How it is typed: a line of text by default. */
+  input?: "text" | "password" | "lines" | "select";
+  /** The choices of a `select`, its value first. */
+  options?: { value: string; label: string }[];
 }
 
 /** A kind of check one can add, with the alert that comes with it. */
@@ -245,11 +273,24 @@ export interface CheckType {
   noAlert?: boolean;
   /** Runs from the central server or a relay, which the form asks (ADR-0148). */
   probe?: boolean;
+  /** Alerts that come with it besides its own event, like a website's certificate (ADR-0150). */
+  moreAlerts?: (metricOf: (suffix: string) => string, values: Record<string, string>) => ThresholdRequest[];
 }
 
 const portNumber = (value: string) =>
   /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 65_535 ? null : t("checks.error.port");
 const oneName = (value: string) => (/^[^,\s]+$/.test(value) ? null : t("checks.error.oneName"));
+const websiteUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return t("checks.error.websiteUrl");
+    return url.username || url.password ? t("checks.error.urlCredentials") : null;
+  } catch {
+    return t("checks.error.websiteUrl");
+  }
+};
+const statusCodes = (value: string) =>
+  /^\s*[1-5]\d\d(\s*-\s*[1-5]\d\d)?(\s*,\s*[1-5]\d\d(\s*-\s*[1-5]\d\d)?)*\s*$/.test(value) ? null : t("checks.error.status");
 
 /**
  * The kinds of check, with their words in the active language: labels,
@@ -378,6 +419,84 @@ export const CHECK_TYPES: CheckType[] = [
     severity: "warning",
     duration_s: 60,
   },
+  {
+    kind: "http",
+    get label() {
+      return t("checks.type.http");
+    },
+    os: null,
+    get fields(): CheckField[] {
+      return [
+        { key: "url", label: t("checks.field.url"), placeholder: "https://www.example.com/", hint: t("checks.field.urlHint"), check: websiteUrl },
+        { key: "contains", label: t("checks.field.contains"), placeholder: t("checks.field.containsPlaceholder"), hint: t("checks.field.containsHint"), optional: true },
+        { key: "not_contains", label: t("checks.field.notContains"), placeholder: t("checks.field.notContainsPlaceholder"), hint: t("checks.field.notContainsHint"), optional: true, advanced: true },
+        { key: "status", label: t("checks.field.status"), placeholder: "200-299", hint: t("checks.field.statusHint"), optional: true, advanced: true, check: statusCodes },
+        {
+          key: "follow_redirects",
+          label: t("checks.field.redirects"),
+          placeholder: "",
+          initial: "true",
+          optional: true,
+          advanced: true,
+          input: "select",
+          options: [
+            { value: "true", label: t("checks.field.redirectsFollow") },
+            { value: "false", label: t("checks.field.redirectsKeep") },
+          ],
+        },
+        {
+          key: "method",
+          label: t("checks.field.method"),
+          placeholder: "",
+          initial: "GET",
+          optional: true,
+          advanced: true,
+          input: "select",
+          options: [
+            { value: "GET", label: t("checks.field.methodGet") },
+            { value: "HEAD", label: t("checks.field.methodHead") },
+          ],
+        },
+        {
+          key: "ip",
+          label: t("checks.field.ip"),
+          placeholder: "",
+          initial: "any",
+          optional: true,
+          advanced: true,
+          input: "select",
+          options: [
+            { value: "any", label: t("checks.field.ipAny") },
+            { value: "4", label: "IPv4" },
+            { value: "6", label: "IPv6" },
+          ],
+        },
+        { key: "headers", label: t("checks.field.headers"), placeholder: "Accept-Language: en", hint: t("checks.field.headersHint"), optional: true, advanced: true, input: "lines" },
+        { key: "username", label: t("checks.field.username"), placeholder: "", hint: t("checks.field.usernameHint"), optional: true, advanced: true },
+        { key: "password", label: t("checks.field.password"), placeholder: "", hint: t("checks.field.passwordHint"), optional: true, advanced: true, input: "password" },
+      ];
+    },
+    nameFrom: "url",
+    severity: "critical",
+    duration_s: 120,
+    moreAlerts: (metricOf, values) => {
+      const rule = (suffix: string, comparison: Comparison, warning: number | null, critical: number | null, duration_s: number) => ({
+        metric: metricOf(suffix),
+        instance: null,
+        comparison,
+        warning,
+        critical,
+        duration_s,
+        hysteresis: 0,
+        enabled: true,
+      });
+      const https = (values.url ?? "").trim().toLowerCase().startsWith("https://");
+      return [
+        ...(https ? [rule("cert_ok", "<", null, 1, 300), rule("cert_days_left", "<", 14, 7, 0)] : []),
+        rule("response_seconds", ">", 3, null, 300),
+      ];
+    },
+  },
 ];
 
 const hostField = (): CheckField => ({
@@ -455,7 +574,11 @@ const MAX_NAME = 64;
 /** "service_nginx": a sensor name for the check, which prefixes its metrics. */
 export function checkName(type: CheckType, values: Record<string, string>): string {
   const prefix = type.prefix ?? (type.kind === "systemd" || type.kind === "windows_service" ? "service" : type.kind);
-  const source = (values[type.nameFrom] ?? "").split(/[/\\]/).pop() ?? "";
+  // A website by its host: "http_shop_example_com".
+  const source =
+    type.kind === "http"
+      ? websiteHost((values[type.nameFrom] ?? "").trim())
+      : ((values[type.nameFrom] ?? "").split(/[/\\]/).pop() ?? "");
   const slug = source
     .toLowerCase()
     .replace(/\.(service|log|sh|ps1)$/, "")
@@ -481,14 +604,15 @@ export function checkRequests(
   type: CheckType,
   values: Record<string, string>,
   intervalMs: number,
-): { sensor: SensorConfigRequest; threshold: ThresholdRequest | null } {
+): { sensor: SensorConfigRequest; threshold: ThresholdRequest | null; more: ThresholdRequest[] } {
   const name = checkName(type, values);
   const params = Object.fromEntries(
     type.fields.map((f) => [f.key, (values[f.key] ?? "").trim()]).filter(([, value]) => value !== ""),
   );
   const sensor: SensorConfigRequest = { kind: type.kind, name, interval_ms: intervalMs, params: { ...params, ...type.fixed } };
   const event = EVENTS[type.kind];
-  if (!event || type.noAlert) return { sensor, threshold: null };
+  if (!event || type.noAlert) return { sensor, threshold: null, more: [] };
+  const more = type.moreAlerts?.((suffix) => `${METRIC_PREFIX}${name}_${suffix}`, values) ?? [];
   const level = (severity: Severity) => (type.severity === severity ? event.value : null);
   return {
     sensor,
@@ -502,6 +626,7 @@ export function checkRequests(
       hysteresis: 0,
       enabled: true,
     },
+    more,
   };
 }
 
@@ -612,6 +737,8 @@ function ownTitle(sensor: EffectiveSensor): string {
       return t("checks.title.service", { name: params.services ?? sensor.name });
     case "script":
       return t("checks.title.script", { name: params.script ?? sensor.name });
+    case "http":
+      return t("checks.title.website", { host: websiteHost(params.url) || sensor.name });
     default:
       return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }

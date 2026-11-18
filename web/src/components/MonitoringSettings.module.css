@@ -147,3 +147,14 @@
 .turnOff button:not([type="submit"]) {
   color: var(--bad);
 }
+
+/* "More options" of a check form: the fields most checks leave as they are. */
+.more {
+  margin: 4px 0 8px;
+}
+
+.more > summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
