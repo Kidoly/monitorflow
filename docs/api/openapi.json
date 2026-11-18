@@ -40774,6 +40774,66 @@
           },
           {
             "type": "object",
+            "description": "A network scan of the import's site (ADR-0154), notifications\noff, run from the site's default probe.",
+            "required": [
+              "name",
+              "targets",
+              "addresses",
+              "ports",
+              "probe",
+              "has_snmp",
+              "object"
+            ],
+            "properties": {
+              "addresses": {
+                "type": "integer",
+                "format": "int32",
+                "description": "How many addresses they stand for.",
+                "minimum": 0
+              },
+              "every": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "`hour`, `day` or `week`; `null`: only when asked."
+              },
+              "has_snmp": {
+                "type": "boolean",
+                "description": "Whether its own SNMP credentials come with it, kept sealed."
+              },
+              "name": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "network_scan"
+                ]
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              },
+              "probe": {
+                "type": "string",
+                "description": "Where it runs from when the preview was made: `central`, or the\nname of the relay of the site added first."
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Addresses, blocks and ranges, as `POST /api/network-scans`\ntakes them."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A notification channel.",
             "required": [
               "kind",
@@ -40911,7 +40971,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`server`, `check`, `threshold`, `silence`, `channel`, or what the\nsource item was when nothing is created (`builtin` for what every\nserver measures already, `other`)."
+            "description": "`server`, `check`, `threshold`, `silence`, `window`,\n`network_scan`, `channel`, or what the source item was when\nnothing is created (`builtin` for what every server measures\nalready, `other`)."
           },
           "list": {
             "$ref": "#/components/schemas/ImportList"
@@ -40996,7 +41056,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "What it is there: `host`, `item`, `trigger`, `template`,\n`web_scenario`, `maintenance`, `media_type`, `user_media`,\n`scrape_target`, `alerting_rule`, `receiver`, `silence`, `sensor`,\n`notification`, `device` or `group`."
+            "description": "What it is there: `host`, `item`, `trigger`, `template`,\n`web_scenario`, `maintenance`, `media_type`, `user_media`,\n`scrape_target`, `alerting_rule`, `receiver`, `silence`, `sensor`,\n`notification`, `device`, `group`, `probe`, `time_interval`,\n`schedule`, `discovery_rule` or `action`."
           },
           "name": {
             "type": "string",
@@ -41059,7 +41119,7 @@
         "properties": {
           "created": {
             "type": "object",
-            "description": "Created, by object: `server`, `check`, `threshold`, `silence`,\n`channel`.",
+            "description": "Created, by object: `server`, `check`, `threshold`, `silence`,\n`window`, `network_scan`, `channel`.",
             "additionalProperties": {
               "type": "integer",
               "format": "int32",

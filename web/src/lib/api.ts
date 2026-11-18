@@ -1611,6 +1611,17 @@ export type ImportCreate =
     }
   | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
   | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
+  | {
+      object: "network_scan";
+      name: string;
+      targets: string[];
+      addresses: number;
+      ports: number[];
+      every: "hour" | "day" | "week" | null;
+      /** `central`, or the name of the relay it runs from. */
+      probe: string;
+      has_snmp: boolean;
+    }
   | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null };
 
 /** One line of an import's preview. */

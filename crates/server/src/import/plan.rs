@@ -53,6 +53,11 @@ pub struct Existing {
     pub channels: HashSet<String>,
     /// Maintenance windows of the site not removed, by [`window_key`].
     pub windows: HashSet<String>,
+    /// Network scans of the site, by lowercase name.
+    pub scans: HashSet<String>,
+    /// The site's default probe (ADR-0148): `central`, or the relay's
+    /// name; `central` when empty.
+    pub probe: String,
 }
 
 /// What identifies a maintenance window of the import's site: its
@@ -177,6 +182,7 @@ pub fn plan_in(
     planner.thresholds();
     planner.silences();
     planner.windows();
+    planner.scans();
     planner.channels();
     planner.unmovable();
     planner.out
@@ -1482,6 +1488,105 @@ impl Planner<'_> {
                 present,
                 needs,
                 create: Some(create),
+            });
+        }
+    }
+
+    fn scans(&mut self) {
+        use crate::api::network_scans::MAX_NAME;
+        use crate::netscan::targets;
+        for scan in &self.inventory.scans {
+            let origin: OriginView = (&scan.origin).into();
+            let (mut list, mut why) = list_of(&scan.fidelity);
+            let name: String = scan
+                .name
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(MAX_NAME)
+                .collect::<String>()
+                .trim()
+                .to_owned();
+            let name = if name.is_empty() {
+                origin.name.chars().take(MAX_NAME).collect()
+            } else {
+                name
+            };
+            // The same checks as the network scans API.
+            let checked = targets::expand(&scan.targets)
+                .and_then(|(t, ips)| Ok((t, ips, targets::ports(scan.ports.as_deref())?)));
+            let (entries, addresses, ports) = match checked {
+                Ok(checked) => checked,
+                Err(reason) => {
+                    let reason = reason.replace('`', "");
+                    self.not_movable(
+                        "network_scan",
+                        origin,
+                        vec![],
+                        note("refused", args! {"reason" => reason}),
+                    );
+                    continue;
+                }
+            };
+            let mut secret = None;
+            if let Some(snmp) = &scan.snmp {
+                let request = json!({
+                    "version": snmp.version,
+                    "port": snmp.port,
+                    "community": snmp.community.as_ref().map(|s| s.expose()),
+                    "user": snmp.user,
+                    "auth_protocol": snmp.auth_protocol,
+                    "auth_password": snmp.auth_password.as_ref().map(|s| s.expose()),
+                    "priv_protocol": snmp.priv_protocol,
+                    "priv_password": snmp.priv_password.as_ref().map(|s| s.expose()),
+                });
+                let checked =
+                    serde_json::from_value::<crate::snmp::CredentialsRequest>(request.clone())
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| crate::snmp::check(&r, None));
+                match checked {
+                    Ok(_) => secret = Some(request.to_string()),
+                    Err(reason) if list == List::Exact => {
+                        list = List::Approximated;
+                        let reason = reason.replace('`', "");
+                        why = note("scan_snmp_refused", args! {"reason" => reason});
+                    }
+                    Err(_) => {}
+                }
+            }
+            let present = self.existing.scans.contains(&name.to_lowercase());
+            let id = self.unique_id(format!("network_scan:{name}"));
+            let has_snmp = secret.is_some();
+            if let Some(secret) = secret {
+                self.out.secrets.insert(
+                    id.clone(),
+                    ChannelSecret {
+                        url: None,
+                        secret: Some(secret),
+                    },
+                );
+            }
+            let probe = match self.existing.probe.as_str() {
+                "" => monitorflow_probe::CENTRAL.to_owned(),
+                p => p.to_owned(),
+            };
+            self.push(Item {
+                id,
+                kind: "network_scan".into(),
+                list,
+                note: why,
+                origin,
+                hosts: vec![],
+                present,
+                needs: vec![],
+                create: Some(Create::NetworkScan {
+                    name,
+                    targets: entries,
+                    addresses: u32::try_from(addresses.len()).unwrap_or(u32::MAX),
+                    ports,
+                    every: scan.every.map(|e| e.as_str().to_owned()),
+                    probe,
+                    has_snmp,
+                }),
             });
         }
     }

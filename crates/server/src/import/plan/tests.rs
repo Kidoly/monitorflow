@@ -1468,3 +1468,114 @@ fn devices_and_probe_checks() {
         .iter()
         .any(|i| i.kind == "builtin" && i.note.as_ref().is_some_and(|n| n.code == "builtin_net")));
 }
+
+fn scan(name: &str, targets: &[&str]) -> monitorflow_import::model::Scan {
+    monitorflow_import::model::Scan {
+        name: name.into(),
+        targets: targets.iter().map(|t| (*t).to_owned()).collect(),
+        ports: Some(vec![22, 80]),
+        every: Some(monitorflow_import::model::Every::Day),
+        snmp: None,
+        group: None,
+        origin: Origin::new("discovery_rule", name),
+        fidelity: Fidelity::Exact,
+    }
+}
+
+#[test]
+fn network_scans_go_to_the_site_from_its_probe() {
+    use monitorflow_import::model::ScanSnmp;
+    let mut office = scan("Office", &["192.0.2.0/24"]);
+    office.snmp = Some(ScanSnmp {
+        version: "v2c".into(),
+        port: 161,
+        community: Some(Secret::new("recorded-community")),
+        ..ScanSnmp::default()
+    });
+    let mut lab = scan("Lab", &["198.51.100.1-10"]);
+    (lab.ports, lab.every) = (None, None);
+    // Too short a password for SNMPv3.
+    lab.snmp = Some(ScanSnmp {
+        version: "v3".into(),
+        port: 161,
+        user: Some("monitor".into()),
+        auth_protocol: Some("sha".into()),
+        auth_password: Some(Secret::new("short")),
+        ..ScanSnmp::default()
+    });
+    let inventory = Inventory {
+        scans: vec![
+            office,
+            scan("Everything", &["10.0.0.0/16"]),
+            lab,
+            scan("Branch", &["203.0.113.5"]),
+        ],
+        ..Inventory::default()
+    };
+    let existing = Existing {
+        scans: HashSet::from(["branch".to_owned()]),
+        probe: "relay-paris".into(),
+        ..Existing::default()
+    };
+    let planned = run(&inventory, &existing);
+
+    let office = by_id(&planned, "network_scan:Office");
+    assert_eq!(
+        (office.kind.as_str(), office.list),
+        ("network_scan", List::Exact)
+    );
+    assert_eq!(
+        office.create,
+        Some(Create::NetworkScan {
+            name: "Office".into(),
+            targets: vec!["192.0.2.0/24".into()],
+            addresses: 254,
+            ports: vec![22, 80],
+            every: Some("day".into()),
+            probe: "relay-paris".into(),
+            has_snmp: true,
+        })
+    );
+    // The community is sealed with the run, never in the preview.
+    let secret = planned.secrets["network_scan:Office"]
+        .secret
+        .as_deref()
+        .unwrap();
+    let request: crate::snmp::CredentialsRequest = serde_json::from_str(secret).unwrap();
+    assert_eq!(request.community.as_deref(), Some("recorded-community"));
+    assert!(!serde_json::to_string(&planned.items)
+        .unwrap()
+        .contains("recorded-community"));
+
+    // More than a scan tries: refused as the API would.
+    let everything = by_id(&planned, "other:discovery_rule:Everything");
+    assert_eq!(everything.list, List::NotMovable);
+    assert_eq!(everything.note.as_ref().unwrap().code, "refused");
+
+    // Default ports, when asked only, and credentials refused said so.
+    let lab = by_id(&planned, "network_scan:Lab");
+    assert_eq!(lab.list, List::Approximated);
+    assert_eq!(lab.note.as_ref().unwrap().code, "scan_snmp_refused");
+    let Some(Create::NetworkScan {
+        ports,
+        every,
+        has_snmp,
+        addresses,
+        ..
+    }) = &lab.create
+    else {
+        panic!("{lab:?}");
+    };
+    assert_eq!(ports, &crate::netscan::targets::DEFAULT_PORTS.to_vec());
+    assert_eq!((every, *has_snmp, *addresses), (&None, false, 10));
+    assert!(!planned.secrets.contains_key("network_scan:Lab"));
+
+    // A scan of that name in the site already: nothing to create.
+    assert!(by_id(&planned, "network_scan:Branch").present);
+    // Without a relay, the central server.
+    let planned = run(&inventory, &Existing::default());
+    assert!(matches!(
+        &by_id(&planned, "network_scan:Office").create,
+        Some(Create::NetworkScan { probe, .. }) if probe == "central"
+    ));
+}
