@@ -579,12 +579,12 @@ async fn create_one(
                 crate::api::thresholds::validate_entry(crate::api::thresholds::EntryRequest {
                     metric: metric.clone(),
                     instance: instance.clone(),
-                    comparison: comparison.clone(),
+                    comparison: Some(comparison.clone()),
                     warning: *warning,
                     critical: *critical,
                     duration_s: *duration_s,
                     hysteresis: *hysteresis,
-                    enabled: true,
+                    ..Default::default()
                 })?;
             sqlx::query_scalar(
                 "INSERT INTO thresholds (server_id, metric, instance, comparison, warning,

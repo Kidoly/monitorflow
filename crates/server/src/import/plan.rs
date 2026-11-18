@@ -1193,12 +1193,12 @@ impl Planner<'_> {
             let request = thresholds::EntryRequest {
                 metric: metric.clone(),
                 instance: instance.clone(),
-                comparison: merged.comparison.into(),
+                comparison: Some(merged.comparison.into()),
                 warning,
                 critical,
                 duration_s,
                 hysteresis: merged.hysteresis,
-                enabled: true,
+                ..Default::default()
             };
             if let Err(reason) = thresholds::validate_entry(request) {
                 self.not_movable(
