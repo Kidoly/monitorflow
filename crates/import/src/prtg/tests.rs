@@ -194,8 +194,14 @@ async fn silences_follow_pauses_and_maintenance() {
         .unwrap();
     assert_eq!(network.scope, SilenceScope::Hosts(vec![]));
     let codes: Vec<&str> = inv.unmovable.iter().map(|u| u.why.code.as_str()).collect();
-    assert!(codes.contains(&"prtg_paused_sensor"));
     assert!(codes.contains(&"prtg_paused_by_rule"));
+    // A paused sensor silences its check, not its whole server.
+    let sensor = inv
+        .silences
+        .iter()
+        .find(|s| s.origin.name == "Disk /var")
+        .unwrap();
+    assert_eq!(sensor.checks, vec![crate::model::Watch::Disk]);
 }
 
 #[tokio::test]

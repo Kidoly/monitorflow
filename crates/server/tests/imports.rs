@@ -161,6 +161,7 @@ fn inventory() -> Inventory {
         }],
         silences: vec![Silence {
             scope: SilenceScope::Hosts(vec!["2".into()]),
+            checks: vec![],
             starts_at: now + TimeDelta::hours(1),
             ends_at: now + TimeDelta::hours(3),
             reason: "Database upgrade".into(),
@@ -192,6 +193,7 @@ fn inventory() -> Inventory {
                 fidelity: Fidelity::Exact,
             },
         ],
+        windows: vec![],
         unmovable: vec![],
     }
 }

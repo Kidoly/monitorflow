@@ -439,6 +439,7 @@ fn a_recovery_value_becomes_hysteresis_and_crossed_levels_are_fixed() {
 fn silences_are_cut_skipped_or_per_server() {
     let silence = |scope, starts: i64, ends: i64, name: &str| Silence {
         scope,
+        checks: vec![],
         starts_at: now() + TimeDelta::hours(starts),
         ends_at: now() + TimeDelta::hours(ends),
         reason: format!("{name} window"),

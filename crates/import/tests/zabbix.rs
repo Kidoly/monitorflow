@@ -418,8 +418,9 @@ async fn a_live_zabbix() {
     );
     assert_eq!(nginx.origin.kind, "item");
 
-    // Maintenances: the one-time window, and the next Sunday 02:00 of
-    // the weekly one, on both hosts of "Linux servers".
+    // Maintenances: the one-time window as a silence, and the weekly one
+    // as a maintenance window on Sundays at 02:00, on both hosts of
+    // "Linux servers" (ADR-0151).
     let upgrade = inventory
         .silences
         .iter()
@@ -430,20 +431,16 @@ async fn a_live_zabbix() {
     assert_eq!((upgrade.ends_at - upgrade.starts_at).num_hours(), 4);
     assert_eq!(upgrade.fidelity, Fidelity::Exact);
     let weekly = inventory
-        .silences
+        .windows
         .iter()
-        .find(|s| s.origin.name == "Weekly patching")
+        .find(|w| w.origin.name == "Weekly patching")
         .unwrap();
     let SilenceScope::Hosts(hosts) = &weekly.scope else {
         panic!("hosts expected")
     };
     assert!(hosts.contains(&"db-01".into()) && hosts.contains(&"web-01".into()));
-    assert_eq!(
-        weekly.starts_at.format("%a %H:%M").to_string(),
-        "Sun 02:00",
-        "{weekly:?}"
-    );
-    assert_eq!(note(&weekly.fidelity), Some("silence_next_window"));
+    assert_eq!(weekly.rule.weekdays, 1 << 6, "{weekly:?}");
+    assert_eq!(weekly.rule.start_time.to_string(), "02:00:00");
 
     // Channels: the mail server with Admin's two addresses, the webhook,
     // and the chat webhooks from Admin's "send to".

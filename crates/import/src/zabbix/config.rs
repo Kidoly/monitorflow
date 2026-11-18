@@ -164,6 +164,8 @@ pub struct Trigger {
     pub prototype: bool,
     /// The template it comes from, when the API says.
     pub template: Option<String>,
+    /// Its tags, name and value, which maintenances may select.
+    pub tags: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -216,8 +218,35 @@ pub struct Maintenance {
     /// Names of its host groups.
     pub groups: Vec<String>,
     pub periods: Vec<Period>,
-    /// Problem tags it is limited to, as `tag=value`.
+    /// Problem tags it is limited to, as `tag=value`, for people.
     pub tags: Vec<String>,
+    /// The same, to match: name, value, and whether the value is only
+    /// contained (Zabbix's "contains") rather than equal.
+    pub tag_filters: Vec<TagFilter>,
+    /// Problems need every tag name (Zabbix's "And/Or"), not one of them.
+    pub tags_all: bool,
+    /// Zabbix keeps collecting data during it.
+    pub collect_data: bool,
+}
+
+/// One tag condition of a maintenance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagFilter {
+    pub tag: String,
+    pub value: String,
+    pub contains: bool,
+}
+
+impl TagFilter {
+    /// Whether a problem tag passes it.
+    pub fn matches(&self, tag: &str, value: &str) -> bool {
+        tag == self.tag
+            && if self.contains {
+                value.contains(&self.value)
+            } else {
+                value == self.value
+            }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

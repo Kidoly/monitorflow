@@ -253,6 +253,10 @@ fn trigger_of(value: &Value) -> Trigger {
         enabled: !disabled(value),
         prototype: false,
         template: None,
+        tags: list(value, "tags")
+            .into_iter()
+            .map(|t| (text(t, "tag"), text(t, "value")))
+            .collect(),
     }
 }
 

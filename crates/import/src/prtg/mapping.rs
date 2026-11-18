@@ -3,13 +3,13 @@
 //! pauses and maintenance windows become silences, and notification
 //! templates become channels.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveTime, Utc};
 use monitorflow_common::redact::Secret;
 
 use crate::args;
 use crate::model::{
-    Channel, Check, Fidelity, Host, Inventory, Origin, Os, Silence, SilenceScope, Target,
-    Threshold, Unmovable, Watch,
+    Channel, Check, Fidelity, Host, Inventory, Origin, Os, Repeat, Rule, Silence, SilenceScope,
+    Target, Threshold, Unmovable, Watch, Window, EVERY_MONTH, MAX_WINDOW_MINUTES,
 };
 use crate::notes::Note;
 
@@ -271,28 +271,42 @@ fn silences(tree: &Tree, object: &Object, hosts: &[i64], now: DateTime<Utc>, out
     {
         return;
     }
-    let whole_server = || {
-        Fidelity::Approximated(Note::new(
-            "silence_whole_server",
-            args! {"matchers" => object.name},
-        ))
+    // A sensor is one check of its device: what is silenced.
+    let checks: Vec<Watch> = if sensor {
+        let device = tree.ancestor(object.id, Kind::Device);
+        match sensors::map(object, device.and_then(|d| d.host.as_deref())) {
+            Mapped::Watch { watch, .. } if watch != Watch::Agent => vec![watch],
+            _ => vec![],
+        }
+    } else {
+        vec![]
     };
+    // A sensor MonitorFlow has no check for is left out: silencing its
+    // whole server would hide far more than PRTG did.
+    let unmapped = sensor && checks.is_empty();
+    let scheduled = object.schedule.as_ref().and_then(|name| {
+        tree.schedules
+            .get(name)
+            .cloned()
+            .flatten()
+            .map(|p| (name, p))
+    });
     match &object.paused {
         None => {}
+        Some(Paused::ByRule) if scheduled.is_some() => {}
         Some(Paused::ByRule) => out.unmovable.push(Unmovable {
             hosts: vec![],
             origin: origin(object),
             why: Note::plain("prtg_paused_by_rule"),
         }),
-        // Silencing a whole server for one paused check would hide far
-        // more than PRTG did.
-        Some(_) if sensor => out.unmovable.push(Unmovable {
+        Some(_) if unmapped => out.unmovable.push(Unmovable {
             hosts: vec![],
             origin: origin(object),
             why: Note::plain("prtg_paused_sensor"),
         }),
         Some(Paused::Indefinitely) => out.silences.push(Silence {
             scope: scope(tree, object, hosts),
+            checks: checks.clone(),
             starts_at: now,
             ends_at: now + Duration::days(MAX_SILENCE_DAYS),
             reason: "Paused in PRTG".into(),
@@ -301,33 +315,105 @@ fn silences(tree: &Tree, object: &Object, hosts: &[i64], now: DateTime<Utc>, out
         }),
         Some(Paused::Until(end)) => out.silences.push(Silence {
             scope: scope(tree, object, hosts),
+            checks: checks.clone(),
             starts_at: now,
             ends_at: *end,
             reason: "Paused in PRTG".into(),
             origin: origin(object),
-            fidelity: if sensor {
-                whole_server()
-            } else {
-                Fidelity::Exact
-            },
+            fidelity: Fidelity::Exact,
         }),
     }
     if let Some(window) = &object.maintenance {
-        out.silences.push(Silence {
-            scope: scope(tree, object, hosts),
-            starts_at: window.start,
-            ends_at: window.end,
-            reason: "Maintenance window from PRTG".into(),
-            origin: origin(object),
-            fidelity: if sensor {
-                whole_server()
-            } else if tree.local_times {
-                Fidelity::Approximated(Note::plain("prtg_local_time"))
-            } else {
-                Fidelity::Exact
-            },
+        if unmapped {
+            out.unmovable.push(Unmovable {
+                hosts: vec![],
+                origin: origin(object),
+                why: Note::plain("prtg_paused_sensor"),
+            });
+        } else {
+            out.silences.push(Silence {
+                scope: scope(tree, object, hosts),
+                checks: checks.clone(),
+                starts_at: window.start,
+                ends_at: window.end,
+                reason: "Maintenance window from PRTG".into(),
+                origin: origin(object),
+                fidelity: if tree.local_times {
+                    Fidelity::Approximated(Note::plain("prtg_local_time"))
+                } else {
+                    Fidelity::Exact
+                },
+            });
+        }
+    }
+    if let Some(name) = &object.schedule {
+        let rules = scheduled
+            .as_ref()
+            .and_then(|(_, periods)| period_list(periods))
+            .filter(|_| !unmapped);
+        match rules {
+            Some(rules) => {
+                for rule in rules {
+                    out.windows.push(Window {
+                        scope: scope(tree, object, hosts),
+                        checks: checks.clone(),
+                        rule,
+                        reason: format!("Schedule {name} from PRTG"),
+                        origin: Origin::new("schedule", name.clone())
+                            .with_detail(tree.path(object.id)),
+                        fidelity: Fidelity::Exact,
+                    });
+                }
+            }
+            None => out.unmovable.push(Unmovable {
+                hosts: vec![],
+                origin: origin(object),
+                why: Note::new("prtg_schedule_unknown", args! {"schedule" => name}),
+            }),
+        }
+    }
+}
+
+/// A schedule's period list, `mo:00:00-mo:06:00` per line, as weekly
+/// rules in PRTG's local time, the zone chosen for the import. `None`
+/// when a line is not a period.
+pub fn period_list(text: &str) -> Option<Vec<Rule>> {
+    const DAYS: [&str; 7] = ["mo", "tu", "we", "th", "fr", "sa", "su"];
+    let point = |p: &str| -> Option<u32> {
+        let mut parts = p.trim().split(':');
+        let day = parts.next()?;
+        let day = DAYS.iter().position(|d| d.eq_ignore_ascii_case(day))?;
+        let hours: u32 = parts.next()?.parse().ok()?;
+        let minutes: u32 = parts.next()?.parse().ok()?;
+        (parts.next().is_none() && hours <= 24 && minutes < 60)
+            .then(|| u32::try_from(day).unwrap_or(0) * 1440 + hours * 60 + minutes)
+    };
+    let mut rules = Vec::new();
+    for line in text
+        .split(['\n', ',', ';'])
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        let (from, to) = line.split_once('-')?;
+        let (start, end) = (point(from)?, point(to)?);
+        let week = 7 * 1440;
+        let length = (end + week - start) % week;
+        let length = if length == 0 { week } else { length };
+        rules.push(Rule {
+            repeat: Repeat::Weekly,
+            every: 1,
+            weekdays: 1 << (start / 1440),
+            month_day: None,
+            month_week: None,
+            months: EVERY_MONTH,
+            start_time: NaiveTime::from_num_seconds_from_midnight_opt((start % 1440) * 60, 0)?,
+            duration_minutes: length.min(MAX_WINDOW_MINUTES),
+            time_zone: None,
+            starts_on: None,
+            ends_on: None,
         });
     }
+    (!rules.is_empty()).then_some(rules)
 }
 
 /// The target of a webhook URL, by its host.
@@ -444,6 +530,7 @@ mod tests {
             ],
             notifications: vec![],
             local_times: false,
+            schedules: Default::default(),
         }
     }
 
@@ -506,7 +593,12 @@ mod tests {
             .iter()
             .map(|u| (u.origin.name.as_str(), u.why.code.as_str()))
             .collect();
-        assert!(codes.contains(&("sensor 30", "prtg_paused_sensor")));
+        // A paused sensor silences its check, when MonitorFlow has one.
+        let paused = &tree.objects[7];
+        match inv.silences.iter().find(|s| s.origin.name == paused.name) {
+            Some(silence) => assert!(!silence.checks.is_empty(), "{silence:?}"),
+            None => assert!(codes.contains(&(paused.name.as_str(), "prtg_paused_sensor"))),
+        }
         assert!(codes.contains(&("files", "prtg_paused_by_rule")));
     }
 
@@ -577,5 +669,62 @@ mod tests {
                 ("Empty", "no_target")
             ]
         );
+    }
+
+    #[test]
+    fn schedules_become_weekly_windows() {
+        let mut tree = tree();
+        // The port sensor of web follows "Backups", the files device "Grid".
+        tree.objects[9].schedule = Some("Backups".into());
+        tree.objects[6].schedule = Some("Grid".into());
+        tree.schedules.insert(
+            "Backups".into(),
+            Some("sa:23:00-su:02:00\nwe:12:00-we:12:30".into()),
+        );
+        tree.schedules.insert("Grid".into(), None);
+        let inv = inventory(&tree, now());
+        let windows: Vec<_> = inv
+            .windows
+            .iter()
+            .filter(|w| w.origin.name == "Backups")
+            .collect();
+        assert_eq!(windows.len(), 2);
+        assert_eq!(
+            windows[0].scope,
+            SilenceScope::Hosts(vec!["device:20".into()])
+        );
+        assert_eq!(
+            windows[0].checks,
+            vec![Watch::Port {
+                address: Some("192.0.2.20".into()),
+                port: 443
+            }]
+        );
+        assert_eq!(
+            (windows[0].rule.weekdays, windows[0].rule.duration_minutes),
+            (1 << 5, 180)
+        );
+        assert_eq!(windows[0].rule.start_time.to_string(), "23:00:00");
+        assert_eq!(
+            (windows[1].rule.weekdays, windows[1].rule.duration_minutes),
+            (1 << 2, 30)
+        );
+        assert!(inv
+            .unmovable
+            .iter()
+            .any(|u| u.origin.name == "files" && u.why.code == "prtg_schedule_unknown"));
+    }
+
+    #[test]
+    fn period_lists_are_read_or_refused() {
+        // Over the end of the week.
+        let rules = period_list("su:22:00-mo:06:00").unwrap();
+        assert_eq!(
+            (rules[0].weekdays, rules[0].duration_minutes),
+            (1 << 6, 480)
+        );
+        assert!(period_list("mu:00:00-mo:01:00").is_none());
+        assert!(period_list("mo:00:00").is_none());
+        assert!(period_list("").is_none());
     }
 }
