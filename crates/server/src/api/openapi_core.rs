@@ -184,7 +184,7 @@ pub mod ex {
                 "metric": "monitorflow_disk_used_ratio", "instance": null, "comparison": ">",
                 "warning": 0.85, "critical": 0.95, "duration_s": 300, "hysteresis": 0.02
             },
-            "silenced_until": null, "silenced": false,
+            "silenced_until": null, "in_maintenance": false, "silenced": false,
             "acknowledged_by": null, "acknowledged_at": null,
             "can_acknowledge": true
         })

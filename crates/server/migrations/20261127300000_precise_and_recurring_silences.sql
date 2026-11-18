@@ -67,50 +67,50 @@ ALTER TABLE silences
 -- target and start for each version of its rule (`updated_at`).
 CREATE INDEX silences_window_idx ON silences (window_id, starts_at) WHERE window_id IS NOT NULL;
 
--- Whole targets only: a server with some checks silenced is not silenced.
-CREATE OR REPLACE FUNCTION silenced_until(server uuid, relay uuid, site uuid, customer uuid)
-RETURNS timestamptz
-LANGUAGE sql STABLE AS $$
-    SELECT max(coalesce(ended_at, ends_at)) FROM silences
-    WHERE starts_at <= now() AND coalesce(ended_at, ends_at) > now() AND checks IS NULL
-      AND (num_nonnulls(server_id, relay_id, site_id, customer_id) = 0
-           OR server_id = server OR relay_id = relay
-           OR site_id = site OR customer_id = customer)
-$$;
-
 -- Whether a check `(name, instance)` wrote `metric` of `instance`: the
 -- metric, without `monitorflow_`, is the name or starts with `name_`, no
 -- other check name is longer and prefixes it, and the instance is the
 -- check's when it has one. Mirrors `notify::silence::check_covers`.
-CREATE FUNCTION check_covers(name text, check_instance text, metric text, instance text)
+CREATE FUNCTION check_covers(check_name text, check_instance text,
+                             metric_name text, metric_instance text)
 RETURNS boolean
 LANGUAGE sql STABLE AS $$
-    WITH m AS (SELECT CASE WHEN metric LIKE 'monitorflow\_%' THEN substr(metric, 13)
-                           ELSE metric END AS short)
-    SELECT (check_instance = '' OR check_instance = instance)
-       AND (m.short = name OR starts_with(m.short, name || '_'))
+    WITH m AS (SELECT CASE WHEN metric_name LIKE 'monitorflow\_%' THEN substr(metric_name, 13)
+                           ELSE metric_name END AS short)
+    SELECT (check_instance = '' OR check_instance = metric_instance)
+       AND (m.short = check_name OR starts_with(m.short, check_name || '_'))
        AND NOT EXISTS (
            SELECT 1 FROM sensor_configs sc
-           WHERE char_length(sc.name) > char_length(name)
+           WHERE char_length(sc.name) > char_length(check_name)
              AND (m.short = sc.name OR starts_with(m.short, sc.name || '_')))
     FROM m
 $$;
 
--- When the last silence now covering one incident ends, or NULL: whole
--- targets as `silenced_until`, and silences of chosen checks that cover
--- its metric.
-CREATE FUNCTION incident_silenced_until(server uuid, relay uuid, site uuid, customer uuid,
-                                        metric text, instance text)
-RETURNS timestamptz
+-- The silences covering a place now: a server, relay, site or customer,
+-- any of them NULL. With a `metric`, the incident of that metric and
+-- instance, which silences of chosen checks may cover too; without one,
+-- whole targets only, as a server with some checks silenced is not
+-- silenced.
+CREATE FUNCTION covering_silences(server uuid, relay uuid, site uuid, customer uuid,
+                                  metric text, instance text)
+RETURNS SETOF silences
 LANGUAGE sql STABLE AS $$
-    SELECT max(coalesce(x.ended_at, x.ends_at)) FROM silences x
+    SELECT x.* FROM silences x
     WHERE x.starts_at <= now() AND coalesce(x.ended_at, x.ends_at) > now()
       AND (num_nonnulls(x.server_id, x.relay_id, x.site_id, x.customer_id) = 0
            OR x.server_id = server OR x.relay_id = relay
            OR x.site_id = site OR x.customer_id = customer)
       AND (x.checks IS NULL
-           OR (server IS NOT NULL AND metric <> 'offline' AND EXISTS (
+           OR (metric IS NOT NULL AND server IS NOT NULL AND metric <> 'offline' AND EXISTS (
                SELECT 1 FROM jsonb_array_elements(x.checks) c
                WHERE check_covers(c ->> 'name', coalesce(c ->> 'instance', ''),
                                   metric, instance))))
+$$;
+
+-- When the longest silence now covering a place ends, or NULL.
+CREATE OR REPLACE FUNCTION silenced_until(server uuid, relay uuid, site uuid, customer uuid)
+RETURNS timestamptz
+LANGUAGE sql STABLE AS $$
+    SELECT max(coalesce(ended_at, ends_at))
+    FROM covering_silences(server, relay, site, customer, NULL, NULL)
 $$;

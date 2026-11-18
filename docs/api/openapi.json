@@ -4293,11 +4293,13 @@
                         {
                           "hostname": "web-1",
                           "id": "2b3c4d5e-6f70-4a1b-9c2d-3e4f5a6b7c8d",
+                          "in_maintenance": false,
                           "instance": "/var",
                           "metric": "monitorflow_disk_used_ratio",
                           "opened_at": "2026-11-14T15:02:00Z",
                           "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
-                          "severity": "warning"
+                          "severity": "warning",
+                          "silenced_until": null
                         }
                       ],
                       "id": "alerts",
@@ -8858,6 +8860,7 @@
                       "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
                       "hostname": "web-1",
                       "id": "4d3c2b1a-0f9e-4d8c-b7a6-5f4e3d2c1b0a",
+                      "in_maintenance": false,
                       "instance": "/var",
                       "last_value": 0.97,
                       "last_value_at": "2026-11-14T09:29:00Z",
@@ -9188,6 +9191,7 @@
                   },
                   "hostname": "web-1",
                   "id": "4d3c2b1a-0f9e-4d8c-b7a6-5f4e3d2c1b0a",
+                  "in_maintenance": false,
                   "instance": "/var",
                   "last_value": 0.97,
                   "last_value_at": "2026-11-14T09:29:00Z",
@@ -34614,7 +34618,8 @@
           "metric",
           "instance",
           "severity",
-          "opened_at"
+          "opened_at",
+          "in_maintenance"
         ],
         "properties": {
           "hostname": {
@@ -34624,6 +34629,10 @@
             "type": "string",
             "format": "uuid",
             "description": "The incident's ID."
+          },
+          "in_maintenance": {
+            "type": "boolean",
+            "description": "Whether a maintenance window covers it now: \"In maintenance until\n04:00\"."
           },
           "instance": {
             "type": "string"
@@ -34642,6 +34651,14 @@
           "severity": {
             "type": "string",
             "description": "`warning` or `critical`."
+          },
+          "silenced_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the last silence covering it ends, if one does now (ADR-0079,\nADR-0151)."
           }
         }
       },
@@ -36934,6 +36951,7 @@
           "last_value_at",
           "peak_value",
           "threshold",
+          "in_maintenance",
           "silenced",
           "can_acknowledge",
           "reason"
@@ -36975,6 +36993,10 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "in_maintenance": {
+            "type": "boolean",
+            "description": "While open, whether a maintenance window covers it now (ADR-0151):\n\"In maintenance until 04:00\". Silences of chosen checks count, for\nthe incidents of those checks."
           },
           "instance": {
             "type": "string",
@@ -37045,7 +37067,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "While open and covered by a silence, when the last one ends\n(ADR-0079)."
+            "description": "While open and covered by a silence, when the last one ends\n(ADR-0079): one of its server, relay, site or customer, of\neverything, or of its check (ADR-0151)."
           },
           "site_id": {
             "type": "string",
@@ -43135,7 +43157,8 @@
         "description": "Who silenced a server, until when and why (ADR-0130).",
         "required": [
           "until",
-          "reason"
+          "reason",
+          "window"
         ],
         "properties": {
           "by": {
@@ -43151,6 +43174,10 @@
           "until": {
             "type": "string",
             "format": "date-time"
+          },
+          "window": {
+            "type": "boolean",
+            "description": "An occurrence of a maintenance window (ADR-0151): \"In maintenance\nuntil 04:00\"."
           }
         }
       },
