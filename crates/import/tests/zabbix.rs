@@ -555,7 +555,11 @@ async fn a_live_zabbix() {
             port: 5432
         })
     );
-    let shop = inventory.services.iter().find(|s| s.name == "Shop").unwrap();
+    let shop = inventory
+        .services
+        .iter()
+        .find(|s| s.name == "Shop")
+        .unwrap();
     let hosts: Vec<_> = shop.members.iter().map(|m| m.host.as_str()).collect();
     assert_eq!(hosts, ["db-01", "web-01"], "{shop:?}");
     assert_eq!((shop.at_least, shop.target), (None, Some(99.9)));

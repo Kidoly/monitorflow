@@ -54,6 +54,8 @@ fn report(outages: usize) -> Report {
                 check: None,
             }],
         }],
+        dependencies: vec![],
+        parents: vec![],
         names: vec![],
     };
     let period = (start, at("2026-11-01T00:00:00Z"));

@@ -55,6 +55,28 @@ pub struct Silence {
     pub window: bool,
 }
 
+/// What something depends on (ADR-0152): while it is down, what depends
+/// on it is unreachable, which counts as down (ADR-0155).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Parent {
+    Relay(Uuid),
+    /// A server, down while offline, or a device, down while a ping check
+    /// of it is critical.
+    Server(Uuid),
+    /// One check of a server or device, down while critical.
+    Check(Uuid, CheckRef),
+}
+
+/// A dependency set by someone: `server_id`, or its `check`, is behind
+/// `parent`. A server's relay, and the relays running a device's checks,
+/// are parents without one (`Machine::relays`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dependency {
+    pub server_id: Uuid,
+    pub check: Option<CheckRef>,
+    pub parent: Parent,
+}
+
 /// A member of a business service.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Member {
@@ -81,6 +103,10 @@ pub struct Data {
     pub incidents: Vec<Incident>,
     pub silences: Vec<Silence>,
     pub services: Vec<Service>,
+    pub dependencies: Vec<Dependency>,
+    /// Servers and devices outside the report that something of it
+    /// depends on: read for their down time, never reported.
+    pub parents: Vec<Machine>,
     /// Every check name the central server knows, to tell which check
     /// wrote a metric (ADR-0151).
     pub names: Vec<String>,
@@ -257,6 +283,8 @@ pub async fn load(
         incidents,
         silences,
         services,
+        dependencies: Vec::new(),
+        parents: Vec::new(),
         names,
     })
 }

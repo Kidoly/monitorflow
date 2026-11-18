@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::availability::data::{Member, Service};
+use crate::availability::data::{Dependency, Member, Parent, Service};
 use crate::availability::Rule;
 
 fn t(m: i64) -> DateTime<Utc> {
@@ -97,6 +97,8 @@ fn data() -> Data {
                 },
             ],
         }],
+        dependencies: vec![],
+        parents: vec![],
         names: vec!["cpu".into(), "disk".into(), "memory".into()],
     }
 }
@@ -217,4 +219,127 @@ fn a_server_added_later_counts_from_then() {
     data.incidents.clear();
     let report = build(&data, day(), t(2000));
     assert_eq!(report.machines[1].numbers.counted_seconds, 720.0 * 60.0);
+}
+
+#[test]
+fn what_depends_on_a_parent_is_unreachable_while_it_is_down() {
+    let switch = Uuid::from_u128(30);
+    let router = Uuid::from_u128(31);
+    let mut data = data();
+    data.silences.clear();
+    data.incidents.clear();
+    data.machines[0].relays.clear();
+    let device = |id, name: &str| Machine {
+        device: true,
+        ..machine(id, name, vec![])
+    };
+    // The router is outside the report, the switch in it.
+    data.machines.push(device(switch, "sw-core"));
+    data.parents.push(device(router, "rt-edge"));
+    data.dependencies = vec![
+        Dependency {
+            server_id: WEB1,
+            check: None,
+            parent: Parent::Server(switch),
+        },
+        Dependency {
+            server_id: switch,
+            check: None,
+            parent: Parent::Server(router),
+        },
+        // Only web-2's disk check is behind web-1's cpu check.
+        Dependency {
+            server_id: WEB2,
+            check: Some(disk()),
+            parent: Parent::Check(
+                WEB1,
+                CheckRef {
+                    name: "cpu".into(),
+                    instance: String::new(),
+                },
+            ),
+        },
+    ];
+    data.names.push("ping".into());
+    data.incidents = vec![
+        // The switch's ping fails 100-110; its cpu check does not count.
+        incident(Some(switch), None, "monitorflow_ping_loss_ratio", 100, 110),
+        incident(Some(switch), None, "monitorflow_cpu_usage_ratio", 200, 230),
+        // The router behind it, 300-320.
+        incident(Some(router), None, "monitorflow_ping_loss_ratio", 300, 320),
+        incident(Some(WEB1), None, "monitorflow_cpu_usage_ratio", 400, 405),
+        incident(Some(WEB2), None, "monitorflow_disk_used_ratio", 500, 510),
+    ];
+    let report = build(&data, day(), t(2000));
+    let web1 = report.machines.iter().find(|m| m.id == WEB1).unwrap();
+    // Behind the switch (100-110) and, through it, the router (300-320),
+    // and its own cpu (400-405).
+    assert_eq!(web1.numbers.down_seconds, 35.0 * 60.0);
+    let via: Vec<_> = web1
+        .outage_list
+        .iter()
+        .map(|o| o.causes[0].via.clone())
+        .collect();
+    assert_eq!(via, [Some("sw-core".into()), Some("sw-core".into()), None]);
+    // The router is read, never reported.
+    assert!(report.machines.iter().all(|m| m.id != router));
+    // Web-2 is not behind web-1 as a whole: only its disk check is.
+    let web2 = report.machines.iter().find(|m| m.id == WEB2).unwrap();
+    assert_eq!(web2.numbers.down_seconds, 10.0 * 60.0);
+    let disk_check = report.checks.iter().find(|c| c.server_id == WEB2).unwrap();
+    // Its own 10 minutes, the cpu check's 5, and the 30 that check was
+    // unreachable itself, behind web-1's switch and router.
+    assert_eq!(disk_check.numbers.down_seconds, 45.0 * 60.0);
+    assert_eq!(
+        disk_check.outage_list[0].causes[0].via.as_deref(),
+        Some("web-1 cpu")
+    );
+}
+
+#[test]
+fn planned_work_on_a_parent_is_planned_for_what_is_behind_it() {
+    let switch = Uuid::from_u128(30);
+    let mut data = data();
+    data.silences.clear();
+    data.machines[0].relays.clear();
+    data.machines.push(Machine {
+        device: true,
+        ..machine(switch, "sw-core", vec![])
+    });
+    data.dependencies = vec![Dependency {
+        server_id: WEB1,
+        check: None,
+        parent: Parent::Server(switch),
+    }];
+    data.names.push("ping".into());
+    data.incidents = vec![incident(
+        Some(switch),
+        None,
+        "monitorflow_ping_loss_ratio",
+        100,
+        160,
+    )];
+    data.silences = vec![silence(Some(switch), None, 90, 130)];
+    let report = build(&data, day(), t(2000));
+    let web1 = report.machines.iter().find(|m| m.id == WEB1).unwrap();
+    assert_eq!(web1.numbers.down_seconds, 30.0 * 60.0);
+}
+
+#[test]
+fn a_cycle_written_past_the_api_ends() {
+    let mut data = data();
+    data.dependencies = vec![
+        Dependency {
+            server_id: WEB1,
+            check: None,
+            parent: Parent::Server(WEB2),
+        },
+        Dependency {
+            server_id: WEB2,
+            check: None,
+            parent: Parent::Server(WEB1),
+        },
+    ];
+    let report = build(&data, day(), t(2000));
+    assert_eq!(report.machines.len(), 2);
 }
