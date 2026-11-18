@@ -14,6 +14,7 @@ monitorflow-common.workspace = true
 monitorflow-sensors.workspace = true
 # SNMP checks of devices (ADR-0149).
 monitorflow-snmp.workspace = true
+async-trait.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

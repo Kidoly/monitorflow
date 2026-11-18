@@ -8,6 +8,9 @@
 //! Sensors are built by kind through a [`ProbeFactory`], so a probe can run
 //! kinds that live outside `monitorflow-sensors` (website checks, ADR-0150)
 //! by wrapping [`Builtin`].
+//!
+//! [`discover`] is the one-off test a network scan is made of (ADR-0154):
+//! it is never a check that repeats.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -19,6 +22,9 @@ use monitorflow_sensors::{
 };
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+
+pub mod discover;
+mod rdns;
 
 /// The probe's name of the central server, in the `probe` label of the
 /// series it writes and in the API.
@@ -38,7 +44,8 @@ pub trait ProbeFactory: Send + Sync + 'static {
 }
 
 /// The kinds of `monitorflow-sensors`, without an agent's local limits:
-/// `ping` and `port` over TCP or UDP, and `snmp` of `monitorflow-snmp`.
+/// `ping` and `port` over TCP or UDP, `snmp` of `monitorflow-snmp`, and
+/// the scans' `discover` tests.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Builtin;
 
@@ -50,6 +57,9 @@ impl ProbeFactory for Builtin {
     ) -> Result<Arc<dyn Sensor>, String> {
         if kind == monitorflow_snmp::KIND {
             return monitorflow_snmp::build(params);
+        }
+        if kind == discover::KIND {
+            return discover::build(params);
         }
         if !PROBE_RUNS.contains(&kind) {
             return Err(format!("a probe does not run `{kind}` checks"));
