@@ -11,6 +11,7 @@ import {
   type IncidentEvent,
   type MetricSeries,
   type RemediationIncident,
+  type Incident,
   type ThresholdSnapshot,
   api,
   describeError,
@@ -25,6 +26,8 @@ import { useMultiSite } from "@/lib/me";
 import { incidentLogsHref, incidentPeerHref, incidentsHref, sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue, seriesTitle } from "@/lib/sensors";
+import { describeRule, incidentValue, linesInMetricUnit } from "@/lib/rules";
+import { shapeOf } from "@/lib/alerts";
 import { SEVERITY_LABELS } from "@/lib/thresholds";
 import { usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
@@ -147,6 +150,8 @@ export function IncidentPage({ id }: { id: string | null }) {
   const now = updatedAt;
   const open = incident.state === "open";
   const format = (v: number) => formatSensorValue(incident.metric, v);
+  // Richer rules judge another number than the chart's (ADR-0153).
+  const judged = (v: number) => incidentValue(incident, v);
   const opened = Date.parse(incident.opened_at) / 1000;
   const resolved = incident.resolved_at ? Date.parse(incident.resolved_at) / 1000 : null;
   const tone: Tone = incident.severity === "critical" ? "bad" : "warn";
@@ -215,8 +220,11 @@ export function IncidentPage({ id }: { id: string | null }) {
           ...(offline
             ? [{ label: t("incidents.tile.lastHeard"), value: minutes(incident.opened_at), tone: open ? tone : ("plain" as const) }]
             : [
-                { label: t("incidents.tile.last"), value: format(incident.last_value), tone: open ? tone : ("plain" as const) },
-                { label: t("incidents.tile.peak"), value: format(incident.peak_value) },
+                { label: t("incidents.tile.last"), value: judged(incident.last_value), tone: open ? tone : ("plain" as const) },
+                { label: t("incidents.tile.peak"), value: judged(incident.peak_value) },
+                ...(incident.expected_at
+                  ? [{ label: t("rules.incident.tileExpected"), value: formatExact(new Date(incident.expected_at)).slice(0, 16) }]
+                  : []),
               ]),
           {
             label: new Date(incident.opened_at).toDateString() === now.toDateString()
@@ -256,7 +264,7 @@ export function IncidentPage({ id }: { id: string | null }) {
           format={format}
           min={ratio ? 0 : undefined}
           max={ratio ? 1 : undefined}
-          thresholds={snapshotLines(incident.threshold)}
+          thresholds={linesInMetricUnit(incident.threshold) ? snapshotLines(incident.threshold) : []}
           markers={[
             { t: opened, label: t("incidents.chart.opened", { time: minutes(incident.opened_at) }), kind: "opened" },
             resolved !== null
@@ -278,7 +286,12 @@ export function IncidentPage({ id }: { id: string | null }) {
             ]}
           />
         ) : (
-          <FactsBox title={t("incidents.threshold.title")} facts={thresholdFacts(incident.threshold, format)} />
+          <FactsBox
+            title={t("incidents.threshold.title")}
+            facts={(incident.kind ?? incident.threshold.kind ?? "value") === "value" && !incident.threshold.conditions?.length
+              ? thresholdFacts(incident.threshold, format)
+              : richFacts(incident)}
+          />
         )}
         {/* The opening alone is already in the tiles, the chart and the header. */}
         {!onlyOpened(incident.events) && (
@@ -298,6 +311,19 @@ export function snapshotLines(threshold: ThresholdSnapshot): Threshold[] {
     const value = threshold[severity];
     return value === null ? [] : [{ severity, value, label: SEVERITY_LABELS[severity] }];
   });
+}
+
+/** The rule of an incident a richer rule opened (ADR-0153), in its own words. */
+function richFacts(incident: Incident) {
+  const { threshold } = incident;
+  const rule = { ...threshold, origin: "default" as const, threshold_id: null, enabled: true, kind: incident.kind ?? threshold.kind };
+  const facts = [
+    { label: t("rules.incident.alertsOn"), value: describeRule(shapeOf([], incident.metric, incident.instance || null), rule) },
+  ];
+  if (incident.expected_at) {
+    facts.push({ label: t("rules.incident.tileExpected"), value: t("rules.incident.expected", { when: formatExact(new Date(incident.expected_at)).slice(0, 16) }) });
+  }
+  return facts;
 }
 
 function thresholdFacts(threshold: ThresholdSnapshot, format: (v: number) => string) {

@@ -11,7 +11,7 @@ import { incidentTitle, isOffline } from "@/lib/incidents";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { ADD_DEVICE_PATH, incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
-import { formatSensorValue } from "@/lib/sensors";
+import { incidentValue } from "@/lib/rules";
 import { isServerState, SERVER_STATES, STATE_TONES, serverState, stateWord, stateHref } from "@/lib/serverState";
 import { REFRESH_MS, usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
@@ -82,7 +82,7 @@ function toRows(fleet: Fleet, now: Date): Row[] {
     const certificateWarning = server.cert_not_after !== null && certificateState(server.cert_not_after, now) !== "valid";
     const rank = state === "ok" && certificateWarning ? CERTIFICATE_RANK : RANK[state];
     const what = incident
-      ? `${incidentTitle(incident)}${isOffline(incident) ? "" : ` ${formatSensorValue(incident.metric, incident.last_value)}`}`
+      ? `${incidentTitle(incident)}${isOffline(incident) ? "" : ` ${incidentValue(incident, incident.last_value)}`}`
       : stateWord(state);
     return {
       key: server.id,
@@ -323,7 +323,7 @@ function What({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
         )}
         {incidentTitle(incident)}{" "}
         <span>
-          {!isOffline(incident) && `${formatSensorValue(incident.metric, incident.last_value)} · `}
+          {!isOffline(incident) && `${incidentValue(incident, incident.last_value)} · `}
           {formatDuration((now.getTime() - Date.parse(incident.opened_at)) / 1000)}
         </span>
       </span>
