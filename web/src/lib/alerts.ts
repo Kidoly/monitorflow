@@ -27,7 +27,7 @@ export type Shape =
   | { type: "percent" | "number"; noun: string; suffix: string; unit?: string }
   | { type: "event"; noun: string; text: string; brief: string; comparison: Comparison; value: number };
 
-type EventWords = "port" | "ping" | "service" | "log" | "eventlog" | "script" | "website" | "certificate";
+type EventWords = "port" | "ping" | "snmp" | "service" | "log" | "eventlog" | "script" | "website" | "certificate";
 
 /**
  * The fixed trigger of an event, by sensor kind and metric suffix; its
@@ -37,6 +37,7 @@ type EventWords = "port" | "ping" | "service" | "log" | "eventlog" | "script" | 
 const EVENTS: Record<string, { suffix: string; words: EventWords; comparison: Comparison; value: number }> = {
   port: { suffix: "up", words: "port", comparison: "<", value: 1 },
   ping: { suffix: "up", words: "ping", comparison: "<", value: 1 },
+  snmp: { suffix: "up", words: "snmp", comparison: "<", value: 1 },
   systemd: { suffix: "active", words: "service", comparison: "<", value: 1 },
   windows_service: { suffix: "active", words: "service", comparison: "<", value: 1 },
   log: { suffix: "matches", words: "log", comparison: ">", value: 0 },
@@ -744,6 +745,8 @@ function ownTitle(sensor: EffectiveSensor): string {
     }
     case "ping":
       return params.host ? t("checks.title.pingOf", { host: params.host }) : t("checks.title.ping");
+    case "snmp":
+      return t(`devices.snmp.group.${SNMP_GROUPS.find((g) => g === params.what) ?? "system"}`);
     case "systemd":
       return t("checks.title.service", { name: params.units ?? sensor.name });
     case "windows_service":
@@ -756,6 +759,9 @@ function ownTitle(sensor: EffectiveSensor): string {
       return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }
 }
+
+/** The groups of SNMP checks (ADR-0149). */
+export const SNMP_GROUPS = ["system", "interfaces", "host", "ups", "temperature", "printer"] as const;
 
 /** "Warning" or "Critical", for the severity select; the label is read when shown. */
 export const SEVERITIES = (["warning", "critical"] as const).map((value) => ({

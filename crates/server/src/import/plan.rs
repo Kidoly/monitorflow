@@ -3,18 +3,20 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{DateTime, SubsecRound, TimeDelta, Utc};
+use chrono_tz::Tz;
 use monitorflow_import::args;
 use monitorflow_import::model::{
-    Alert, Check, Direction, Fidelity, Inventory, Measure, Os, Severity, SilenceScope, Target,
-    Watch,
+    Alert, Check, Direction, Fidelity, Inventory, Measure, Os, Repeat, Rule, Severity,
+    SilenceScope, Target, Watch,
 };
 use monitorflow_import::Note;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use super::{ChannelSecret, Create, Item, List, NoteView, OriginView};
+use super::{ChannelSecret, CheckRef, Create, Item, List, NoteView, OriginView};
 use crate::api::{sensors, thresholds};
 use crate::enroll::install_key::peer_id_from_hostname;
+use crate::notify::maintenance::{self, Schedule};
 use crate::sensor_config::{MAX_CHECK_INTERVAL_MS, MIN_CHECK_INTERVAL_MS};
 
 /// Interval of a check whose source says none.
@@ -49,6 +51,49 @@ pub struct Existing {
     pub silences: HashSet<(Option<String>, DateTime<Utc>, String)>,
     /// Channels by [`channel_key`].
     pub channels: HashSet<String>,
+    /// Maintenance windows of the site not removed, by [`window_key`].
+    pub windows: HashSet<String>,
+}
+
+/// What identifies a maintenance window of the import's site: its
+/// servers (lowercase IDs), checks, rule and reason.
+pub fn window_key(create: &Create) -> Option<String> {
+    let Create::Window {
+        servers,
+        checks,
+        repeat,
+        every,
+        weekdays,
+        month_day,
+        month_week,
+        months,
+        start_time,
+        duration_minutes,
+        time_zone,
+        reason,
+        ..
+    } = create
+    else {
+        return None;
+    };
+    let mut servers: Vec<String> = servers.iter().map(|s| s.to_ascii_lowercase()).collect();
+    servers.sort();
+    let mut checks: Vec<String> = checks
+        .iter()
+        .map(|c| format!("{}/{}", c.name, c.instance))
+        .collect();
+    checks.sort();
+    let mut months = months.clone();
+    months.sort_unstable();
+    if months.len() == 12 {
+        months.clear();
+    }
+    Some(format!(
+        "{}|{}|{repeat}|{every}|{}|{month_day:?}|{month_week:?}|{months:?}|{start_time}|{duration_minutes}|{time_zone}|{reason}",
+        servers.join(","),
+        checks.join(","),
+        weekdays.join(","),
+    ))
 }
 
 impl Existing {
@@ -87,9 +132,30 @@ pub fn plan(
     existing: &Existing,
     now: DateTime<Utc>,
 ) -> Planned {
+    plan_in(
+        inventory,
+        site_id,
+        channels_everywhere,
+        existing,
+        now,
+        Tz::UTC,
+    )
+}
+
+/// [`plan`], with `zone` for maintenance windows whose source does not
+/// say its time zone (ADR-0151).
+pub fn plan_in(
+    inventory: &Inventory,
+    site_id: Uuid,
+    channels_everywhere: bool,
+    existing: &Existing,
+    now: DateTime<Utc>,
+    zone: Tz,
+) -> Planned {
     let mut planner = Planner {
         inventory,
         site_id,
+        zone,
         channels_everywhere,
         existing,
         now,
@@ -98,6 +164,7 @@ pub fn plan(
         used_ids: HashSet::new(),
         check_names: HashSet::new(),
         checks: HashMap::new(),
+        watch_names: HashMap::new(),
         alerts: HashMap::new(),
         thresholds: BTreeMap::new(),
         websites: HashMap::new(),
@@ -109,6 +176,7 @@ pub fn plan(
     }
     planner.thresholds();
     planner.silences();
+    planner.windows();
     planner.channels();
     planner.unmovable();
     planner.out
@@ -126,6 +194,10 @@ struct Server {
     os: Os,
     /// Whether checks may be added to it.
     may_change: bool,
+    /// A device's address: its checks run from a probe (ADR-0148).
+    device: Option<String>,
+    /// An address a probe reaches it at, for checks of a server.
+    address: Option<String>,
 }
 
 /// Thresholds merged by (server, metric, instance).
@@ -162,6 +234,8 @@ struct WebRule {
 struct Planner<'a> {
     inventory: &'a Inventory,
     site_id: Uuid,
+    /// For windows whose source does not say its time zone.
+    zone: Tz,
     channels_everywhere: bool,
     existing: &'a Existing,
     now: DateTime<Utc>,
@@ -174,6 +248,9 @@ struct Planner<'a> {
     /// Checks planned by (lowercase peer ID, kind, parameters), to their
     /// name.
     checks: HashMap<(String, String, String), String>,
+    /// The name of the check each watch of a server became, by
+    /// (lowercase peer ID, watch), for the silences that name it.
+    watch_names: HashMap<(String, String), String>,
     /// Alert items planned, by metric of a server, to their index.
     alerts: HashMap<String, usize>,
     thresholds: BTreeMap<ThresholdKey, Merged>,
@@ -233,6 +310,147 @@ fn check_name(prefix: &str, text: &str) -> String {
         .to_owned()
 }
 
+const WEEKDAYS: [&str; 7] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+];
+
+/// A reader's rule as MonitorFlow keeps it, in `zone`; starting today
+/// when the source gives no first day.
+fn schedule_of(rule: &Rule, zone: Tz, now: DateTime<Utc>) -> Schedule {
+    Schedule {
+        repeat: match rule.repeat {
+            Repeat::Daily => maintenance::Repeat::Daily,
+            Repeat::Weekly => maintenance::Repeat::Weekly,
+            Repeat::Monthly => maintenance::Repeat::Monthly,
+        },
+        every: rule.every,
+        weekdays: rule.weekdays,
+        month_day: rule.month_day,
+        month_week: rule.month_week,
+        months: rule.months,
+        start_time: rule.start_time,
+        duration_minutes: rule.duration_minutes,
+        time_zone: zone,
+        // Today, or the last day when it is past, which the preview then
+        // says is over.
+        starts_on: rule.starts_on.unwrap_or_else(|| {
+            let today = now.with_timezone(&zone).date_naive();
+            rule.ends_on.map_or(today, |end| end.min(today))
+        }),
+        ends_on: rule.ends_on,
+    }
+}
+
+/// What a watch becomes on a server of `os`.
+enum Spec {
+    /// A built-in check, by name.
+    Builtin(&'static str),
+    /// The offline alert.
+    Agent,
+    /// Nothing named here: a probe or SNMP check, which the plan names
+    /// when it makes it.
+    NoPort,
+    /// A check of `kind` with `params`, named from `prefix`.
+    Check {
+        kind: &'static str,
+        params: Map<String, Value>,
+        prefix: (String, String),
+    },
+}
+
+fn watch_spec(watch: &Watch, os: Os) -> Spec {
+    let (kind, params, prefix) = match watch {
+        Watch::Cpu => return Spec::Builtin("cpu"),
+        Watch::Memory => return Spec::Builtin("memory"),
+        Watch::Disk => return Spec::Builtin("disk"),
+        Watch::DiskIo => return Spec::Builtin("diskio"),
+        Watch::Agent => return Spec::Agent,
+        // Probe and SNMP checks depend on the server; the plan names them
+        // when it makes them.
+        Watch::Ping { .. } | Watch::UdpPort { .. } | Watch::Snmp { .. } | Watch::Traffic => {
+            return Spec::NoPort
+        }
+        Watch::Service { name } => {
+            let (kind, key) = if os == Os::Windows {
+                ("windows_service", "services")
+            } else {
+                ("systemd", "units")
+            };
+            let mut params = Map::new();
+            params.insert(key.into(), json!(name));
+            (kind, params, ("service".into(), name.clone()))
+        }
+        Watch::Port { address, port } => {
+            // The server itself, however the source wrote it.
+            let address = address.as_deref().filter(|a| {
+                !matches!(
+                    a.trim().to_ascii_lowercase().as_str(),
+                    "127.0.0.1" | "localhost" | "::1" | "[::1]" | ""
+                )
+            });
+            let mut params = Map::new();
+            params.insert("port".into(), json!(port.to_string()));
+            let host = address.unwrap_or("127.0.0.1").to_owned();
+            let text = match address {
+                Some(a) => format!("{a}_{port}"),
+                None => port.to_string(),
+            };
+            params.insert("host".into(), json!(host));
+            ("port", params, ("port".into(), text))
+        }
+        Watch::Log { path, pattern } => {
+            let mut params = Map::new();
+            params.insert("path".into(), json!(path));
+            params.insert("pattern".into(), json!(pattern));
+            ("log", params, ("log".into(), path.clone()))
+        }
+        Watch::EventLog {
+            channel,
+            levels,
+            providers,
+            event_ids,
+        } => {
+            let mut params = Map::new();
+            params.insert("channel".into(), json!(channel));
+            let lists = [
+                ("levels", levels.join(",")),
+                ("providers", providers.join(",")),
+                (
+                    "event_ids",
+                    event_ids
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+            ];
+            for (key, list) in lists {
+                if !list.is_empty() {
+                    params.insert(key.into(), json!(list));
+                }
+            }
+            ("eventlog", params, ("eventlog".into(), channel.clone()))
+        }
+        // A website check (ADR-0150), named as the plan names it.
+        Watch::Web(site) => {
+            let (params, _) = website::params(site);
+            let label = website::label(site.url.trim());
+            ("http", params, ("http".into(), label))
+        }
+    };
+    Spec::Check {
+        kind,
+        params,
+        prefix,
+    }
+}
+
 impl Planner<'_> {
     fn push(&mut self, item: Item) {
         if self.out.items.len() < super::MAX_ITEMS {
@@ -263,6 +481,23 @@ impl Planner<'_> {
             let existing = self.existing.server(&peer_id, &host.name);
             let id = self.unique_id(format!("server:{lower}"));
             let addresses = host.addresses.clone();
+            // The first address a probe can reach, else the name.
+            let address = host
+                .addresses
+                .iter()
+                .chain(std::iter::once(&host.name))
+                .map(|a| a.trim())
+                .find(|a| crate::api::devices::check_address(a).is_ok())
+                .map(str::to_owned);
+            if host.agentless && existing.is_none() && address.is_none() {
+                self.not_movable(
+                    "server",
+                    (&host.origin).into(),
+                    vec![host.name.clone()],
+                    note("no_address", args! {}),
+                );
+                continue;
+            }
             let (peer_id, present, may_change) = match existing {
                 Some(s) => (s.peer_id.clone(), true, s.may_change),
                 None => (peer_id, false, true),
@@ -276,11 +511,18 @@ impl Planner<'_> {
                 hosts: vec![host.name.clone()],
                 present,
                 needs: vec![],
-                create: Some(Create::Server {
-                    peer_id: peer_id.clone(),
-                    hostname: host.name.trim().to_owned(),
-                    os_family: os_family(host.os).into(),
-                    addresses,
+                create: Some(match (&address, host.agentless) {
+                    (Some(address), true) => Create::Device {
+                        peer_id: peer_id.clone(),
+                        hostname: host.name.trim().to_owned(),
+                        address: address.clone(),
+                    },
+                    _ => Create::Server {
+                        peer_id: peer_id.clone(),
+                        hostname: host.name.trim().to_owned(),
+                        os_family: os_family(host.os).into(),
+                        addresses,
+                    },
                 }),
             };
             self.push(item);
@@ -290,6 +532,8 @@ impl Planner<'_> {
                 item: (!present).then_some(id),
                 os: host.os,
                 may_change,
+                device: address.clone().filter(|_| host.agentless),
+                address,
             };
             by_peer.insert(lower, server.clone());
             self.hosts.insert(host.key.clone(), server);
@@ -333,103 +577,227 @@ impl Planner<'_> {
             return;
         };
         let (mut list, mut why) = list_of(&check.fidelity);
-        let (kind, params, prefix_text): (&str, Map<String, Value>, (String, String)) =
-            match &check.watch {
-                Watch::Cpu | Watch::Memory | Watch::Disk | Watch::DiskIo => {
-                    self.builtin(origin, &server, &check.fidelity, "builtin", args! {});
-                    return;
-                }
-                Watch::Agent => {
-                    self.builtin(
+        let mut probe = false;
+        // What a device's SNMP says stands for what an agent measures
+        // (ADR-0149).
+        let snmp_group = |group: &str| Watch::Snmp {
+            group: group.into(),
+        };
+        let watch = match (&check.watch, server.device.is_some()) {
+            (Watch::Cpu | Watch::Memory | Watch::Disk, true) => snmp_group("host"),
+            (Watch::Traffic, true) => snmp_group("interfaces"),
+            (watch, _) => watch.clone(),
+        };
+        // Where a probe check of this server connects: a device's own
+        // address by default, else the address named or the server's.
+        let target = |address: &Option<String>| -> Option<Option<String>> {
+            match (address, &server.device) {
+                (Some(a), _) => Some(Some(a.clone())),
+                (None, Some(_)) => Some(None),
+                (None, None) => server.address.clone().map(Some),
+            }
+        };
+        let (kind, params, prefix_text): (&str, Map<String, Value>, (String, String)) = match &watch
+        {
+            Watch::DiskIo | Watch::Agent if server.device.is_some() => {
+                self.not_movable(
+                    "check",
+                    origin,
+                    vec![server.name.clone()],
+                    note("device_no_agent", args! {}),
+                );
+                return;
+            }
+            Watch::Ping { address } => {
+                let Some(host) = target(address) else {
+                    self.not_movable(
+                        "check",
                         origin,
-                        &server,
-                        &check.fidelity,
-                        "offline_alert",
-                        args! {"minutes" => OFFLINE_MINUTES},
+                        vec![server.name.clone()],
+                        note("no_address", args! {}),
+                    );
+                    return;
+                };
+                probe = true;
+                let mut params = Map::new();
+                if let Some(host) = &host {
+                    params.insert("host".into(), json!(host));
+                }
+                let text = if server.device.is_some() && address.is_none() {
+                    String::new()
+                } else {
+                    host.unwrap_or_default()
+                };
+                ("ping", params, ("ping".into(), text))
+            }
+            Watch::UdpPort {
+                address,
+                port,
+                query,
+            } => {
+                let Some(host) = target(address) else {
+                    self.not_movable(
+                        "check",
+                        origin,
+                        vec![server.name.clone()],
+                        note("no_address", args! {}),
+                    );
+                    return;
+                };
+                probe = true;
+                let mut params = Map::new();
+                params.insert("port".into(), json!(port.to_string()));
+                params.insert("protocol".into(), json!("udp"));
+                if let Some(query) = query {
+                    params.insert("query".into(), json!(query));
+                }
+                if let Some(host) = &host {
+                    params.insert("host".into(), json!(host));
+                }
+                ("port", params, ("udp".into(), port.to_string()))
+            }
+            Watch::Snmp { group } => {
+                if server.device.is_none() {
+                    self.not_movable(
+                        "check",
+                        origin,
+                        vec![server.name.clone()],
+                        note("snmp_of_agent", args! {}),
                     );
                     return;
                 }
-                Watch::Service { name } => {
-                    let windows = server.os == Os::Windows;
-                    let (kind, key) = if windows {
-                        ("windows_service", "services")
-                    } else {
-                        ("systemd", "units")
-                    };
-                    let mut params = Map::new();
-                    params.insert(key.into(), json!(name));
-                    (kind, params, ("service".into(), name.clone()))
+                probe = true;
+                let mut params = Map::new();
+                params.insert("what".into(), json!(group));
+                if list == List::Exact {
+                    list = List::Approximated;
+                    why = note("snmp_credentials", args! {});
                 }
-                Watch::Port { address, port } => {
-                    // The server itself, however the source wrote it.
-                    let address = address.as_deref().filter(|a| {
-                        !matches!(
-                            a.trim().to_ascii_lowercase().as_str(),
-                            "127.0.0.1" | "localhost" | "::1" | "[::1]" | ""
-                        )
-                    });
-                    let mut params = Map::new();
-                    params.insert("port".into(), json!(port.to_string()));
-                    let host = address.unwrap_or("127.0.0.1").to_owned();
-                    let text = match address {
-                        Some(a) => format!("{a}_{port}"),
-                        None => port.to_string(),
-                    };
-                    params.insert("host".into(), json!(host));
-                    ("port", params, ("port".into(), text))
+                let name = match group.as_str() {
+                    "system" => "snmp",
+                    "interfaces" => "snmp_if",
+                    "host" => "snmp_host",
+                    "ups" => "snmp_ups",
+                    "temperature" => "snmp_temp",
+                    "printer" => "snmp_printer",
+                    _ => "snmp",
+                };
+                ("snmp", params, (name.into(), String::new()))
+            }
+            Watch::Traffic => {
+                self.builtin(origin, &server, &check.fidelity, "builtin_net", args! {});
+                return;
+            }
+            Watch::Cpu | Watch::Memory | Watch::Disk | Watch::DiskIo => {
+                self.builtin(origin, &server, &check.fidelity, "builtin", args! {});
+                return;
+            }
+            Watch::Agent => {
+                self.builtin(
+                    origin,
+                    &server,
+                    &check.fidelity,
+                    "offline_alert",
+                    args! {"minutes" => OFFLINE_MINUTES},
+                );
+                return;
+            }
+            Watch::Service { name } => {
+                let windows = server.os == Os::Windows;
+                let (kind, key) = if windows {
+                    ("windows_service", "services")
+                } else {
+                    ("systemd", "units")
+                };
+                let mut params = Map::new();
+                params.insert(key.into(), json!(name));
+                (kind, params, ("service".into(), name.clone()))
+            }
+            Watch::Port { address, port } if server.device.is_some() => {
+                probe = true;
+                let mut params = Map::new();
+                params.insert("port".into(), json!(port.to_string()));
+                if let Some(address) = address {
+                    params.insert("host".into(), json!(address));
                 }
-                Watch::Log { path, pattern } => {
-                    let mut params = Map::new();
-                    params.insert("path".into(), json!(path));
-                    params.insert("pattern".into(), json!(pattern));
-                    if list == List::Exact {
-                        list = List::Approximated;
-                        why = note("log_dirs", args! {});
+                let text = match address {
+                    Some(a) => format!("{a}_{port}"),
+                    None => port.to_string(),
+                };
+                ("port", params, ("port".into(), text))
+            }
+            Watch::Port { address, port } => {
+                // The server itself, however the source wrote it.
+                let address = address.as_deref().filter(|a| {
+                    !matches!(
+                        a.trim().to_ascii_lowercase().as_str(),
+                        "127.0.0.1" | "localhost" | "::1" | "[::1]" | ""
+                    )
+                });
+                let mut params = Map::new();
+                params.insert("port".into(), json!(port.to_string()));
+                let host = address.unwrap_or("127.0.0.1").to_owned();
+                let text = match address {
+                    Some(a) => format!("{a}_{port}"),
+                    None => port.to_string(),
+                };
+                params.insert("host".into(), json!(host));
+                ("port", params, ("port".into(), text))
+            }
+            Watch::Log { path, pattern } => {
+                let mut params = Map::new();
+                params.insert("path".into(), json!(path));
+                params.insert("pattern".into(), json!(pattern));
+                if list == List::Exact {
+                    list = List::Approximated;
+                    why = note("log_dirs", args! {});
+                }
+                ("log", params, ("log".into(), path.clone()))
+            }
+            Watch::EventLog {
+                channel,
+                levels,
+                providers,
+                event_ids,
+            } => {
+                let mut params = Map::new();
+                params.insert("channel".into(), json!(channel));
+                let lists = [
+                    ("levels", levels.join(",")),
+                    ("providers", providers.join(",")),
+                    (
+                        "event_ids",
+                        event_ids
+                            .iter()
+                            .map(u32::to_string)
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    ),
+                ];
+                for (key, list) in lists {
+                    if !list.is_empty() {
+                        params.insert(key.into(), json!(list));
                     }
-                    ("log", params, ("log".into(), path.clone()))
                 }
-                Watch::EventLog {
-                    channel,
-                    levels,
-                    providers,
-                    event_ids,
-                } => {
-                    let mut params = Map::new();
-                    params.insert("channel".into(), json!(channel));
-                    let lists = [
-                        ("levels", levels.join(",")),
-                        ("providers", providers.join(",")),
-                        (
-                            "event_ids",
-                            event_ids
-                                .iter()
-                                .map(u32::to_string)
-                                .collect::<Vec<_>>()
-                                .join(","),
-                        ),
-                    ];
-                    for (key, list) in lists {
-                        if !list.is_empty() {
-                            params.insert(key.into(), json!(list));
-                        }
-                    }
-                    ("eventlog", params, ("eventlog".into(), channel.clone()))
+                ("eventlog", params, ("eventlog".into(), channel.clone()))
+            }
+            Watch::Web(site) => {
+                let (params, left) = website::params(site);
+                // What the person must do (a password) comes first;
+                // a header left out only when nothing else differs.
+                let password = left
+                    .as_ref()
+                    .is_some_and(|n| n.code.starts_with("web_password") || n.code == "web_token");
+                if left.is_some() && (password || list == List::Exact) {
+                    list = List::Approximated;
+                    why = left;
                 }
-                Watch::Web(site) => {
-                    let (params, left) = website::params(site);
-                    // What the person must do (a password) comes first;
-                    // a header left out only when nothing else differs.
-                    let password = left.as_ref().is_some_and(|n| {
-                        n.code.starts_with("web_password") || n.code == "web_token"
-                    });
-                    if left.is_some() && (password || list == List::Exact) {
-                        list = List::Approximated;
-                        why = left;
-                    }
-                    let label = website::label(site.url.trim());
-                    ("http", params, ("http".into(), label))
-                }
-            };
+                // A device has no agent: a probe runs it (ADR-0148).
+                probe = server.device.is_some();
+                let label = website::label(site.url.trim());
+                ("http", params, ("http".into(), label))
+            }
+        };
         if !server.may_change {
             self.not_movable(
                 "check",
@@ -475,6 +843,8 @@ impl Planner<'_> {
             Value::Object(params.clone()).to_string(),
         );
         if let Some(name) = self.checks.get(&same).cloned() {
+            self.watch_names
+                .insert((lower.clone(), format!("{:?}", check.watch)), name.clone());
             if let Some(alert) = &alert {
                 self.alert(&server, kind, &name, alert, origin);
             }
@@ -491,16 +861,19 @@ impl Planner<'_> {
             .existing
             .checks
             .contains(&(lower.clone(), name.clone()));
-        let valid = sensors::validate_entry(sensors::EntryRequest {
-            kind: kind.into(),
-            name: Some(name.clone()),
-            instance: String::new(),
-            interval_ms,
-            timeout_ms,
-            params: params.clone(),
-            enabled: true,
-            probe: None,
-        });
+        let valid = sensors::validate_with_host(
+            sensors::EntryRequest {
+                kind: kind.into(),
+                name: Some(name.clone()),
+                instance: String::new(),
+                interval_ms,
+                timeout_ms,
+                params: params.clone(),
+                enabled: true,
+                probe: None,
+            },
+            server.device.as_deref(),
+        );
         if let Err(reason) = valid {
             self.not_movable(
                 "check",
@@ -527,9 +900,12 @@ impl Planner<'_> {
                 interval_ms,
                 timeout_ms,
                 params,
+                probe,
             }),
         });
         self.checks.insert(same, name.clone());
+        self.watch_names
+            .insert((lower.clone(), format!("{:?}", check.watch)), name.clone());
         if let Some(site) = website {
             let url = site.url.trim().to_owned();
             for rule in website::rules(&url) {
@@ -560,10 +936,14 @@ impl Planner<'_> {
         alert: &Alert,
         origin: OriginView,
     ) {
+        // Of an SNMP device's groups, only `system` says whether it answers.
+        if kind == "snmp" && name != "snmp" {
+            return;
+        }
         let lower = server.peer_id.to_ascii_lowercase();
         let id = format!("check:{lower}:{name}");
         let (suffix, comparison, value) = match kind {
-            "port" | "http" => ("up", "<", 1.0),
+            "port" | "ping" | "snmp" | "http" => ("up", "<", 1.0),
             "systemd" | "windows_service" => ("active", "<", 1.0),
             _ => ("matches", ">", 0.0),
         };
@@ -913,6 +1293,16 @@ impl Planner<'_> {
                 if target.as_ref().is_some_and(|s| !s.may_change) {
                     continue;
                 }
+                let checks = self.check_refs(target.as_ref(), &silence.checks);
+                if !silence.checks.is_empty() && checks.is_empty() {
+                    self.not_movable(
+                        "silence",
+                        origin.clone(),
+                        target.iter().map(|s| s.name.clone()).collect(),
+                        note("no_equivalent", args! {}),
+                    );
+                    continue;
+                }
                 let lower = target.as_ref().map(|s| s.peer_id.to_ascii_lowercase());
                 let present =
                     self.existing
@@ -937,9 +1327,162 @@ impl Planner<'_> {
                         starts_at,
                         ends_at,
                         reason: reason.clone(),
+                        checks,
                     }),
                 });
             }
+        }
+    }
+
+    /// The checks of `server` (or of the site's servers) that `watches`
+    /// are: built-in ones by name, others by the check planned or the
+    /// name it would have. The offline alert is no check.
+    fn check_refs(&self, server: Option<&Server>, watches: &[Watch]) -> Vec<CheckRef> {
+        let mut refs: Vec<CheckRef> = Vec::new();
+        for watch in watches {
+            let planned = server.and_then(|s| {
+                let key = (s.peer_id.to_ascii_lowercase(), format!("{watch:?}"));
+                self.watch_names.get(&key).cloned()
+            });
+            let name = match planned {
+                Some(name) => name,
+                None => match watch_spec(watch, server.map_or(Os::Linux, |s| s.os)) {
+                    Spec::Builtin(name) => name.to_owned(),
+                    Spec::Agent | Spec::NoPort => continue,
+                    Spec::Check {
+                        kind,
+                        params,
+                        prefix,
+                    } => server
+                        .and_then(|s| {
+                            let key = (
+                                s.peer_id.to_ascii_lowercase(),
+                                kind.to_owned(),
+                                Value::Object(params).to_string(),
+                            );
+                            self.checks.get(&key).cloned()
+                        })
+                        .unwrap_or_else(|| check_name(&prefix.0, &prefix.1)),
+                },
+            };
+            let check = CheckRef {
+                name,
+                instance: String::new(),
+            };
+            if !refs.contains(&check) && refs.len() < crate::notify::silence::MAX_CHECKS {
+                refs.push(check);
+            }
+        }
+        refs
+    }
+
+    fn windows(&mut self) {
+        for window in &self.inventory.windows {
+            let origin: OriginView = (&window.origin).into();
+            let (list, why) = list_of(&window.fidelity);
+            let servers: Vec<Server> = match &window.scope {
+                SilenceScope::Everything => vec![],
+                SilenceScope::Hosts(keys) => {
+                    let found: Vec<Server> =
+                        keys.iter().filter_map(|k| self.server_of(k)).collect();
+                    if found.is_empty() {
+                        self.not_movable("window", origin, vec![], note("no_hosts", args! {}));
+                        continue;
+                    }
+                    found
+                }
+            };
+            let servers: Vec<Server> = servers.into_iter().filter(|s| s.may_change).collect();
+            if matches!(window.scope, SilenceScope::Hosts(_)) && servers.is_empty() {
+                continue;
+            }
+            let checks = self.check_refs(servers.first(), &window.checks);
+            if !window.checks.is_empty() && checks.is_empty() {
+                self.not_movable("window", origin, vec![], note("no_equivalent", args! {}));
+                continue;
+            }
+            let rule = &window.rule;
+            let zone: Tz = match &rule.time_zone {
+                None => self.zone,
+                Some(name) => match name.parse() {
+                    Ok(zone) => zone,
+                    Err(_) => {
+                        self.not_movable(
+                            "window",
+                            origin,
+                            vec![],
+                            note(
+                                "refused",
+                                args! {"reason" => format!("unknown time zone {name}")},
+                            ),
+                        );
+                        continue;
+                    }
+                },
+            };
+            let schedule = schedule_of(rule, zone, self.now);
+            if let Err(reason) = schedule.validate() {
+                self.not_movable(
+                    "window",
+                    origin,
+                    vec![],
+                    note("refused", args! {"reason" => reason}),
+                );
+                continue;
+            }
+            if schedule.next(self.now, 1).is_empty() {
+                self.not_movable("window", origin, vec![], note("silence_over", args! {}));
+                continue;
+            }
+            let mut reason: String = window.reason.trim().chars().take(MAX_REASON).collect();
+            if reason.is_empty() {
+                reason = "Maintenance".into();
+            }
+            let bits = |value: u16, names: &[&str]| -> Vec<String> {
+                names
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| value & (1 << i) != 0)
+                    .map(|(_, n)| (*n).to_owned())
+                    .collect()
+            };
+            let create = Create::Window {
+                servers: servers.iter().map(|s| s.peer_id.clone()).collect(),
+                checks,
+                repeat: schedule.repeat.as_str().to_owned(),
+                every: schedule.every,
+                weekdays: bits(u16::from(schedule.weekdays), &WEEKDAYS),
+                month_day: schedule.month_day,
+                month_week: schedule.month_week,
+                months: if schedule.months == maintenance::EVERY_MONTH {
+                    vec![]
+                } else {
+                    (1..=12u8)
+                        .filter(|m| schedule.months & (1 << (m - 1)) != 0)
+                        .collect()
+                },
+                start_time: schedule.start_time.format("%H:%M").to_string(),
+                duration_minutes: schedule.duration_minutes,
+                time_zone: zone.name().to_owned(),
+                starts_on: rule.starts_on,
+                ends_on: rule.ends_on,
+                reason,
+            };
+            let present = window_key(&create).is_some_and(|k| self.existing.windows.contains(&k));
+            let id = self.unique_id(format!("window:{}", origin.name));
+            let mut needs: Vec<String> = servers.iter().flat_map(Self::needs).collect();
+            needs.dedup();
+            self.push(Item {
+                id,
+                kind: "window".into(),
+                list,
+                note: why,
+                origin,
+                hosts: servers.iter().map(|s| s.name.clone()).collect(),
+                present,
+                needs,
+                create: Some(create),
+            });
         }
     }
 

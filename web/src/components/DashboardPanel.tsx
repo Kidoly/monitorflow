@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { t } from "@/i18n";
-import type { ChartLine, DashboardData, Panel, PanelData } from "@/lib/api";
+import type { ChartLine, DashboardData, Panel, PanelAlert, PanelData } from "@/lib/api";
 import { formatNumber, unitOf } from "@/lib/format";
 import { incidentTitle } from "@/lib/incidents";
 import { incidentHref, sensorHref } from "@/lib/routes";
@@ -12,7 +12,7 @@ import { type Scope, scopedHref } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
 import { Label } from "@/components/ui/StatusLabel";
 import { TimeChart } from "@/components/ui/TimeChart";
-import { formatSince } from "@/components/ui/time";
+import { formatDay, formatSince } from "@/components/ui/time";
 
 import styles from "./Dashboards.module.css";
 
@@ -27,6 +27,12 @@ export function seriesLabel(panel: Panel, line: ChartLine): string {
 }
 
 /** Why a panel shows nothing, in plain words; null when it shows something. */
+/** "in maintenance until 04:00 today", "silenced until …": why nobody is told of an alert (ADR-0151). */
+export function quiet(alert: PanelAlert, now: Date): string {
+  const when = formatDay(new Date(alert.silenced_until ?? 0), now);
+  return alert.in_maintenance ? t("display.panel.inMaintenance", { when }) : t("display.panel.silenced", { when });
+}
+
 export function emptyReason(panel: Panel, data: PanelData): string | null {
   if (data.servers > 0) return null;
   if (data.unavailable > 0 || panel.servers.kind !== "all") {
@@ -174,6 +180,7 @@ export function DashboardPanel({
                   <span className={styles.value}>
                     {t("display.panel.since", { time: formatSince(new Date(alert.opened_at), now) })}
                   </span>
+                  {alert.silenced_until && <span className={styles.muted}>{quiet(alert, now)}</span>}
                 </li>
               ))}
             </ul>

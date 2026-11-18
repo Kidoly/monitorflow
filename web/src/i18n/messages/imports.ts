@@ -62,9 +62,15 @@ export const en = {
     "A server of this name is in a site you do not administer.",
   "note.refused": "MonitorFlow refuses it: {reason}.",
   "note.unknown_host": "It refers to a host that is not part of this import.",
-  "note.udp": "MonitorFlow checks TCP ports only.",
   "note.network_traffic":
-    "MonitorFlow does not measure network interface traffic yet.",
+    "MonitorFlow measures interface traffic but does not move thresholds on it: add one on the server's page.",
+  "note.snmp_object": "An SNMP object outside the common MIBs MonitorFlow reads: interfaces, host resources, UPS, temperature sensors and printer supplies.",
+  "note.dns_as_udp": "MonitorFlow checks that the DNS server answers a query; it does not compare the record.",
+  "note.no_address": "There is no address MonitorFlow can check it at.",
+  "note.device_no_agent": "It becomes a device, which has no agent to measure this.",
+  "note.snmp_of_agent": "MonitorFlow polls SNMP on devices; on a server, its agent measures this itself.",
+  "note.snmp_credentials": "SNMP credentials are not moved: set them on the device's page, and its SNMP checks start.",
+  "note.builtin_net": "Every server measures the traffic of its network interfaces already.",
   "note.no_equivalent": "MonitorFlow has no check of this kind.",
   "note.expression":
     "MonitorFlow cannot read this expression; add a check and an alert by hand if you need it.",
@@ -72,8 +78,6 @@ export const en = {
     "The source compares the load per processor; MonitorFlow compares the load itself.",
   "note.script":
     "Commands run by the source are not moved: put the script in the agent's scripts directory and add a custom script check.",
-  "note.snmp":
-    "MonitorFlow watches servers through its agent; SNMP devices cannot be moved.",
   "note.no_target": "Notifications of this kind cannot be sent by MonitorFlow.",
   "note.chat_token":
     "The source posts with an app token; MonitorFlow needs an incoming webhook URL. Add a channel with one.",
@@ -99,10 +103,6 @@ export const en = {
     "Its setting {setting} has no usable address in the source.",
   "note.scrape_as_port":
     "MonitorFlow checks that port {port} answers; it does not read the exporter's metrics.",
-  "note.ping_as_offline":
-    "The source pings the host; MonitorFlow's offline alert tells when its agent stops answering.",
-  "note.ping":
-    "MonitorFlow does not ping addresses; it watches servers through their agent.",
   "note.disk_wait":
     "MonitorFlow compares the average wait of the disk's operations, reads and writes together, which differs from what the source measures.",
   "note.cpu_busy_modes":
@@ -122,7 +122,6 @@ export const en = {
   "note.routes":
     "MonitorFlow sends every alert to every channel of its site; the source's routing by labels is not moved.",
 
-  "note.prtg_ping": "PRTG pinged it from a probe; MonitorFlow's offline alert tells when its agent stops answering. Ping times are not measured.",
   "note.prtg_from_server": "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
   "note.prtg_sensor_type": "MonitorFlow has no check like this PRTG sensor ({type}).",
   "note.prtg_no_setting": "The sensor's settings do not say what it checks.",
@@ -135,9 +134,19 @@ export const en = {
   "note.prtg_not_on_device": "It belongs to a probe or a group, not to a device.",
   "note.prtg_paused": "Paused in PRTG with no end: the silence lasts 30 days, the longest MonitorFlow allows.",
   "note.prtg_paused_by_rule": "Paused by a schedule or a dependency in PRTG, which MonitorFlow does not have.",
-  "note.prtg_paused_sensor": "A paused sensor: MonitorFlow silences whole servers, not one check, so its check runs.",
+  "note.prtg_paused_sensor": "A paused sensor MonitorFlow has no check for: silencing its whole server would hide more than PRTG did.",
   "note.prtg_local_time": "The file does not say PRTG's time zone: the window is read as UTC.",
   "note.prtg_triggers": "MonitorFlow sends it every incident; PRTG used it only where a notification trigger named it.",
+  "note.window_cut": "MonitorFlow maintenance windows last at most 7 days: this one ends 7 days after it starts.",
+  "note.window_offline_kept": "In MonitorFlow a server going offline still notifies: only its checks are silenced.",
+  "note.zabbix_no_data": "Zabbix stopped collecting data during this maintenance; MonitorFlow keeps watching and only holds notifications.",
+  "note.zabbix_tags_unmatched": "No imported check comes from a trigger with these tags ({tags}): the whole server is silenced.",
+  "note.am_active_intervals": "Alertmanager sends this route only within its active time intervals, which MonitorFlow does not have.",
+  "note.am_interval": "This time interval cannot be said as a MonitorFlow maintenance window: {detail}.",
+  "note.am_months_weekly": "Weekdays of some months only: MonitorFlow's weekly windows apply every month.",
+  "note.am_years": "Limited to some years: the window applies from the first of them to the last.",
+  "note.am_route_labels": "The route also matched other labels ({matchers}): MonitorFlow holds every notification of these servers.",
+  "note.prtg_schedule_unknown": "Paused by the schedule {schedule}, whose periods are not in the source or are a time table: it cannot be moved.",
   "origin.host": "Host",
   "origin.item": "Item",
   "origin.trigger": "Trigger",
@@ -155,6 +164,8 @@ export const en = {
   "origin.device": "Device",
   "origin.group": "Group",
   "origin.probe": "Probe",
+  "origin.time_interval": "Time interval",
+  "origin.schedule": "Schedule",
 
   title: "Move from another tool",
   intro:
@@ -168,6 +179,8 @@ export const en = {
   "start.title": "Read a configuration",
   "start.source": "Import from",
   "start.site": "Servers go to the site",
+  "start.zone": "Time zone of the source",
+  "start.zoneNote": "Zabbix and PRTG keep their server’s local time: maintenance windows that do not say their time zone are read in this one.",
   "start.how": "How to read it",
   "start.files": "Upload export files",
   "start.connect": "Connect to its API",
@@ -211,6 +224,7 @@ export const en = {
   "kind.check": "Checks",
   "kind.threshold": "Alerts",
   "kind.silence": "Silences",
+  "kind.window": "Maintenance windows",
   "kind.channel": "Notification channels",
   "kind.builtin": "Measured on every server",
   "kind.other": "Other",
@@ -218,6 +232,9 @@ export const en = {
   "item.hosts": { one: "{count} server", other: "{count} servers" },
   "item.needsOut": "left out with what it needs",
   "item.silence": "From {from} to {to}: {reason}",
+  "item.silenceChecks": "From {from} to {to}, {checks}: {reason}",
+  "item.window": "{rule}: {reason}",
+  "item.windowChecks": "{rule}, {checks}: {reason}",
   "item.channel": "{kind} to {target}",
   "channel.email": "Email",
   "channel.webhook": "Webhook",
@@ -323,9 +340,15 @@ export const fr: Translation<typeof en> = {
   "note.refused": "MonitorFlow le refuse : {reason}.",
   "note.unknown_host":
     "Il désigne un hôte qui ne fait pas partie de cet import.",
-  "note.udp": "MonitorFlow ne vérifie que les ports TCP.",
   "note.network_traffic":
-    "MonitorFlow ne mesure pas encore le trafic des interfaces réseau.",
+    "MonitorFlow mesure le trafic des interfaces mais n’en reprend pas les seuils : ajoutez-en un sur la page du serveur.",
+  "note.snmp_object": "Un objet SNMP hors des MIB courantes que lit MonitorFlow : interfaces, ressources de l’hôte, onduleur, capteurs de température et consommables d’imprimante.",
+  "note.dns_as_udp": "MonitorFlow vérifie que le serveur DNS répond à une requête ; il ne compare pas l’enregistrement.",
+  "note.no_address": "Aucune adresse à laquelle MonitorFlow peut le vérifier.",
+  "note.device_no_agent": "Il devient un équipement, sans agent pour mesurer cela.",
+  "note.snmp_of_agent": "MonitorFlow interroge SNMP sur les équipements ; sur un serveur, son agent le mesure lui-même.",
+  "note.snmp_credentials": "Les identifiants SNMP ne sont pas repris : saisissez-les sur la page de l’équipement et ses contrôles SNMP démarrent.",
+  "note.builtin_net": "Chaque serveur mesure déjà le trafic de ses interfaces réseau.",
   "note.no_equivalent": "MonitorFlow n’a pas de vérification de ce genre.",
   "note.expression":
     "MonitorFlow ne sait pas lire cette expression ; ajoutez une vérification et une alerte à la main si vous en avez besoin.",
@@ -333,8 +356,6 @@ export const fr: Translation<typeof en> = {
     "La source compare la charge par processeur ; MonitorFlow compare la charge elle-même.",
   "note.script":
     "Les commandes lancées par la source ne sont pas reprises : placez le script dans le répertoire de scripts de l’agent et ajoutez une vérification par script.",
-  "note.snmp":
-    "MonitorFlow surveille les serveurs par son agent ; les équipements SNMP ne peuvent pas être repris.",
   "note.no_target":
     "MonitorFlow ne sait pas envoyer de notifications de ce genre.",
   "note.chat_token":
@@ -361,10 +382,6 @@ export const fr: Translation<typeof en> = {
     "Son paramètre {setting} n’a pas d’adresse utilisable dans la source.",
   "note.scrape_as_port":
     "MonitorFlow vérifie que le port {port} répond ; il ne lit pas les métriques de l’exportateur.",
-  "note.ping_as_offline":
-    "La source envoie un ping à l’hôte ; l’alerte hors ligne de MonitorFlow prévient quand son agent ne répond plus.",
-  "note.ping":
-    "MonitorFlow n’envoie pas de ping à des adresses ; il surveille les serveurs par leur agent.",
   "note.disk_wait":
     "MonitorFlow compare l’attente moyenne des opérations du disque, lectures et écritures ensemble, ce qui diffère de ce que mesure la source.",
   "note.cpu_busy_modes":
@@ -384,7 +401,6 @@ export const fr: Translation<typeof en> = {
   "note.routes":
     "MonitorFlow envoie chaque alerte à chaque canal de son site ; le routage par étiquettes de la source n’est pas repris.",
 
-  "note.prtg_ping": "PRTG l’interrogeait par ping depuis une sonde ; l’alerte hors ligne de MonitorFlow prévient quand son agent ne répond plus. Les temps de ping ne sont pas mesurés.",
   "note.prtg_from_server": "Vérifié par l’agent du serveur lui-même, pas depuis une sonde : un problème réseau entre les deux n’est pas vu.",
   "note.prtg_sensor_type": "MonitorFlow n’a pas de vérification comme ce capteur PRTG ({type}).",
   "note.prtg_no_setting": "Les réglages du capteur ne disent pas ce qu’il vérifie.",
@@ -397,9 +413,19 @@ export const fr: Translation<typeof en> = {
   "note.prtg_not_on_device": "Il appartient à une sonde ou à un groupe, pas à un équipement.",
   "note.prtg_paused": "En pause dans PRTG sans fin prévue : le silence dure 30 jours, le plus long que MonitorFlow permet.",
   "note.prtg_paused_by_rule": "En pause dans PRTG par un horaire ou une dépendance, que MonitorFlow n’a pas.",
-  "note.prtg_paused_sensor": "Un capteur en pause : MonitorFlow met en silence des serveurs entiers, pas une vérification, donc sa vérification tourne.",
+  "note.prtg_paused_sensor": "Un capteur en pause sans contrôle équivalent dans MonitorFlow : mettre tout son serveur en silence cacherait plus que PRTG.",
   "note.prtg_local_time": "Le fichier ne dit pas le fuseau horaire de PRTG : la fenêtre est lue en UTC.",
   "note.prtg_triggers": "MonitorFlow lui envoie chaque incident ; PRTG ne l’utilisait que là où un déclencheur de notification le nommait.",
+  "note.window_cut": "Les fenêtres de maintenance de MonitorFlow durent au plus 7 jours : celle-ci se termine 7 jours après son début.",
+  "note.window_offline_kept": "Dans MonitorFlow, un serveur hors ligne prévient toujours : seuls ses contrôles sont mis en silence.",
+  "note.zabbix_no_data": "Zabbix arrêtait la collecte pendant cette maintenance ; MonitorFlow continue de surveiller et retient seulement les notifications.",
+  "note.zabbix_tags_unmatched": "Aucun contrôle importé ne vient d’un déclencheur avec ces étiquettes ({tags}) : tout le serveur est mis en silence.",
+  "note.am_active_intervals": "Alertmanager n’envoie cette route que pendant ses intervalles actifs, que MonitorFlow n’a pas.",
+  "note.am_interval": "Cet intervalle ne peut pas s’écrire comme une fenêtre de maintenance MonitorFlow : {detail}.",
+  "note.am_months_weekly": "Des jours de la semaine de certains mois seulement : les fenêtres hebdomadaires de MonitorFlow valent tous les mois.",
+  "note.am_years": "Limité à certaines années : la fenêtre vaut de la première à la dernière.",
+  "note.am_route_labels": "La route visait aussi d’autres étiquettes ({matchers}) : MonitorFlow retient toutes les notifications de ces serveurs.",
+  "note.prtg_schedule_unknown": "En pause selon le planning {schedule}, dont les périodes ne sont pas dans la source ou sont une grille horaire : il ne peut pas être déplacé.",
   "origin.host": "Hôte",
   "origin.item": "Élément",
   "origin.trigger": "Déclencheur",
@@ -417,6 +443,8 @@ export const fr: Translation<typeof en> = {
   "origin.device": "Équipement",
   "origin.group": "Groupe",
   "origin.probe": "Sonde",
+  "origin.time_interval": "Intervalle de temps",
+  "origin.schedule": "Planning",
   title: "Venir d’un autre outil",
   intro:
     "Lisez la configuration de l’outil de supervision que vous utilisez aujourd’hui, depuis un fichier d’export ou son API. Vous voyez d’abord ce que MonitorFlow fait pareil, ce qu’il fait autrement et ce qui ne peut pas être repris ; rien n’est créé avant votre confirmation. Les serveurs n’ont ensuite besoin que de l’agent, et l’autre outil peut continuer de tourner jusqu’à la bascule.",
@@ -430,6 +458,8 @@ export const fr: Translation<typeof en> = {
   "start.title": "Lire une configuration",
   "start.source": "Importer depuis",
   "start.site": "Les serveurs vont dans le site",
+  "start.zone": "Fuseau horaire de la source",
+  "start.zoneNote": "Zabbix et PRTG gardent l’heure locale de leur serveur : les fenêtres de maintenance qui ne disent pas leur fuseau sont lues dans celui-ci.",
   "start.how": "Comment la lire",
   "start.files": "Envoyer des fichiers d’export",
   "start.connect": "Se connecter à son API",
@@ -472,6 +502,7 @@ export const fr: Translation<typeof en> = {
   "kind.check": "Vérifications",
   "kind.threshold": "Alertes",
   "kind.silence": "Silences",
+  "kind.window": "Fenêtres de maintenance",
   "kind.channel": "Canaux de notification",
   "kind.builtin": "Mesuré sur chaque serveur",
   "kind.other": "Autre",
@@ -479,6 +510,9 @@ export const fr: Translation<typeof en> = {
   "item.hosts": { one: "{count} serveur", other: "{count} serveurs" },
   "item.needsOut": "laissé de côté avec ce dont il dépend",
   "item.silence": "Du {from} au {to} : {reason}",
+  "item.silenceChecks": "Du {from} au {to}, {checks} : {reason}",
+  "item.window": "{rule} : {reason}",
+  "item.windowChecks": "{rule}, {checks} : {reason}",
   "item.channel": "{kind} vers {target}",
   "channel.email": "E-mail",
   "channel.webhook": "Webhook",

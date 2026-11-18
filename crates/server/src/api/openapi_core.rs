@@ -184,7 +184,7 @@ pub mod ex {
                 "metric": "monitorflow_disk_used_ratio", "instance": null, "comparison": ">",
                 "warning": 0.85, "critical": 0.95, "duration_s": 300, "hysteresis": 0.02
             },
-            "silenced_until": null, "silenced": false,
+            "silenced_until": null, "in_maintenance": false, "silenced": false,
             "acknowledged_by": null, "acknowledged_at": null,
             "can_acknowledge": true
         })
@@ -212,7 +212,7 @@ pub mod ex {
             "starts_at": "2026-11-14T22:00:00Z", "ends_at": "2026-11-15T00:00:00Z",
             "active": false, "reason": "Kernel upgrade and reboot",
             "created_by_username": "alice", "created_at": "2026-11-14T09:30:00Z",
-            "can_end": true
+            "checks": null, "window_id": null, "can_end": true
         })
     }
 }

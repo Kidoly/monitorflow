@@ -18,7 +18,9 @@ use crate::import::{Create, Item, List, NoteView, OriginView};
     modifiers(&Common),
     tags((name = "imports", description = "Moving from another monitoring tool. An import reads the \
 other tool's configuration, from export files or through its API, and shows first what MonitorFlow would \
-create: servers waiting for their agent, checks, thresholds, silences and notification channels. Each item \
+create: servers waiting for their agent, checks, thresholds, silences (of servers or of chosen checks), \
+maintenance windows that come back (ADR-0151) and notification channels. Windows whose source does not say \
+its time zone, like Zabbix's and PRTG's, are read in the request's `time_zone`. Each item \
 is in one of three lists: `exact` (MonitorFlow does the same), `approximated` (close, the note says how it \
 differs) or `not_movable` (the note says why), and says whether MonitorFlow has it already (`present`). \
 Nothing is created until the preview is confirmed, with the items to leave out; items that need one left \

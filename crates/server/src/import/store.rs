@@ -16,6 +16,7 @@ use super::plan::{channel_key, Existing, ExistingServer};
 use super::{ChannelSecret, Create, Item, PREVIEW_HOURS};
 use crate::enroll::identity::{self, Pending};
 use crate::enroll::install_key::peer_id_from_hostname;
+use crate::notify::maintenance::write;
 use crate::notify::{self, Coverage, Destination};
 use crate::secrets::{self, Column};
 
@@ -157,6 +158,9 @@ pub async fn existing(
         .into_iter()
         .map(|(id, ends, reason)| (id.and_then(|id| peer_of.get(&id).cloned()), ends, reason))
         .collect();
+    let mut conn = pool.acquire().await?;
+    existing.windows = existing_windows(&mut conn, site_id).await?;
+    drop(conn);
     let channels: Vec<(String, Value, Option<String>)> =
         sqlx::query_as("SELECT kind, settings, secret FROM notification_channels")
             .fetch_all(pool)
@@ -472,6 +476,24 @@ async fn create_one(
             servers.insert(peer_id.to_ascii_lowercase(), id);
             Ok(Some(id))
         }
+        Create::Device {
+            peer_id,
+            hostname,
+            address,
+        } => {
+            if let Some(id) = server_id(tx, peer_id).await.map_err(db_error)? {
+                servers.insert(peer_id.to_ascii_lowercase(), id);
+                return Ok(None);
+            }
+            let address = crate::api::devices::check_address(address)
+                .map_err(|_| "its address is not valid")?;
+            let (id, made) = crate::api::devices::insert(tx, site_id, hostname, &address)
+                .await
+                .map_err(|e| e.to_string())?;
+            servers.insert(peer_id.to_ascii_lowercase(), id);
+            servers.insert(made.to_ascii_lowercase(), id);
+            Ok(Some(id))
+        }
         Create::Check {
             server: peer_id,
             kind,
@@ -479,6 +501,7 @@ async fn create_one(
             interval_ms,
             timeout_ms,
             params,
+            probe,
         } => {
             let id = match server(peer_id, servers) {
                 Some(id) => id,
@@ -489,27 +512,48 @@ async fn create_one(
             };
             // Never a secret: an imported website check has no password
             // (the person sets it after the import).
-            let valid = crate::api::sensors::validate_entry(crate::api::sensors::EntryRequest {
-                kind: kind.clone(),
-                name: Some(name.clone()),
-                instance: String::new(),
-                interval_ms: *interval_ms,
-                timeout_ms: *timeout_ms,
-                params: params.clone(),
-                enabled: true,
-                probe: None,
-            })?;
+            // A probe check runs from the site's default probe (ADR-0148).
+            let by = if *probe {
+                crate::api::sensors::default_probe(&mut **tx, site_id)
+                    .await
+                    .map_err(db_error)?
+            } else {
+                crate::api::sensors::RunBy::default()
+            };
+            let address: Option<String> =
+                sqlx::query_scalar("SELECT address FROM servers WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&mut **tx)
+                    .await
+                    .map_err(db_error)?;
+            let valid = crate::api::sensors::validate_with_host(
+                crate::api::sensors::EntryRequest {
+                    kind: kind.clone(),
+                    name: Some(name.clone()),
+                    instance: String::new(),
+                    interval_ms: *interval_ms,
+                    timeout_ms: *timeout_ms,
+                    params: params.clone(),
+                    enabled: true,
+                    probe: None,
+                },
+                address.as_deref(),
+            )?;
             sqlx::query_scalar(
-                "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, timeout_ms, params)
-                 VALUES ($1, $2, $3, '', $4, $5, $6)
+                "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, timeout_ms,
+                                             params, probe, probe_relay_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                  ON CONFLICT ON CONSTRAINT sensor_configs_key DO NOTHING RETURNING id",
             )
             .bind(id)
             .bind(&valid.kind)
             .bind(&valid.name)
+            .bind(if *probe { by.key.as_str() } else { "" })
             .bind(valid.interval_ms)
             .bind(valid.timeout_ms)
             .bind(&valid.params)
+            .bind(by.probe)
+            .bind(by.relay)
             .fetch_optional(&mut **tx)
             .await
             .map_err(db_error)
@@ -565,6 +609,7 @@ async fn create_one(
             starts_at,
             ends_at,
             reason,
+            checks,
         } => {
             let server_id = match peer_id {
                 Some(p) => Some(match server(p, servers) {
@@ -577,6 +622,7 @@ async fn create_one(
                 None => None,
             };
             let site = server_id.is_none().then_some(site_id);
+            let checks_json = (!checks.is_empty()).then(|| sqlx::types::Json(checks.clone()));
             let starts_at = (*starts_at).max(Utc::now());
             if *ends_at <= starts_at {
                 return Err("the window is over".into());
@@ -585,12 +631,14 @@ async fn create_one(
                 "SELECT id FROM silences
                  WHERE server_id IS NOT DISTINCT FROM $1 AND site_id IS NOT DISTINCT FROM $2
                    AND relay_id IS NULL AND customer_id IS NULL AND ended_at IS NULL
+                   AND window_id IS NULL AND checks IS NOT DISTINCT FROM $5
                    AND ends_at = $3 AND reason = $4 LIMIT 1",
             )
             .bind(server_id)
             .bind(site)
             .bind(ends_at)
             .bind(reason)
+            .bind(&checks_json)
             .fetch_optional(&mut **tx)
             .await
             .map_err(db_error)?;
@@ -598,8 +646,9 @@ async fn create_one(
                 return Ok(None);
             }
             sqlx::query_scalar(
-                "INSERT INTO silences (server_id, site_id, starts_at, ends_at, reason, created_by)
-                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+                "INSERT INTO silences (server_id, site_id, starts_at, ends_at, reason, created_by,
+                                       checks)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
             )
             .bind(server_id)
             .bind(site)
@@ -607,10 +656,24 @@ async fn create_one(
             .bind(ends_at)
             .bind(reason)
             .bind(user)
+            .bind(&checks_json)
             .fetch_one(&mut **tx)
             .await
             .map(Some)
             .map_err(db_error)
+        }
+        Create::Window { servers: peers, .. } => {
+            let mut ids = Vec::new();
+            for peer in peers {
+                ids.push(match server(peer, servers) {
+                    Some(id) => id,
+                    None => server_id(tx, peer)
+                        .await
+                        .map_err(db_error)?
+                        .ok_or("its server is not there")?,
+                });
+            }
+            create_window(tx, site_id, create, &ids, user).await
         }
         Create::Channel {
             kind,
@@ -646,6 +709,169 @@ async fn create_one(
             .map_err(db_error)
         }
     }
+}
+
+/// A maintenance window of the site with the servers `ids`, and its
+/// occurrences; `None` when the same one is there (ADR-0151).
+async fn create_window(
+    tx: &mut Transaction<'_, Postgres>,
+    site_id: Uuid,
+    create: &Create,
+    ids: &[Uuid],
+    user: Uuid,
+) -> Result<Option<Uuid>, String> {
+    let Create::Window {
+        checks,
+        repeat,
+        every,
+        weekdays,
+        month_day,
+        month_week,
+        months,
+        start_time,
+        duration_minutes,
+        time_zone,
+        starts_on,
+        ends_on,
+        reason,
+        ..
+    } = create
+    else {
+        return Err("not a window".into());
+    };
+    if let Some(key) = super::plan::window_key(create) {
+        let existing = existing_windows(tx, site_id).await.map_err(db_error)?;
+        if existing.contains(&key) {
+            return Ok(None);
+        }
+    }
+    let index = |names: &[&str], value: &str| names.iter().position(|n| *n == value);
+    let weekdays: i16 = weekdays
+        .iter()
+        .filter_map(|d| index(&WEEKDAYS, d))
+        .map(|i| 1i16 << i)
+        .sum();
+    let months: i16 = match months.iter().map(|m| 1i16 << (m - 1)).sum() {
+        0 => 0xfff,
+        m => m,
+    };
+    let start =
+        chrono::NaiveTime::parse_from_str(start_time, "%H:%M").map_err(|e| e.to_string())?;
+    let starts_on = starts_on.unwrap_or_else(|| Utc::now().date_naive());
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO maintenance_windows (site_id, checks, repeat, every, weekdays, month_day,
+                                          month_week, months, start_time, duration_minutes,
+                                          time_zone, starts_on, ends_on, reason, created_by,
+                                          whole_site)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         RETURNING id",
+    )
+    .bind(site_id)
+    .bind((!checks.is_empty()).then(|| sqlx::types::Json(checks.clone())))
+    .bind(repeat)
+    .bind(i16::try_from(*every).unwrap_or(1))
+    .bind(weekdays)
+    .bind(month_day.map(i16::from))
+    .bind(month_week.map(i16::from))
+    .bind(months)
+    .bind(start)
+    .bind(i32::try_from(*duration_minutes).unwrap_or(1))
+    .bind(time_zone)
+    .bind(starts_on)
+    .bind(ends_on)
+    .bind(reason)
+    .bind(user)
+    .bind(ids.is_empty())
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(db_error)?;
+    sqlx::query(
+        "INSERT INTO maintenance_window_servers (window_id, server_id)
+         SELECT $1, unnest($2::uuid[])",
+    )
+    .bind(id)
+    .bind(ids)
+    .execute(&mut **tx)
+    .await
+    .map_err(db_error)?;
+    let stored = write::load(tx, id)
+        .await
+        .map_err(db_error)?
+        .ok_or("the window is gone")?;
+    write::write(tx, &stored, Utc::now())
+        .await
+        .map_err(db_error)?;
+    Ok(Some(id))
+}
+
+const WEEKDAYS: [&str; 7] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+];
+
+/// The [`window_key`](super::plan::window_key)s of the site's windows not
+/// removed.
+async fn existing_windows(
+    db: &mut PgConnection,
+    site_id: Uuid,
+) -> Result<HashSet<String>, sqlx::Error> {
+    // SQL-safe: interpolates only the constant SELECT.
+    let rows: Vec<write::Stored> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{} WHERE w.site_id = $1 AND w.removed_at IS NULL",
+        write::SELECT
+    )))
+    .bind(site_id)
+    .fetch_all(&mut *db)
+    .await?;
+    let mut keys = HashSet::new();
+    for row in rows {
+        // A window whose servers were all removed covers nothing.
+        if !row.whole_site && row.servers.is_empty() {
+            continue;
+        }
+        let peers: Vec<String> =
+            sqlx::query_scalar("SELECT peer_id FROM servers WHERE id = ANY($1)")
+                .bind(&row.servers)
+                .fetch_all(&mut *db)
+                .await?;
+        let bits = |value: i16, names: &[&str]| -> Vec<String> {
+            names
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| value & (1 << i) != 0)
+                .map(|(_, n)| (*n).to_owned())
+                .collect()
+        };
+        let create = Create::Window {
+            servers: peers,
+            checks: row
+                .checks
+                .as_ref()
+                .and_then(|c| serde_json::from_value(c.clone()).ok())
+                .unwrap_or_default(),
+            repeat: row.repeat.clone(),
+            every: u16::try_from(row.every).unwrap_or(1),
+            weekdays: bits(row.weekdays, &WEEKDAYS),
+            month_day: row.month_day.and_then(|v| u8::try_from(v).ok()),
+            month_week: row.month_week.and_then(|v| u8::try_from(v).ok()),
+            months: (1..=12u8)
+                .filter(|m| row.months & (1 << (m - 1)) != 0)
+                .collect(),
+            start_time: row.start_time.format("%H:%M").to_string(),
+            duration_minutes: u32::try_from(row.duration_minutes).unwrap_or(0),
+            time_zone: row.time_zone.clone(),
+            starts_on: None,
+            ends_on: None,
+            reason: row.reason.clone(),
+        };
+        keys.extend(super::plan::window_key(&create));
+    }
+    Ok(keys)
 }
 
 /// Whether a channel with the same destination exists, so a second
@@ -696,7 +922,8 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
     // Servers the run made that an agent took over.
     let kept: Vec<(Uuid, String)> = sqlx::query_as(
         "SELECT s.id, s.hostname FROM import_created c JOIN servers s ON s.id = c.object_id
-         WHERE c.run_id = $1 AND c.object = 'server' AND NOT s.awaiting_agent",
+         WHERE c.run_id = $1 AND c.object = 'server' AND NOT s.awaiting_agent
+           AND s.kind = 'agent'",
     )
     .bind(run.id)
     .fetch_all(&mut *tx)
@@ -724,6 +951,11 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
                AND (server_id IS NULL OR NOT (server_id = ANY($2)))",
         ),
         (
+            "window",
+            "DELETE FROM maintenance_windows WHERE id IN
+                 (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'window')",
+        ),
+        (
             "channel",
             "DELETE FROM notification_channels WHERE id IN
                  (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'channel')",
@@ -732,7 +964,7 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
             "server",
             "DELETE FROM servers WHERE id IN
                  (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'server')
-               AND awaiting_agent",
+               AND (awaiting_agent OR kind = 'device')",
         ),
     ] {
         let done = sqlx::query(sql)

@@ -173,7 +173,7 @@ db_tests! {
             .iter()
             .map(|s| (s["name"].as_str().unwrap(), s["origin"].as_str().unwrap()))
             .collect();
-        assert_eq!(sensors, [("cpu", "default"), ("disk", "default"), ("diskio", "default"), ("memory", "default")]);
+        assert_eq!(sensors, [("cpu", "default"), ("disk", "default"), ("diskio", "default"), ("memory", "default"), ("net", "default")]);
 
         // Lyon's resources do not exist for a Paris viewer.
         for uri in [
@@ -263,6 +263,7 @@ db_tests! {
                 ("disk_data", "server", server_row["id"].clone()),
                 ("diskio", "default", Value::Null),
                 ("memory", "default", Value::Null),
+                ("net", "default", Value::Null),
             ]
         );
         assert_eq!(body["sensors"][0]["params"], json!({ "per_core": "false" }));
@@ -401,8 +402,8 @@ db_tests! {
             .iter()
             .map(|s| (s["name"].as_str().unwrap(), s["origin"].as_str().unwrap()))
             .collect();
-        assert_eq!(sensors, [("cpu", "default"), ("diskio", "default"), ("memory", "default"), ("port_443", "site")]);
-        assert_eq!(body["sensors"][3]["params"], json!({ "port": "443" }));
+        assert_eq!(sensors, [("cpu", "default"), ("diskio", "default"), ("memory", "default"), ("net", "default"), ("port_443", "site")]);
+        assert_eq!(body["sensors"][4]["params"], json!({ "port": "443" }));
 
         for uri in [
             format!("/api/sites/{}/sensors", f.lyon),
@@ -451,7 +452,7 @@ db_tests! {
         let hourly = |name: &str| (name.to_owned(), 3_600_000);
         assert_eq!(
             intervals(&body),
-            [hourly("cpu"), hourly("disk"), hourly("diskio"), hourly("memory"), ("port_443".to_owned(), 30_000)]
+            [hourly("cpu"), hourly("disk"), hourly("diskio"), hourly("memory"), hourly("net"), ("port_443".to_owned(), 30_000)]
         );
         let (_, body) = call(&pool, &viewer, "GET", &format!("/api/sites/{}/sensors", f.paris), None).await;
         assert_eq!(body["check_interval_ms"], 3_600_000);

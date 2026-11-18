@@ -24,7 +24,8 @@ use std::time::Duration;
 use chrono::Utc;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    ProbeConfig, ProbeConfigAck, ProbeResults, Sample as ProtoSample, SampleBatch,
+    ProbeConfig, ProbeConfigAck, ProbeResults, ProbeTest, ProbeTestResult, Sample as ProtoSample,
+    SampleBatch,
 };
 use monitorflow_common::tls::PeerRole;
 use monitorflow_probe::{Check, ProbeFactory, Runner, CENTRAL};
@@ -102,6 +103,26 @@ pub struct Probes {
     shared: Arc<RwLock<Shared>>,
     /// Wakes [`Probes::run_relays`] when a relay's stream opens.
     opened: Arc<tokio::sync::Notify>,
+    /// Builds the sensors of the central server's one-off tests.
+    factory: Arc<dyn ProbeFactory>,
+    /// Tests sent to relays, by ID: the relay, and who waits.
+    tests: Arc<std::sync::Mutex<HashMap<String, Waiting>>>,
+}
+
+/// A test sent to a relay: the relay, and who waits for its answer.
+type Waiting = (String, tokio::sync::oneshot::Sender<ProbeTestResult>);
+
+/// Why a one-off test did not run.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TestError {
+    /// The relay's stream is not held by this central server.
+    #[error("the relay is not connected to this central server")]
+    NotConnected,
+    #[error("the relay did not answer in time")]
+    NoAnswer,
+    /// The check ran and failed, or could not run.
+    #[error("{0}")]
+    Failed(String),
 }
 
 impl std::fmt::Debug for Probes {
@@ -118,6 +139,80 @@ impl Probes {
             alerts,
             shared: Arc::default(),
             opened: Arc::default(),
+            factory: Arc::new(monitorflow_probe::Builtin),
+            tests: Arc::default(),
+        }
+    }
+
+    /// Builds the central server's tests with `factory` instead of the
+    /// built-in kinds.
+    pub fn with_factory(mut self, factory: Arc<dyn ProbeFactory>) -> Self {
+        self.factory = factory;
+        self
+    }
+
+    /// Runs `check` once from `probe` ([`CENTRAL`] or a relay's ID) and
+    /// returns what it measured (ADR-0149): on this central server, or on
+    /// the relay through its stream, which `registry` must hold.
+    pub async fn test(
+        &self,
+        registry: &Registry,
+        probe: &str,
+        check: Check,
+    ) -> Result<Vec<ProtoSample>, TestError> {
+        if probe == CENTRAL {
+            return monitorflow_probe::test_once(&*self.factory, &check)
+                .await
+                .map(|samples| {
+                    samples
+                        .into_iter()
+                        .map(monitorflow_probe::sample_to_proto)
+                        .collect()
+                })
+                .map_err(TestError::Failed);
+        }
+        if registry.get(PeerRole::Relay, probe).is_none() {
+            return Err(TestError::NotConnected);
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.tests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.clone(), (probe.to_owned(), tx));
+        let wait = check.config.timeout().min(monitorflow_probe::MAX_TEST) + Duration::from_secs(5);
+        let envelope = registry.envelope(Payload::ProbeTest(ProbeTest {
+            id: id.clone(),
+            check: Some(check.to_proto()),
+        }));
+        let outcome = match timeout(
+            SEND_TIMEOUT,
+            registry.send(PeerRole::Relay, probe, envelope),
+        )
+        .await
+        {
+            Ok(Ok(())) => match timeout(wait, rx).await {
+                Ok(Ok(result)) if result.error.is_empty() => Ok(result.samples),
+                Ok(Ok(result)) => Err(TestError::Failed(result.error.chars().take(512).collect())),
+                Ok(Err(_)) | Err(_) => Err(TestError::NoAnswer),
+            },
+            Ok(Err(_)) | Err(_) => Err(TestError::NotConnected),
+        };
+        self.tests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
+        outcome
+    }
+
+    /// The answer of `relay` to one of its tests; answers to tests it was
+    /// not sent are dropped.
+    pub fn test_result(&self, relay: &str, result: ProbeTestResult) {
+        let mut tests = self.tests.lock().unwrap_or_else(|e| e.into_inner());
+        if tests.get(&result.id).is_some_and(|(to, _)| to == relay) {
+            if let Some((_, tx)) = tests.remove(&result.id) {
+                let _ = tx.send(result);
+            }
         }
     }
 
