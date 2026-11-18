@@ -130,6 +130,7 @@ fn inventory() -> Inventory {
                 alert: Some(Alert {
                     severity: Severity::Critical,
                     for_s: 60,
+                    no_data: false,
                 }),
                 origin: origin("item", "nginx running"),
                 fidelity: Fidelity::Exact,
@@ -144,12 +145,15 @@ fn inventory() -> Inventory {
                 alert: Some(Alert {
                     severity: Severity::Critical,
                     for_s: 0,
+                    no_data: false,
                 }),
                 origin: origin("item", "PostgreSQL port"),
                 fidelity: Fidelity::Exact,
             },
         ],
         thresholds: vec![Threshold {
+            judged: Default::default(),
+            conditions: Vec::new(),
             hosts: vec!["1".into(), "2".into()],
             measure: Measure::CpuUsage,
             direction: Direction::Above,
@@ -370,7 +374,7 @@ db_tests! {
             host: "sw".into(),
             watch,
             interval_s: Some(60),
-            alert: Some(Alert { severity: Severity::Critical, for_s: 60 }),
+            alert: Some(Alert { severity: Severity::Critical, for_s: 60, no_data: false }),
             origin: origin("item", name),
             fidelity: Fidelity::Exact,
         };
@@ -529,6 +533,8 @@ db_tests! {
                 fidelity: Fidelity::Exact,
             }],
             thresholds: vec![Threshold {
+                judged: Default::default(),
+                conditions: Vec::new(),
                 hosts: vec!["1".into()],
                 measure: Measure::WebResponseTime { url: "https://shop.example.com/".into() },
                 direction: Direction::Above,

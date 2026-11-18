@@ -288,6 +288,8 @@ fn add_limits(
     let key = key.to_owned();
     for limit in limits {
         out.thresholds.push(Threshold {
+            judged: Default::default(),
+            conditions: Vec::new(),
             hosts: vec![key.clone()],
             measure: limit.measure,
             direction: limit.direction,

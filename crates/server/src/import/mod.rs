@@ -87,6 +87,32 @@ impl From<&model::Origin> for OriginView {
     }
 }
 
+/// The fields of a richer threshold (ADR-0153), as the threshold API takes
+/// them; all absent for a plain one.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct Richer {
+    /// `window`, `compare`, `forecast` or `nodata`; absent: `value`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_s: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset_s: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<crate::api::thresholds::ThresholdCondition>,
+}
+
+impl Richer {
+    /// The kind, `value` when absent.
+    pub fn kind(&self) -> &str {
+        self.kind.as_deref().unwrap_or("value")
+    }
+}
+
 /// What an item creates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "object", rename_all = "snake_case")]
@@ -128,7 +154,7 @@ pub enum Create {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         probe: bool,
     },
-    /// A threshold of a server.
+    /// A threshold of a server, as `POST /thresholds` takes it.
     Threshold {
         server: String,
         metric: String,
@@ -139,6 +165,10 @@ pub enum Create {
         critical: Option<f64>,
         duration_s: u32,
         hysteresis: f64,
+        /// What a richer rule judges (ADR-0153); empty for a plain
+        /// threshold.
+        #[serde(flatten, default)]
+        richer: Richer,
     },
     /// A silence of a server, or of the import's site when `server` is
     /// `null`.

@@ -349,6 +349,10 @@ impl Website {
 pub struct Alert {
     pub severity: Severity,
     pub for_s: u32,
+    /// The alert is about the check sending nothing for `for_s` seconds,
+    /// not about what it measures (ADR-0153).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_data: bool,
 }
 
 /// Something a host is checked for.
@@ -424,9 +428,73 @@ pub enum Direction {
     Below,
 }
 
+/// A function over a window (ADR-0153).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowFunction {
+    Avg,
+    Min,
+    Max,
+    /// The last value minus the first one.
+    Change,
+    /// The change per second.
+    Rate,
+}
+
+/// What a threshold judges (ADR-0153): the value by default.
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+#[serde(tag = "judged", rename_all = "snake_case")]
+pub enum Judged {
+    /// The latest value.
+    #[default]
+    Value,
+    /// A function of the values of the last `window_s` seconds.
+    Window {
+        function: WindowFunction,
+        window_s: u32,
+    },
+    /// The average over `window_s` against the same `offset_s` earlier:
+    /// divided (`ratio`) or subtracted.
+    Compare {
+        ratio: bool,
+        offset_s: u32,
+        window_s: u32,
+    },
+    /// Seconds left until the measure reaches `target` on the side of
+    /// `direction`, from its trend over `window_s`; warning and critical
+    /// are seconds left.
+    Forecast { target: f64, window_s: u32 },
+    /// Seconds without a value; warning and critical are seconds.
+    NoData,
+}
+
+impl Judged {
+    pub fn is_value(&self) -> bool {
+        *self == Self::Value
+    }
+}
+
+/// Another measure of the same host that must also be past a value, for
+/// a threshold joined with "and" (ADR-0153).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Condition {
+    pub measure: Measure,
+    pub direction: Direction,
+    pub value: f64,
+    /// A function over a window of seconds, else the latest value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<(WindowFunction, u32)>,
+}
+
 /// When a measure is a problem, on some hosts.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Threshold {
+    /// What is judged: the value, a window, a forecast...
+    #[serde(flatten, skip_serializing_if = "Judged::is_value")]
+    pub judged: Judged,
+    /// More conditions joined with "and", at most two.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<Condition>,
     /// The hosts it applies to.
     pub hosts: Vec<String>,
     pub measure: Measure,

@@ -871,6 +871,8 @@ receivers:
         }
         let mut fleet = Fleet::new(&collected);
         fleet.inventory.thresholds.push(crate::model::Threshold {
+            judged: Default::default(),
+            conditions: Vec::new(),
             hosts: vec!["web-01".into(), "db-01".into()],
             measure: Measure::CpuUsage,
             direction: crate::model::Direction::Above,

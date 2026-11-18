@@ -170,6 +170,7 @@ fn down() -> Option<Alert> {
     Some(Alert {
         severity: Severity::Critical,
         for_s: 0,
+        no_data: false,
     })
 }
 
@@ -661,7 +662,11 @@ fn event_log(sensor: &Object) -> Mapped {
             providers,
             event_ids,
         },
-        alert: Some(Alert { severity, for_s: 0 }),
+        alert: Some(Alert {
+            severity,
+            for_s: 0,
+            no_data: false,
+        }),
         fidelity,
         limits: Vec::new(),
         lost: Vec::new(),

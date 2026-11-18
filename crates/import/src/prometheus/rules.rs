@@ -106,6 +106,7 @@ fn apply_one(fleet: &mut Fleet, rule: &Rule) {
     let alert = Alert {
         severity: level,
         for_s: rule.for_s,
+        no_data: false,
     };
     let extra = reading
         .extra_condition
@@ -213,6 +214,8 @@ fn apply_one(fleet: &mut Fleet, rule: &Rule) {
         };
         for (_, host, url) in probes {
             fleet.inventory.thresholds.push(Threshold {
+                judged: Default::default(),
+                conditions: Vec::new(),
                 hosts: vec![host],
                 measure: measure(url),
                 direction,
@@ -288,6 +291,8 @@ fn apply_one(fleet: &mut Fleet, rule: &Rule) {
         Severity::Critical => (None, Some(value)),
     };
     fleet.inventory.thresholds.push(Threshold {
+        judged: Default::default(),
+        conditions: Vec::new(),
         hosts: node_hosts,
         measure,
         direction,
@@ -562,7 +567,8 @@ mod tests {
             agents[0].1,
             Alert {
                 severity: Severity::Critical,
-                for_s: 60
+                for_s: 60,
+                no_data: false
             }
         );
         let web = checks
@@ -575,7 +581,8 @@ mod tests {
             web.alert,
             Some(Alert {
                 severity: Severity::Critical,
-                for_s: 300
+                for_s: 300,
+                no_data: false
             })
         );
         assert_eq!(fleet.inventory.unmovable.len(), 1);
@@ -706,7 +713,8 @@ mod tests {
             web.alert,
             Some(Alert {
                 severity: Severity::Critical,
-                for_s: 60
+                for_s: 60,
+                no_data: false
             })
         );
         let url = "https://shop.example.com".to_owned();

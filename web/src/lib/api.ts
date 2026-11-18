@@ -1588,6 +1588,13 @@ export type ImportCreate =
       critical: number | null;
       duration_s: number;
       hysteresis: number;
+      /** What a richer rule judges (ADR-0153); absent for a plain threshold. */
+      kind?: RuleKind;
+      function?: RuleFunction;
+      window_s?: number;
+      offset_s?: number;
+      target?: number;
+      conditions?: RuleCondition[];
     }
   | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
   | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)

@@ -39370,63 +39370,79 @@
             }
           },
           {
-            "type": "object",
-            "description": "A threshold of a server.",
-            "required": [
-              "server",
-              "metric",
-              "comparison",
-              "duration_s",
-              "hysteresis",
-              "object"
-            ],
-            "properties": {
-              "comparison": {
-                "type": "string",
-                "description": "`>`, `>=`, `<` or `<=`."
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Richer",
+                "description": "What a richer rule judges (ADR-0153); empty for a plain\nthreshold."
               },
-              "critical": {
-                "type": [
-                  "number",
-                  "null"
+              {
+                "type": "object",
+                "required": [
+                  "server",
+                  "metric",
+                  "comparison",
+                  "duration_s",
+                  "hysteresis"
                 ],
-                "format": "double"
+                "properties": {
+                  "comparison": {
+                    "type": "string",
+                    "description": "`>`, `>=`, `<` or `<=`."
+                  },
+                  "critical": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "double"
+                  },
+                  "duration_s": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  },
+                  "hysteresis": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "instance": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "metric": {
+                    "type": "string"
+                  },
+                  "server": {
+                    "type": "string"
+                  },
+                  "warning": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "double"
+                  }
+                }
               },
-              "duration_s": {
-                "type": "integer",
-                "format": "int32",
-                "minimum": 0
-              },
-              "hysteresis": {
-                "type": "number",
-                "format": "double"
-              },
-              "instance": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "metric": {
-                "type": "string"
-              },
-              "object": {
-                "type": "string",
-                "enum": [
-                  "threshold"
-                ]
-              },
-              "server": {
-                "type": "string"
-              },
-              "warning": {
-                "type": [
-                  "number",
-                  "null"
+              {
+                "type": "object",
+                "description": "A threshold of a server, as `POST /thresholds` takes it.",
+                "required": [
+                  "object"
                 ],
-                "format": "double"
+                "properties": {
+                  "object": {
+                    "type": "string",
+                    "enum": [
+                      "threshold"
+                    ]
+                  }
+                }
               }
-            }
+            ],
+            "description": "A threshold of a server, as `POST /thresholds` takes it."
           },
           {
             "type": "object",
@@ -45786,6 +45802,54 @@
               "type": "string"
             },
             "description": "Certificates put in the CRL, lowercase hexadecimal."
+          }
+        }
+      },
+      "Richer": {
+        "type": "object",
+        "description": "The fields of a richer threshold (ADR-0153), as the threshold API takes\nthem; all absent for a plain one.",
+        "properties": {
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThresholdCondition"
+            }
+          },
+          "function": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`window`, `compare`, `forecast` or `nodata`; absent: `value`."
+          },
+          "offset_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "window_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

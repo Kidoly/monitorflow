@@ -135,15 +135,17 @@ pub async fn existing(
         .into_iter()
         .filter_map(|(id, name)| Some((peer_of.get(&id)?.clone(), name)))
         .collect();
-    let thresholds: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
-        "SELECT server_id, metric, instance FROM thresholds WHERE server_id = ANY($1)",
+    let thresholds: Vec<(Uuid, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT server_id, metric, instance, kind FROM thresholds WHERE server_id = ANY($1)",
     )
     .bind(&server_ids)
     .fetch_all(pool)
     .await?;
     existing.thresholds = thresholds
         .into_iter()
-        .filter_map(|(id, metric, instance)| Some((peer_of.get(&id)?.clone(), metric, instance)))
+        .filter_map(|(id, metric, instance, kind)| {
+            Some((peer_of.get(&id)?.clone(), metric, instance, kind))
+        })
         .collect();
     let silences: Vec<(Option<Uuid>, DateTime<Utc>, String)> = sqlx::query_as(
         "SELECT server_id, ends_at, reason FROM silences
@@ -567,6 +569,7 @@ async fn create_one(
             critical,
             duration_s,
             hysteresis,
+            richer,
         } => {
             let id = match server(peer_id, servers) {
                 Some(id) => id,
@@ -584,12 +587,13 @@ async fn create_one(
                     critical: *critical,
                     duration_s: *duration_s,
                     hysteresis: *hysteresis,
-                    ..Default::default()
+                    ..super::plan::entry_fields(richer)
                 })?;
             sqlx::query_scalar(
                 "INSERT INTO thresholds (server_id, metric, instance, comparison, warning,
-                                         critical, duration_s, hysteresis)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                         critical, duration_s, hysteresis, kind, function,
+                                         window_s, offset_s, target, conditions)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                  ON CONFLICT ON CONSTRAINT thresholds_key DO NOTHING RETURNING id",
             )
             .bind(id)
@@ -600,6 +604,12 @@ async fn create_one(
             .bind(valid.critical)
             .bind(valid.duration_s)
             .bind(valid.hysteresis)
+            .bind(valid.kind.as_str())
+            .bind(valid.function.map(|f| f.as_str()))
+            .bind(valid.window_s)
+            .bind(valid.offset_s)
+            .bind(valid.target)
+            .bind(serde_json::json!(valid.conditions))
             .fetch_optional(&mut **tx)
             .await
             .map_err(db_error)

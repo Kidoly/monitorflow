@@ -1,8 +1,8 @@
 use chrono::TimeZone;
 use monitorflow_common::redact::Secret;
 use monitorflow_import::model::{
-    Alert, Channel, Host, Origin, Repeat, Rule, Silence, Smtp, Threshold, Unmovable, Website,
-    Window, EVERY_MONTH,
+    Alert, Channel, Condition, Host, Judged, Origin, Repeat, Rule, Silence, Smtp, Threshold,
+    Unmovable, Website, Window, WindowFunction, EVERY_MONTH,
 };
 
 use super::*;
@@ -32,6 +32,7 @@ fn check(host: &str, watch: Watch, alert: Option<Severity>) -> Check {
         alert: alert.map(|severity| Alert {
             severity,
             for_s: 120,
+            no_data: false,
         }),
         origin: Origin::new("item", "an item"),
         fidelity: Fidelity::Exact,
@@ -46,6 +47,8 @@ fn threshold(
     name: &str,
 ) -> Threshold {
     Threshold {
+        judged: Judged::Value,
+        conditions: Vec::new(),
         hosts: hosts.iter().map(|h| (*h).to_owned()).collect(),
         measure,
         direction: Direction::Above,
@@ -1467,4 +1470,151 @@ fn devices_and_probe_checks() {
         .items
         .iter()
         .any(|i| i.kind == "builtin" && i.note.as_ref().is_some_and(|n| n.code == "builtin_net")));
+}
+
+#[test]
+fn richer_thresholds_keep_what_they_judge() {
+    let mut forecast = threshold(
+        &["1"],
+        Measure::DiskUsed { mount: None },
+        Some(259_200.0),
+        Some(86_400.0),
+        "Disk full in 3 days",
+    );
+    forecast.judged = Judged::Forecast {
+        target: 1.0,
+        window_s: 86_400,
+    };
+    forecast.for_s = 0;
+    let mut window = threshold(&["1"], Measure::CpuUsage, Some(0.9), None, "CPU average");
+    window.judged = Judged::Window {
+        function: WindowFunction::Avg,
+        window_s: 900,
+    };
+    window.for_s = 0;
+    window.conditions = vec![Condition {
+        measure: Measure::CpuLoad { minutes: 1 },
+        direction: Direction::Above,
+        value: 8.0,
+        window: None,
+    }];
+    // A plain threshold on the same disk is a row of its own.
+    let plain = threshold(
+        &["1"],
+        Measure::DiskUsed { mount: None },
+        Some(0.85),
+        None,
+        "Disk",
+    );
+    let inventory = Inventory {
+        hosts: vec![host("1", "web-01", Os::Linux)],
+        thresholds: vec![forecast, window, plain],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let item = by_id(
+        &planned,
+        "threshold:web-01:monitorflow_disk_used_ratio:*:forecast",
+    );
+    assert_eq!(item.list, List::Exact, "{:?}", item.note);
+    let Some(Create::Threshold {
+        comparison,
+        richer,
+        warning,
+        critical,
+        ..
+    }) = &item.create
+    else {
+        panic!()
+    };
+    assert_eq!(comparison, ">=");
+    assert_eq!(
+        (richer.kind(), richer.target, richer.window_s),
+        ("forecast", Some(1.0), Some(86_400))
+    );
+    assert_eq!((*warning, *critical), (Some(259_200.0), Some(86_400.0)));
+    assert!(
+        by_id(&planned, "threshold:web-01:monitorflow_disk_used_ratio:*")
+            .create
+            .is_some()
+    );
+    let Some(Create::Threshold { richer, metric, .. }) = &by_id(
+        &planned,
+        "threshold:web-01:monitorflow_cpu_usage_ratio:total:window",
+    )
+    .create
+    else {
+        panic!()
+    };
+    assert_eq!(metric, "monitorflow_cpu_usage_ratio");
+    assert_eq!(
+        (richer.function.as_deref(), richer.window_s),
+        (Some("avg"), Some(900))
+    );
+    assert_eq!(richer.conditions.len(), 1);
+    assert_eq!(richer.conditions[0].metric, "monitorflow_cpu_load1");
+    assert_eq!(richer.conditions[0].function, "value");
+    // Present when the server has that kind already, not another one.
+    let existing = Existing {
+        thresholds: HashSet::from([(
+            "web-01".to_owned(),
+            "monitorflow_disk_used_ratio".to_owned(),
+            None,
+            "forecast".to_owned(),
+        )]),
+        ..Existing::default()
+    };
+    let planned = run(&inventory, &existing);
+    assert!(
+        by_id(
+            &planned,
+            "threshold:web-01:monitorflow_disk_used_ratio:*:forecast"
+        )
+        .present
+    );
+    assert!(!by_id(&planned, "threshold:web-01:monitorflow_disk_used_ratio:*").present);
+}
+
+#[test]
+fn a_check_that_goes_silent_gets_a_no_data_rule_beside_its_alert() {
+    let mut port = check(
+        "1",
+        Watch::Port {
+            address: None,
+            port: 443,
+        },
+        Some(Severity::Critical),
+    );
+    port.alert = Some(Alert {
+        severity: Severity::Warning,
+        for_s: 600,
+        no_data: true,
+    });
+    let inventory = Inventory {
+        hosts: vec![host("1", "web-01", Os::Linux)],
+        checks: vec![port],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let Some(Create::Threshold {
+        metric,
+        comparison,
+        warning,
+        duration_s,
+        richer,
+        ..
+    }) = &by_id(&planned, "threshold:web-01:monitorflow_port_443_up:nodata").create
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (
+            metric.as_str(),
+            comparison.as_str(),
+            *warning,
+            *duration_s,
+            richer.kind()
+        ),
+        ("monitorflow_port_443_up", ">", Some(600.0), 0, "nodata")
+    );
 }

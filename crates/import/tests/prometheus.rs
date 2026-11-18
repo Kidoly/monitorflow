@@ -83,6 +83,7 @@ fn critical(for_s: u32) -> Option<Alert> {
     Some(Alert {
         severity: Severity::Critical,
         for_s,
+        no_data: false,
     })
 }
 
@@ -178,7 +179,8 @@ fn assert_common(inventory: &Inventory) {
         exporter.alert,
         Some(Alert {
             severity: Severity::Warning,
-            for_s: 300
+            for_s: 300,
+            no_data: false,
         })
     );
     assert_eq!(

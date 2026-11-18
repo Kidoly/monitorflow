@@ -443,6 +443,8 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
                         Severity::Critical => (None, Some(level.value)),
                     };
                     out.thresholds.push(Threshold {
+                        judged: level.judged,
+                        conditions: level.conditions,
                         hosts: vec![key.clone()],
                         measure: level.measure,
                         direction: level.direction,
@@ -458,9 +460,14 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
             Outcome::Alert {
                 key: item_key,
                 for_s,
+                no_data,
                 note,
             } => {
-                let alert = Alert { severity, for_s };
+                let alert = Alert {
+                    severity,
+                    for_s,
+                    no_data,
+                };
                 let targets: Vec<&mut Pending> = pending
                     .iter_mut()
                     .chain(
