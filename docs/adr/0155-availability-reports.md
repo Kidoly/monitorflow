@@ -56,9 +56,9 @@ The **PDF** is made by the central server with `pdf-writer` (MIT or Apache 2.0, 
 
 A **report schedule** sends a report by email: for one customer or, for administrators of everything, for everything; **monthly** (the default, on the first day of the month for the month before) or **weekly** (on Monday for the week before), at 06:00 in its time zone, in English or French, with the PDF, the CSV or both attached (both by default). It is sent through an email channel of the notifications (ADR-0060) that covers its customer, to the channel's recipients or to its own list.
 
-The central server looks every minute for schedules whose last period sent is not the latest one ended, and sends it; the row is claimed for 10 minutes (`claimed_until`) so two central servers (ADR-0089) never both send it, and a failure is retried at the next look, at most every 15 minutes, with the error shown on the schedule. A report that was due while the server was down is sent when it comes back, once: only the latest period is ever sent. **Send now** sends the last period at once, to check the setup.
+The leading central server looks every minute for schedules whose last period sent is not the latest one ended, and sends it; the row is also claimed for 10 minutes (`claimed_until`), so two central servers (ADR-0089) never both send it even while leadership changes hands, and a failure is tried again 15 minutes later, with the error shown on the schedule. A report that was due while the server was down is sent when it comes back, once: only the latest period is ever sent. A new schedule starts with the next period. **Send now** sends the latest period at once, to check the setup, and leaves the schedule's own sending as planned.
 
-Who: operators and above of the whole customer make, change and remove schedules of that customer; for everything, of everything. Every change is audited, and so is each report sent (`report.sent`), with its period and recipients.
+Who: a schedule sends through a notification channel, and channels are managed by administrators of what they cover (ADR-0078), so schedules are too: administrators of the whole customer for its schedules, global administrators for everything. Every change is audited, and so is each report sent (`report.sent`), with its period and recipients.
 
 ### Single company and MSPs
 
@@ -74,9 +74,9 @@ Under the `alerts` area of API keys, documented in OpenAPI:
 | GET | `/api/v1/availability/report?from&to&customer_id&format=pdf\|csv&language&time_zone` | any role |
 | GET, POST | `/api/v1/business-services` | read: customer-wide grant; create: operator of the customer |
 | PUT, DELETE | `/api/v1/business-services/{id}` | operator of the customer |
-| GET, POST | `/api/v1/report-schedules` | operator of the customer |
-| PUT, DELETE | `/api/v1/report-schedules/{id}` | operator of the customer |
-| POST | `/api/v1/report-schedules/{id}/send` | operator of the customer |
+| GET, POST | `/api/v1/report-schedules` | administrator of the customer |
+| PUT, DELETE | `/api/v1/report-schedules/{id}` | administrator of the customer |
+| POST | `/api/v1/report-schedules/{id}/send` | administrator of the customer |
 
 ### Moving from another tool
 

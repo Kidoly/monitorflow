@@ -206,6 +206,7 @@ db_tests! {
                 "remediation_pending_commands",
                 "remediation_policies",
                 "remediation_rules",
+                "report_schedules",
                 "sealed_columns",
                 "seen_releases",
                 "sensor_configs",

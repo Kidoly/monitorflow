@@ -19,6 +19,7 @@ use super::auth::CurrentUser;
 use super::{ApiError, ApiState};
 use crate::availability::data::{load, Reach};
 use crate::availability::report::{build, Report};
+use crate::availability::sender::file_name;
 use crate::availability::words::Language;
 use crate::availability::{csv, pdf, Span};
 
@@ -160,24 +161,6 @@ pub async fn get(
     Ok(Json(
         report(&state, &user, period, params.customer_id).await?,
     ))
-}
-
-/// A file's name: `availability-<customer>-<from>-<to>.<extension>`, with
-/// only letters, digits and dashes.
-pub fn file_name(report: &Report, zone: Tz, extension: &str) -> String {
-    let mut name = String::from("availability");
-    if let Some(customer) = &report.customer_name {
-        name.push('-');
-        name.extend(customer.chars().map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        }));
-    }
-    let day = |at: DateTime<Utc>| at.with_timezone(&zone).format("%Y-%m-%d").to_string();
-    format!("{name}-{}-{}.{extension}", day(report.from), day(report.to))
 }
 
 /// `report` as a `csv` or `pdf` file; the PDF is made off the runtime.

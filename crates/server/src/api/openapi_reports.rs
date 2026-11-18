@@ -9,12 +9,13 @@ use utoipa::OpenApi;
 
 use super::openapi::{Common, ErrorBody};
 use super::openapi_core::ex;
-use super::{availability, business_services};
+use super::{availability, business_services, report_schedules};
 
 #[derive(OpenApi)]
 #[openapi(
     paths(list_services, create_service, update_service, remove_service, availability_report,
-        availability_file),
+        availability_file, list_schedules, create_schedule, update_schedule, remove_schedule,
+        send_schedule),
     components(schemas(ErrorBody)),
     modifiers(&Common),
 )]
@@ -216,3 +217,119 @@ CSV numbers are plain (seconds, dot decimals); words are in `language`; times ar
 `not_found`", body = ErrorBody),
     ))]
 fn availability_file() {}
+
+const SCHEDULE: &str = "8e9f0a1b-2c3d-4e5f-8a6b-7c8d9e0f1a2b";
+const CHANNEL: &str = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f";
+
+fn schedule_request() -> Value {
+    json!({
+        "customer_id": ex::CUSTOMER, "frequency": "monthly", "time_zone": "Europe/Paris",
+        "language": "fr", "pdf": true, "csv": true, "channel_id": CHANNEL,
+        "recipients": ["it@example.com"]
+    })
+}
+
+fn schedule() -> Value {
+    json!({
+        "id": SCHEDULE, "customer_id": ex::CUSTOMER, "customer_name": "acme",
+        "frequency": "monthly", "time_zone": "Europe/Paris", "language": "fr",
+        "pdf": true, "csv": true, "channel_id": CHANNEL, "channel_host": "smtp.example.com",
+        "recipients": ["it@example.com"], "channel_recipients": ["ops@example.com"],
+        "enabled": true, "last_period_end": "2026-10-31T23:00:00Z",
+        "last_sent_at": "2026-11-01T05:00:12Z", "last_error": null, "last_error_at": null,
+        "next_from": "2026-10-31T23:00:00Z", "next_to": "2026-11-30T23:00:00Z",
+        "next_send_at": "2026-12-01T05:00:00Z", "created_at": "2026-10-20T09:30:00Z"
+    })
+}
+
+#[utoipa::path(get, path = "/api/v1/report-schedules", tag = "alerts",
+    summary = "List report schedules",
+    description = "The availability reports sent by email on a schedule that the key manages: those of \
+customers it administers as a whole, and with a global administrator's key those of everything. Each \
+says its next period and when it goes out, and how the last sending went.\n\n\
+**Who**: administrators. **Area**: `alerts`.",
+    responses(
+        (status = 200, description = "The schedules", body = report_schedules::ScheduleList,
+            example = json!({"schedules": [schedule()]})),
+        (status = 403, description = "Not an administrator: `forbidden`; or outside the key's areas: \
+`api_key_scope`", body = ErrorBody),
+    ))]
+fn list_schedules() {}
+
+#[utoipa::path(post, path = "/api/v1/report-schedules", tag = "alerts",
+    summary = "Create a report schedule",
+    description = "Sends the availability report (see `GET /api/v1/availability`) by email: `monthly` \
+on the first day of each month for the month before, or `weekly` on Monday for the week before, at 06:00 \
+in `time_zone`, in `language`, with the PDF, the CSV or both attached. One customer's report with \
+`customer_id`, built from that customer's sites and services only; everything without it. A report due \
+while the server was down is sent when it is back, once: only the latest period is ever sent. A new \
+schedule starts with the next period; use `send` for the one that ended.\n\n\
+It goes through `channel_id`, an email channel of the notifications covering that customer as a whole, \
+or everything, to the channel's own recipients unless `recipients` names up to 20 others.\n\n\
+**Who**: administrator of the whole customer; global administrator for everything. **Area**: `alerts`. \
+Audited as `report_schedule.create`. **Not safe to repeat**: send `Idempotency-Key` to retry.",
+    request_body(content = report_schedules::ScheduleRequest, example = json!(schedule_request())),
+    responses(
+        (status = 201, description = "The new schedule", body = report_schedules::ScheduleView,
+            example = json!(schedule())),
+        (status = 400, description = "An unknown frequency, time zone or language, no file attached, a \
+recipient that is not an address or over 20, or a channel that is not email, not managed by the key or \
+not covering the customer: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key does not administer the customer, or everything: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "The customer does not exist or is outside the key's reach: \
+`not_found`", body = ErrorBody),
+    ))]
+fn create_schedule() {}
+
+#[utoipa::path(put, path = "/api/v1/report-schedules/{id}", tag = "alerts",
+    summary = "Change a report schedule",
+    description = "Replaces every field, as when creating one. A failure waiting to be tried again is \
+tried at the next look.\n\n\
+**Who**: as when creating one, for its customer now and the one it will have. **Area**: `alerts`. \
+Audited as `report_schedule.update`. Safe to repeat.",
+    params(("id" = uuid::Uuid, Path, description = "The schedule")),
+    request_body(content = report_schedules::ScheduleRequest, example = json!(schedule_request())),
+    responses(
+        (status = 200, description = "Changed", body = report_schedules::ScheduleView,
+            example = json!(schedule())),
+        (status = 400, description = "As when creating one: `invalid`", body = ErrorBody),
+        (status = 403, description = "Not an administrator of the new customer: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such schedule, or one the key does not manage: `not_found`",
+            body = ErrorBody),
+    ))]
+fn update_schedule() {}
+
+#[utoipa::path(delete, path = "/api/v1/report-schedules/{id}", tag = "alerts",
+    summary = "Remove a report schedule",
+    description = "No more reports from it. What it sent stays in the audit log (`report.sent`).\n\n\
+**Who**: as when creating one. **Area**: `alerts`. Audited as `report_schedule.remove`.",
+    params(("id" = uuid::Uuid, Path, description = "The schedule")),
+    responses(
+        (status = 204, description = "Removed"),
+        (status = 403, description = "Not an administrator: `forbidden`; or outside the key's areas: \
+`api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such schedule, or one the key does not manage: `not_found`",
+            body = ErrorBody),
+    ))]
+fn remove_schedule() {}
+
+#[utoipa::path(post, path = "/api/v1/report-schedules/{id}/send", tag = "alerts",
+    summary = "Send a scheduled report now",
+    description = "Sends the latest period that ended now, to check the setup or to send it again. The \
+schedule still sends its next period as planned. A failure is `ok: false` with the reason in plain \
+words, also kept on the schedule.\n\n\
+**Who**: as when creating one. **Area**: `alerts`. Audited as `report.sent` with `manual: true` when it \
+went through. **Not safe to repeat**: each request sends an email.",
+    params(("id" = uuid::Uuid, Path, description = "The schedule")),
+    responses(
+        (status = 200, description = "Sent, or why not", body = report_schedules::SentView,
+            example = json!({"ok": true, "error": null, "from": "2026-09-30T22:00:00Z",
+                             "to": "2026-10-31T23:00:00Z", "recipients": ["it@example.com"]})),
+        (status = 403, description = "Not an administrator: `forbidden`; or outside the key's areas: \
+`api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such schedule, or one the key does not manage: `not_found`",
+            body = ErrorBody),
+    ))]
+fn send_schedule() {}

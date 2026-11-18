@@ -98,6 +98,9 @@
 //! | PUT | `/api/business-services/{id}` | modify the whole customer | the same body; [`business_services::ServiceView`]; audited |
 //! | DELETE | `/api/business-services/{id}` | modify the whole customer | 204; audited |
 //! | GET | `/api/availability` | any role | `from`, `to`, `customer_id`; [`crate::availability::report::Report`] of what the user reads (ADR-0155) |
+//! | GET, POST | `/api/report-schedules` | administrator of the whole customer, global for everything | body [`report_schedules::ScheduleRequest`]; [`report_schedules::ScheduleList`], 201 [`report_schedules::ScheduleView`]; audited (ADR-0155) |
+//! | PUT, DELETE | `/api/report-schedules/{id}` | the same | the same body; [`report_schedules::ScheduleView`], 204; audited |
+//! | POST | `/api/report-schedules/{id}/send` | the same | [`report_schedules::SentView`]: the latest period sent now; audited as `report.sent` |
 //! | GET | `/api/availability/report` | any role | the same and `format` (`csv` or `pdf`), `language`, `time_zone`; the report as a file |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
@@ -751,6 +754,7 @@ pub mod release_import;
 pub mod remediation;
 pub mod remediation_events;
 pub mod remediation_incidents;
+pub mod report_schedules;
 pub mod revoke;
 pub mod roles;
 pub mod rollback;
@@ -1118,6 +1122,18 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/availability", get(availability::get))
         .route("/api/availability/report", get(availability::file))
+        .route(
+            "/api/report-schedules",
+            get(report_schedules::list).post(report_schedules::create),
+        )
+        .route(
+            "/api/report-schedules/{id}",
+            put(report_schedules::update).delete(report_schedules::remove),
+        )
+        .route(
+            "/api/report-schedules/{id}/send",
+            post(report_schedules::send_now),
+        )
         .route(
             "/api/business-services",
             get(business_services::list).post(business_services::create),

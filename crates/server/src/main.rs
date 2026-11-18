@@ -17,6 +17,7 @@ use monitorflow_server::api::{
     self, customers, setup, users, ApiSettings, ApiState, EnrollmentSettings, Role,
 };
 use monitorflow_server::auto_update::AutoUpdate;
+use monitorflow_server::availability;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::ca_rotation::{self, Rotator};
 use monitorflow_server::campaign::{self, Runner};
@@ -600,6 +601,7 @@ async fn main() -> anyhow::Result<()> {
     };
     // Notifications (ADR-0060): the outbox the database triggers fill.
     let notify_pool = pool.clone();
+    let report_pool = pool.clone();
     let deliverer = integrations::Deliverer::new(pool.clone(), config.web_base_url());
     // The daily look for a newer release (ADR-0061).
     let check_pool = pool.clone();
@@ -797,6 +799,13 @@ async fn main() -> anyhow::Result<()> {
                 .with_status_dir(config.server_update_dir.clone());
             cluster::lead(cluster.leadership(), stopped.clone(), |until| {
                 dispatcher.clone().run(notify::dispatcher::POLL, until)
+            })
+            .await;
+            Ok(())
+        },
+        async {
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                availability::sender::run(report_pool.clone(), availability::sender::POLL, until)
             })
             .await;
             Ok(())

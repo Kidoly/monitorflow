@@ -167,6 +167,9 @@ struct Tenant {
     window: Uuid,
     /// A business service of the server (ADR-0155).
     business_service: Uuid,
+    /// An email channel of the customer and a monthly report through it.
+    report_channel: Uuid,
+    report_schedule: Uuid,
     /// A viewer of the customer with a contact, on its on-call schedule
     /// (ADR-0081), which has an override.
     member: Uuid,
@@ -366,6 +369,24 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let report_channel = one(
+        "INSERT INTO notification_channels (kind, settings, customer_id)
+         VALUES ('email', '{\"host\": \"127.0.0.1\", \"port\": 9, \"to\": [\"a@x.example\"]}', $1)
+         RETURNING id",
+    )
+    .bind(customer)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let report_schedule = one(
+        "INSERT INTO report_schedules (customer_id, time_zone, channel_id)
+         VALUES ($1, 'UTC', $2) RETURNING id",
+    )
+    .bind(customer)
+    .bind(report_channel)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     let member = one(
         "WITH u AS (INSERT INTO users (username) VALUES ($1) RETURNING id),
               r AS (INSERT INTO user_roles (user_id, role, customer_id)
@@ -443,6 +464,8 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         customer_silence,
         window,
         business_service,
+        report_channel,
+        report_schedule,
         remediation,
         pending,
         campaign,
@@ -2084,6 +2107,41 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         ("GET", "/api/availability/report") => {
             let uri = format!("{path}?format=csv&customer_id={}", b.customer);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        // Report schedules (ADR-0155): B's are not listed and do not exist
+        // for A, and A cannot send its report through B's channel nor make
+        // one of B's customer.
+        ("GET", "/api/report-schedules") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.report_schedule), "{body}");
+            assert!(!Ctx::mentions(&body, b.report_schedule), "{body}");
+        }
+        ("POST", "/api/report-schedules") => {
+            let schedule = |customer: Uuid, channel: Uuid| json!({"customer_id": customer, "time_zone": "UTC", "channel_id": channel});
+            let body = Some(schedule(b.customer, b.report_channel));
+            assert_eq!(ctx.status(method, path, body).await, not_found);
+            let body = Some(schedule(a.customer, b.report_channel));
+            assert_eq!(
+                ctx.status(method, path, body).await,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        ("PUT", "/api/report-schedules/{id}") => {
+            let body = json!({"customer_id": a.customer, "time_zone": "UTC",
+                              "channel_id": a.report_channel});
+            let uri = path.replace("{id}", &b.report_schedule.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, Some(body.clone())).await,
+                not_found
+            );
+            let uri = path.replace("{id}", &a.report_schedule.to_string());
+            let mut moved = body;
+            moved["customer_id"] = json!(b.customer);
+            assert_eq!(ctx.status(method, &uri, Some(moved)).await, not_found);
+        }
+        ("DELETE", "/api/report-schedules/{id}") | ("POST", "/api/report-schedules/{id}/send") => {
+            let uri = path.replace("{id}", &b.report_schedule.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
         ("DELETE", "/api/business-services/{id}") => {
