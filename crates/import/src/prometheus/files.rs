@@ -38,12 +38,7 @@ pub fn collect(files: &[File]) -> Result<Collected, ReadError> {
                 }
                 merged.receivers.extend(config.receivers);
             }
-            Kind::Blackbox(config) => collected.probers.extend(
-                config
-                    .modules
-                    .into_iter()
-                    .map(|(name, module)| (name, module.prober)),
-            ),
+            Kind::Blackbox(config) => collected.modules.extend(config.modules),
             Kind::FileSd(groups) => discovery.push((file.name.clone(), groups)),
         }
     }

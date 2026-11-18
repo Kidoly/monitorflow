@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use monitorflow_import::model::{
     Alert, Check, Direction, Fidelity, Inventory, Measure, Os, Severity, SilenceScope, Target,
-    Threshold, Watch,
+    Threshold, Watch, WebMethod,
 };
 use monitorflow_import::prometheus::Prometheus;
 use monitorflow_import::source::{self, Connection, File, Input};
@@ -105,14 +105,45 @@ fn assert_common(inventory: &Inventory) {
     assert!(monitor.groups.contains(&"blackbox-exporter".to_owned()));
 
     // Probes of the blackbox exporter, each with BlackboxProbeFailed.
-    let web_check = check(
-        inventory,
-        "monitor-01",
-        &Watch::web(monitorflow_import::model::Website::new("http://shop/")),
-    );
+    let web_check = inventory
+        .checks
+        .iter()
+        .find(|c| matches!(&c.watch, Watch::Web(site) if site.url == "http://shop/"))
+        .expect("the website check of http://shop/");
+    assert_eq!(web_check.host, "monitor-01");
     assert_eq!(web_check.interval_s, Some(15));
+    // BlackboxProbeFailed and BlackboxProbeHttpFailure, both critical.
     assert_eq!(web_check.alert, critical(0));
     assert_eq!(web_check.fidelity, Fidelity::Exact);
+    let Watch::Web(site) = &web_check.watch else {
+        unreachable!()
+    };
+    assert_eq!(site.status, None, "the exporter's 2xx, the check's default");
+    assert_eq!(site.method, WebMethod::Get);
+    // BlackboxSlowProbe and BlackboxSslCertificateWillExpireSoon.
+    let url = "http://shop/".to_owned();
+    let t = threshold(inventory, "BlackboxSlowProbe");
+    assert_eq!(
+        (&t.measure, t.direction, t.warning, t.for_s, &t.fidelity),
+        (
+            &Measure::WebResponseTime { url: url.clone() },
+            Direction::Above,
+            Some(1.0),
+            60,
+            &Fidelity::Exact
+        )
+    );
+    assert_eq!(t.hosts, ["monitor-01"]);
+    let t = threshold(inventory, "BlackboxSslCertificateWillExpireSoon");
+    assert_eq!(
+        (&t.measure, t.direction, t.warning, &t.fidelity),
+        (
+            &Measure::CertificateDays { url },
+            Direction::Below,
+            Some(20.0),
+            &Fidelity::Approximated(Note::plain("extra_condition"))
+        )
+    );
     let port = check(
         inventory,
         "monitor-01",
@@ -230,7 +261,7 @@ fn assert_common(inventory: &Inventory) {
             Some(0.1)
         )
     );
-    assert_eq!(inventory.thresholds.len(), 7);
+    assert_eq!(inventory.thresholds.len(), 9);
 
     // What cannot be moved, and why.
     assert_eq!(unmovable(inventory, "HostSystemSaturated"), "per_cpu_load");
@@ -240,9 +271,6 @@ fn assert_common(inventory: &Inventory) {
         "HostUnusualNetworkThroughputIn",
         "HostOomKillDetected",
         "HostSystemdServiceCrashed",
-        "BlackboxSlowProbe",
-        "BlackboxProbeHttpFailure",
-        "BlackboxSslCertificateWillExpireSoon",
     ] {
         assert_eq!(unmovable(inventory, rule), "expression", "{rule}");
     }
