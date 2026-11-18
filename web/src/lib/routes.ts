@@ -86,6 +86,8 @@ export const RELAYS_PATH = "/settings/relays/";
 export const SITES_PATH = "/settings/sites/";
 /** Install commands and single-use tokens. */
 export const TOKENS_PATH = "/settings/add-servers/";
+/** Adding a device watched without the agent (ADR-0148). */
+export const ADD_DEVICE_PATH = "/devices/add/";
 /** Moving from another monitoring tool (ADR-0146). */
 export const IMPORT_PATH = "/settings/import/";
 export const USERS_PATH = "/settings/users/";

@@ -530,9 +530,11 @@ mod tests {
             ("script", &[("script", "check")]),
             ("systemd", &[("units", "ssh")]),
         ];
-        // `eventlog` and `windows_service` are refused off Windows.
+        // `eventlog` and `windows_service` are refused off Windows, probe
+        // kinds everywhere (ADR-0148).
         let kinds = sensors::registry::KINDS.iter();
-        for kind in kinds.filter(|k| sensors::registry::supported(k)) {
+        let probe = |k: &&&str| sensors::registry::PROBE_KINDS.contains(k);
+        for kind in kinds.filter(|k| sensors::registry::supported(k) && !probe(k)) {
             let mut config = config.clone();
             let pairs = required.iter().find(|(k, _)| k == kind);
             for (name, value) in pairs.map_or(&[][..], |(_, p)| p) {
@@ -540,6 +542,13 @@ mod tests {
             }
             assert!(builtin.build(kind, &config).is_ok(), "{kind}");
         }
+        let mut ping = config.clone();
+        ping.params.insert("host".into(), "192.0.2.1".into());
+        let error = builtin.build("ping", &ping).err().unwrap();
+        assert!(
+            matches!(&error, FactoryError::Refused(m) if m.contains("from a probe")),
+            "{error}"
+        );
         // Valid for the server, refused by this host's limits.
         let mut missing = config.clone();
         missing.params.insert("script".into(), "missing".into());

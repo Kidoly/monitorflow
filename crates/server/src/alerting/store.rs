@@ -193,11 +193,23 @@ impl AlertStore {
                 })
             })
             .collect();
-        let sensors = SensorConfigStore::new(self.pool.clone())
+        let mut sensors = SensorConfigStore::new(self.pool.clone())
             .load(peer_id)
             .await?
             .map(|resolved| resolved.sensors)
             .unwrap_or_default();
+        // Probe checks (ADR-0148) time their series the same way.
+        let probe: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT c.name, c.interval_ms FROM sensor_configs c
+             WHERE c.server_id = $1 AND c.probe IS NOT NULL AND c.enabled",
+        )
+        .bind(server_id)
+        .fetch_all(&self.pool)
+        .await?;
+        sensors.extend(probe.into_iter().map(|(name, interval)| Spec {
+            name,
+            ..Spec::new("probe", non_negative(interval))
+        }));
         Ok(Some(ServerRules {
             server_id,
             revision: non_negative(revision),

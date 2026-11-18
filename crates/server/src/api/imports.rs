@@ -119,6 +119,11 @@ pub struct PreviewRequest {
     /// this request only: never stored, never logged.
     #[serde(default)]
     pub connection: Option<BTreeMap<String, String>>,
+    /// The IANA time zone of maintenance windows whose source does not say
+    /// it, like Zabbix's and PRTG's, which keep their server's local time
+    /// (ADR-0151); UTC when absent.
+    #[serde(default)]
+    pub time_zone: Option<String>,
 }
 
 /// Body of `POST /api/imports/{id}/confirm`.
@@ -365,6 +370,12 @@ pub async fn preview(
 ) -> Result<(StatusCode, Json<RunView>), ApiError> {
     let request = body(request)?;
     let site = site_of(&state, &user, request.site_id).await?;
+    let zone: chrono_tz::Tz = match request.time_zone.as_deref() {
+        None | Some("") => chrono_tz::Tz::UTC,
+        Some(name) => name.parse().map_err(|_| {
+            ApiError::Invalid(format!("{name} is not a time zone, like Europe/Paris."))
+        })?,
+    };
     let reader = source::source(&request.source)
         .ok_or_else(|| ApiError::Invalid(format!("Unknown source {}.", request.source)))?;
     let info = reader.info();
@@ -384,7 +395,14 @@ pub async fn preview(
     let administered = user.sites_with(Role::Administrator);
     let existing =
         store::existing(&state.pool, &inventory, site, |s| administered.contains(s)).await?;
-    let planned = import::plan(&inventory, site, is_global_admin(&user), &existing, now);
+    let planned = import::plan_in(
+        &inventory,
+        site,
+        is_global_admin(&user),
+        &existing,
+        now,
+        zone,
+    );
     let id = store::create(
         &state.pool,
         source_id,

@@ -16,6 +16,7 @@ import {
 import { rich, t } from "@/i18n";
 import {
   type CheckType,
+  DEVICE_CHECK_TYPES,
   type FormErrors,
   type Shape,
   type ThresholdForm,
@@ -42,6 +43,7 @@ import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, StaleBanner } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
 
+import { ProbeSelect } from "./AddDevice";
 import { CheckRecommendations } from "./CheckRecommendations";
 import { CheckCatalogue } from "./CheckCatalogue";
 import { type Inherit, IntervalControl, IntervalSelect } from "./IntervalSelect";
@@ -752,6 +754,37 @@ export function AddCheck({
   );
   const top = useMemo(() => mostUsed(entries, usage.data?.checks ?? []), [entries, usage.data]);
   const systems = [...new Set(entries.flatMap((e) => e.systems))];
+  const [deviceType, setDeviceType] = useState<CheckType | null>(null);
+
+  // A device has no agent: its checks run from the central server or a relay (ADR-0148).
+  if (osFamily === "device") {
+    return (
+      <div className={cx(styles.editor, styles.add)}>
+        {deviceType ? (
+          <CheckForm
+            key={deviceType.label}
+            target={target}
+            type={deviceType}
+            intervalMs={intervalMs}
+            onDone={onDone}
+            onBack={() => setDeviceType(null)}
+            onCancel={onCancel}
+          />
+        ) : (
+          <div className={styles.buttons} role="group" aria-label={t("monitoring.addCheckForm")}>
+            {DEVICE_CHECK_TYPES.map((type) => (
+              <Button key={type.label} onClick={() => setDeviceType(type)}>
+                {type.label}
+              </Button>
+            ))}
+            <Button variant="ghost" onClick={onCancel}>
+              {t("monitoring.cancel")}
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={cx(styles.editor, styles.add)}>
@@ -792,6 +825,7 @@ function CheckForm({
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(type));
   const [scope, setScope] = useState<"own" | "site">("own");
   const [alert, setAlert] = useState(true);
+  const [probe, setProbe] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -803,6 +837,7 @@ function CheckForm({
     if (Object.keys(found).length > 0) return;
     const owner = scope === "site" ? siteOwner(target) : ownerOf(target);
     const { sensor, threshold } = checkRequests(type, values, intervalMs);
+    if (type.probe && probe) sensor.probe = probe;
     setBusy(true);
     setFailure(null);
     try {
@@ -856,7 +891,10 @@ function CheckForm({
           {alert && <SlowNote durationS={type.duration_s} intervalS={intervalMs / 1000} />}
         </>
       )}
-      {target.kind === "server" && (
+      {type.probe && target.kind === "server" && (
+        <ProbeSelect siteId={target.siteId} value={probe} onChange={setProbe} label={t("devices.check.from")} />
+      )}
+      {target.kind === "server" && !type.probe && (
         <fieldset className={styles.scope}>
           <legend>{t("monitoring.addTo")}</legend>
           <label>

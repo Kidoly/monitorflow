@@ -145,14 +145,19 @@ impl SensorConfigStore {
             Option<i64>,
             Option<serde_json::Value>,
             Option<bool>,
+            bool,
         );
+        // Checks a probe runs are not the agent's (ADR-0148); a device
+        // runs none of the site's, nor the built-in ones.
         let lines: Vec<Line> = sqlx::query_as(
             "SELECT si.sensor_revision + s.sensor_revision, si.id, si.check_interval_ms,
                     c.server_id IS NOT NULL, c.kind, c.name, c.instance,
-                    c.interval_ms, c.timeout_ms, c.params, c.enabled
+                    c.interval_ms, c.timeout_ms, c.params, c.enabled, s.kind = 'device'
              FROM servers s
              JOIN sites si ON si.id = s.site_id
-             LEFT JOIN sensor_configs c ON c.site_id = s.site_id OR c.server_id = s.id
+             LEFT JOIN sensor_configs c
+                  ON c.probe IS NULL
+                 AND ((c.site_id = s.site_id AND s.kind = 'agent') OR c.server_id = s.id)
              WHERE s.peer_id = $1",
         )
         .bind(peer_id)
@@ -164,26 +169,43 @@ impl SensorConfigStore {
         let revision = non_negative(first.0);
         let site = first.1;
         let builtin_interval = site_interval(first.2.map(i64::from));
-        let rows = lines
-            .into_iter()
-            .filter_map(|line| {
-                let (_, _, _, server, kind, name, instance, interval, timeout, params_, enabled) =
-                    line;
-                Some(Row {
-                    layer: if server? { Layer::Server } else { Layer::Site },
-                    spec: Spec {
-                        kind: kind?,
-                        name: name?,
-                        instance: instance?,
-                        interval_ms: non_negative(interval?),
-                        timeout_ms: timeout.map(non_negative),
-                        params: params(params_?),
-                    },
-                    enabled: enabled?,
+        let device = first.11;
+        let rows =
+            lines
+                .into_iter()
+                .filter_map(|line| {
+                    let (
+                        _,
+                        _,
+                        _,
+                        server,
+                        kind,
+                        name,
+                        instance,
+                        interval,
+                        timeout,
+                        params_,
+                        enabled,
+                        _,
+                    ) = line;
+                    Some(Row {
+                        layer: if server? { Layer::Server } else { Layer::Site },
+                        spec: Spec {
+                            kind: kind?,
+                            name: name?,
+                            instance: instance?,
+                            interval_ms: non_negative(interval?),
+                            timeout_ms: timeout.map(non_negative),
+                            params: params(params_?),
+                        },
+                        enabled: enabled?,
+                    })
                 })
-            })
-            .collect();
-        let sensors = resolve(rows, builtin_interval);
+                .collect();
+        let mut sensors = resolve(rows, builtin_interval);
+        if device {
+            sensors.clear();
+        }
         let plugins = self.grants(peer_id, site, &sensors).await?;
         let plugin_set = self.grant_set(peer_id, &plugins);
         Ok(Some(Resolved {

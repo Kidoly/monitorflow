@@ -10,7 +10,8 @@
 //! once it is back (ADR-0027). The relay serves a copy of the upstream's
 //! package mirrors on a plain HTTP listener (ADR-0034). A relay enrolled
 //! without names opens its own stream and waits for an administrator to
-//! confirm the names it reported before anything else (ADR-0066).
+//! confirm the names it reported before anything else (ADR-0066). It runs
+//! the network checks the server gives it as a probe (ADR-0148).
 
 pub mod buffer;
 pub mod control;
@@ -18,6 +19,7 @@ pub mod forward;
 pub mod listener;
 pub mod mirror;
 pub mod names;
+pub mod probe;
 pub mod renew;
 pub mod self_update;
 mod session;

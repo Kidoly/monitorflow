@@ -1,5 +1,6 @@
 //! MonitorFlow relay entry point.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -118,8 +119,11 @@ async fn main() -> anyhow::Result<()> {
     );
     let (control, upstream_up) =
         Control::new(ControlSettings::from_config(&config), identities.clone());
+    let probes =
+        monitorflow_relay::probe::start(Arc::new(monitorflow_probe::Builtin), stop.clone());
     let control = control
         .with_commands(commands)
+        .with_probes(probes)
         .with_connected_record(config.data_dir.clone());
     // Stays empty, so the server forgets earlier reports, unless the
     // mirrors start with a public URL (ADR-0037).
