@@ -859,6 +859,14 @@ impl Connection {
                 }
                 _ => tracing::debug!(agent_id = %id, sequence, "ignoring probe results"),
             },
+            Some(Payload::ProbeTest(_)) => {
+                tracing::warn!(agent_id = %id, sequence, "ignoring ProbeTest sent upstream")
+            }
+            Some(Payload::ProbeTestResult(result)) => {
+                if let (Some(probes), PeerRole::Relay) = (&self.probes, self.role) {
+                    probes.test_result(id, result);
+                }
+            }
             Some(Payload::ProbeConfigAck(ack)) => {
                 if let (Some(probes), PeerRole::Relay) = (&self.probes, self.role) {
                     probes.acknowledged(id, &ack);

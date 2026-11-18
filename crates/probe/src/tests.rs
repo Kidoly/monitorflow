@@ -202,3 +202,25 @@ async fn batches_take_what_is_queued() {
     drop(tx);
     assert!(next_batch(&mut rx).await.is_none());
 }
+
+#[tokio::test]
+async fn tests_run_once_with_full_names() {
+    let factory = Fakes::default();
+    let mut ok = check("nas", "fake", "snmp", "central");
+    ok.config.timeout = Some(Duration::from_millis(500));
+    let samples = test_once(&factory, &ok).await.unwrap();
+    assert_eq!(
+        (samples[0].sensor.as_str(), samples[0].instance.as_str()),
+        ("snmp", "central")
+    );
+    assert_eq!(
+        test_once(&factory, &check("nas", "nope", "x", ""))
+            .await
+            .unwrap_err(),
+        "no `nope`"
+    );
+    assert!(test_once(&factory, &check("nas", "boom", "x", ""))
+        .await
+        .unwrap_err()
+        .contains("unexpectedly"));
+}
