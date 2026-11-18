@@ -10,8 +10,8 @@ use axum::http::{Request, StatusCode};
 use chrono::{TimeDelta, Utc};
 use monitorflow_common::redact::Secret;
 use monitorflow_import::model::{
-    Alert, Channel, Check, Direction, Fidelity, Host, Inventory, Measure, Origin, Os, Severity,
-    Silence, SilenceScope, Smtp, Target, Threshold, Watch,
+    Alert, Channel, Check, Direction, Fidelity, Host, Inventory, Measure, Origin, Os, Repeat, Rule,
+    Severity, Silence, SilenceScope, Smtp, Target, Threshold, Watch, Window, EVERY_MONTH,
 };
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
@@ -427,5 +427,76 @@ db_tests! {
         assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 0);
         let skip: HashSet<String> = HashSet::new();
         assert!(store::confirm(&pool, id, &skip, admin, false, Utc::now()).await.is_err());
+    }
+
+    #[sqlx::test]
+    async fn windows_and_check_silences_import_once_and_undo(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let mut inventory = inventory();
+        let now = Utc::now();
+        inventory.silences.push(Silence {
+            scope: SilenceScope::Hosts(vec!["2".into()]),
+            checks: vec![Watch::Port { address: None, port: 5432 }],
+            starts_at: now + TimeDelta::hours(1),
+            ends_at: now + TimeDelta::hours(2),
+            reason: "Database port work".into(),
+            origin: origin("silence", "port work"),
+            fidelity: Fidelity::Exact,
+        });
+        inventory.windows.push(Window {
+            scope: SilenceScope::Hosts(vec!["1".into(), "2".into()]),
+            checks: vec![Watch::Service { name: "nginx".into() }],
+            rule: Rule {
+                repeat: Repeat::Daily,
+                every: 1,
+                weekdays: 0,
+                month_day: None,
+                month_week: None,
+                months: EVERY_MONTH,
+                start_time: chrono::NaiveTime::from_hms_opt(3, 0, 0).unwrap(),
+                duration_minutes: 60,
+                time_zone: Some("Europe/Paris".into()),
+                starts_on: None,
+                ends_on: None,
+            },
+            reason: "Nightly restart".into(),
+            origin: origin("maintenance", "Nightly restart"),
+            fidelity: Fidelity::Exact,
+        });
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["created"]["window"], 1, "{run}");
+        assert_eq!(run["result"]["failed"], json!([]));
+        let (repeat, zone, checks, servers): (String, String, Value, i64) = sqlx::query_as(
+            "SELECT repeat, time_zone, checks,
+                    (SELECT count(*) FROM maintenance_window_servers ws WHERE ws.window_id = w.id)
+             FROM maintenance_windows w",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((repeat.as_str(), zone.as_str(), servers), ("daily", "Europe/Paris", 2));
+        assert_eq!(checks, json!([{"name": "service_nginx", "instance": ""}]));
+        // Its occurrences are written at once, one per server.
+        assert!(count(&pool, "SELECT count(*) FROM silences WHERE window_id IS NOT NULL").await >= 2);
+        let port: Value = sqlx::query_scalar("SELECT checks FROM silences WHERE reason = 'Database port work'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(port, json!([{"name": "port_5432", "instance": ""}]));
+
+        // A second import finds both there.
+        let second = preview(&pool, paris, admin, &inventory).await;
+        let (_, run) = call(&pool, "GET", &format!("/api/imports/{second}"), &cookie, None).await;
+        assert_eq!(run["counts"]["to_create"], 0, "{run}");
+
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["removed"]["window"], 1);
+        assert_eq!(count(&pool, "SELECT count(*) FROM maintenance_windows").await, 0);
+        assert_eq!(count(&pool, "SELECT count(*) FROM silences").await, 0);
     }
 }

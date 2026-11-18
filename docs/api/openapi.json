@@ -37208,6 +37208,13 @@
               "object"
             ],
             "properties": {
+              "checks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SilencedCheck"
+                },
+                "description": "Only these checks (ADR-0151); empty for everything."
+              },
               "ends_at": {
                 "type": "string",
                 "format": "date-time"
@@ -37230,6 +37237,114 @@
               "starts_at": {
                 "type": "string",
                 "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A maintenance window of the import's site (ADR-0151), as\n`POST /api/maintenance-windows` takes it.",
+            "required": [
+              "servers",
+              "repeat",
+              "every",
+              "weekdays",
+              "months",
+              "start_time",
+              "duration_minutes",
+              "time_zone",
+              "reason",
+              "object"
+            ],
+            "properties": {
+              "checks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SilencedCheck"
+                },
+                "description": "Only these checks; empty for everything."
+              },
+              "duration_minutes": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "ends_on": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date"
+              },
+              "every": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "month_day": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "month_week": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "months": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                },
+                "description": "1 to 12; empty for every month."
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "window"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "repeat": {
+                "type": "string",
+                "description": "`daily`, `weekly` or `monthly`."
+              },
+              "servers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The servers' IDs; empty for the whole site."
+              },
+              "start_time": {
+                "type": "string",
+                "description": "`HH:MM`, local."
+              },
+              "starts_on": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date"
+              },
+              "time_zone": {
+                "type": "string"
+              },
+              "weekdays": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "`monday` to `sunday`."
               }
             }
           },
@@ -37503,6 +37618,13 @@
           "source": {
             "type": "string",
             "description": "The reader, from `GET /api/imports/sources`."
+          },
+          "time_zone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The IANA time zone of maintenance windows whose source does not say\nit, like Zabbix's and PRTG's, which keep their server's local time\n(ADR-0151); UTC when absent."
           }
         },
         "additionalProperties": false
@@ -46180,7 +46302,7 @@
     },
     {
       "name": "imports",
-      "description": "Moving from another monitoring tool. An import reads the other tool's configuration, from export files or through its API, and shows first what MonitorFlow would create: servers waiting for their agent, checks, thresholds, silences and notification channels. Each item is in one of three lists: `exact` (MonitorFlow does the same), `approximated` (close, the note says how it differs) or `not_movable` (the note says why), and says whether MonitorFlow has it already (`present`). Nothing is created until the preview is confirmed, with the items to leave out; items that need one left out are left out too. Importing the same configuration again creates nothing twice. An import can be undone: what it created goes, except servers an agent has taken over. Servers then only need the agent: one that enrolls with a server's ID, or with an install key of its site from a host of that name, takes it over with its checks. The other tool is only read, never changed, and can keep running. A connection's token is used for the request and never stored. Administrators of the target site only; everything is in the audit log. API keys need the `administration` area."
+      "description": "Moving from another monitoring tool. An import reads the other tool's configuration, from export files or through its API, and shows first what MonitorFlow would create: servers waiting for their agent, checks, thresholds, silences (of servers or of chosen checks), maintenance windows that come back (ADR-0151) and notification channels. Windows whose source does not say its time zone, like Zabbix's and PRTG's, are read in the request's `time_zone`. Each item is in one of three lists: `exact` (MonitorFlow does the same), `approximated` (close, the note says how it differs) or `not_movable` (the note says why), and says whether MonitorFlow has it already (`present`). Nothing is created until the preview is confirmed, with the items to leave out; items that need one left out are left out too. Importing the same configuration again creates nothing twice. An import can be undone: what it created goes, except servers an agent has taken over. Servers then only need the agent: one that enrolls with a server's ID, or with an install key of its site from a host of that name, takes it over with its checks. The other tool is only read, never changed, and can keep running. A connection's token is used for the request and never stored. Administrators of the target site only; everything is in the audit log. API keys need the `administration` area."
     }
   ]
 }

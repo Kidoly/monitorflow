@@ -10,13 +10,14 @@ pub mod store;
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use monitorflow_import::model;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-pub use plan::{plan, Existing, Planned};
+pub use crate::notify::silence::CheckRef;
+pub use plan::{plan, plan_in, Existing, Planned};
 
 /// A preview older than this cannot be confirmed: the source may have
 /// changed, and so may MonitorFlow.
@@ -130,6 +131,34 @@ pub enum Create {
         starts_at: DateTime<Utc>,
         ends_at: DateTime<Utc>,
         reason: String,
+        /// Only these checks (ADR-0151); empty for everything.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        checks: Vec<CheckRef>,
+    },
+    /// A maintenance window of the import's site (ADR-0151), as
+    /// `POST /api/maintenance-windows` takes it.
+    Window {
+        /// The servers' IDs; empty for the whole site.
+        servers: Vec<String>,
+        /// Only these checks; empty for everything.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        checks: Vec<CheckRef>,
+        /// `daily`, `weekly` or `monthly`.
+        repeat: String,
+        every: u16,
+        /// `monday` to `sunday`.
+        weekdays: Vec<String>,
+        month_day: Option<u8>,
+        month_week: Option<u8>,
+        /// 1 to 12; empty for every month.
+        months: Vec<u8>,
+        /// `HH:MM`, local.
+        start_time: String,
+        duration_minutes: u32,
+        time_zone: String,
+        starts_on: Option<NaiveDate>,
+        ends_on: Option<NaiveDate>,
+        reason: String,
     },
     /// A notification channel.
     Channel {
@@ -147,13 +176,14 @@ pub enum Create {
 }
 
 impl Create {
-    /// `server`, `check`, `threshold`, `silence` or `channel`.
+    /// `server`, `check`, `threshold`, `silence`, `window` or `channel`.
     pub fn object(&self) -> &'static str {
         match self {
             Self::Server { .. } => "server",
             Self::Check { .. } => "check",
             Self::Threshold { .. } => "threshold",
             Self::Silence { .. } => "silence",
+            Self::Window { .. } => "window",
             Self::Channel { .. } => "channel",
         }
     }

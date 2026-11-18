@@ -1368,7 +1368,8 @@ export type ImportCreate =
       duration_s: number;
       hysteresis: number;
     }
-  | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string }
+  | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
+  | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
   | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null };
 
 /** One line of an import's preview. */
@@ -1423,6 +1424,8 @@ export interface ImportRequest {
   site_id?: string;
   files?: { name: string; content: string; base64?: boolean }[];
   connection?: Record<string, string>;
+  /** IANA zone of maintenance windows whose source does not say it (ADR-0151). */
+  time_zone?: string;
 }
 
 export type BackupKind = "daily" | "manual" | "update";
