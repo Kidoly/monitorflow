@@ -73,6 +73,7 @@ pub fn build() -> Document {
     doc.merge(super::openapi_auto_update::Doc::openapi());
     doc.merge(super::openapi_checks::Doc::openapi());
     doc.merge(super::openapi_imports::Doc::openapi());
+    doc.merge(super::openapi_maintenance::Doc::openapi());
     doc
 }
 
@@ -113,7 +114,7 @@ held for a person: approve, edit or reject them. The AI's text is untrusted and 
 server, a metric and optionally an instance; MonitorFlow builds the query itself and never accepts raw PromQL. \
 Area `servers`."),
         (name = "servers", description = "Servers, sites and customers"),
-        (name = "alerts", description = "Incidents and silences"),
+        (name = "alerts", description = "Incidents, silences and maintenance windows"),
         (name = "updates", description = "Commands sent to servers"),
         (name = "remediation", description = "What the AI did about alerts. Each remediation incident \
 is one alert the AI worked on, with every step recorded in a hash chain: the context it was sent after \
@@ -501,8 +502,10 @@ fn acknowledge() {}
 #[utoipa::path(get, path = "/api/v1/silences", tag = "alerts",
     summary = "List silences",
     description = "The silences that are active or yet to start, the first to start first, in full. A \
-silence stops notifications about a server, a relay, a site, a customer or everything until it ends; \
-incidents still open and show, and what is still open at its end is sent then.\n\n\
+silence stops notifications about a server, a relay, a site, a customer or everything until it ends, \
+or about chosen `checks` of a server or site; incidents still open and show, and what is still open at its \
+end is sent then. A maintenance window's running occurrence is listed with its `window_id`; its coming ones \
+are in `GET /api/v1/maintenance-windows`.\n\n\
 **Who**: any role. **Area**: `alerts`. The key sees the silences of the sites it reaches, of their \
 customers, and those covering everything.\n\n\
 **Filter**: at most one of `server_id`, `relay_id` and `site_id`, for the silences covering it: its own, \
@@ -522,7 +525,9 @@ fn list_silences() {}
     summary = "Create a silence",
     description = "Stops notifications about a server, a relay, a site, a customer or everything, from \
 `starts_at` (now when absent or past) until `ends_at`, at most 30 days later. Use it around a deployment \
-or maintenance.\n\n\
+or maintenance. With `checks` (1 to 20, a server or a site only), only the incidents those checks write \
+are held: the server going offline and its other checks still notify, and the server is not shown as \
+silenced. Each check must run there: built in, or set on the server, its site, or a server of the site.\n\n\
 **Who**, by `scope`: for `server`, `relay` or `site`, operator or above on its site; for `customer`, \
 operator or above on the customer as a whole; for `all`, a global administrator. **Area**: `alerts`. \
 `target_id` is required, except for `all`, which takes none.\n\n\
@@ -541,7 +546,8 @@ request makes a silence; send `Idempotency-Key` to retry.",
         (status = 200, description = "The same silence, already there: nothing was created",
             body = silences::SilenceView, example = json!(ex::silence())),
         (status = 400, description = "No `target_id` (or one for `all`), no reason or a reason over 200 \
-characters, an end not after the start, or longer than 30 days: `invalid`", body = ErrorBody),
+characters, an end not after the start, or longer than 30 days, checks for another scope, unknown checks \
+or over 20: `invalid`", body = ErrorBody),
         (status = 403, description = "The key may only read the target, or may not silence \
 everything: `forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
         (status = 404, description = "The target does not exist or is outside the key's reach: \
@@ -552,7 +558,8 @@ fn create_silence() {}
 #[utoipa::path(post, path = "/api/v1/silences/{id}/end", tag = "alerts",
     summary = "End a silence",
     description = "Ends a silence now, or calls it off if it has not started. What it held back and is \
-still open is sent within seconds.\n\n\
+still open is sent within seconds. For an occurrence of a maintenance window, this skips that one \
+window; the next comes as planned.\n\n\
 **Who**: whoever could create it: operator or above on its site, or on its customer as a whole, or a \
 global administrator for one covering everything. **Area**: `alerts`.\n\n\
 Audited as `silence.end`. A second request is 409, as the silence is over.",

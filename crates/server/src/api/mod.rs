@@ -82,6 +82,10 @@
 //! | GET | `/api/silences` | any role | [`silences::SilenceList`]: active and upcoming silences of the user's scope, or with `server_id`, `relay_id` or `site_id` those covering it (ADR-0079) |
 //! | POST | `/api/silences` | modify the scope | body [`silences::CreateRequest`]; 201 [`silences::SilenceView`]; audited |
 //! | POST | `/api/silences/{id}/end` | modify the scope | 204: ended now, or called off before it started; 409 once over; audited |
+//! | GET | `/api/maintenance-windows` | any role | `site_id` or `server_id`; [`maintenance_windows::WindowList`]: silences that come back, with their next windows (ADR-0151) |
+//! | POST | `/api/maintenance-windows` | modify the site | body [`maintenance_windows::WindowRequest`]; 201 [`maintenance_windows::WindowView`]; audited |
+//! | PUT | `/api/maintenance-windows/{id}` | modify the sites | the same body; [`maintenance_windows::WindowView`]; audited |
+//! | DELETE | `/api/maintenance-windows/{id}` | modify the site | 204; the running window ends; audited |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
@@ -694,6 +698,7 @@ pub mod integrations;
 pub mod license;
 pub mod login_limit;
 pub mod logs;
+pub mod maintenance_windows;
 pub mod metrics;
 pub mod mirrors;
 pub mod notifications;
@@ -707,6 +712,7 @@ mod openapi_checks;
 pub mod openapi_core;
 mod openapi_dashboards;
 mod openapi_imports;
+mod openapi_maintenance;
 mod openapi_plugins;
 pub mod openapi_remediation;
 mod openapi_settings;
@@ -1073,6 +1079,14 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/on-call/contact/test", post(on_call::test_contact))
         .route("/api/silences/{id}/end", post(silences::end))
+        .route(
+            "/api/maintenance-windows",
+            get(maintenance_windows::list).post(maintenance_windows::create),
+        )
+        .route(
+            "/api/maintenance-windows/{id}",
+            put(maintenance_windows::update).delete(maintenance_windows::remove),
+        )
         .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
         .route("/api/sites/{id}/check-interval", put(check_interval::site))
         .route(

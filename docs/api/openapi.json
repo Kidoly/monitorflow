@@ -11626,6 +11626,755 @@
         }
       }
     },
+    "/api/v1/maintenance-windows": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "List maintenance windows",
+        "description": "The maintenance windows of the sites the key reads, the next to come first, in full. A maintenance window is a silence that comes back on its own every day, week or month, at local times in a time zone, for a site, chosen servers of it, or chosen checks of those: notifications are held while one runs, exactly as a silence holds them, and what is still open at its end is sent then. It needs no renewing.\n\nEach window lists its next three windows (`next`, the running one first) and, while one runs, when it ends (`active_until`). While one runs, its servers' `silence` says `window: true`, and its incidents `in_maintenance: true`.\n\n**Who**: any role. **Area**: `alerts`.\n\n**Filter**: at most one of `site_id` and `server_id`, for the windows of the site, or those covering the server (its whole site's, and those naming it). Unknown parameters are 400.",
+        "operationId": "list_windows",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "The windows of this site.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "The windows covering this server: of its whole site, or naming it.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The windows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceWindowList"
+                },
+                "example": {
+                  "windows": [
+                    {
+                      "active_until": null,
+                      "can_change": true,
+                      "checks": [
+                        {
+                          "instance": "",
+                          "name": "service_postgresql"
+                        }
+                      ],
+                      "created_at": "2026-11-18T09:30:00Z",
+                      "created_by_username": "alice",
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "duration_minutes": 120,
+                      "ends_on": null,
+                      "every": 1,
+                      "id": "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+                      "month_day": null,
+                      "month_week": null,
+                      "months": [
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        11,
+                        12
+                      ],
+                      "next": [
+                        {
+                          "ends_at": "2026-11-22T03:00:00Z",
+                          "starts_at": "2026-11-22T01:00:00Z"
+                        },
+                        {
+                          "ends_at": "2026-11-29T03:00:00Z",
+                          "starts_at": "2026-11-29T01:00:00Z"
+                        },
+                        {
+                          "ends_at": "2026-12-06T03:00:00Z",
+                          "starts_at": "2026-12-06T01:00:00Z"
+                        }
+                      ],
+                      "reason": "Database patches",
+                      "repeat": "weekly",
+                      "servers": [
+                        {
+                          "hostname": "web-1",
+                          "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                        }
+                      ],
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "site_name": "paris",
+                      "start_time": "02:00",
+                      "starts_on": "2026-11-18",
+                      "time_zone": "Europe/Paris",
+                      "updated_at": "2026-11-18T09:30:00Z",
+                      "weekdays": [
+                        "sunday"
+                      ],
+                      "whole_site": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Both filters, or an unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The site or server of the filter does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Create a maintenance window",
+        "description": "A silence that comes back on its own:\n\n- `daily`: every `every` days from `starts_on`;\n- `weekly`: on `weekdays`, every `every` weeks from the week of `starts_on`;\n- `monthly`: on `month_day` (a month without that day has no window), or on the one weekday of `weekdays` in week `month_week` of the month (5 is the last: \"the last Friday\"), in `months` (every month when absent).\n\nEach window starts at `start_time`, local to `time_zone`, and lasts `duration_minutes` (at most 7 days). Daylight saving is followed: a start that happens twice when clocks go back is the first, one skipped when they go forward is read with the offset before the change, and the end is the local start plus the duration, so \"22:00 for 8 hours\" ends at 06:00 local time on the nights clocks change.\n\nWithout `server_ids`, it covers the whole site, servers added later included. With `checks`, only the incidents those checks write: the server going offline and its other checks still notify.\n\n**Who**: operator or above on the site. **Area**: `alerts`. Audited as `maintenance_window.create`. **Not safe to repeat**: each request makes a window; send `Idempotency-Key` to retry.",
+        "operationId": "create_window",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaintenanceWindowRequest"
+              },
+              "example": {
+                "checks": [
+                  {
+                    "instance": "",
+                    "name": "service_postgresql"
+                  }
+                ],
+                "duration_minutes": 120,
+                "reason": "Database patches",
+                "repeat": "weekly",
+                "server_ids": [
+                  "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                ],
+                "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                "start_time": "02:00",
+                "time_zone": "Europe/Paris",
+                "weekdays": [
+                  "sunday"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new window",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceWindow"
+                },
+                "example": {
+                  "active_until": null,
+                  "can_change": true,
+                  "checks": [
+                    {
+                      "instance": "",
+                      "name": "service_postgresql"
+                    }
+                  ],
+                  "created_at": "2026-11-18T09:30:00Z",
+                  "created_by_username": "alice",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "duration_minutes": 120,
+                  "ends_on": null,
+                  "every": 1,
+                  "id": "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+                  "month_day": null,
+                  "month_week": null,
+                  "months": [
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9,
+                    10,
+                    11,
+                    12
+                  ],
+                  "next": [
+                    {
+                      "ends_at": "2026-11-22T03:00:00Z",
+                      "starts_at": "2026-11-22T01:00:00Z"
+                    },
+                    {
+                      "ends_at": "2026-11-29T03:00:00Z",
+                      "starts_at": "2026-11-29T01:00:00Z"
+                    },
+                    {
+                      "ends_at": "2026-12-06T03:00:00Z",
+                      "starts_at": "2026-12-06T01:00:00Z"
+                    }
+                  ],
+                  "reason": "Database patches",
+                  "repeat": "weekly",
+                  "servers": [
+                    {
+                      "hostname": "web-1",
+                      "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                    }
+                  ],
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "start_time": "02:00",
+                  "starts_on": "2026-11-18",
+                  "time_zone": "Europe/Paris",
+                  "updated_at": "2026-11-18T09:30:00Z",
+                  "weekdays": [
+                    "sunday"
+                  ],
+                  "whole_site": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown repeat, weekday, month or time zone, a time not `HH:MM`, no weekday for a weekly window, neither or both of `month_day` and `month_week`, not one weekday for a monthly window by week, a duration over 7 days, a last day before the first, servers of another site or over 500, unknown checks or over 20, or a reason missing or over 200 characters: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The site does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/maintenance-windows/{id}": {
+      "put": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Change a maintenance window",
+        "description": "Replaces every field, as when creating one. The running window, if any, ends and the new rule's are written at once, so what it held stays held when the new rule still covers it, and is sent within seconds otherwise.\n\n**Who**: operator or above on its site now and on the one it will have. **Area**: `alerts`. Audited as `maintenance_window.update`. Safe to repeat.",
+        "operationId": "update_window",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The window",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaintenanceWindowRequest"
+              },
+              "example": {
+                "checks": [
+                  {
+                    "instance": "",
+                    "name": "service_postgresql"
+                  }
+                ],
+                "duration_minutes": 120,
+                "reason": "Database patches",
+                "repeat": "weekly",
+                "server_ids": [
+                  "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                ],
+                "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                "start_time": "02:00",
+                "time_zone": "Europe/Paris",
+                "weekdays": [
+                  "sunday"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceWindow"
+                },
+                "example": {
+                  "active_until": null,
+                  "can_change": true,
+                  "checks": [
+                    {
+                      "instance": "",
+                      "name": "service_postgresql"
+                    }
+                  ],
+                  "created_at": "2026-11-18T09:30:00Z",
+                  "created_by_username": "alice",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "duration_minutes": 120,
+                  "ends_on": null,
+                  "every": 1,
+                  "id": "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+                  "month_day": null,
+                  "month_week": null,
+                  "months": [
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9,
+                    10,
+                    11,
+                    12
+                  ],
+                  "next": [
+                    {
+                      "ends_at": "2026-11-22T03:00:00Z",
+                      "starts_at": "2026-11-22T01:00:00Z"
+                    },
+                    {
+                      "ends_at": "2026-11-29T03:00:00Z",
+                      "starts_at": "2026-11-29T01:00:00Z"
+                    },
+                    {
+                      "ends_at": "2026-12-06T03:00:00Z",
+                      "starts_at": "2026-12-06T01:00:00Z"
+                    }
+                  ],
+                  "reason": "Database patches",
+                  "repeat": "weekly",
+                  "servers": [
+                    {
+                      "hostname": "web-1",
+                      "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                    }
+                  ],
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "start_time": "02:00",
+                  "starts_on": "2026-11-18",
+                  "time_zone": "Europe/Paris",
+                  "updated_at": "2026-11-18T09:30:00Z",
+                  "weekdays": [
+                    "sunday"
+                  ],
+                  "whole_site": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As when creating one: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read one of the sites: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such window, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Remove a maintenance window",
+        "description": "No more windows. The running one ends now, and what it held back and is still open is sent within seconds. To skip one window only, end its silence (`POST /api/v1/silences/{id}/end`): the window comes back as planned.\n\n**Who**: operator or above on its site. **Area**: `alerts`. Audited as `maintenance_window.remove`.",
+        "operationId": "remove_window",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The window",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read its site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such window, removed already, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/metrics/query": {
       "get": {
         "tags": [
@@ -27644,7 +28393,7 @@
           "alerts"
         ],
         "summary": "List silences",
-        "description": "The silences that are active or yet to start, the first to start first, in full. A silence stops notifications about a server, a relay, a site, a customer or everything until it ends; incidents still open and show, and what is still open at its end is sent then.\n\n**Who**: any role. **Area**: `alerts`. The key sees the silences of the sites it reaches, of their customers, and those covering everything.\n\n**Filter**: at most one of `server_id`, `relay_id` and `site_id`, for the silences covering it: its own, its site's, its customer's and those covering everything. Unknown parameters are 400.",
+        "description": "The silences that are active or yet to start, the first to start first, in full. A silence stops notifications about a server, a relay, a site, a customer or everything until it ends, or about chosen `checks` of a server or site; incidents still open and show, and what is still open at its end is sent then. A maintenance window's running occurrence is listed with its `window_id`; its coming ones are in `GET /api/v1/maintenance-windows`.\n\n**Who**: any role. **Area**: `alerts`. The key sees the silences of the sites it reaches, of their customers, and those covering everything.\n\n**Filter**: at most one of `server_id`, `relay_id` and `site_id`, for the silences covering it: its own, its site's, its customer's and those covering everything. Unknown parameters are 400.",
         "operationId": "list_silences",
         "parameters": [
           {
@@ -27691,6 +28440,7 @@
                     {
                       "active": false,
                       "can_end": true,
+                      "checks": null,
                       "created_at": "2026-11-14T09:30:00Z",
                       "created_by_username": "alice",
                       "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
@@ -27701,7 +28451,8 @@
                       "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
                       "starts_at": "2026-11-14T22:00:00Z",
                       "target_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
-                      "target_name": "web-1"
+                      "target_name": "web-1",
+                      "window_id": null
                     }
                   ]
                 }
@@ -27783,7 +28534,7 @@
           "alerts"
         ],
         "summary": "Create a silence",
-        "description": "Stops notifications about a server, a relay, a site, a customer or everything, from `starts_at` (now when absent or past) until `ends_at`, at most 30 days later. Use it around a deployment or maintenance.\n\n**Who**, by `scope`: for `server`, `relay` or `site`, operator or above on its site; for `customer`, operator or above on the customer as a whole; for `all`, a global administrator. **Area**: `alerts`. `target_id` is required, except for `all`, which takes none.\n\n`reason` (1 to 200 characters) shows to others, so they know what the silence is for. Audited as `silence.create`. The same request again while its silence runs or waits (same target, `ends_at` and `reason`) answers that silence with 200 and makes no second one. Otherwise **not safe to repeat**: each request makes a silence; send `Idempotency-Key` to retry.",
+        "description": "Stops notifications about a server, a relay, a site, a customer or everything, from `starts_at` (now when absent or past) until `ends_at`, at most 30 days later. Use it around a deployment or maintenance. With `checks` (1 to 20, a server or a site only), only the incidents those checks write are held: the server going offline and its other checks still notify, and the server is not shown as silenced. Each check must run there: built in, or set on the server, its site, or a server of the site.\n\n**Who**, by `scope`: for `server`, `relay` or `site`, operator or above on its site; for `customer`, operator or above on the customer as a whole; for `all`, a global administrator. **Area**: `alerts`. `target_id` is required, except for `all`, which takes none.\n\n`reason` (1 to 200 characters) shows to others, so they know what the silence is for. Audited as `silence.create`. The same request again while its silence runs or waits (same target, `ends_at` and `reason`) answers that silence with 200 and makes no second one. Otherwise **not safe to repeat**: each request makes a silence; send `Idempotency-Key` to retry.",
         "operationId": "create_silence",
         "parameters": [
           {
@@ -27826,6 +28577,7 @@
                 "example": {
                   "active": false,
                   "can_end": true,
+                  "checks": null,
                   "created_at": "2026-11-14T09:30:00Z",
                   "created_by_username": "alice",
                   "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
@@ -27836,7 +28588,8 @@
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
                   "starts_at": "2026-11-14T22:00:00Z",
                   "target_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
-                  "target_name": "web-1"
+                  "target_name": "web-1",
+                  "window_id": null
                 }
               }
             }
@@ -27851,6 +28604,7 @@
                 "example": {
                   "active": false,
                   "can_end": true,
+                  "checks": null,
                   "created_at": "2026-11-14T09:30:00Z",
                   "created_by_username": "alice",
                   "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
@@ -27861,13 +28615,14 @@
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
                   "starts_at": "2026-11-14T22:00:00Z",
                   "target_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
-                  "target_name": "web-1"
+                  "target_name": "web-1",
+                  "window_id": null
                 }
               }
             }
           },
           "400": {
-            "description": "No `target_id` (or one for `all`), no reason or a reason over 200 characters, an end not after the start, or longer than 30 days: `invalid`",
+            "description": "No `target_id` (or one for `all`), no reason or a reason over 200 characters, an end not after the start, or longer than 30 days, checks for another scope, unknown checks or over 20: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -27963,7 +28718,7 @@
           "alerts"
         ],
         "summary": "End a silence",
-        "description": "Ends a silence now, or calls it off if it has not started. What it held back and is still open is sent within seconds.\n\n**Who**: whoever could create it: operator or above on its site, or on its customer as a whole, or a global administrator for one covering everything. **Area**: `alerts`.\n\nAudited as `silence.end`. A second request is 409, as the silence is over.",
+        "description": "Ends a silence now, or calls it off if it has not started. What it held back and is still open is sent within seconds. For an occurrence of a maintenance window, this skips that one window; the next comes as planned.\n\n**Who**: whoever could create it: operator or above on its site, or on its customer as a whole, or a global administrator for one covering everything. **Area**: `alerts`.\n\nAudited as `silence.end`. A second request is 409, as the silence is over.",
         "operationId": "end_silence",
         "parameters": [
           {
@@ -38139,6 +38894,338 @@
           }
         }
       },
+      "MaintenanceOccurrence": {
+        "type": "object",
+        "description": "One window, from start to end, excluded.",
+        "required": [
+          "starts_at",
+          "ends_at"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "MaintenanceWindow": {
+        "type": "object",
+        "description": "One maintenance window.",
+        "required": [
+          "id",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "whole_site",
+          "servers",
+          "repeat",
+          "every",
+          "weekdays",
+          "months",
+          "start_time",
+          "duration_minutes",
+          "time_zone",
+          "starts_on",
+          "reason",
+          "next",
+          "created_at",
+          "updated_at",
+          "can_change"
+        ],
+        "properties": {
+          "active_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the one running now ends; `null` when none runs."
+          },
+          "can_change": {
+            "type": "boolean",
+            "description": "Whether this user may change or remove it."
+          },
+          "checks": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SilencedCheck"
+            },
+            "description": "The chosen checks; `null` for everything of the servers."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` once the user is deleted."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ends_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "every": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "month_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "month_week": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 4, or 5 for the last week.",
+            "minimum": 0
+          },
+          "months": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "1 to 12; all twelve for every month."
+          },
+          "next": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaintenanceOccurrence"
+            },
+            "description": "The running window, if any, then the next ones: three in all, fewer\nwhen the rule ends."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "repeat": {
+            "type": "string",
+            "description": "`daily`, `weekly` or `monthly`."
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaintenanceWindowServer"
+            },
+            "description": "The chosen servers, by name, when not the whole site; none left\nwhen they were all removed, and then it covers nothing."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "start_time": {
+            "type": "string",
+            "description": "`HH:MM`, local."
+          },
+          "starts_on": {
+            "type": "string",
+            "format": "date"
+          },
+          "time_zone": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "weekdays": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`monday` to `sunday`, in week order."
+          },
+          "whole_site": {
+            "type": "boolean",
+            "description": "The whole site, servers added later included."
+          }
+        }
+      },
+      "MaintenanceWindowList": {
+        "type": "object",
+        "description": "Body of `GET /api/maintenance-windows`.",
+        "required": [
+          "windows"
+        ],
+        "properties": {
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaintenanceWindow"
+            },
+            "description": "The first to come first."
+          }
+        }
+      },
+      "MaintenanceWindowRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/maintenance-windows` and `PUT\n/api/maintenance-windows/{id}`; a change replaces every field.",
+        "required": [
+          "site_id",
+          "repeat",
+          "start_time",
+          "duration_minutes",
+          "time_zone",
+          "reason"
+        ],
+        "properties": {
+          "checks": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SilencedCheck"
+            },
+            "description": "Only these checks of the servers covered, 1 to 20; absent or `null`:\neverything of them."
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 minute to 7 days (10080).",
+            "minimum": 0
+          },
+          "ends_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "The last one; absent or `null` for no end."
+          },
+          "every": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Every N days (daily, 1 to 365) or weeks (weekly, 1 to 52), counted\nfrom `starts_on`; 1 (the default) for monthly.",
+            "minimum": 0
+          },
+          "month_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Monthly: on this day, 1 to 31. A month without it has no window.",
+            "minimum": 0
+          },
+          "month_week": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Monthly: on `weekdays` of this week of the month, 1 to 4, or 5 for\nthe last one (\"the last Friday\").",
+            "minimum": 0
+          },
+          "months": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "Monthly: in these months, 1 (January) to 12; absent or empty: every\nmonth."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why, for others: 1 to 200 characters, trimmed."
+          },
+          "repeat": {
+            "type": "string",
+            "description": "`daily`, `weekly` or `monthly`."
+          },
+          "server_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only these servers of the site, at most 500; empty or absent: the\nwhole site, servers added later included."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The site it belongs to."
+          },
+          "start_time": {
+            "type": "string",
+            "description": "Local time each window starts, `HH:MM`."
+          },
+          "starts_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "The first local date a window may start on; today in the zone when\nabsent."
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "IANA time zone the times are in, like `Europe/Paris`; daylight\nsaving is followed."
+          },
+          "weekdays": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`monday` to `sunday`: the days of a weekly window, or the one\nweekday of a monthly window by week."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MaintenanceWindowServer": {
+        "type": "object",
+        "description": "A server a window names.",
+        "required": [
+          "id",
+          "hostname"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "MappingView": {
         "type": "object",
         "description": "One line of \"Groups and roles\".",
@@ -43190,6 +44277,16 @@
           "reason"
         ],
         "properties": {
+          "checks": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SilencedCheck"
+            },
+            "description": "Only these checks of the server, or of every server of the site\n(ADR-0151): 1 to 20. Absent or `null`: everything of the target."
+          },
           "ends_at": {
             "type": "string",
             "format": "date-time",
@@ -43255,6 +44352,16 @@
             "type": "boolean",
             "description": "Whether this user may end it."
           },
+          "checks": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SilencedCheck"
+            },
+            "description": "Only these checks of its server or site; `null` for all of it\n(ADR-0151)."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -43317,8 +44424,34 @@
               "null"
             ],
             "description": "The server's hostname, or the relay's, site's or customer's name;\n`null` for `all`."
+          },
+          "window_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The maintenance window it is an occurrence of, `null` for a one-off\nsilence (ADR-0151)."
           }
         }
+      },
+      "SilencedCheck": {
+        "type": "object",
+        "description": "A check, by its identity in `sensor_configs`.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "instance": {
+            "type": "string",
+            "description": "What it watches, `\"\"` (the default) for every instance it writes."
+          },
+          "name": {
+            "type": "string",
+            "description": "The check's name, like `service_nginx` or `disk`."
+          }
+        },
+        "additionalProperties": false
       },
       "SiteList": {
         "type": "object",
@@ -44935,7 +46068,7 @@
     },
     {
       "name": "alerts",
-      "description": "Incidents and silences"
+      "description": "Incidents, silences and maintenance windows"
     },
     {
       "name": "updates",
