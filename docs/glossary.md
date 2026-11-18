@@ -37,6 +37,8 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Recommended check | Contrôle recommandé | A check MonitorFlow suggests for a server from what its agent saw running: "PostgreSQL is running". Nothing is added until someone clicks Add | discovery, suggestion, auto-detected | `recommendations`, `server_discovery` |
 | Dismiss | Écarter ; « Afficher les écartés » | Stop showing a recommended check for one server; "Show dismissed" brings it back | ignore, hide, mute | `check_recommendation_dismissals` |
 | Port targets | Cibles de ports | The addresses, address ranges and host names, with ports, that a server's port checks may connect to, set by its administrator in `agent.toml`. Anywhere by default | port allowlist, scan scope | `sensors.port_targets` |
+| Website check | Contrôle de site web | A check that requests a page as a visitor does: its status code, the text on it, how long it takes, its redirects and its certificate. "A website answers" in the catalogue | HTTP check, web monitor, synthetic check, uptime check | `http` |
+| Days left (certificate) | Jours restants (certificat) | How long until a website's certificate expires; negative once it has | expiry, TTL | `http_cert_days_left` |
 | Disk busy | Occupation du disque | Share of the time a disk had work in flight, per disk (`sda`, `vg0-root`, `PhysicalDrive0`) | utilisation, util, I/O % | `diskio_busy_ratio` |
 | Disk wait | Attente du disque | Average time a disk took to answer one read or write, waiting in its queue included | latency, await | `diskio_wait_seconds` |
 | Disk activity | Activité des disques | The check that reports how busy and how slow each disk is | disk I/O, diskio (on screen) | `diskio` |

@@ -11,12 +11,13 @@ use utoipa::OpenApi;
 
 use super::openapi::{Common, ErrorBody};
 use super::openapi_core::ex;
-use super::{checks, recommendations, sensor_values};
+use super::{checks, recommendations, sensor_values, website_checks};
 use crate::recommend;
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(sensor_values, recommendations, dismiss_recommendation, restore_recommendation, check_usage),
+    paths(sensor_values, website_checks, recommendations, dismiss_recommendation, restore_recommendation,
+        check_usage),
     components(schemas(recommend::Recommendation, recommend::Proposed, recommend::Params)),
     modifiers(&Common),
 )]
@@ -67,6 +68,40 @@ late (\"No data for 5 minutes\"). For other ranges or metrics, use the metric qu
             body = ErrorBody),
     ))]
 fn sensor_values() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/website-checks", tag = "sensors",
+    summary = "Read the last run of a server's website checks",
+    description = "Each website check the server has (kind `http`, ADR-0150), whether its agent, the \
+central server or a relay (`relay`, its ID) runs it, and what its last run found: `up` and, when not, `reason` (`dns`, `connect`, \
+`timeout`, `tls`, `certificate`, `status`, `content`, `redirects`, `refused` or `protocol`), the status code, \
+the time from the start to the end of the page, the redirects followed and where they ended, whether the \
+text conditions passed, and the certificate of an https site: whether it is trusted, valid now and for the \
+name (`reason`: `expired`, `not_yet_valid`, `self_signed`, `untrusted`, `name`, `revoked` or `other`), its \
+days left, expiry, issuer and subject. Values are `null` before the first run. Checks are added and changed \
+with `POST /api/v1/servers/{id}/sensor_configs` and kind `http`.\n\n\
+**Who**: any role on the server's site. **Area**: `servers`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "The website checks and their last run",
+            body = website_checks::WebsiteChecks,
+            example = json!({"checks": [{
+                "name": "http", "instance": "shop", "entry_id": "0f8e4c1a-6d1b-4c55-9a5e-2b1f8b7a9c10",
+                "origin": "server", "url": "https://shop.example.com/", "run_by": "central", "relay": null,
+                "interval_ms": 60_000, "last_at": "2026-11-18T09:12:00Z", "up": true, "reason": null,
+                "status_code": 200, "response_seconds": 0.212, "redirects": 1,
+                "final_url": "https://www.shop.example.com/", "content_ok": true,
+                "certificate": {"ok": true, "reason": null, "name_ok": true, "days_left": 41.5,
+                    "not_after": "2026-12-30T00:00:00Z", "issuer": "R11", "subject": "www.shop.example.com"}
+            }]})),
+        (status = 403, description = "Outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 502, description = "The metrics database is unreachable or not configured: \
+`metrics_unavailable`", body = ErrorBody),
+        (status = 504, description = "The metrics database did not answer in time: `metrics_timeout`",
+            body = ErrorBody),
+    ))]
+fn website_checks() {}
 
 #[utoipa::path(get, path = "/api/v1/servers/{id}/recommendations", tag = "sensors",
     summary = "List the checks recommended for a server",

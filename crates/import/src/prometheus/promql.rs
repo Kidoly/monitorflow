@@ -723,6 +723,19 @@ pub enum LeafKind {
     Up,
     ProbeSuccess,
     SystemdUnit,
+    /// The status code of a probe's answer.
+    ProbeStatusCode,
+    /// How long a probe took, in seconds; `whole` is false for a phase
+    /// of an HTTP probe (`probe_http_duration_seconds`).
+    ProbeDuration {
+        whole: bool,
+    },
+    /// When a probe's certificate expires, Unix seconds.
+    CertExpiry,
+    /// `time()`.
+    Time,
+    /// Seconds a probe's certificate has left: `CertExpiry - Time`.
+    CertSecondsLeft,
 }
 
 /// A known series in an expression.
@@ -920,6 +933,29 @@ pub fn read(text: &str) -> Option<Reading> {
     read_expr(&expr)
 }
 
+/// Reads `text` as conditions joined by `or`, each on one known measure:
+/// `probe_http_status_code <= 199 or probe_http_status_code >= 400`.
+pub fn read_alternatives(text: &str) -> Option<Vec<Reading>> {
+    fn split<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+        match expr {
+            Expr::Binary {
+                op: BinOp::Or,
+                lhs,
+                rhs,
+                ..
+            } => {
+                split(lhs, out);
+                split(rhs, out);
+            }
+            other => out.push(other),
+        }
+    }
+    let expr = parse(text).ok()?;
+    let mut parts = Vec::new();
+    split(&expr, &mut parts);
+    parts.into_iter().map(read_expr).collect()
+}
+
 fn read_expr(expr: &Expr) -> Option<Reading> {
     // `(...) * on(instance) group_left(nodename) node_uname_info` only adds
     // the host name to the alert: the value is the left side's.
@@ -948,6 +984,35 @@ fn read_expr(expr: &Expr) -> Option<Reading> {
         reading.extra_condition |= !is_harmless_filter(rhs);
         return Some(reading);
     }
+    // `3 <= days < 20`: the first comparison only filters, the second is
+    // the condition.
+    if let Expr::Binary {
+        op,
+        lhs,
+        rhs,
+        bool_modifier: false,
+    } = expr
+    {
+        if let Expr::Binary {
+            op: filter,
+            lhs: low,
+            rhs: inner,
+            bool_modifier: false,
+        } = &**lhs
+        {
+            if op.is_comparison() && filter.is_comparison() && matches!(**low, Expr::Number(_)) {
+                let condition = Expr::Binary {
+                    op: *op,
+                    lhs: inner.clone(),
+                    rhs: rhs.clone(),
+                    bool_modifier: false,
+                };
+                let mut reading = read_expr(&condition)?;
+                reading.extra_condition = true;
+                return Some(reading);
+            }
+        }
+    }
     let Expr::Binary {
         op,
         lhs,
@@ -963,7 +1028,7 @@ fn read_expr(expr: &Expr) -> Option<Reading> {
     let mut leaves = Vec::new();
     let left = poly(lhs, &mut leaves)?;
     let right = poly(rhs, &mut leaves)?;
-    let difference = left.add(right.scale(-1.0));
+    let difference = seconds_left(left.add(right.scale(-1.0)));
     // One product of series plus a constant.
     let (variable, constant): (Vec<_>, Vec<_>) =
         difference.terms.iter().partition(|(_, m)| !m.is_empty());
@@ -993,6 +1058,34 @@ fn read_expr(expr: &Expr) -> Option<Reading> {
         leaves,
         extra_condition: false,
     })
+}
+
+/// `c * expiry - c * time()` as `c * seconds left`: the one sum of two
+/// series the reading takes, a certificate's time left.
+fn seconds_left(poly: Poly) -> Poly {
+    let one = |kind: LeafKind| Monomial::from([(kind, 1)]);
+    let expiry = poly
+        .terms
+        .iter()
+        .find(|(_, m)| *m == one(LeafKind::CertExpiry))
+        .map(|(c, _)| *c);
+    let time = poly
+        .terms
+        .iter()
+        .find(|(_, m)| *m == one(LeafKind::Time))
+        .map(|(c, _)| *c);
+    match (expiry, time) {
+        (Some(e), Some(t)) if (e + t).abs() < 1e-12 => {
+            let mut terms: Vec<(f64, Monomial)> = poly
+                .terms
+                .into_iter()
+                .filter(|(_, m)| *m != one(LeafKind::CertExpiry) && *m != one(LeafKind::Time))
+                .collect();
+            terms.push((e, one(LeafKind::CertSecondsLeft)));
+            Poly { terms }
+        }
+        _ => poly,
+    }
 }
 
 /// A value without the noise of floating point arithmetic.
@@ -1040,6 +1133,10 @@ fn poly(expr: &Expr, leaves: &mut Vec<Leaf>) -> Option<Poly> {
                 BinOp::Div => l.div(&r),
                 _ => None,
             }
+        }
+        // Rounding a value changes nothing worth saying.
+        Expr::Call { func, args } if func == "round" && matches!(args.len(), 1 | 2) => {
+            poly(&args[0], leaves)
         }
         _ => {
             let leaf = leaf(expr)?;
@@ -1095,6 +1192,19 @@ fn has(matchers: &[Matcher], label: &str, op: MatchOp, value: &str) -> bool {
         .any(|m| m.label == label && m.op == op && m.value == value)
 }
 
+/// The series of a blackbox exporter's probe a website check measures
+/// too.
+fn probe_kind(metric: &str) -> Option<LeafKind> {
+    Some(match metric {
+        "probe_success" => LeafKind::ProbeSuccess,
+        "probe_http_status_code" => LeafKind::ProbeStatusCode,
+        "probe_duration_seconds" => LeafKind::ProbeDuration { whole: true },
+        "probe_http_duration_seconds" => LeafKind::ProbeDuration { whole: false },
+        "probe_ssl_earliest_cert_expiry" => LeafKind::CertExpiry,
+        _ => return None,
+    })
+}
+
 fn leaf(expr: &Expr) -> Option<Leaf> {
     let make = |kind: LeafKind, matchers: &[Matcher]| {
         let mut matchers = matchers.to_vec();
@@ -1113,9 +1223,24 @@ fn leaf(expr: &Expr) -> Option<Leaf> {
             "up" => LeafKind::Up,
             "probe_success" => LeafKind::ProbeSuccess,
             "node_systemd_unit_state" => LeafKind::SystemdUnit,
-            _ => return None,
+            other => probe_kind(other)?,
         };
         return make(kind, matchers);
+    }
+    if let Expr::Call { func, args } = expr {
+        if func == "time" && args.is_empty() {
+            return make(LeafKind::Time, &[]);
+        }
+        // A probe's value over a short range: `avg_over_time(...[1m])`.
+        if matches!(
+            func.as_str(),
+            "avg_over_time" | "max_over_time" | "min_over_time" | "last_over_time"
+        ) {
+            if let [arg @ Expr::Selector { range: Some(_), .. }] = args.as_slice() {
+                let (metric, matchers) = selector(arg)?;
+                return make(probe_kind(metric)?, matchers);
+            }
+        }
     }
     if let Some((metric, matchers)) = rate_of(expr) {
         let kind = match metric {
@@ -1226,6 +1351,9 @@ fn leaf(expr: &Expr) -> Option<Leaf> {
                     | LeafKind::Load(_)
                     | LeafKind::Up
                     | LeafKind::ProbeSuccess
+                    | LeafKind::ProbeStatusCode
+                    | LeafKind::ProbeDuration { .. }
+                    | LeafKind::CertExpiry
             )
             .then_some(inner_leaf)
         }
@@ -1517,9 +1645,39 @@ mod tests {
     }
 
     #[test]
+    fn website_probes() {
+        let c = cond("probe_ssl_earliest_cert_expiry - time() < 86400 * 7");
+        assert!(c.is(&[(CertSecondsLeft, 1)]));
+        assert_eq!((c.cmp, c.value), (Cmp::Lt, 604_800.0));
+        let c = cond("(probe_ssl_earliest_cert_expiry - time()) / 86400 < 30");
+        assert!(c.is(&[(CertSecondsLeft, 1)]));
+        assert_eq!(c.value, 2_592_000.0);
+        let c = cond("probe_ssl_earliest_cert_expiry < time() + 86400");
+        assert!(c.is(&[(CertSecondsLeft, 1)]) && c.cmp == Cmp::Lt);
+        let r = read(
+            "3 <= round((last_over_time(probe_ssl_earliest_cert_expiry[10m]) - time()) / 86400, 0.1) < 20",
+        )
+        .unwrap();
+        assert!(r.condition.is(&[(CertSecondsLeft, 1)]) && r.extra_condition);
+        assert_eq!(r.condition.value, 1_728_000.0);
+        let c = cond("avg_over_time(probe_duration_seconds[1m]) > 1");
+        assert!(c.is(&[(ProbeDuration { whole: true }, 1)]));
+        let c = cond(r#"max by (instance) (probe_http_duration_seconds{phase="processing"}) > 1"#);
+        assert!(c.is(&[(ProbeDuration { whole: false }, 1)]));
+        let parts =
+            read_alternatives("probe_http_status_code <= 199 OR probe_http_status_code >= 400")
+                .unwrap();
+        assert_eq!(parts.len(), 2);
+        assert!(parts
+            .iter()
+            .all(|p| p.condition.is(&[(ProbeStatusCode, 1)])));
+        assert!(read_alternatives("probe_http_status_code > 399 or nothing_known > 1").is_none());
+    }
+
+    #[test]
     fn unknown_expressions() {
         for text in [
-            "probe_ssl_earliest_cert_expiry - time() < 86400 * 7",
+            "probe_ssl_earliest_cert_expiry - 2 * time() < 0",
             "probe_http_status_code <= 199 OR probe_http_status_code >= 400",
             "rate(node_network_receive_bytes_total[5m]) > 1e8",
             "increase(node_vmstat_oom_kill[1m]) > 0",

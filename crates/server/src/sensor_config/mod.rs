@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 use monitorflow_common::proto::v1 as proto;
 
+pub(crate) use store::with_secret;
 pub use store::SensorConfigStore;
 pub use watcher::{SensorConfigs, WatcherSettings};
 

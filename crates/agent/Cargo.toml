@@ -31,6 +31,8 @@ toml.workspace = true
 toml_edit.workspace = true
 thiserror.workspace = true
 monitorflow-sensors.workspace = true
+# Website checks (ADR-0150).
+monitorflow-webcheck.workspace = true
 # Check plugins in their sandbox (ADR-0103).
 monitorflow-plugin.workspace = true
 prost.workspace = true

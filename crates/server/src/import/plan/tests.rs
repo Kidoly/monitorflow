@@ -1,8 +1,8 @@
 use chrono::TimeZone;
 use monitorflow_common::redact::Secret;
 use monitorflow_import::model::{
-    Alert, Channel, Host, Origin, Repeat, Rule, Silence, Smtp, Threshold, Unmovable, Window,
-    EVERY_MONTH,
+    Alert, Channel, Host, Origin, Repeat, Rule, Silence, Smtp, Threshold, Unmovable, Website,
+    Window, EVERY_MONTH,
 };
 
 use super::*;
@@ -190,9 +190,7 @@ fn checks_become_sensor_rows_with_their_alert() {
             ),
             check(
                 "l",
-                Watch::Web {
-                    url: "https://shop.example/health".into(),
-                },
+                Watch::web(Website::new("https://shop.example/health")),
                 Some(Severity::Critical),
             ),
         ],
@@ -277,9 +275,313 @@ fn checks_become_sensor_rows_with_their_alert() {
         .items
         .iter()
         .any(|i| i.id.starts_with("threshold:lin:monitorflow_port_db")));
-    let web = by_id(&planned, "check:lin:port_shop_example_443");
-    assert_eq!(web.list, List::Approximated);
-    assert_eq!(web.note.as_ref().unwrap().code, "web_as_port");
+    // The page is a website check, with the source's alert.
+    let web = by_id(&planned, "check:lin:http_shop_example");
+    assert_eq!((web.list, web.note.as_ref()), (List::Exact, None));
+    let Some(Create::Check { kind, params, .. }) = &web.create else {
+        panic!()
+    };
+    assert_eq!(kind, "http");
+    assert_eq!(
+        Value::Object(params.clone()),
+        json!({"url": "https://shop.example/health"})
+    );
+    let Some(Create::Threshold {
+        comparison,
+        critical,
+        duration_s,
+        ..
+    }) = &by_id(&planned, "threshold:lin:monitorflow_http_shop_example_up").create
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (comparison.as_str(), *critical, *duration_s),
+        ("<", Some(1.0), 120)
+    );
+}
+
+fn website(url: &str) -> Website {
+    Website::new(url)
+}
+
+fn create_of(item: &Item) -> &Create {
+    item.create
+        .as_ref()
+        .expect("an item that creates something")
+}
+
+#[test]
+fn websites_come_with_the_alerts_the_web_interface_adds() {
+    let mut shop = website("https://shop.example.com/");
+    shop.status = Some("200,301".into());
+    shop.contains = Some("Welcome".into());
+    shop.not_contains = Some("Error".into());
+    shop.follow_redirects = false;
+    shop.method = monitorflow_import::model::WebMethod::Get;
+    shop.headers = vec![("Accept-Language".into(), "en".into())];
+    shop.ip = monitorflow_import::model::IpFamily::V4;
+    shop.timeout_s = Some(90);
+    let mut shop_check = check("l", Watch::web(shop), None);
+    shop_check.origin = Origin::new("web_scenario", "Shop");
+    let inventory = Inventory {
+        hosts: vec![host("l", "lin", Os::Linux)],
+        checks: vec![
+            shop_check,
+            check(
+                "l",
+                Watch::web(website("http://intranet.example:8080/")),
+                Some(Severity::Warning),
+            ),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let shop = by_id(&planned, "check:lin:http_shop_example_com");
+    assert_eq!(
+        (shop.list, &shop.needs),
+        (List::Exact, &vec!["server:lin".to_owned()])
+    );
+    let Create::Check {
+        kind,
+        params,
+        interval_ms,
+        timeout_ms,
+        ..
+    } = create_of(shop)
+    else {
+        panic!()
+    };
+    assert_eq!(kind, "http");
+    assert_eq!(
+        Value::Object(params.clone()),
+        json!({
+            "url": "https://shop.example.com/",
+            "status": "200,301",
+            "contains": "Welcome",
+            "not_contains": "Error",
+            "follow_redirects": "false",
+            "headers": "Accept-Language: en",
+            "ip": "4",
+        })
+    );
+    // At most the interval.
+    assert_eq!((*interval_ms, *timeout_ms), (60_000, Some(60_000)));
+    // Its alerts, as the web interface adds them for https.
+    let alert = |metric: &str| {
+        let item = by_id(&planned, &format!("threshold:lin:{metric}"));
+        // Its check, then its server.
+        let check = metric.split_once("monitorflow_").unwrap().1;
+        let check = ["_up", "_cert_ok", "_cert_days_left", "_response_seconds"]
+            .iter()
+            .find_map(|s| check.split(':').next().unwrap().strip_suffix(s))
+            .unwrap();
+        assert_eq!(
+            item.needs,
+            [format!("check:lin:{check}"), "server:lin".to_owned()],
+            "{metric}"
+        );
+        let Create::Threshold {
+            comparison,
+            warning,
+            critical,
+            duration_s,
+            ..
+        } = create_of(item)
+        else {
+            panic!()
+        };
+        (comparison.clone(), *warning, *critical, *duration_s)
+    };
+    assert_eq!(
+        alert("monitorflow_http_shop_example_com_up"),
+        ("<".into(), None, Some(1.0), 120)
+    );
+    assert_eq!(
+        alert("monitorflow_http_shop_example_com_cert_ok:*"),
+        ("<".into(), None, Some(1.0), 300)
+    );
+    assert_eq!(
+        alert("monitorflow_http_shop_example_com_cert_days_left:*"),
+        ("<".into(), Some(14.0), Some(7.0), 0)
+    );
+    assert_eq!(
+        alert("monitorflow_http_shop_example_com_response_seconds:*"),
+        (">".into(), Some(3.0), None, 300)
+    );
+    // Plain http: no certificate; the port is in the name; the source's
+    // severity and wait.
+    let intranet = by_id(&planned, "check:lin:http_intranet_example_8080");
+    assert_eq!(intranet.list, List::Exact);
+    assert_eq!(
+        alert("monitorflow_http_intranet_example_8080_up"),
+        ("<".into(), Some(1.0), None, 120)
+    );
+    assert!(!planned
+        .items
+        .iter()
+        .any(|i| i.id.contains("http_intranet_example_8080_cert")));
+    by_id(
+        &planned,
+        "threshold:lin:monitorflow_http_intranet_example_8080_response_seconds:*",
+    );
+    // Nothing is planned twice, and every id is unique.
+    let mut ids: Vec<_> = planned.items.iter().map(|i| i.id.as_str()).collect();
+    ids.sort_unstable();
+    let count = ids.len();
+    ids.dedup();
+    assert_eq!(count, ids.len());
+}
+
+#[test]
+fn thresholds_of_websites_replace_the_defaults() {
+    let url = "https://shop.example.com/";
+    let mut slow = threshold(
+        &["l"],
+        Measure::WebResponseTime { url: url.into() },
+        Some(1.5),
+        Some(5.0),
+        "Shop is slow",
+    );
+    slow.for_s = 60;
+    let mut expiry = threshold(
+        &["l"],
+        Measure::CertificateDays { url: url.into() },
+        Some(30.0),
+        None,
+        "Certificate expires",
+    );
+    expiry.direction = Direction::Below;
+    expiry.for_s = 0;
+    let elsewhere = threshold(
+        &["l"],
+        Measure::WebResponseTime {
+            url: "https://other.example.com/".into(),
+        },
+        Some(1.0),
+        None,
+        "Other is slow",
+    );
+    let inventory = Inventory {
+        hosts: vec![host("l", "lin", Os::Linux)],
+        checks: vec![check(
+            "l",
+            Watch::web(website(url)),
+            Some(Severity::Critical),
+        )],
+        thresholds: vec![slow, expiry, elsewhere],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let response = by_id(
+        &planned,
+        "threshold:lin:monitorflow_http_shop_example_com_response_seconds:*",
+    );
+    assert_eq!(response.origin.name, "Shop is slow");
+    assert!(response
+        .needs
+        .contains(&"check:lin:http_shop_example_com".to_owned()));
+    let Create::Threshold {
+        comparison,
+        warning,
+        critical,
+        duration_s,
+        ..
+    } = create_of(response)
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (comparison.as_str(), *warning, *critical, *duration_s),
+        (">", Some(1.5), Some(5.0), 60)
+    );
+    let days = by_id(
+        &planned,
+        "threshold:lin:monitorflow_http_shop_example_com_cert_days_left:*",
+    );
+    let Create::Threshold {
+        comparison,
+        warning,
+        critical,
+        ..
+    } = create_of(days)
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (comparison.as_str(), *warning, *critical),
+        ("<", Some(30.0), None)
+    );
+    // A threshold on a website nothing checks.
+    let other = planned
+        .items
+        .iter()
+        .find(|i| i.origin.name == "Other is slow")
+        .unwrap();
+    assert_eq!(other.list, List::NotMovable);
+    assert_eq!(other.note.as_ref().unwrap().code, "web_no_check");
+}
+
+#[test]
+fn website_passwords_are_set_after_the_import() {
+    let mut basic = website("https://shop.example.com/admin");
+    basic.username = Some("monitor".into());
+    basic.credentials = true;
+    let mut token = website("https://api.example.com/");
+    token.credentials = true;
+    let mut clear = website("http://intranet.example/");
+    clear.username = Some("monitor".into());
+    clear.credentials = true;
+    // A reader's own note gives way to the password's.
+    let mut noted = check("l", Watch::web(basic), None);
+    noted.fidelity = Fidelity::Approximated(Note::plain("web_certificate_only"));
+    let inventory = Inventory {
+        hosts: vec![host("l", "lin", Os::Linux)],
+        checks: vec![
+            noted,
+            check("l", Watch::web(token), None),
+            check("l", Watch::web(clear), None),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let note_of = |id: &str| {
+        let item = by_id(&planned, id);
+        assert_eq!(item.list, List::Approximated, "{id}");
+        let Create::Check { params, .. } = create_of(item) else {
+            panic!()
+        };
+        // Neither the user name alone nor any secret is sent.
+        assert!(!params.contains_key("password") && !params.contains_key("username"));
+        item.note.clone().unwrap()
+    };
+    let note = note_of("check:lin:http_shop_example_com");
+    assert_eq!(
+        (note.code.as_str(), note.args["username"].as_str()),
+        ("web_password", "monitor")
+    );
+    assert_eq!(note_of("check:lin:http_api_example_com").code, "web_token");
+    assert_eq!(
+        note_of("check:lin:http_intranet_example").code,
+        "web_password_http"
+    );
+    assert!(planned.secrets.is_empty());
+}
+
+#[test]
+fn a_website_the_check_refuses_cannot_be_moved() {
+    let mut bad = website("https://shop.example.com/");
+    bad.status = Some("not codes".into());
+    let inventory = Inventory {
+        hosts: vec![host("l", "lin", Os::Linux)],
+        checks: vec![check("l", Watch::web(bad), None)],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    assert_eq!(planned.items.len(), 2, "the server and the refusal");
+    let refused = &planned.items[1];
+    assert_eq!(refused.list, List::NotMovable);
+    assert_eq!(refused.note.as_ref().unwrap().code, "refused");
 }
 
 #[test]
@@ -868,6 +1170,40 @@ fn a_silence_of_checks_names_the_checks_planned() {
     };
     let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, ["service_nginx", "disk"]);
+}
+
+#[test]
+fn a_silence_names_website_checks_planned_or_not() {
+    let shop = Website::new("https://shop.example.com/");
+    let inventory = Inventory {
+        hosts: vec![host("1", "a", Os::Linux)],
+        checks: vec![check(
+            "1",
+            Watch::web(shop.clone()),
+            Some(Severity::Critical),
+        )],
+        silences: vec![Silence {
+            scope: SilenceScope::Hosts(vec!["1".into()]),
+            checks: vec![
+                Watch::web(shop),
+                // Not imported here: named as the plan would name it.
+                Watch::web(Website::new("http://intranet:8080/")),
+            ],
+            starts_at: now() + TimeDelta::hours(1),
+            ends_at: now() + TimeDelta::hours(2),
+            reason: "Shop release".into(),
+            origin: Origin::new("silence", "Shop release"),
+            fidelity: Fidelity::Exact,
+        }],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let silence = planned.items.iter().find(|i| i.kind == "silence").unwrap();
+    let Some(Create::Silence { checks, .. }) = &silence.create else {
+        panic!()
+    };
+    let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["http_shop_example_com", "http_intranet_8080"]);
 }
 
 fn weekly(zone: Option<&str>) -> Rule {

@@ -5,6 +5,7 @@ members = [
     "crates/sensors",
     "crates/probe",
     "crates/snmp",
+    "crates/webcheck",
     "crates/import",
     "crates/ai",
     "crates/agent",
@@ -37,6 +38,7 @@ monitorflow-ai = { path = "crates/ai" }
 monitorflow-server-ee = { path = "ee/crates/server-ee" }
 monitorflow-plugin = { path = "crates/plugin" }
 monitorflow-import = { path = "crates/import" }
+monitorflow-webcheck = { path = "crates/webcheck" }
 
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.14", features = ["tls-ring"] }
@@ -49,6 +51,13 @@ rustls-pemfile = "2"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+# Website checks (ADR-0150): an HTTP/1.1 client over our own TLS stream,
+# so the check sees the certificate it got.
+hyper = { version = "1", features = ["client", "http1"] }
+http-body-util = "0.1"
+url = "2"
+# The roots the machine running a website check trusts (ADR-0150).
+rustls-native-certs = "0.8"
 # OpenAPI document of the public API, generated from the code (ADR-0101).
 utoipa = { version = "=6.0.0", features = ["uuid", "chrono"] }
 # Swagger UI for the public API, its files built into the binary (ADR-0135).

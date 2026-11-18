@@ -117,6 +117,10 @@ pub enum Create {
         kind: String,
         name: String,
         interval_ms: u64,
+        /// How long one run may take, when the source says; at most
+        /// `interval_ms`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
         #[schema(value_type = Object)]
         params: Map<String, Value>,
         /// Run from the site's default probe, the relay of the site or the

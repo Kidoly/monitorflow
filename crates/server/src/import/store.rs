@@ -499,6 +499,7 @@ async fn create_one(
             kind,
             name,
             interval_ms,
+            timeout_ms,
             params,
             probe,
         } => {
@@ -509,6 +510,8 @@ async fn create_one(
                     .map_err(db_error)?
                     .ok_or("its server is not there")?,
             };
+            // Never a secret: an imported website check has no password
+            // (the person sets it after the import).
             // A probe check runs from the site's default probe (ADR-0148).
             let by = if *probe {
                 crate::api::sensors::default_probe(&mut **tx, site_id)
@@ -529,7 +532,7 @@ async fn create_one(
                     name: Some(name.clone()),
                     instance: String::new(),
                     interval_ms: *interval_ms,
-                    timeout_ms: None,
+                    timeout_ms: *timeout_ms,
                     params: params.clone(),
                     enabled: true,
                     probe: None,
@@ -537,9 +540,9 @@ async fn create_one(
                 address.as_deref(),
             )?;
             sqlx::query_scalar(
-                "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, params,
-                                             probe, probe_relay_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, timeout_ms,
+                                             params, probe, probe_relay_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                  ON CONFLICT ON CONSTRAINT sensor_configs_key DO NOTHING RETURNING id",
             )
             .bind(id)
@@ -547,6 +550,7 @@ async fn create_one(
             .bind(&valid.name)
             .bind(if *probe { by.key.as_str() } else { "" })
             .bind(valid.interval_ms)
+            .bind(valid.timeout_ms)
             .bind(&valid.params)
             .bind(by.probe)
             .bind(by.relay)

@@ -202,17 +202,72 @@ pub struct Receiver {
     pub configs: BTreeMap<String, Value>,
 }
 
-/// `blackbox.yml`: which prober each module uses.
+/// `blackbox.yml`: each module's prober and the settings of its HTTP and
+/// TCP probes that a website check can take (ADR-0150).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct BlackboxConfig {
     pub modules: BTreeMap<String, BlackboxModule>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct BlackboxModule {
     pub prober: String,
+    /// `5s`, as written.
+    pub timeout: Option<String>,
+    pub http: HttpProbe,
+    pub tcp: TcpProbe,
+}
+
+/// The blackbox exporter's `http` prober settings. Settings it has and
+/// the reader does not name are kept as values, to say they are not
+/// moved.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct HttpProbe {
+    /// Empty: any 2xx.
+    pub valid_status_codes: Vec<u16>,
+    pub method: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: String,
+    pub body_file: String,
+    /// Before blackbox exporter 0.22.
+    pub no_follow_redirects: Option<bool>,
+    pub follow_redirects: Option<bool>,
+    pub fail_if_ssl: bool,
+    pub fail_if_not_ssl: bool,
+    pub fail_if_body_matches_regexp: Vec<String>,
+    pub fail_if_body_not_matches_regexp: Vec<String>,
+    pub fail_if_header_matches: Vec<Value>,
+    pub fail_if_header_not_matches: Vec<Value>,
+    /// Only whether it is there: a password is never read.
+    pub basic_auth: Option<BasicAuth>,
+    pub bearer_token: Option<Value>,
+    pub bearer_token_file: Option<Value>,
+    pub authorization: Option<Value>,
+    pub oauth2: Option<Value>,
+    pub preferred_ip_protocol: String,
+    pub ip_protocol_fallback: Option<bool>,
+}
+
+/// A basic authentication: its user name, and whether it has a password.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct BasicAuth {
+    pub username: String,
+    pub password: Option<Value>,
+    pub password_file: Option<Value>,
+}
+
+/// The `tcp` prober settings: whether it speaks TLS.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct TcpProbe {
+    pub tls: bool,
+    pub query_response: Vec<Value>,
+    pub preferred_ip_protocol: String,
+    pub ip_protocol_fallback: Option<bool>,
 }
 
 /// What a file is, by its content.

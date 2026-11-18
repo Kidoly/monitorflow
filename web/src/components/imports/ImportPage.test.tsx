@@ -77,12 +77,12 @@ const items: ImportItem[] = [
     },
   },
   {
-    id: "check:web-01:port_shop_443",
+    id: "check:web-01:http_shop",
     kind: "check",
     list: "approximated",
     note: {
-      code: "web_as_port",
-      args: { port: "443", host: "shop" },
+      code: "web_password",
+      args: { username: "monitor" },
       text: "english",
     },
     origin: { kind: "web_scenario", name: "Shop" },
@@ -92,10 +92,10 @@ const items: ImportItem[] = [
     create: {
       object: "check",
       server: "web-01",
-      kind: "port",
-      name: "port_shop_443",
+      kind: "http",
+      name: "http_shop",
       interval_ms: 60000,
-      params: { port: "443", host: "shop" },
+      params: { url: "https://shop/" },
     },
   },
   {
@@ -227,7 +227,7 @@ describe("ImportPage", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "MonitorFlow checks that port 443 of shop answers; it does not read the page or its status code.",
+        "Passwords are not imported: set the password of monitor in the check after the import.",
       ),
     ).toBeInTheDocument();
     expect(

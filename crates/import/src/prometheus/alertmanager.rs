@@ -15,8 +15,8 @@ use serde_json::Value;
 
 use crate::args;
 use crate::model::{
-    Channel, Fidelity, Inventory, Measure, Origin, Repeat, Rule, Silence, SilenceScope, Smtp,
-    Target, Unmovable, Watch, Window, EVERY_MONTH,
+    Channel, Fidelity, Inventory, Origin, Repeat, Rule, Silence, SilenceScope, Smtp, Target,
+    Unmovable, Watch, Window, EVERY_MONTH,
 };
 use crate::notes::Note;
 use crate::text::{host_of, port_of};
@@ -330,12 +330,7 @@ fn checks_of(
     }
     for threshold in &inventory.thresholds {
         if threshold.hosts.iter().any(|h| hosts.contains(h)) && named(&threshold.origin) {
-            add(match threshold.measure {
-                Measure::CpuUsage | Measure::CpuLoad { .. } => Watch::Cpu,
-                Measure::MemoryAvailable => Watch::Memory,
-                Measure::DiskUsed { .. } => Watch::Disk,
-                Measure::DiskWait { .. } => Watch::DiskIo,
-            });
+            add(threshold.measure.watch(&inventory.checks));
         }
     }
     let offline = checks.contains(&Watch::Agent);
@@ -688,6 +683,7 @@ mod tests {
     use super::super::targets::Target as ScrapeTarget;
     use super::super::Collected;
     use super::*;
+    use crate::model::Measure;
 
     fn config(text: &str) -> AmConfig {
         serde_norway::from_str(text).unwrap()

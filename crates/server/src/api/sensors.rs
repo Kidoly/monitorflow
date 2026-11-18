@@ -25,6 +25,7 @@ use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::{ApiError, ApiState};
 use crate::plugins;
+use crate::secrets::{self, Column};
 use crate::sensor_config::{self, Layer, Row, Spec};
 
 /// Most parameters on one row.
@@ -63,6 +64,14 @@ pub struct EntryRequest {
     /// The kind's settings: a flat object of strings, numbers and
     /// booleans, at most 32, each value at most 1024 bytes. Unknown
     /// settings are refused.
+    ///
+    /// A website check (`http`, ADR-0150) takes `url` (required),
+    /// `method` (`GET` or `HEAD`), `status` (`200-299` by default, like
+    /// `200,301-302`), `contains`, `not_contains`, `follow_redirects`
+    /// (`true` by default), `headers` (`Name: value` lines), `username`,
+    /// `password` and `ip` (`any`, `4` or `6`). `password` is accepted
+    /// with an `https://` URL only, kept sealed and never returned: absent
+    /// from an update, the stored one is kept; `""` removes it.
     #[serde(default)]
     #[schema(value_type = Object)]
     pub params: Map<String, Value>,
@@ -84,6 +93,26 @@ fn enabled_by_default() -> bool {
     true
 }
 
+/// What a request does with the stored secret of a website check.
+#[derive(Clone, PartialEq, Eq)]
+pub enum SecretChange {
+    /// Keeps it: the request named no `password`.
+    Keep,
+    Set(String),
+    /// Removes it: `""`, or a kind that takes none.
+    Clear,
+}
+
+impl std::fmt::Debug for SecretChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Keep => "Keep",
+            Self::Set(_) => "Set(..)",
+            Self::Clear => "Clear",
+        })
+    }
+}
+
 /// An [`EntryRequest`] that passed [`validate_entry`], in database types.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValidEntry {
@@ -92,8 +121,28 @@ pub struct ValidEntry {
     pub instance: String,
     pub interval_ms: i64,
     pub timeout_ms: Option<i64>,
+    /// Without the secret.
     pub params: Value,
     pub enabled: bool,
+    /// What happens to the stored secret; never in `params`.
+    pub secret: SecretChange,
+}
+
+impl ValidEntry {
+    /// The secret to store, sealed: `None` to clear it, or keep it with
+    /// [`SecretChange::Keep`].
+    fn sealed_secret(&self) -> Result<Option<String>, ApiError> {
+        match &self.secret {
+            SecretChange::Set(secret) => secrets::seal(Column::SensorConfigs, secret)
+                .map(Some)
+                .map_err(|error| {
+                    ApiError::Internal(format!(
+                        "cannot seal the password of a website check: {error}"
+                    ))
+                }),
+            SecretChange::Keep | SecretChange::Clear => Ok(None),
+        }
+    }
 }
 
 /// Checks `request` as the agent will: ADR-0012's name, instance,
@@ -111,6 +160,30 @@ pub fn validate_with_host(
     request: EntryRequest,
     address: Option<&str>,
 ) -> Result<ValidEntry, String> {
+    validate_full(request, address, false)
+}
+
+/// [`validate_with_host`] for a row that may hold a secret already
+/// (`stored_secret`), which a request without `password` keeps.
+pub fn validate_full(
+    mut request: EntryRequest,
+    address: Option<&str>,
+    stored_secret: bool,
+) -> Result<ValidEntry, String> {
+    let website = request.kind == monitorflow_webcheck::KIND;
+    let secret = match request.params.remove(monitorflow_webcheck::SECRET_PARAM) {
+        _ if !website => SecretChange::Clear,
+        None if stored_secret => SecretChange::Keep,
+        None => SecretChange::Clear,
+        Some(Value::String(secret)) if secret.is_empty() => SecretChange::Clear,
+        Some(Value::String(secret)) => SecretChange::Set(secret),
+        Some(_) => {
+            return Err(format!(
+                "param `{}` must be a string",
+                monitorflow_webcheck::SECRET_PARAM
+            ))
+        }
+    };
     let name = request.name.unwrap_or_else(|| request.kind.clone());
     validate::sensor_name(&request.kind).map_err(|e| format!("kind: {e}"))?;
     validate::sensor_name(&name).map_err(|e| format!("name: {e}"))?;
@@ -155,6 +228,20 @@ pub fn validate_with_host(
         if !plugin.is_some_and(monitorflow_plugin::manifest::valid_name) {
             return Err(format!("param `{PLUGIN_PARAM}` must name a check plugin"));
         }
+    } else if website {
+        // Checked with the secret it will run with, kept or new. A website
+        // check names its URL: a device's address is not added.
+        let mut check = config.params.clone();
+        match &secret {
+            SecretChange::Set(secret) => {
+                check.insert(monitorflow_webcheck::SECRET_PARAM.into(), secret.clone());
+            }
+            SecretChange::Keep => {
+                check.insert(monitorflow_webcheck::SECRET_PARAM.into(), "kept".into());
+            }
+            SecretChange::Clear => {}
+        }
+        monitorflow_webcheck::build(&check, None).map_err(|e| e.to_string())?;
     } else if request.kind == monitorflow_snmp::KIND {
         // Credentials belong to the device, not to a row (ADR-0149).
         if let Some(key) = config
@@ -192,6 +279,7 @@ pub fn validate_with_host(
         timeout_ms: request.timeout_ms.map(millis),
         params,
         enabled: request.enabled,
+        secret,
     })
 }
 
@@ -233,6 +321,8 @@ pub struct Entry {
     /// for the central server, `relay` for the relay `probe_relay_id`.
     pub probe: Option<String>,
     pub probe_relay_id: Option<Uuid>,
+    /// Whether a website check holds a password, which is never returned.
+    pub secret_set: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -336,7 +426,7 @@ pub struct SiteEffective {
 
 const ENTRY_COLUMNS: &str = "id, site_id, server_id, kind, name, instance, interval_ms, \
                              timeout_ms, params, enabled, probe, probe_relay_id, \
-                             created_at, updated_at";
+                             secret IS NOT NULL AS secret_set, created_at, updated_at";
 
 /// A path ID that is not a UUID names nothing.
 pub(super) fn parse_id(id: &str) -> Result<Uuid, ApiError> {
@@ -446,6 +536,7 @@ fn audit_summary(entry: &Entry) -> Value {
         "probe": entry.probe,
         "probe_relay_id": entry.probe_relay_id,
         "param_names": param_names,
+        "secret_set": entry.secret_set,
     })
 }
 
@@ -642,7 +733,8 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
             "SNMP checks are for devices: add the address as a device (POST /api/devices)".into(),
         ));
     }
-    if by.address.is_none() && valid.params.get("host").is_none() {
+    let website = valid.kind == monitorflow_webcheck::KIND;
+    if !website && by.address.is_none() && valid.params.get("host").is_none() {
         return Err(ApiError::Invalid(
             "name the `host` to check: from a probe, the server's own address is not known".into(),
         ));
@@ -655,10 +747,10 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
 
 /// Kinds a probe runs.
 pub fn probe_kind(kind: &str) -> bool {
-    monitorflow_probe::PROBE_RUNS.contains(&kind)
+    monitorflow_probe::PROBE_RUNS.contains(&kind) || kind == monitorflow_webcheck::KIND
 }
 
-const PROBE_KINDS_TEXT: &str = "`ping`, `port` and `snmp`";
+const PROBE_KINDS_TEXT: &str = "`ping`, `port`, `snmp` and `http`";
 
 async fn create(
     state: &ApiState,
@@ -676,12 +768,13 @@ async fn create(
     check_run_by(&mut valid, &by)?;
     check_plugin(&mut *tx, &valid, site).await?;
     let (site_id, server_id) = owner.columns();
+    let secret = valid.sealed_secret()?;
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
     let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO sensor_configs
              (site_id, server_id, kind, name, instance, interval_ms, timeout_ms, params, enabled,
-              probe, probe_relay_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+              probe, probe_relay_id, secret)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING {ENTRY_COLUMNS}"
     )))
     .bind(site_id)
@@ -695,6 +788,7 @@ async fn create(
     .bind(valid.enabled)
     .bind(by.probe)
     .bind(by.relay)
+    .bind(secret)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| write_error(e, &valid))?;
@@ -779,15 +873,18 @@ pub async fn update(
         None => Owner::Site(site.unwrap_or_default()),
     };
     let by = run_by(&mut tx, owner, request.probe.as_deref()).await?;
-    let mut valid =
-        validate_with_host(request, by.address.as_deref()).map_err(ApiError::Invalid)?;
+    let mut valid = validate_full(request, by.address.as_deref(), before.secret_set)
+        .map_err(ApiError::Invalid)?;
     check_run_by(&mut valid, &by)?;
     check_plugin(&mut *tx, &valid, site).await?;
+    let keep = valid.secret == SecretChange::Keep;
+    let secret = valid.sealed_secret()?;
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
     let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE sensor_configs
          SET kind = $2, name = $3, instance = $4, interval_ms = $5, timeout_ms = $6,
-             params = $7, enabled = $8, probe = $9, probe_relay_id = $10, updated_at = now()
+             params = $7, enabled = $8, probe = $9, probe_relay_id = $10, updated_at = now(),
+             secret = CASE WHEN $11 THEN secret ELSE $12 END
          WHERE id = $1
          RETURNING {ENTRY_COLUMNS}"
     )))
@@ -801,6 +898,8 @@ pub async fn update(
     .bind(valid.enabled)
     .bind(by.probe)
     .bind(by.relay)
+    .bind(keep)
+    .bind(secret)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| write_error(e, &valid))?;
@@ -1180,6 +1279,7 @@ mod tests {
             enabled,
             probe: None,
             probe_relay_id: None,
+            secret_set: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

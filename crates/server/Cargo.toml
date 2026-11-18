@@ -26,6 +26,8 @@ monitorflow-server-ee = { workspace = true, optional = true }
 monitorflow-common = { workspace = true, features = ["mirror", "server-update", "openapi"] }
 monitorflow-probe.workspace = true
 monitorflow-snmp.workspace = true
+# Website checks among the probe kinds (ADR-0150).
+monitorflow-webcheck.workspace = true
 monitorflow-sensors.workspace = true
 # Readers of other monitoring tools' configuration (ADR-0146).
 monitorflow-import.workspace = true

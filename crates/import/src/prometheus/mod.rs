@@ -18,6 +18,7 @@ use crate::source::{Context, Field, Input, ReadError, Source, SourceInfo, MAX_HO
 
 pub mod alertmanager;
 pub mod api;
+pub mod blackbox;
 pub mod config;
 pub mod files;
 pub mod hosts;
@@ -37,8 +38,8 @@ pub struct Collected {
     pub rules: Vec<rules::Rule>,
     pub alertmanager: Option<config::AmConfig>,
     pub silences: Vec<alertmanager::SilenceIn>,
-    /// The prober of each blackbox module, from `blackbox.yml`.
-    pub probers: BTreeMap<String, String>,
+    /// Blackbox modules by name, from `blackbox.yml`.
+    pub modules: BTreeMap<String, config::BlackboxModule>,
     /// What could not be read at all: missing files, other discoveries.
     pub unmovable: Vec<Unmovable>,
 }

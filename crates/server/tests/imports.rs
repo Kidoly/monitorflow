@@ -11,7 +11,7 @@ use chrono::{TimeDelta, Utc};
 use monitorflow_common::redact::Secret;
 use monitorflow_import::model::{
     Alert, Channel, Check, Direction, Fidelity, Host, Inventory, Measure, Origin, Os, Repeat, Rule,
-    Severity, Silence, SilenceScope, Smtp, Target, Threshold, Watch, Window, EVERY_MONTH,
+    Severity, Silence, SilenceScope, Smtp, Target, Threshold, Watch, Website, Window, EVERY_MONTH,
 };
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
@@ -496,6 +496,115 @@ db_tests! {
         assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 0);
         let skip: HashSet<String> = HashSet::new();
         assert!(store::confirm(&pool, id, &skip, admin, false, Utc::now()).await.is_err());
+    }
+
+    #[sqlx::test]
+    async fn a_web_check_becomes_a_website_check_without_its_password(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let mut shop = Website::new("https://shop.example.com/");
+        shop.status = Some("200,301".into());
+        shop.contains = Some("Welcome".into());
+        shop.username = Some("monitor".into());
+        shop.credentials = true;
+        shop.timeout_s = Some(10);
+        let inventory = Inventory {
+            hosts: vec![Host {
+                key: "1".into(),
+                name: "web-01".into(),
+                visible_name: None,
+                addresses: vec![],
+                os: Os::Debian,
+                groups: vec![],
+                origin: origin("host", "web-01"),
+                agentless: false,
+            }],
+            checks: vec![Check {
+                host: "1".into(),
+                watch: Watch::web(shop),
+                interval_s: Some(60),
+                alert: None,
+                origin: origin("web_scenario", "Shop"),
+                fidelity: Fidelity::Exact,
+            }],
+            thresholds: vec![Threshold {
+                hosts: vec!["1".into()],
+                measure: Measure::WebResponseTime { url: "https://shop.example.com/".into() },
+                direction: Direction::Above,
+                warning: Some(2.0),
+                critical: None,
+                for_s: 60,
+                recovery: None,
+                origin: origin("trigger", "Shop is slow"),
+                fidelity: Fidelity::Exact,
+            }],
+            ..Inventory::default()
+        };
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (status, run) = call(&pool, "GET", &format!("/api/imports/{id}"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        let check = run["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == "check:web-01:http_shop_example_com")
+            .unwrap_or_else(|| panic!("{run}"));
+        assert_eq!(check["list"], "approximated");
+        assert_eq!(check["note"]["code"], "web_password");
+
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["failed"], json!([]), "{run}");
+        // The check, its alert, and the alerts the web interface adds,
+        // the response time one from the source.
+        assert_eq!(
+            run["result"]["created"],
+            json!({"server": 1, "check": 1, "threshold": 4}),
+            "{run}"
+        );
+        let (kind, name, interval, timeout, params, sealed): (String, String, i64, Option<i64>, Value, bool) =
+            sqlx::query_as(
+                "SELECT kind, name, interval_ms, timeout_ms, params, secret IS NOT NULL FROM sensor_configs",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            (kind.as_str(), name.as_str(), interval, timeout, sealed),
+            ("http", "http_shop_example_com", 60_000, Some(10_000), false)
+        );
+        assert_eq!(
+            params,
+            json!({"url": "https://shop.example.com/", "status": "200,301", "contains": "Welcome"})
+        );
+        type Row = (String, String, Option<f64>, Option<f64>, i32);
+        let thresholds: Vec<Row> = sqlx::query_as(
+            "SELECT metric, comparison, warning, critical, duration_s FROM thresholds ORDER BY metric",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            thresholds,
+            vec![
+                ("monitorflow_http_shop_example_com_cert_days_left".into(), "<".into(), Some(14.0), Some(7.0), 0),
+                ("monitorflow_http_shop_example_com_cert_ok".into(), "<".into(), None, Some(1.0), 300),
+                ("monitorflow_http_shop_example_com_response_seconds".into(), ">".into(), Some(2.0), None, 60),
+                ("monitorflow_http_shop_example_com_up".into(), "<".into(), None, Some(1.0), 120),
+            ]
+        );
+
+        // Importing it again creates nothing.
+        let again = preview(&pool, paris, admin, &inventory).await;
+        let (_, run) = call(&pool, "GET", &format!("/api/imports/{again}"), &cookie, None).await;
+        let fresh: Vec<&Value> = run["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["present"] == false)
+            .collect();
+        assert!(fresh.is_empty(), "{fresh:#?}");
     }
 
     #[sqlx::test]

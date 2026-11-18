@@ -13,6 +13,8 @@ use crate::model::{Check, Fidelity, Host, Inventory, Origin, Os, Unmovable, Watc
 use crate::notes::Note;
 use crate::text::{host_of, port_of};
 
+use super::blackbox;
+use super::config::BlackboxModule;
 use super::targets::Target;
 use super::Collected;
 
@@ -256,7 +258,7 @@ impl Fleet {
         let Some(probe) = &target.probe else { return };
         // A ping, a DNS query or an SNMP walk is about the address probed,
         // wherever the exporter runs (ADR-0148, ADR-0149).
-        let kind = match prober(&probe.module, &collected.probers) {
+        let kind = match prober(&probe.module, &collected.modules) {
             _ if target.job.to_ascii_lowercase().contains("snmp") => Prober::Snmp,
             kind => kind,
         };
@@ -316,12 +318,23 @@ impl Fleet {
             origin: origin.clone(),
             fidelity,
         };
-        let check = match prober(&probe.module, &collected.probers) {
+        let module = collected.modules.get(&probe.module);
+        let first = |notes: Vec<Note>| {
+            notes
+                .into_iter()
+                .next()
+                .map_or(Fidelity::Exact, Fidelity::Approximated)
+        };
+        let check = match prober(&probe.module, &collected.modules) {
             Prober::Tcp => {
                 let port = port_of(&probe.target);
                 let address = host_of(&probe.target);
-                match port {
-                    Some(port) if !address.is_empty() => make(
+                match (port, module) {
+                    (Some(port), Some(module)) if !address.is_empty() && module.tcp.tls => {
+                        let (site, notes) = blackbox::certificate(&address, port, module);
+                        make(host.clone(), Watch::web(site), first(notes))
+                    }
+                    (Some(port), _) if !address.is_empty() => make(
                         host.clone(),
                         Watch::Port {
                             address: Some(address),
@@ -341,8 +354,8 @@ impl Fleet {
                 } else {
                     format!("http://{}", probe.target)
                 };
-                // The server says how a web check is approximated.
-                make(host.clone(), Watch::Web { url }, Fidelity::Exact)
+                let (site, notes) = blackbox::http(&url, module);
+                make(host.clone(), Watch::web(site), first(notes))
             }
             Prober::Icmp | Prober::Dns | Prober::Snmp => return,
             Prober::Other => {
@@ -500,10 +513,11 @@ pub enum Prober {
 /// The prober of `module`: from `blackbox.yml` when it was uploaded,
 /// otherwise guessed from the usual module names (`http_2xx`,
 /// `tcp_connect`, `icmp`, `ssh_banner`).
-pub fn prober(module: &str, probers: &BTreeMap<String, String>) -> Prober {
-    let text = probers
-        .get(module)
-        .map_or_else(|| module.to_ascii_lowercase(), |p| p.to_ascii_lowercase());
+pub fn prober(module: &str, modules: &BTreeMap<String, BlackboxModule>) -> Prober {
+    let text = modules.get(module).map_or_else(
+        || module.to_ascii_lowercase(),
+        |m| m.prober.to_ascii_lowercase(),
+    );
     let has = |words: &[&str]| words.iter().any(|w| text.contains(w));
     if has(&["icmp", "ping"]) {
         Prober::Icmp
@@ -567,7 +581,13 @@ mod tests {
         assert_eq!(prober("dns_udp", &none), Prober::Dns);
         assert_eq!(prober("if_mib", &none), Prober::Snmp);
         assert_eq!(prober("grpc", &none), Prober::Other);
-        let custom = BTreeMap::from([("shop".to_owned(), "http".to_owned())]);
+        let custom = BTreeMap::from([(
+            "shop".to_owned(),
+            BlackboxModule {
+                prober: "http".into(),
+                ..BlackboxModule::default()
+            },
+        )]);
         assert_eq!(prober("shop", &custom), Prober::Http);
         assert_eq!(prober("shop", &none), Prober::Other);
     }

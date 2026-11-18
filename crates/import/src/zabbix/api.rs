@@ -15,8 +15,9 @@ use reqwest::{Client, Method, Url};
 use serde_json::{json, Value};
 
 use super::config::{
-    Config, Host, Interface, InterfaceKind, Item, ItemKind, Macro, Maintenance, MediaKind,
-    MediaType, Period, PeriodKind, Priority, TagFilter, Template, Trigger, UserMedia, WebScenario,
+    Config, Host, HttpAgent, Interface, InterfaceKind, Item, ItemKind, Macro, Maintenance,
+    MediaKind, MediaType, Period, PeriodKind, Priority, TagFilter, Template, Trigger, UserMedia,
+    WebAuth, WebRequest, WebScenario,
 };
 use super::export::{list, text};
 use crate::http;
@@ -267,8 +268,15 @@ impl Api {
                     "httptest.get",
                     json!({
                         "hostids": host_ids,
-                        "output": ["httptestid", "hostid", "name", "delay", "status"],
-                        "selectSteps": ["no", "url"],
+                        "output": [
+                            "httptestid", "hostid", "name", "delay", "status", "headers",
+                            "variables", "authentication", "http_user", "http_password",
+                        ],
+                        "selectSteps": [
+                            "no", "name", "url", "query_fields", "posts", "required",
+                            "status_codes", "follow_redirects", "retrieve_mode", "headers",
+                            "variables", "timeout",
+                        ],
                     }),
                 )
                 .await?
@@ -391,7 +399,18 @@ impl Api {
             "type",
             "status",
             "url",
-            "templateid"
+            "templateid",
+            "query_fields",
+            "request_method",
+            "posts",
+            "status_codes",
+            "follow_redirects",
+            "retrieve_mode",
+            "headers",
+            "authtype",
+            "username",
+            "password",
+            "timeout"
         ]);
         let items = self
             .get(
@@ -617,16 +636,117 @@ fn item_kind(number: &str) -> ItemKind {
 }
 
 fn item_of(raw: &Value, prototype: bool, template: Option<String>) -> Item {
+    let kind = item_kind(&text(raw, "type"));
     Item {
         name: text(raw, "name"),
         key: text(raw, "key_"),
-        kind: item_kind(&text(raw, "type")),
+        kind,
         delay: Some(text(raw, "delay")).filter(|d| !d.is_empty()),
         enabled: text(raw, "status") == "0",
         prototype,
-        url: Some(text(raw, "url")).filter(|u| !u.is_empty()),
+        http: (kind == ItemKind::HttpAgent).then(|| Box::new(http_agent_of(raw))),
         snmp_oid: Some(text(raw, "snmp_oid")).filter(|o| !o.is_empty()),
         template,
+    }
+}
+
+/// Name and value pairs: `[{"name": .., "value": ..}]` as Zabbix 7.0 and
+/// web scenarios write them, `{"name": "value"}` or `[{"name": "value"}]`
+/// as items did before.
+fn pairs(raw: &Value, key: &str) -> Vec<(String, String)> {
+    let scalar = |v: &Value| match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    };
+    let mut out = Vec::new();
+    match raw.get(key) {
+        Some(Value::Array(items)) => {
+            for item in items {
+                if item.get("name").is_some() {
+                    out.push((text(item, "name"), text(item, "value")));
+                } else if let Value::Object(map) = item {
+                    out.extend(map.iter().map(|(k, v)| (k.clone(), scalar(v))));
+                }
+            }
+        }
+        Some(Value::Object(map)) => out.extend(map.iter().map(|(k, v)| (k.clone(), scalar(v)))),
+        _ => {}
+    }
+    out.retain(|(name, _)| !name.is_empty());
+    out
+}
+
+/// Whether `key` holds anything: a non-empty text, list or object.
+fn has(raw: &Value, key: &str) -> bool {
+    match raw.get(key) {
+        Some(Value::String(s)) => !s.trim().is_empty(),
+        Some(Value::Array(a)) => !a.is_empty(),
+        Some(Value::Object(o)) => !o.is_empty(),
+        _ => false,
+    }
+}
+
+/// An authentication number of the API, with its user and password keys.
+fn auth_of(raw: &Value, kind: &str, user: &str, password: &str) -> WebAuth {
+    let kind = match text(raw, kind).as_str() {
+        "1" => "basic",
+        "2" => "ntlm",
+        "3" => "kerberos",
+        "4" => "digest",
+        _ => "",
+    };
+    WebAuth {
+        kind: kind.into(),
+        user: if kind.is_empty() {
+            String::new()
+        } else {
+            text(raw, user)
+        },
+        password: !kind.is_empty() && !text(raw, password).is_empty(),
+    }
+}
+
+fn http_agent_of(raw: &Value) -> HttpAgent {
+    let method = match text(raw, "request_method").as_str() {
+        "1" => "POST",
+        "2" => "PUT",
+        "3" => "HEAD",
+        _ => "GET",
+    };
+    HttpAgent {
+        request: WebRequest {
+            name: String::new(),
+            url: text(raw, "url"),
+            query: pairs(raw, "query_fields"),
+            method: method.into(),
+            body: has(raw, "posts"),
+            status_codes: text(raw, "status_codes"),
+            required: String::new(),
+            follow_redirects: text(raw, "follow_redirects") != "0",
+            headers_only: text(raw, "retrieve_mode") == "1",
+            headers: pairs(raw, "headers"),
+            variables: false,
+            timeout: Some(text(raw, "timeout")).filter(|t| !t.is_empty()),
+        },
+        auth: auth_of(raw, "authtype", "username", "password"),
+    }
+}
+
+fn step_of(raw: &Value) -> WebRequest {
+    WebRequest {
+        name: text(raw, "name"),
+        url: text(raw, "url"),
+        query: pairs(raw, "query_fields"),
+        method: "GET".into(),
+        body: has(raw, "posts"),
+        status_codes: text(raw, "status_codes"),
+        required: text(raw, "required"),
+        follow_redirects: text(raw, "follow_redirects") != "0",
+        headers_only: text(raw, "retrieve_mode") == "1",
+        headers: pairs(raw, "headers"),
+        variables: has(raw, "variables"),
+        timeout: Some(text(raw, "timeout")).filter(|t| !t.is_empty()),
     }
 }
 
@@ -655,11 +775,10 @@ fn web_of(raw: &Value) -> WebScenario {
         name: text(raw, "name"),
         delay: Some(text(raw, "delay")).filter(|d| !d.is_empty()),
         enabled: text(raw, "status") == "0",
-        urls: steps
-            .into_iter()
-            .map(|s| text(s, "url"))
-            .filter(|u| !u.is_empty())
-            .collect(),
+        steps: steps.into_iter().map(step_of).collect(),
+        headers: pairs(raw, "headers"),
+        variables: has(raw, "variables"),
+        auth: auth_of(raw, "authentication", "http_user", "http_password"),
     }
 }
 

@@ -82,7 +82,7 @@ fn primary(sensor: &EffectiveSensor) -> (String, Option<String>, Rollup) {
         "diskio" => (Some("busy_ratio"), None, Rollup::Max),
         "net" => (Some("receive_bytes_per_second"), None, Rollup::Max),
         "systemd" | "windows_service" => (Some("active"), None, Rollup::Min),
-        "port" | "ping" => (Some("up"), None, Rollup::Min),
+        "port" | "ping" | "http" => (Some("up"), None, Rollup::Min),
         // An SNMP check stands for what its group watches most (ADR-0149).
         "snmp" => match sensor.params.get("what").map(String::as_str) {
             Some("interfaces") => (Some("oper_up"), None, Rollup::Min),

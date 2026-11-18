@@ -91,8 +91,52 @@ pub const NOTES: &[(&str, &str)] = &[
         "MonitorFlow's offline alert tells when the agent stops answering, after {minutes} minutes.",
     ),
     (
-        "web_as_port",
-        "MonitorFlow checks that port {port} of {host} answers; it does not read the page or its status code.",
+        "web_password",
+        "Passwords are not imported: set the password of {username} in the check after the import.",
+    ),
+    (
+        "web_token",
+        "Tokens are not imported: set the token as the check's password after the import.",
+    ),
+    (
+        "web_password_http",
+        "The source sends a password over plain http; MonitorFlow sends one only over https, so the check runs without it.",
+    ),
+    (
+        "web_auth",
+        "MonitorFlow uses basic authentication, not {kind}: the check runs without it.",
+    ),
+    (
+        "web_method",
+        "MonitorFlow sends GET or HEAD requests only: the check sends GET instead of {method}, without a body.",
+    ),
+    (
+        "web_regex",
+        "MonitorFlow looks for plain text, not a pattern: the condition {pattern} is not moved.",
+    ),
+    (
+        "web_steps",
+        "Only the first of {count} steps is moved: a MonitorFlow website check reads one page.",
+    ),
+    (
+        "web_setting",
+        "The setting {setting} has no equivalent in a MonitorFlow website check; the rest is moved.",
+    ),
+    (
+        "web_header",
+        "The header {name} is not moved: MonitorFlow sets it itself or does not keep it in clear.",
+    ),
+    (
+        "web_certificate_only",
+        "The source checks only the certificate; MonitorFlow's website check also requests the page, whatever its status.",
+    ),
+    (
+        "web_response_phase",
+        "MonitorFlow measures the whole response time, redirects included, not one phase of it.",
+    ),
+    (
+        "web_no_check",
+        "It is about a website this import does not check.",
     ),
     (
         "silence_next_window",
@@ -260,6 +304,10 @@ pub const NOTES: &[(&str, &str)] = &[
         "An export has no users' media, so no recipients: connect to the Zabbix API to read them, or add the channel by hand.",
     ),
     (
+        "zabbix_web_step",
+        "Only the first step of a web scenario is moved; this is about the step {step}.",
+    ),
+    (
         "zabbix_not_set",
         "Its setting {setting} has no usable address in the source.",
     ),
@@ -338,10 +386,6 @@ pub const NOTES: &[(&str, &str)] = &[
         "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
     ),
     (
-        "prtg_certificate",
-        "MonitorFlow checks that port {port} answers; the certificate and its expiry are not checked.",
-    ),
-    (
         "prtg_sensor_type",
         "MonitorFlow has no check like this PRTG sensor ({type}).",
     ),
@@ -409,13 +453,10 @@ mod tests {
 
     #[test]
     fn notes_fill_their_arguments() {
-        let note = Note::new(
-            "web_as_port",
-            args! {"port" => 443, "host" => "shop.example"},
-        );
+        let note = Note::new("web_password", args! {"username" => "monitor"});
         assert_eq!(
             note.text(),
-            "MonitorFlow checks that port 443 of shop.example answers; it does not read the page or its status code."
+            "Passwords are not imported: set the password of monitor in the check after the import."
         );
         assert_eq!(
             Note::plain("builtin_net").text(),

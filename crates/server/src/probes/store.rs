@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::ProbeSet;
-use crate::sensor_config::params;
+use crate::sensor_config::{params, with_secret};
 
 #[derive(Debug, Clone)]
 pub struct ProbeStore {
@@ -30,6 +30,7 @@ type Line = (
     serde_json::Value,
     String,
     Option<String>,
+    Option<String>,
 );
 
 impl ProbeStore {
@@ -41,7 +42,7 @@ impl ProbeStore {
     pub async fn load(&self) -> Result<HashMap<String, ProbeSet>, sqlx::Error> {
         let lines: Vec<Line> = sqlx::query_as(
             "SELECT s.peer_id, si.name, s.address, c.kind, c.name, c.instance,
-                    c.interval_ms, c.timeout_ms, c.params, c.probe, r.peer_id
+                    c.interval_ms, c.timeout_ms, c.params, c.probe, r.peer_id, c.secret
              FROM sensor_configs c
              JOIN servers s ON s.id = c.server_id
              JOIN sites si ON si.id = s.site_id
@@ -131,15 +132,31 @@ fn non_negative(value: i64) -> u64 {
 fn group(lines: Vec<Line>) -> HashMap<String, ProbeSet> {
     let mut sets: HashMap<String, ProbeSet> = HashMap::new();
     for line in lines {
-        let (device, site, address, kind, name, instance, interval, timeout, raw, probe, relay) =
-            line;
+        let (
+            device,
+            site,
+            address,
+            kind,
+            name,
+            instance,
+            interval,
+            timeout,
+            raw,
+            probe,
+            relay,
+            secret,
+        ) = line;
         let probe = match (probe.as_str(), relay) {
             ("central", _) => CENTRAL.to_owned(),
             (_, Some(relay)) => relay,
             _ => continue,
         };
         let mut params: BTreeMap<String, String> = params(raw);
-        if let Some(address) = address {
+        // The password of a website check, opened for the probe that runs
+        // it, which gets it over its mTLS stream like an agent.
+        with_secret(&kind, &mut params, secret);
+        // A website check names its URL itself (ADR-0150).
+        if let Some(address) = address.filter(|_| kind != monitorflow_webcheck::KIND) {
             params.entry("host".into()).or_insert(address);
         }
         let mut config = SensorConfig::new(name, Duration::from_millis(non_negative(interval)));
@@ -181,6 +198,7 @@ mod tests {
             params,
             probe.into(),
             relay.map(str::to_owned),
+            None,
         )
     }
 
@@ -199,6 +217,7 @@ mod tests {
                 serde_json::json!({"what": "interfaces"}),
                 "central".into(),
                 None,
+                None,
             ),
             (
                 "printer".into(),
@@ -211,6 +230,7 @@ mod tests {
                 None,
                 serde_json::json!({}),
                 "central".into(),
+                None,
                 None,
             ),
             line(
@@ -267,11 +287,30 @@ mod tests {
                 serde_json::json!({"host": "198.51.100.7"}),
             ),
             line("odd", None, "ping", "relay", None, serde_json::json!({})),
+            {
+                let mut web = line(
+                    "nas",
+                    Some("192.0.2.5"),
+                    "http",
+                    "central",
+                    None,
+                    serde_json::json!({"url": "https://nas.test/"}),
+                );
+                web.3 = "http".into();
+                web
+            },
         ]);
         assert_eq!(sets.len(), 2);
         let central = &sets[CENTRAL];
-        assert_eq!(central.checks.len(), 1);
+        assert_eq!(central.checks.len(), 2);
         assert_eq!(central.checks[0].config.params["host"], "192.0.2.5");
+        let web = &central.checks[1];
+        assert_eq!(web.kind, "http");
+        assert!(
+            !web.config.params.contains_key("host"),
+            "{:?}",
+            web.config.params
+        );
         assert_eq!(central.sites["nas"], "paris");
         let relay = &sets["relay-1"];
         assert_eq!(relay.checks.len(), 2);

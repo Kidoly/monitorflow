@@ -1,0 +1,8 @@
+# The web interface's static export and the API on 127.0.0.1, for the
+# test's browser only.
+server {
+    listen 127.0.0.1:${MF_UI_PORT};
+    root /srv/web;
+    location /api/ { proxy_pass http://127.0.0.1:${MF_API_PORT}; }
+    location / { try_files $uri $uri.html $uri/ /404.html; }
+}

@@ -134,24 +134,34 @@ async fn checks_and_thresholds() {
         mount: Some("/var".into()),
     });
     assert_eq!(var.warning, Some(0.9));
-    // The page and the certificate are both port 443 of web01: one check.
-    let ports = inv
+    // The page and the certificate of web01 are one website check, with
+    // the page's response time and the certificate's days limits.
+    let url = "https://web01.example.net/health";
+    let pages: Vec<&Watch> = inv
         .checks
         .iter()
-        .filter(|c| matches!(c.watch, Watch::Port { port: 443, .. } | Watch::Web { .. }))
-        .count();
-    assert_eq!(ports, 1);
-    assert!(inv
-        .unmovable
-        .iter()
-        .any(|u| u.origin.name == "Certificate" && u.why.code == "prtg_same_port"));
+        .map(|c| &c.watch)
+        .filter(|w| matches!(w, Watch::Web(_)))
+        .collect();
+    assert_eq!(pages, [&Watch::web(crate::model::Website::new(url))]);
+    let response = find(Measure::WebResponseTime { url: url.into() });
+    assert_eq!(
+        (response.direction, response.warning, response.critical),
+        (Direction::Above, Some(0.5), None)
+    );
+    let days = find(Measure::CertificateDays { url: url.into() });
+    assert_eq!(
+        (days.direction, days.warning, days.critical),
+        (Direction::Below, Some(30.0), Some(7.0))
+    );
+    assert_eq!(days.origin.name, "Certificate");
     let lost: Vec<&str> = inv
         .unmovable
         .iter()
         .filter(|u| u.why.code == "prtg_limit")
         .map(|u| u.why.args["channel"].as_str())
         .collect();
-    assert_eq!(lost, ["CPU 1", "C:\\ Free Bytes", "Response Time",]);
+    assert_eq!(lost, ["CPU 1", "C:\\ Free Bytes"]);
 }
 
 #[tokio::test]

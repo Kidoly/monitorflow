@@ -144,14 +144,19 @@ impl SensorFactory for Builtin {
                 )),
             };
         }
-        sensors::registry::build_local(kind, &config.params, &self.local).map_err(|error| {
-            match error {
-                sensors::BuildError::UnknownKind(kind) => FactoryError::UnknownKind(kind),
-                refused @ sensors::BuildError::Refused { .. } => {
-                    FactoryError::Refused(refused.to_string())
-                }
-                other => FactoryError::Invalid(other.to_string()),
+        let built = if kind == monitorflow_webcheck::KIND {
+            // Website checks within the same limits as port checks
+            // (ADR-0111, ADR-0150).
+            monitorflow_webcheck::build(&config.params, self.local.port_targets.as_ref())
+        } else {
+            sensors::registry::build_local(kind, &config.params, &self.local)
+        };
+        built.map_err(|error| match error {
+            sensors::BuildError::UnknownKind(kind) => FactoryError::UnknownKind(kind),
+            refused @ sensors::BuildError::Refused { .. } => {
+                FactoryError::Refused(refused.to_string())
             }
+            other => FactoryError::Invalid(other.to_string()),
         })
     }
 }
@@ -390,13 +395,24 @@ impl ConfigFile {
     }
 
     /// Writes a temporary file and renames it, so a crash leaves the old
-    /// or the new configuration, never half of one.
+    /// or the new configuration, never half of one. Readable by the
+    /// agent's user only on Unix: a website check may carry a password
+    /// (ADR-0150).
     pub async fn save(&self, config: &SensorConfig) -> io::Result<()> {
+        use tokio::io::AsyncWriteExt;
         if let Some(dir) = self.path.parent() {
             tokio::fs::create_dir_all(dir).await?;
         }
         let tmp = self.path.with_extension("pb.tmp");
-        tokio::fs::write(&tmp, config.encode_to_vec()).await?;
+        let _ = tokio::fs::remove_file(&tmp).await;
+        let mut options = tokio::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&tmp).await?;
+        file.write_all(&config.encode_to_vec()).await?;
+        file.flush().await?;
+        drop(file);
         tokio::fs::rename(&tmp, &self.path).await
     }
 }
@@ -557,6 +573,28 @@ mod tests {
             matches!(&error, FactoryError::Refused(m) if m.contains("refused by this agent") && m.contains("not installed")),
             "{error}"
         );
+        let mut website = config.clone();
+        website
+            .params
+            .insert("url".into(), "https://example.com/".into());
+        assert!(builtin.build("http", &website).is_ok());
+        let limited = Builtin::new(
+            local(&AgentSensorsConfig {
+                port_targets: Some(vec!["10.0.0.0/8:22".into()]),
+                ..AgentSensorsConfig::default()
+            })
+            .unwrap(),
+        );
+        let error = limited.build("http", &website).err().unwrap();
+        assert!(
+            matches!(&error, FactoryError::Refused(m) if m.contains("port_targets")),
+            "{error}"
+        );
+        website.params.insert("url".into(), "ftp://x".into());
+        assert!(matches!(
+            builtin.build("http", &website),
+            Err(FactoryError::Invalid(_))
+        ));
         let builtin = Builtin::default();
         assert_eq!(
             builtin.build("gpu", &config).err(),
@@ -643,7 +681,15 @@ mod tests {
             sensors: vec![spec("fake", "good", 10_000)],
         };
         file.save(&config).await.unwrap();
+        file.save(&config).await.unwrap();
         assert_eq!(file.load().await, Some(config));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = dir.path().join("sub").join(FILE_NAME);
+            let mode = std::fs::metadata(path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
         std::fs::write(dir.path().join("sub").join(FILE_NAME), b"\xff\xff\xff").unwrap();
         assert_eq!(file.load().await, None);
     }

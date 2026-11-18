@@ -7,7 +7,7 @@
 //! thing the agent checks, with a note.
 
 use crate::args;
-use crate::model::{Alert, Direction, Fidelity, Measure, Severity, Watch};
+use crate::model::{Alert, Direction, Fidelity, Measure, Severity, Watch, WebMethod, Website};
 use crate::notes::Note;
 
 use super::tree::{Channel, Limits, Object};
@@ -74,7 +74,7 @@ pub fn family(sensor_type: &str) -> Family {
 pub fn wanted(sensor_type: &str) -> (&'static [&'static str], bool) {
     match family(sensor_type) {
         Family::Port => (&["port"], true),
-        Family::Web => (&["httpurl", "url"], true),
+        Family::Web => (WEB_SETTINGS, true),
         Family::Certificate => (&["port", "sniname"], true),
         Family::Service => (&["service", "servicename"], false),
         Family::EventLog => (
@@ -373,6 +373,55 @@ fn port(sensor: &Object, host: Option<&str>) -> Mapped {
     }
 }
 
+/// The settings of HTTP sensors a website check takes: the URL, the
+/// method and its body, the time it may take, the keyword the page must
+/// or must not hold (plain text or a regular expression), custom headers
+/// and the user name of the authentication, never its password. PRTG
+/// names them as below; a setting PRTG does not have for a sensor type
+/// reads as absent.
+const WEB_SETTINGS: &[&str] = &[
+    "httpurl",
+    "url",
+    "httpmethod",
+    "postdata",
+    "timeout",
+    "includemode",
+    "includestring",
+    "includetype",
+    "excludemode",
+    "excludestring",
+    "excludetype",
+    "httpheaders",
+    "authmethod",
+    "httpusername",
+];
+
+/// A keyword condition: its text when the mode is on, plain or as the
+/// literal a regular expression is.
+fn keyword(
+    sensor: &Object,
+    mode: &str,
+    text: &str,
+    kind: &str,
+    notes: &mut Vec<Note>,
+) -> Option<String> {
+    let on = sensor.setting(mode).is_none_or(|m| m.trim() != "0");
+    let value = sensor.setting(text).filter(|t| !t.is_empty())?;
+    if !on {
+        return None;
+    }
+    let regex = sensor
+        .setting(kind)
+        .is_some_and(|k| k.trim() == "1" || k.to_ascii_lowercase().contains("reg"));
+    match crate::web::condition(value, regex, text) {
+        Ok(text) => Some(text),
+        Err(note) => {
+            notes.push(note);
+            None
+        }
+    }
+}
+
 fn web(sensor: &Object, host: Option<&str>) -> Mapped {
     let raw = sensor
         .setting("httpurl")
@@ -390,29 +439,151 @@ fn web(sensor: &Object, host: Option<&str>) -> Mapped {
             None => return Mapped::Not(Note::plain("prtg_no_setting")),
         }
     };
-    // The planner adds its own note: the port only, not the page.
+    let mut site = Website::new(url.clone());
+    let mut notes = Vec::new();
+    match sensor
+        .setting("httpmethod")
+        .map(|m| m.trim().to_ascii_uppercase())
+        .as_deref()
+    {
+        None | Some("" | "GET") => {}
+        Some("HEAD") => site.method = WebMethod::Head,
+        Some(other) => notes.push(Note::new("web_method", args! {"method" => other})),
+    }
+    if sensor
+        .setting("postdata")
+        .is_some_and(|d| !d.trim().is_empty())
+        && notes.is_empty()
+    {
+        notes.push(Note::new("web_setting", args! {"setting" => "postdata"}));
+    }
+    if site.method == WebMethod::Get {
+        site.contains = keyword(
+            sensor,
+            "includemode",
+            "includestring",
+            "includetype",
+            &mut notes,
+        );
+        site.not_contains = keyword(
+            sensor,
+            "excludemode",
+            "excludestring",
+            "excludetype",
+            &mut notes,
+        );
+    }
+    if let Some(headers) = sensor.setting("httpheaders") {
+        for line in headers.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            match line.split_once(':') {
+                Some((name, value)) => site
+                    .headers
+                    .push((name.trim().to_owned(), value.trim().to_owned())),
+                None => notes.push(Note::new("web_setting", args! {"setting" => "httpheaders"})),
+            }
+        }
+    }
+    let user = sensor
+        .setting("httpusername")
+        .map(str::trim)
+        .filter(|u| !u.is_empty());
+    let method = sensor
+        .setting("authmethod")
+        .map(|m| m.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    if method.contains("ntlm") || method.contains("windows") {
+        notes.push(Note::new("web_auth", args! {"kind" => "NTLM"}));
+    } else if let Some(user) = user {
+        site.username = Some(user.to_owned());
+        // PRTG never shows a password back: assume there is one.
+        site.credentials = true;
+    }
+    site.timeout_s = sensor
+        .setting("timeout")
+        .and_then(|t| t.trim().parse::<u32>().ok())
+        .filter(|t| *t > 0);
+    // Response time limits are a threshold on the check's response time.
+    let mut limits = Vec::new();
+    for (channel, l) in limited(sensor) {
+        let name = channel.name.to_ascii_lowercase();
+        let timed = name.contains("response") || name.contains("loading");
+        if !timed || (l.max_warning.is_none() && l.max_error.is_none()) {
+            continue;
+        }
+        let seconds = |v: f64| match channel.unit.trim().to_ascii_lowercase().as_str() {
+            "s" | "sec" | "second" | "seconds" => v,
+            _ => v / 1000.0,
+        };
+        limits.push(Limit {
+            measure: Measure::WebResponseTime { url: url.clone() },
+            direction: Direction::Above,
+            warning: l.max_warning.map(seconds),
+            critical: l.max_error.map(seconds),
+            fidelity: exact(),
+            channel: channel.name.clone(),
+        });
+    }
+    let used: Vec<i64> = sensor
+        .channels
+        .iter()
+        .filter(|c| limits.iter().any(|l| l.channel == c.name))
+        .map(|c| c.id)
+        .collect();
     Mapped::Watch {
-        watch: Watch::Web { url },
+        watch: Watch::web(site),
         alert: down(),
-        fidelity: exact(),
-        limits: Vec::new(),
-        lost: lost(sensor, &[]),
+        fidelity: notes
+            .into_iter()
+            .next()
+            .map_or(Fidelity::Exact, Fidelity::Approximated),
+        lost: lost(sensor, &used),
+        limits,
     }
 }
 
+/// An SSL certificate sensor: a website check of the address, whatever
+/// the page answers, and its days limits on the days left.
 fn certificate(sensor: &Object, host: Option<&str>) -> Mapped {
     let port = sensor
         .setting("port")
         .and_then(|p| p.parse::<u16>().ok())
         .filter(|p| *p > 0)
         .unwrap_or(443);
-    let address = sensor.setting("sniname").or(host).map(str::to_owned);
+    let Some(address) = sensor
+        .setting("sniname")
+        .filter(|s| !s.trim().is_empty())
+        .or(host)
+    else {
+        return Mapped::Not(Note::plain("prtg_no_setting"));
+    };
+    let url = crate::web::https_url(address, port);
+    let mut limits = Vec::new();
+    for (channel, l) in limited(sensor) {
+        let name = channel.name.to_ascii_lowercase();
+        if !name.contains("days") || (l.min_warning.is_none() && l.min_error.is_none()) {
+            continue;
+        }
+        limits.push(Limit {
+            measure: Measure::CertificateDays { url: url.clone() },
+            direction: Direction::Below,
+            warning: l.min_warning,
+            critical: l.min_error,
+            fidelity: exact(),
+            channel: channel.name.clone(),
+        });
+    }
+    let used: Vec<i64> = sensor
+        .channels
+        .iter()
+        .filter(|c| limits.iter().any(|l| l.channel == c.name))
+        .map(|c| c.id)
+        .collect();
     Mapped::Watch {
-        watch: Watch::Port { address, port },
+        watch: Watch::web(Website::new(url).any_status()),
         alert: down(),
-        fidelity: approximated("prtg_certificate", args! {"port" => port}),
-        limits: Vec::new(),
-        lost: lost(sensor, &[]),
+        fidelity: approximated("web_certificate_only", args! {}),
+        lost: lost(sensor, &used),
+        limits,
     }
 }
 
@@ -544,11 +715,96 @@ mod tests {
         let Mapped::Watch { watch, .. } = map(&sensor, Some("fd00::1")) else {
             panic!()
         };
+        assert_eq!(watch, Watch::web(Website::new("http://[fd00::1]/status")));
+    }
+
+    fn advanced(settings: &[(&str, &str)]) -> (Watch, Fidelity) {
+        let mut sensor = Object::new(1, Kind::Sensor, "Shop", Some(0));
+        sensor.sensor_type = Some("httpadvanced".into());
+        sensor
+            .settings
+            .insert("httpurl".into(), "https://shop.example.com/".into());
+        for (k, v) in settings {
+            sensor.settings.insert((*k).into(), (*v).into());
+        }
+        let Mapped::Watch {
+            watch, fidelity, ..
+        } = map(&sensor, None)
+        else {
+            panic!()
+        };
+        (watch, fidelity)
+    }
+
+    #[test]
+    fn http_advanced_settings() {
+        let (watch, fidelity) = advanced(&[
+            ("httpmethod", "GET"),
+            ("timeout", "30"),
+            ("includemode", "1"),
+            ("includestring", "Welcome"),
+            ("excludemode", "1"),
+            ("excludestring", "Maintenance\\ mode"),
+            ("excludetype", "1"),
+            ("httpheaders", "Accept-Language: en\nX-Monitor: prtg"),
+            ("httpusername", "monitor"),
+        ]);
+        let mut expected = Website::new("https://shop.example.com/");
+        expected.contains = Some("Welcome".into());
+        expected.not_contains = Some("Maintenance mode".into());
+        expected.headers = vec![
+            ("Accept-Language".into(), "en".into()),
+            ("X-Monitor".into(), "prtg".into()),
+        ];
+        expected.username = Some("monitor".into());
+        expected.credentials = true;
+        expected.timeout_s = Some(30);
+        assert_eq!(watch, Watch::web(expected));
+        assert_eq!(fidelity, Fidelity::Exact);
+        // A keyword check turned off is no condition.
+        let (watch, _) = advanced(&[("includemode", "0"), ("includestring", "Welcome")]);
+        assert_eq!(watch, Watch::web(Website::new("https://shop.example.com/")));
+        // What a website check cannot do.
+        let (_, fidelity) = advanced(&[("httpmethod", "POST"), ("postdata", "a=1")]);
+        assert_eq!(
+            fidelity,
+            approximated("web_method", args! {"method" => "POST"})
+        );
+        let (_, fidelity) = advanced(&[("includestring", "Total: \\d+"), ("includetype", "1")]);
+        assert_eq!(
+            fidelity,
+            approximated("web_regex", args! {"pattern" => "Total: \\d+"})
+        );
+        let (watch, fidelity) = advanced(&[("authmethod", "Windows NTLM"), ("httpusername", "x")]);
+        assert_eq!(fidelity, approximated("web_auth", args! {"kind" => "NTLM"}));
+        assert!(matches!(watch, Watch::Web(site) if !site.credentials));
+        let (watch, _) = advanced(&[("httpmethod", "HEAD")]);
+        assert!(matches!(watch, Watch::Web(site) if site.method == WebMethod::Head));
+    }
+
+    #[test]
+    fn a_certificate_sensor_checks_its_address() {
+        let mut sensor = Object::new(1, Kind::Sensor, "Certificate", Some(0));
+        sensor.sensor_type = Some("sslcertificate".into());
+        sensor.settings.insert("port".into(), "8443".into());
+        sensor
+            .settings
+            .insert("sniname".into(), "shop.example.com".into());
+        let Mapped::Watch {
+            watch, fidelity, ..
+        } = map(&sensor, Some("192.0.2.30"))
+        else {
+            panic!()
+        };
         assert_eq!(
             watch,
-            Watch::Web {
-                url: "http://[fd00::1]/status".into()
-            }
+            Watch::web(Website::new("https://shop.example.com:8443/").any_status())
+        );
+        assert_eq!(fidelity, approximated("web_certificate_only", args! {}));
+        sensor.settings.clear();
+        assert_eq!(
+            map(&sensor, None),
+            Mapped::Not(Note::plain("prtg_no_setting"))
         );
     }
 }

@@ -22,15 +22,15 @@ Ressaisir des centaines d'équipements, de capteurs et de limites est la partie 
 | Capteurs d'espace disque et de volume, avec des limites sur un canal de pourcentage libre | Seuil d'espace disque pour ce lecteur ou point de montage | Approchée : lu comme espace utilisé |
 | Capteur de service Windows | Contrôle du service Windows, critique quand il s'arrête | Exacte |
 | Capteur de port | Contrôle de port sur l'adresse de l'équipement | Approchée : vérifié par l'agent du serveur, pas depuis une sonde |
-| Capteurs HTTP et HTTP avancé | Contrôle de port sur l'hôte et le port de la page | Approchée : la page, son code de statut et son temps de chargement ne sont pas vérifiés |
-| Capteur de certificat SSL | Contrôle de port sur son hôte et son port | Approchée : le certificat et son expiration ne sont pas vérifiés |
+| Capteurs HTTP et HTTP avancé | Contrôle de site web de la page : sa méthode, le mot-clé qu'elle doit ou ne doit pas contenir, les en-têtes personnalisés et le délai, avec les limites de temps de réponse en seuil | Exacte ; approchée pour un POST, un mot-clé donné en expression régulière ou une authentification Windows. Le mot de passe n'est pas importé : saisissez-le ensuite dans le contrôle |
+| Capteur de certificat SSL | Contrôle de site web de son hôte et de son port, avec ses limites en jours sur les jours restants. Une page du même site déjà contrôlée les reprend à sa place | Approchée : le contrôle demande aussi la page, quelle que soit sa réponse |
 | Capteurs de journal d'événements | Contrôle du journal d'événements avec le même journal, les mêmes niveaux, sources et ID d'événement | Exacte, ou approchée quand un filtre sur le message ou une limite de nombre ne peut pas être repris |
 | Fenêtre de maintenance | Silence des serveurs qu'elle couvre | Exacte ; 30 jours au plus |
 | Équipement, groupe ou sonde en pause | Silence de 30 jours, le plus long possible | Approchée |
 | Modèle de notification par e-mail | Canal e-mail | Approchée : il reçoit chaque incident, alors que PRTG ne l'utilisait que là où un déclencheur le nommait. Son serveur de messagerie n'est pas dans l'API de PRTG : ajoutez un canal e-mail avec le vôtre si l'aperçu le demande |
 | Modèle de notification qui appelle une URL | Canal Slack, Teams, Discord ou webhook, selon l'URL | Approchée : MonitorFlow envoie son propre message |
 
-Ce qui ne peut pas être repris est listé aussi, avec la raison : capteurs de trafic SNMP, équipements surveillés seulement en SNMP (commutateurs, imprimantes), capteurs d'un type sans contrôle équivalent dans MonitorFlow, limites de canaux sans seuil équivalent (temps de réponse, jours restants d'un certificat), capteurs mis en pause par un horaire ou une dépendance, un capteur seul en pause (MonitorFlow met en silence des serveurs entiers), et notifications par SMS ou push.
+Ce qui ne peut pas être repris est listé aussi, avec la raison : capteurs de trafic SNMP, équipements surveillés seulement en SNMP (commutateurs, imprimantes), capteurs d'un type sans contrôle équivalent dans MonitorFlow, limites de canaux sans seuil équivalent, capteurs mis en pause par un horaire ou une dépendance, un capteur seul en pause (MonitorFlow met en silence des serveurs entiers), et notifications par SMS ou push.
 
 ## Avant de commencer
 

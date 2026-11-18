@@ -148,3 +148,19 @@
   text-decoration-color: var(--border-strong);
   text-underline-offset: 2px;
 }
+
+/* Website checks of the Sensors tab (ADR-0150). */
+.websites {
+  margin-top: 16px;
+}
+
+.certificate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.certFacts {
+  color: var(--muted);
+  font-size: 12px;
+}

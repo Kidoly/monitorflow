@@ -366,6 +366,24 @@
         "device:2002"
       ],
       "measure": {
+        "kind": "web_response_time",
+        "url": "https://web01.example.net/health"
+      },
+      "direction": "above",
+      "warning": 0.5,
+      "for_s": 0,
+      "origin": {
+        "kind": "sensor",
+        "name": "Health page",
+        "detail": "Response Time"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "hosts": [
+        "device:2002"
+      ],
+      "measure": {
         "kind": "disk_used",
         "mount": "/var"
       },
@@ -381,6 +399,25 @@
       "note": {
         "code": "disk_free_as_used"
       }
+    },
+    {
+      "hosts": [
+        "device:2002"
+      ],
+      "measure": {
+        "kind": "certificate_days",
+        "url": "https://web01.example.net/health"
+      },
+      "direction": "below",
+      "warning": 30.0,
+      "critical": 7.0,
+      "for_s": 0,
+      "origin": {
+        "kind": "sensor",
+        "name": "Certificate",
+        "detail": "Days to Expiration"
+      },
+      "fidelity": "exact"
     }
   ],
   "silences": [
@@ -526,38 +563,6 @@
         "code": "prtg_limit",
         "args": {
           "channel": "C:\\ Free Bytes"
-        }
-      }
-    },
-    {
-      "hosts": [
-        "device:2002"
-      ],
-      "origin": {
-        "kind": "sensor",
-        "name": "Health page",
-        "detail": "Response Time"
-      },
-      "why": {
-        "code": "prtg_limit",
-        "args": {
-          "channel": "Response Time"
-        }
-      }
-    },
-    {
-      "hosts": [
-        "device:2002"
-      ],
-      "origin": {
-        "kind": "sensor",
-        "name": "Certificate",
-        "detail": "sslcertificate"
-      },
-      "why": {
-        "code": "prtg_same_port",
-        "args": {
-          "port": "443"
         }
       }
     },

@@ -36,6 +36,7 @@ import type { Tone } from "@/components/ui/tone";
 
 import { AddCheck, type Target, TurnBackOn, stopChecking, stringParams } from "./MonitoringSettings";
 import styles from "./ServerPage.module.css";
+import { WebsiteChecks } from "./WebsiteChecks";
 
 /** What the Sensors tab reads besides the rows; null where it could not be read. */
 export interface SensorRules {
@@ -238,6 +239,7 @@ export function ServerSensorsTab({
           }
         />
       )}
+      {sensors.sensors.some((s) => s.kind === "http") && <WebsiteChecks serverId={server.id} />}
       {rows.length > 0 && addButton && <div className={styles.addLine}>{addButton}</div>}
       {adding && (
         <div className={styles.addBox}>

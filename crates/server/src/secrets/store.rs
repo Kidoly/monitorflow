@@ -13,6 +13,7 @@ pub const SEALED: &[Column] = &[
     Column::IdentityProviders,
     Column::ImportRuns,
     Column::SnmpCredentials,
+    Column::SensorConfigs,
 ];
 
 #[derive(Debug, thiserror::Error)]

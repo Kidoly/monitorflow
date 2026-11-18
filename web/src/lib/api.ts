@@ -733,6 +733,46 @@ export interface SensorConfigEntry extends Required<
   /** Who runs it (ADR-0148): null or absent for the agent. */
   probe?: "central" | "relay" | null;
   probe_relay_id?: string | null;
+  /** A website check's password is set; it is never returned (ADR-0150). */
+  secret_set?: boolean;
+}
+
+/** The certificate of a website check's last https connection (ADR-0150). */
+export interface WebsiteCertificate {
+  ok: boolean;
+  /** `expired`, `not_yet_valid`, `self_signed`, `untrusted`, `name`, `revoked` or `other`. */
+  reason: string | null;
+  name_ok: boolean | null;
+  days_left: number | null;
+  not_after: string | null;
+  issuer: string | null;
+  subject: string | null;
+}
+
+/** One website check and its last run, from `GET /api/servers/{id}/website-checks`. */
+export interface WebsiteCheck {
+  name: string;
+  instance: string;
+  entry_id: string | null;
+  origin: "default" | "site" | "server";
+  url: string;
+  run_by: "agent" | "central" | "relay";
+  relay: string | null;
+  interval_ms: number;
+  last_at: string | null;
+  up: boolean | null;
+  /** Why not: `dns`, `connect`, `timeout`, `tls`, `certificate`, `status`, `content`, `redirects`, `refused`, `protocol`. */
+  reason: string | null;
+  status_code: number | null;
+  response_seconds: number | null;
+  redirects: number | null;
+  final_url: string | null;
+  content_ok: boolean | null;
+  certificate: WebsiteCertificate | null;
+}
+
+export interface WebsiteCheckList {
+  checks: WebsiteCheck[];
 }
 
 /** Body of a threshold create or update (ADR-0019); an update replaces every field. */
@@ -1448,6 +1488,7 @@ export type ImportCreate =
       kind: string;
       name: string;
       interval_ms: number;
+      timeout_ms?: number;
       params: Record<string, string>;
       /** Run from the site's default probe (ADR-0148). */
       probe?: boolean;
@@ -3287,6 +3328,10 @@ export const api = {
   /** One server with its certificate; 404 when missing or outside the user's sites. */
   server: (id: string, signal?: AbortSignal) =>
     request<ServerDetail>(`/api/servers/${encodeURIComponent(id)}`, { signal }),
+
+  /** The last run of each website check of the server (ADR-0150). */
+  websiteChecks: (serverId: string, signal?: AbortSignal) =>
+    request<WebsiteCheckList>(`/api/servers/${encodeURIComponent(serverId)}/website-checks`, { signal }),
 
   sensorValues: (serverId: string, signal?: AbortSignal) =>
     request<SensorValueList>(`/api/servers/${encodeURIComponent(serverId)}/sensor-values`, { signal }),

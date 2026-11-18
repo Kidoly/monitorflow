@@ -8,8 +8,8 @@ use monitorflow_common::redact::Secret;
 
 use crate::args;
 use crate::model::{
-    Channel, Check, Fidelity, Host, Inventory, Origin, Os, Repeat, Rule, Silence, SilenceScope,
-    Target, Threshold, Unmovable, Watch, Window, EVERY_MONTH, MAX_WINDOW_MINUTES,
+    Channel, Check, Fidelity, Host, Inventory, Measure, Origin, Os, Repeat, Rule, Silence,
+    SilenceScope, Target, Threshold, Unmovable, Watch, Window, EVERY_MONTH, MAX_WINDOW_MINUTES,
 };
 use crate::notes::Note;
 
@@ -124,7 +124,16 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
             agentless,
         });
     }
-    for sensor in tree.objects.iter().filter(|o| o.kind == Kind::Sensor) {
+    // Certificates last: one of a site checked already goes to its check.
+    let is_certificate = |o: &&Object| {
+        sensors::family(o.sensor_type.as_deref().unwrap_or("")) == Family::Certificate
+    };
+    let sensors = tree.objects.iter().filter(|o| o.kind == Kind::Sensor);
+    for sensor in sensors
+        .clone()
+        .filter(|o| !is_certificate(o))
+        .chain(sensors.filter(is_certificate))
+    {
         sensor_items(tree, sensor, &hosts, &mut out);
     }
     for object in &tree.objects {
@@ -134,7 +143,7 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
     out
 }
 
-/// Where a port or page check connects, as the planner makes it.
+/// Where a port check connects, as the planner makes it.
 fn port_target(watch: &Watch) -> Option<(String, u16)> {
     match watch {
         Watch::Port { address, port } => Some((
@@ -144,12 +153,16 @@ fn port_target(watch: &Watch) -> Option<(String, u16)> {
                 .to_ascii_lowercase(),
             *port,
         )),
-        Watch::Web { url } => Some((
-            crate::text::host_of(url).to_ascii_lowercase(),
-            crate::text::port_of(url)?,
-        )),
         _ => None,
     }
+}
+
+/// The host and port a website check connects to.
+fn site_target(url: &str) -> (String, Option<u16>) {
+    (
+        crate::text::host_of(url).to_ascii_lowercase(),
+        crate::text::port_of(url),
+    )
 }
 
 fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory) {
@@ -185,7 +198,55 @@ fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory
             lost,
         } => (watch, alert, fidelity, limits, lost),
     };
-    // A page and a certificate of one site are one port check.
+    let certificate =
+        sensors::family(sensor.sensor_type.as_deref().unwrap_or("")) == Family::Certificate;
+    let (watch, limits) = match watch {
+        // A certificate of a site checked already: its limits go to that
+        // check, which reads the certificate too.
+        Watch::Web(site) if certificate => {
+            let target = site_target(&site.url);
+            let existing = out.checks.iter().find_map(|c| match &c.watch {
+                Watch::Web(other) if c.host == key && site_target(&other.url) == target => {
+                    Some(other.url.clone())
+                }
+                _ => None,
+            });
+            match existing {
+                Some(url) => {
+                    let limits = limits
+                        .into_iter()
+                        .map(|mut l| {
+                            l.measure = Measure::CertificateDays { url: url.clone() };
+                            l
+                        })
+                        .collect();
+                    add_limits(out, &key, sensor, limits, lost);
+                    return;
+                }
+                None => (Watch::Web(site), limits),
+            }
+        }
+        // The same page twice is one check.
+        Watch::Web(site) => {
+            let taken = out.checks.iter().find_map(|c| match &c.watch {
+                Watch::Web(other) if c.host == key && other.url == site.url => {
+                    site_target(&other.url).1
+                }
+                _ => None,
+            });
+            if let Some(port) = taken {
+                out.unmovable.push(Unmovable {
+                    hosts: vec![key],
+                    origin: origin(sensor),
+                    why: Note::new("prtg_same_port", args! {"port" => port}),
+                });
+                return;
+            }
+            (Watch::Web(site), limits)
+        }
+        other => (other, limits),
+    };
+    // Two sensors of one port are one port check.
     if let Some(target) = port_target(&watch) {
         let taken = out
             .checks
@@ -213,6 +274,18 @@ fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory
         origin: origin(sensor),
         fidelity,
     });
+    add_limits(out, &key, sensor, limits, lost);
+}
+
+/// The thresholds of a sensor's limits, and its limits that move nowhere.
+fn add_limits(
+    out: &mut Inventory,
+    key: &str,
+    sensor: &Object,
+    limits: Vec<sensors::Limit>,
+    lost: Vec<String>,
+) {
+    let key = key.to_owned();
     for limit in limits {
         out.thresholds.push(Threshold {
             hosts: vec![key.clone()],
@@ -518,6 +591,23 @@ mod tests {
         let mut page = sensor(33, 20, "http");
         page.settings
             .insert("httpurl".into(), "https://192.0.2.20/".into());
+        let same_page = Object {
+            id: 35,
+            name: "sensor 35".into(),
+            ..page.clone()
+        };
+        // Listed before the page: certificates are read last.
+        let mut certificate = sensor(36, 20, "sslcertificate");
+        certificate.channels.push(super::super::tree::Channel {
+            id: 0,
+            name: "Days to Expiration".into(),
+            unit: "#".into(),
+            limits: Some(super::super::tree::Limits {
+                min_warning: Some(30.0),
+                min_error: Some(7.0),
+                ..Default::default()
+            }),
+        });
         Tree {
             objects: vec![
                 Object::new(0, Kind::Group, "Root", None),
@@ -530,8 +620,10 @@ mod tests {
                 sensor(30, 20, "wmiprocessor"),
                 sensor(31, 21, "snmptraffic"),
                 port,
+                certificate,
                 page,
                 sensor(34, 10, "ping"),
+                same_page,
             ],
             notifications: vec![],
             local_times: false,
@@ -568,9 +660,32 @@ mod tests {
             .map(|u| (u.origin.name.as_str(), u.why.code.as_str()))
             .collect();
         assert!(why.contains(&("sensor 34", "prtg_not_on_device")));
-        // The page on 443 is the port check already there.
-        assert!(why.contains(&("sensor 33", "prtg_same_port")));
-        assert_eq!(inv.checks.len(), 3);
+        // The port and the page are two checks; the same page twice is
+        // one, and the certificate of the page's site goes to its check.
+        assert!(why.contains(&("sensor 35", "prtg_same_port")));
+        // The port, the page, and the switch's traffic.
+        assert_eq!(inv.checks.len(), 4);
+        assert!(inv
+            .checks
+            .iter()
+            .any(|c| c.watch == Watch::web(crate::model::Website::new("https://192.0.2.20/"))));
+        let days: Vec<_> = inv
+            .thresholds
+            .iter()
+            .filter(|t| t.origin.name == "sensor 36")
+            .map(|t| (&t.measure, t.direction, t.warning, t.critical))
+            .collect();
+        assert_eq!(
+            days,
+            vec![(
+                &Measure::CertificateDays {
+                    url: "https://192.0.2.20/".into()
+                },
+                crate::model::Direction::Below,
+                Some(30.0),
+                Some(7.0)
+            )]
+        );
     }
 
     #[test]

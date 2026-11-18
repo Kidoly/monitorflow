@@ -8663,19 +8663,21 @@
                     {
                       "create": {
                         "interval_ms": 60000,
-                        "kind": "port",
-                        "name": "port_shop_example_com_443",
+                        "kind": "http",
+                        "name": "http_shop_example_com",
                         "object": "check",
                         "params": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "contains": "Welcome",
+                          "status": "200",
+                          "url": "https://shop.example.com/"
                         },
-                        "server": "web-01"
+                        "server": "web-01",
+                        "timeout_ms": 15000
                       },
                       "hosts": [
                         "web-01"
                       ],
-                      "id": "check:web-01:port_443",
+                      "id": "check:web-01:http_shop_example_com",
                       "kind": "check",
                       "list": "approximated",
                       "needs": [
@@ -8683,13 +8685,13 @@
                       ],
                       "note": {
                         "args": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "username": "monitor"
                         },
-                        "code": "web_as_port",
-                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                        "code": "web_password",
+                        "text": "Passwords are not imported: set the password of monitor in the check after the import."
                       },
                       "origin": {
+                        "detail": "https://shop.example.com/",
                         "kind": "web_scenario",
                         "name": "Shop"
                       },
@@ -9045,19 +9047,21 @@
                     {
                       "create": {
                         "interval_ms": 60000,
-                        "kind": "port",
-                        "name": "port_shop_example_com_443",
+                        "kind": "http",
+                        "name": "http_shop_example_com",
                         "object": "check",
                         "params": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "contains": "Welcome",
+                          "status": "200",
+                          "url": "https://shop.example.com/"
                         },
-                        "server": "web-01"
+                        "server": "web-01",
+                        "timeout_ms": 15000
                       },
                       "hosts": [
                         "web-01"
                       ],
-                      "id": "check:web-01:port_443",
+                      "id": "check:web-01:http_shop_example_com",
                       "kind": "check",
                       "list": "approximated",
                       "needs": [
@@ -9065,13 +9069,13 @@
                       ],
                       "note": {
                         "args": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "username": "monitor"
                         },
-                        "code": "web_as_port",
-                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                        "code": "web_password",
+                        "text": "Passwords are not imported: set the password of monitor in the check after the import."
                       },
                       "origin": {
+                        "detail": "https://shop.example.com/",
                         "kind": "web_scenario",
                         "name": "Shop"
                       },
@@ -9314,19 +9318,21 @@
                     {
                       "create": {
                         "interval_ms": 60000,
-                        "kind": "port",
-                        "name": "port_shop_example_com_443",
+                        "kind": "http",
+                        "name": "http_shop_example_com",
                         "object": "check",
                         "params": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "contains": "Welcome",
+                          "status": "200",
+                          "url": "https://shop.example.com/"
                         },
-                        "server": "web-01"
+                        "server": "web-01",
+                        "timeout_ms": 15000
                       },
                       "hosts": [
                         "web-01"
                       ],
-                      "id": "check:web-01:port_443",
+                      "id": "check:web-01:http_shop_example_com",
                       "kind": "check",
                       "list": "approximated",
                       "needs": [
@@ -9334,13 +9340,13 @@
                       ],
                       "note": {
                         "args": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "username": "monitor"
                         },
-                        "code": "web_as_port",
-                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                        "code": "web_password",
+                        "text": "Passwords are not imported: set the password of monitor in the check after the import."
                       },
                       "origin": {
+                        "detail": "https://shop.example.com/",
                         "kind": "web_scenario",
                         "name": "Shop"
                       },
@@ -9588,19 +9594,21 @@
                     {
                       "create": {
                         "interval_ms": 60000,
-                        "kind": "port",
-                        "name": "port_shop_example_com_443",
+                        "kind": "http",
+                        "name": "http_shop_example_com",
                         "object": "check",
                         "params": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "contains": "Welcome",
+                          "status": "200",
+                          "url": "https://shop.example.com/"
                         },
-                        "server": "web-01"
+                        "server": "web-01",
+                        "timeout_ms": 15000
                       },
                       "hosts": [
                         "web-01"
                       ],
-                      "id": "check:web-01:port_443",
+                      "id": "check:web-01:http_shop_example_com",
                       "kind": "check",
                       "list": "approximated",
                       "needs": [
@@ -9608,13 +9616,13 @@
                       ],
                       "note": {
                         "args": {
-                          "host": "shop.example.com",
-                          "port": "443"
+                          "username": "monitor"
                         },
-                        "code": "web_as_port",
-                        "text": "MonitorFlow checks that port 443 of shop.example.com answers; it does not read the page or its status code."
+                        "code": "web_password",
+                        "text": "Passwords are not imported: set the password of monitor in the check after the import."
                       },
                       "origin": {
+                        "detail": "https://shop.example.com/",
                         "kind": "web_scenario",
                         "name": "Shop"
                       },
@@ -21939,7 +21947,7 @@
           "sensors"
         ],
         "summary": "Replace a sensor row",
-        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping` and `port` (TCP or UDP) checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP) and `http` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. A website check names its `url` and takes no address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nA website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
         "operationId": "update_sensor_config",
         "parameters": [
           {
@@ -22001,6 +22009,7 @@
                   "params": {
                     "units": "nginx.service,postgresql.service,redis-server.service"
                   },
+                  "secret_set": false,
                   "server_id": null,
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
                   "timeout_ms": null,
@@ -25757,6 +25766,7 @@
                         "host": "127.0.0.1",
                         "port": 443
                       },
+                      "secret_set": false,
                       "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
                       "site_id": null,
                       "timeout_ms": null,
@@ -25842,7 +25852,7 @@
           "sensors"
         ],
         "summary": "Add a sensor row to a server",
-        "description": "Adds a sensor to one server, or replaces for it the sensor of the same name and instance that its site or the built-in checks give; with `enabled: false`, removes that sensor from it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping` and `port` (TCP or UDP) checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "description": "Adds a sensor to one server, or replaces for it the sensor of the same name and instance that its site or the built-in checks give; with `enabled: false`, removes that sensor from it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP) and `http` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. A website check names its `url` and takes no address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nA website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
         "operationId": "create_server_sensor_config",
         "parameters": [
           {
@@ -25893,6 +25903,19 @@
                     "interval_ms": 60000,
                     "kind": "diskio"
                   }
+                },
+                "website": {
+                  "summary": "Check that a website answers with its shop",
+                  "value": {
+                    "instance": "shop",
+                    "interval_ms": 60000,
+                    "kind": "http",
+                    "name": "http",
+                    "params": {
+                      "contains": "Add to cart",
+                      "url": "https://shop.example.com/"
+                    }
+                  }
                 }
               }
             }
@@ -25919,6 +25942,7 @@
                     "host": "127.0.0.1",
                     "port": 443
                   },
+                  "secret_set": false,
                   "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
                   "site_id": null,
                   "timeout_ms": null,
@@ -27435,6 +27459,159 @@
           },
           "500": {
             "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/website-checks": {
+      "get": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Read the last run of a server's website checks",
+        "description": "Each website check the server has (kind `http`, ADR-0150), whether its agent, the central server or a relay (`relay`, its ID) runs it, and what its last run found: `up` and, when not, `reason` (`dns`, `connect`, `timeout`, `tls`, `certificate`, `status`, `content`, `redirects`, `refused` or `protocol`), the status code, the time from the start to the end of the page, the redirects followed and where they ended, whether the text conditions passed, and the certificate of an https site: whether it is trusted, valid now and for the name (`reason`: `expired`, `not_yet_valid`, `self_signed`, `untrusted`, `name`, `revoked` or `other`), its days left, expiry, issuer and subject. Values are `null` before the first run. Checks are added and changed with `POST /api/v1/servers/{id}/sensor_configs` and kind `http`.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "operationId": "website_checks",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The website checks and their last run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebsiteChecks"
+                },
+                "example": {
+                  "checks": [
+                    {
+                      "certificate": {
+                        "days_left": 41.5,
+                        "issuer": "R11",
+                        "name_ok": true,
+                        "not_after": "2026-12-30T00:00:00Z",
+                        "ok": true,
+                        "reason": null,
+                        "subject": "www.shop.example.com"
+                      },
+                      "content_ok": true,
+                      "entry_id": "0f8e4c1a-6d1b-4c55-9a5e-2b1f8b7a9c10",
+                      "final_url": "https://www.shop.example.com/",
+                      "instance": "shop",
+                      "interval_ms": 60000,
+                      "last_at": "2026-11-18T09:12:00Z",
+                      "name": "http",
+                      "origin": "server",
+                      "reason": null,
+                      "redirects": 1,
+                      "relay": null,
+                      "response_seconds": 0.212,
+                      "run_by": "central",
+                      "status_code": 200,
+                      "up": true,
+                      "url": "https://shop.example.com/"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics database is unreachable or not configured: `metrics_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The metrics database did not answer in time: `metrics_timeout`",
             "content": {
               "application/json": {
                 "schema": {
@@ -30789,6 +30966,7 @@
                       "params": {
                         "units": "nginx.service,postgresql.service"
                       },
+                      "secret_set": false,
                       "server_id": null,
                       "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
                       "timeout_ms": null,
@@ -30874,7 +31052,7 @@
           "sensors"
         ],
         "summary": "Add a sensor row to a site",
-        "description": "Adds a sensor to every server of the site, or replaces the built-in sensor of the same name and instance; with `enabled: false`, removes it. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping` and `port` (TCP or UDP) checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "description": "Adds a sensor to every server of the site, or replaces the built-in sensor of the same name and instance; with `enabled: false`, removes it. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP) and `http` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. A website check names its `url` and takes no address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nA website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
         "operationId": "create_site_sensor_config",
         "parameters": [
           {
@@ -30936,6 +31114,7 @@
                   "params": {
                     "units": "nginx.service,postgresql.service"
                   },
+                  "secret_set": false,
                   "server_id": null,
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
                   "timeout_ms": null,
@@ -35801,6 +35980,58 @@
           }
         }
       },
+      "Certificate": {
+        "type": "object",
+        "description": "The certificate of a website check's last https connection.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "days_left": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name_ok": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "not_after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Trusted, valid now and for the name."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What is wrong: `expired`, `not_yet_valid`, `self_signed`,\n`untrusted`, `name`, `revoked` or `other`."
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "CertificateView": {
         "type": "object",
         "description": "A certificate from the `certificates` table.",
@@ -38503,6 +38734,15 @@
               "server": {
                 "type": "string",
                 "description": "The server's ID."
+              },
+              "timeout_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "How long one run may take, when the source says; at most\n`interval_ms`.",
+                "minimum": 0
               }
             }
           },
@@ -44934,6 +45174,15 @@
           "last"
         ]
       },
+      "RunBy": {
+        "type": "string",
+        "description": "Who runs a website check (ADR-0148).",
+        "enum": [
+          "agent",
+          "central",
+          "relay"
+        ]
+      },
       "RunningServer": {
         "type": "object",
         "description": "The running server: its version, and the images pinned in `.env`\n(`None`: a local build).",
@@ -44975,6 +45224,7 @@
           "interval_ms",
           "params",
           "enabled",
+          "secret_set",
           "created_at",
           "updated_at"
         ],
@@ -45022,6 +45272,10 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "secret_set": {
+            "type": "boolean",
+            "description": "Whether a website check holds a password, which is never returned."
           },
           "server_id": {
             "type": [
@@ -45103,7 +45357,7 @@
           },
           "params": {
             "type": "object",
-            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused."
+            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused.\n\nA website check (`http`, ADR-0150) takes `url` (required),\n`method` (`GET` or `HEAD`), `status` (`200-299` by default, like\n`200,301-302`), `contains`, `not_contains`, `follow_redirects`\n(`true` by default), `headers` (`Name: value` lines), `username`,\n`password` and `ip` (`any`, `4` or `6`). `password` is accepted\nwith an `https://` URL only, kept sealed and never returned: absent\nfrom an update, the stored one is kept; `\"\"` removes it."
           },
           "probe": {
             "type": [
@@ -47704,6 +47958,140 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "WebsiteCheck": {
+        "type": "object",
+        "description": "One website check and its last run.",
+        "required": [
+          "name",
+          "instance",
+          "origin",
+          "url",
+          "run_by",
+          "interval_ms"
+        ],
+        "properties": {
+          "certificate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Certificate",
+                "description": "For https sites."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content_ok": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the text conditions passed, when there are some."
+          },
+          "entry_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The row it comes from."
+          },
+          "final_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the redirects ended, without its query."
+          },
+          "instance": {
+            "type": "string"
+          },
+          "interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it last ran; `null` before its first run."
+          },
+          "name": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/LayerOrigin"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not: `dns`, `connect`, `timeout`, `tls`, `certificate`,\n`status`, `content`, `redirects`, `refused` or `protocol`."
+          },
+          "redirects": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "relay": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The relay that runs it, by its ID, when `run_by` is `relay`."
+          },
+          "response_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "run_by": {
+            "$ref": "#/components/schemas/RunBy"
+          },
+          "status_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "up": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the answer was as expected."
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "WebsiteChecks": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/website-checks`.",
+        "required": [
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebsiteCheck"
+            }
           }
         }
       },
