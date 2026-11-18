@@ -1,0 +1,32 @@
+[package]
+name = "monitorflow-webcheck"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Website checks: an HTTP(S) request and the certificate it met (ADR-0150)"
+
+[dependencies]
+monitorflow-sensors.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
+url.workspace = true
+webpki-roots.workspace = true
+x509-parser.workspace = true
+
+[dev-dependencies]
+hyper = { workspace = true, features = ["server"] }
+rcgen.workspace = true
+time.workspace = true
+hyper-util = { workspace = true, features = ["server", "http1"] }
+tokio = { workspace = true, features = ["test-util"] }
+http-body-util.workspace = true

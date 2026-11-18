@@ -1579,6 +1579,7 @@ dependencies = [
  "monitorflow-plugin",
  "monitorflow-sensors",
  "monitorflow-server",
+ "monitorflow-webcheck",
  "pem",
  "prost",
  "rcgen",
@@ -1898,6 +1899,29 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "monitorflow-webcheck"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "monitorflow-sensors",
+ "rcgen",
+ "rustls",
+ "rustls-native-certs",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "url",
+ "webpki-roots",
+ "x509-parser",
 ]
 
 [[package]]

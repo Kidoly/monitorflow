@@ -887,7 +887,13 @@ async fn probe(
     params: BTreeMap<String, String>,
     local: &registry::Local,
 ) -> anyhow::Result<()> {
-    let build = |kind: &str| registry::build_local(kind, &params, local);
+    let build = |kind: &str| {
+        if kind == monitorflow_webcheck::KIND {
+            monitorflow_webcheck::build(&params, local.port_targets.as_ref())
+        } else {
+            registry::build_local(kind, &params, local)
+        }
+    };
     let sensors = if kinds.is_empty() {
         // Kinds that need parameters, like `systemd`, refuse none.
         registry::KINDS
