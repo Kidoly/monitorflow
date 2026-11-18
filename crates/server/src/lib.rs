@@ -5,6 +5,7 @@ pub mod agent_releases;
 pub mod alerting;
 pub mod api;
 pub mod auto_update;
+pub mod availability;
 pub mod ca;
 pub mod ca_rotation;
 pub mod campaign;
