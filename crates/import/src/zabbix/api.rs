@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 
 use super::config::{
     Config, Host, HttpAgent, Interface, InterfaceKind, Item, ItemKind, Macro, Maintenance,
-    MediaKind, MediaType, Period, PeriodKind, Priority, TagFilter, Template, Trigger, UserMedia,
-    WebAuth, WebRequest, WebScenario,
+    MediaKind, MediaType, Period, PeriodKind, Priority, Service, Sla, StatusRule, TagFilter,
+    Template, Trigger, UserMedia, WebAuth, WebRequest, WebScenario,
 };
 use super::export::{list, text};
 use crate::http;
@@ -371,15 +371,55 @@ impl Api {
             }
         }
 
+        let (services, slas) = if self.version >= (6, 0) {
+            self.read_services().await?
+        } else {
+            (vec![], vec![])
+        };
+
         Ok(Config {
             hosts: hosts.into_values().collect(),
             templates,
             global_macros,
             maintenances,
             media_types,
+            services,
+            slas,
             user_media: Some(user_media),
             inherited: true,
         })
+    }
+
+    /// Services and SLAs (ADR-0155), which exports do not have.
+    async fn read_services(&mut self) -> Result<(Vec<Service>, Vec<Sla>), ReadError> {
+        let raw = self
+            .get(
+                "service.get",
+                json!({
+                    "output": "extend",
+                    "selectChildren": ["serviceid", "weight"],
+                    "selectProblemTags": "extend",
+                    "selectStatusRules": "extend",
+                    "selectTags": "extend",
+                }),
+            )
+            .await?;
+        let services = raw.iter().map(service_of).collect();
+        let slas = self
+            .get(
+                "sla.get",
+                json!({
+                    "output": "extend",
+                    "selectServiceTags": "extend",
+                    "selectSchedule": "extend",
+                    "selectExcludedDowntimes": "extend",
+                }),
+            )
+            .await?
+            .iter()
+            .map(sla_of)
+            .collect();
+        Ok((services, slas))
     }
 
     /// Hosts' items: plain and discovered ones, and the prototypes of
@@ -850,6 +890,56 @@ fn maintenance_of(
             .collect(),
         tags_all: text(raw, "tags_evaltype") != "2",
         collect_data: text(raw, "maintenance_type") != "1",
+    }
+}
+
+/// Tag conditions of a service or SLA: operator 0 is equals, 2 contains.
+fn tag_filters(raw: &Value, key: &str) -> Vec<TagFilter> {
+    list(raw, key)
+        .iter()
+        .map(|t| TagFilter {
+            tag: text(t, "tag"),
+            value: text(t, "value"),
+            contains: text(t, "operator") == "2",
+        })
+        .collect()
+}
+
+fn service_of(raw: &Value) -> Service {
+    Service {
+        id: text(raw, "serviceid"),
+        name: text(raw, "name"),
+        algorithm: number(raw, "algorithm"),
+        problem_tags: tag_filters(raw, "problem_tags"),
+        children: list(raw, "children")
+            .iter()
+            .map(|c| text(c, "serviceid"))
+            .collect(),
+        status_rules: list(raw, "status_rules")
+            .iter()
+            .map(|r| StatusRule {
+                kind: number(r, "type"),
+                limit: number(r, "limit_value"),
+            })
+            .collect(),
+        tags: list(raw, "tags")
+            .iter()
+            .map(|t| (text(t, "tag"), text(t, "value")))
+            .collect(),
+        weighted: list(raw, "children")
+            .iter()
+            .any(|c| number::<u32>(c, "weight") > 0),
+    }
+}
+
+fn sla_of(raw: &Value) -> Sla {
+    Sla {
+        name: text(raw, "name"),
+        enabled: text(raw, "status") != "0",
+        slo: number(raw, "slo"),
+        scheduled: !list(raw, "schedule").is_empty(),
+        excluded: list(raw, "excluded_downtimes").len(),
+        service_tags: tag_filters(raw, "service_tags"),
     }
 }
 

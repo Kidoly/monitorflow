@@ -195,6 +195,7 @@ fn inventory() -> Inventory {
             },
         ],
         windows: vec![],
+        services: vec![],
         unmovable: vec![],
     }
 }
@@ -676,5 +677,56 @@ db_tests! {
         assert_eq!(run["result"]["removed"]["window"], 1);
         assert_eq!(count(&pool, "SELECT count(*) FROM maintenance_windows").await, 0);
         assert_eq!(count(&pool, "SELECT count(*) FROM silences").await, 0);
+    }
+
+    #[sqlx::test]
+    async fn business_services_import_once_and_undo(pool: PgPool) {
+        use monitorflow_import::model::{Member, Service};
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let mut inventory = inventory();
+        inventory.services.push(Service {
+            name: "Shop".into(),
+            members: vec![
+                Member { host: "1".into(), check: None },
+                Member {
+                    host: "2".into(),
+                    check: Some(Watch::Port { address: None, port: 5432 }),
+                },
+            ],
+            at_least: None,
+            target: Some(99.95),
+            origin: origin("service", "Shop"),
+            fidelity: Fidelity::Exact,
+        });
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["created"]["service"], 1, "{run}");
+        let (rule, target, members): (String, Option<f64>, Value) = sqlx::query_as(
+            "SELECT b.rule, b.target,
+                    (SELECT jsonb_agg(jsonb_build_array(s.hostname, m.check_name) ORDER BY m.position)
+                     FROM business_service_members m JOIN servers s ON s.id = m.server_id
+                     WHERE m.service_id = b.id)
+             FROM business_services b JOIN sites si ON si.customer_id = b.customer_id
+             WHERE si.id = $1",
+        )
+        .bind(paris)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((rule.as_str(), target), ("all", Some(99.95)));
+        assert_eq!(members, json!([["web-01", null], ["db-01", "port_5432"]]));
+
+        // A second import finds it there.
+        let second = preview(&pool, paris, admin, &inventory).await;
+        let (_, run) = call(&pool, "GET", &format!("/api/imports/{second}"), &cookie, None).await;
+        assert_eq!(run["counts"]["to_create"], 0, "{run}");
+
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["removed"]["service"], 1);
+        assert_eq!(count(&pool, "SELECT count(*) FROM business_services").await, 0);
     }
 }

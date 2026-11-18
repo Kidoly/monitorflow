@@ -160,6 +160,15 @@ pub async fn existing(
         .collect();
     let mut conn = pool.acquire().await?;
     existing.windows = existing_windows(&mut conn, site_id).await?;
+    existing.services = sqlx::query_scalar::<_, String>(
+        "SELECT lower(b.name) FROM business_services b JOIN sites s ON s.customer_id = b.customer_id
+         WHERE s.id = $1",
+    )
+    .bind(site_id)
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
     drop(conn);
     let channels: Vec<(String, Value, Option<String>)> =
         sqlx::query_as("SELECT kind, settings, secret FROM notification_channels")
@@ -675,6 +684,24 @@ async fn create_one(
             }
             create_window(tx, site_id, create, &ids, user).await
         }
+        Create::Service {
+            name,
+            at_least,
+            target,
+            members,
+        } => {
+            let mut ids = Vec::new();
+            for member in members {
+                ids.push(match server(&member.server, servers) {
+                    Some(id) => id,
+                    None => server_id(tx, &member.server)
+                        .await
+                        .map_err(db_error)?
+                        .ok_or("its server is not there")?,
+                });
+            }
+            create_service(tx, site_id, name, *at_least, *target, members, &ids, user).await
+        }
         Create::Channel {
             kind,
             settings,
@@ -709,6 +736,59 @@ async fn create_one(
             .map_err(db_error)
         }
     }
+}
+
+/// A business service of the site's customer, with `members` as the
+/// servers `ids`; `None` when the customer has one of that name.
+#[allow(clippy::too_many_arguments)]
+async fn create_service(
+    tx: &mut Transaction<'_, Postgres>,
+    site_id: Uuid,
+    name: &str,
+    at_least: Option<u32>,
+    target: Option<f64>,
+    members: &[super::ServiceMember],
+    ids: &[Uuid],
+    user: Uuid,
+) -> Result<Option<Uuid>, String> {
+    let id: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO business_services (customer_id, name, rule, at_least, target, created_by)
+         SELECT customer_id, $2, $3, $4, $5, $6 FROM sites WHERE id = $1
+         ON CONFLICT ON CONSTRAINT business_services_name_key DO NOTHING
+         RETURNING id",
+    )
+    .bind(site_id)
+    .bind(name)
+    .bind(if at_least.is_some() {
+        "at_least"
+    } else {
+        "all"
+    })
+    .bind(at_least.and_then(|n| i32::try_from(n).ok()))
+    .bind(target)
+    .bind(user)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db_error)?;
+    let Some(id) = id else {
+        return Ok(None);
+    };
+    for (position, (member, server)) in members.iter().zip(ids).enumerate() {
+        sqlx::query(
+            "INSERT INTO business_service_members
+                 (service_id, server_id, check_name, check_instance, position)
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .bind(server)
+        .bind(member.check.as_ref().map(|c| &c.name))
+        .bind(member.check.as_ref().map_or("", |c| c.instance.as_str()))
+        .bind(i32::try_from(position).unwrap_or(0))
+        .execute(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    }
+    Ok(Some(id))
 }
 
 /// A maintenance window of the site with the servers `ids`, and its
@@ -954,6 +1034,11 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
             "window",
             "DELETE FROM maintenance_windows WHERE id IN
                  (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'window')",
+        ),
+        (
+            "service",
+            "DELETE FROM business_services WHERE id IN
+                 (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'service')",
         ),
         (
             "channel",

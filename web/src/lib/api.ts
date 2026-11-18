@@ -1506,7 +1506,14 @@ export type ImportCreate =
     }
   | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
   | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
-  | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null };
+  | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null }
+  | {
+      object: "service";
+      name: string;
+      at_least: number | null;
+      target: number | null;
+      members: { server: string; check?: SilencedCheck }[];
+    };
 
 /** One line of an import's preview. */
 export interface ImportItem {

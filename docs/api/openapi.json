@@ -41446,6 +41446,49 @@
                 "description": "The site it covers; `null` for everything."
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A business service of the site's customer (ADR-0155).",
+            "required": [
+              "name",
+              "members",
+              "object"
+            ],
+            "properties": {
+              "at_least": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "Down while fewer than this many are up; `null` for all of them.",
+                "minimum": 0
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ImportServiceMember"
+                }
+              },
+              "name": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "service"
+                ]
+              },
+              "target": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double",
+                "description": "The SLA target in percent."
+              }
+            }
           }
         ],
         "description": "What an item creates."
@@ -41743,6 +41786,28 @@
             "format": "int32",
             "description": "Items unticked, or that need an unticked one.",
             "minimum": 0
+          }
+        }
+      },
+      "ImportServiceMember": {
+        "type": "object",
+        "description": "A member of an imported business service: a server by ID, whole or\none of its checks.",
+        "required": [
+          "server"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SilencedCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server": {
+            "type": "string"
           }
         }
       },

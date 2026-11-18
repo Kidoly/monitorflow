@@ -27,6 +27,8 @@ pub struct Inventory {
     /// Maintenance windows that come back (ADR-0151).
     pub windows: Vec<Window>,
     pub channels: Vec<Channel>,
+    /// Business services, with their rule and SLA target (ADR-0155).
+    pub services: Vec<Service>,
     /// What the source has and MonitorFlow cannot do, with why.
     pub unmovable: Vec<Unmovable>,
 }
@@ -45,6 +47,7 @@ impl Inventory {
             && self.silences.is_empty()
             && self.windows.is_empty()
             && self.channels.is_empty()
+            && self.services.is_empty()
             && self.unmovable.is_empty()
     }
 }
@@ -608,6 +611,30 @@ pub struct Channel {
     /// Its name in the source, for the person who reads the preview.
     pub name: String,
     pub target: Target,
+    pub origin: Origin,
+    #[serde(flatten)]
+    pub fidelity: Fidelity,
+}
+
+/// A member of a business service: a whole host, or one of its checks.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Member {
+    /// The host's [`Host::key`].
+    pub host: String,
+    /// One check of it; `None` for the whole host.
+    pub check: Option<Watch>,
+}
+
+/// A business service (ADR-0155): a named group with one availability.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Service {
+    pub name: String,
+    pub members: Vec<Member>,
+    /// Down while fewer than this many members are up; `None` for all of
+    /// them.
+    pub at_least: Option<u32>,
+    /// The SLA target in percent, like 99.9.
+    pub target: Option<f64>,
     pub origin: Origin,
     #[serde(flatten)]
     pub fidelity: Fidelity,
