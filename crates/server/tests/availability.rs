@@ -242,4 +242,74 @@ db_tests! {
         assert_eq!(report.services[0].met, Some(true));
         assert_eq!(report.summary.outages, 0);
     }
+
+    #[sqlx::test]
+    async fn what_depends_on_a_parent_is_unreachable(pool: PgPool) {
+        // The table of ADR-0152, with its columns, until its migration is
+        // here; afterwards, its own.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS dependencies (
+                 id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                 server_id uuid NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
+                 check_name text, check_instance text NOT NULL DEFAULT '',
+                 parent_server_id uuid REFERENCES servers (id) ON DELETE CASCADE,
+                 parent_relay_id uuid REFERENCES relays (id) ON DELETE CASCADE,
+                 parent_check_name text, parent_check_instance text NOT NULL DEFAULT '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let p = place(&pool, "acme").await;
+        // A switch of another site of the customer, which the report of
+        // the first site does not cover, and db behind it.
+        let other: Uuid = sqlx::query_scalar(
+            "INSERT INTO sites (name, customer_id) VALUES ('acme-lyon', $1) RETURNING id",
+        )
+        .bind(p.customer)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let switch: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family, kind, address, created_at,
+                                  package_updates)
+             VALUES ('sw-core', $1, 'sw-core', 'device', 'device', '192.0.2.1', $2, false)
+             RETURNING id",
+        )
+        .bind(other)
+        .bind(t(-100_000))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO dependencies (server_id, parent_server_id) VALUES ($1, $2)")
+            .bind(p.db)
+            .bind(switch)
+            .execute(&pool)
+            .await
+            .unwrap();
+        incident(&pool, Some(switch), None, "monitorflow_ping_loss_ratio", &[
+            ("opened", Some("critical"), 100),
+            ("resolved", None, 125),
+        ]).await;
+        sqlx::query(
+            "INSERT INTO sensor_configs (server_id, kind, name, interval_ms, params, probe)
+             VALUES ($1, 'ping', 'ping', 60000, '{}', 'central')",
+        )
+        .bind(switch)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let reach = Reach {
+            sites: Some(vec![p.site]),
+            services_of: Some(vec![]),
+        };
+        let mut db = pool.acquire().await.unwrap();
+        let period = (t(0), t(1440));
+        let report = build(&load(&mut db, &reach, period, t(5000)).await.unwrap(), period, t(5000));
+        let names: Vec<_> = report.machines.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["acme-db", "acme-web"]);
+        let db_server = report.machines.iter().find(|m| m.id == p.db).unwrap();
+        assert_eq!(db_server.numbers.down_seconds, 25.0 * 60.0);
+        assert_eq!(db_server.outage_list[0].causes[0].kind, "unreachable");
+        assert_eq!(db_server.outage_list[0].causes[0].via.as_deref(), Some("sw-core"));
+    }
 }
