@@ -1918,6 +1918,8 @@ dependencies = [
  "async-trait",
  "regex",
  "rustix",
+ "serde",
+ "serde_json",
  "socket2",
  "surge-ping",
  "tempfile",
