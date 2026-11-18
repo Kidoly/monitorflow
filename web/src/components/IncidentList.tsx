@@ -33,7 +33,7 @@ function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {
     return (
       <>
         {" "}
-        <Label tone="neutral">{t("incidents.silenced")}</Label>{" "}
+        <Label tone="neutral">{incident.in_maintenance ? t("incidents.inMaintenance") : t("incidents.silenced")}</Label>{" "}
         <span className={styles.small}>{t("incidents.silencedUntil", { when: formatDay(new Date(incident.silenced_until), now) })}</span>
       </>
     );

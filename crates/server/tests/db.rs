@@ -175,6 +175,8 @@ db_tests! {
                 "integration_endpoints",
                 "integration_events",
                 "license",
+                "maintenance_window_servers",
+                "maintenance_windows",
                 "mirror_runs",
                 "mirror_snapshots",
                 "mirrors",

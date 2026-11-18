@@ -603,6 +603,7 @@ async fn main() -> anyhow::Result<()> {
     let deliverer = integrations::Deliverer::new(pool.clone(), config.web_base_url());
     // The daily look for a newer release (ADR-0061).
     let check_pool = pool.clone();
+    let maintenance_pool = pool.clone();
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
@@ -701,6 +702,17 @@ async fn main() -> anyhow::Result<()> {
         },
         async {
             cluster.clone().run(until_stopped()).await;
+            Ok(())
+        },
+        // Every instance writes maintenance windows as silences ahead of
+        // time, under a lock per window (ADR-0151).
+        async {
+            notify::maintenance::write::run(
+                maintenance_pool.clone(),
+                notify::maintenance::write::POLL,
+                until_stopped(),
+            )
+            .await;
             Ok(())
         },
         // Each instance sends the relays it holds their probe checks.

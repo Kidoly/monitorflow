@@ -75,6 +75,8 @@ pub const ORIGIN_KINDS: &[&str] = &[
     "device",
     "group",
     "probe",
+    "time_interval",
+    "schedule",
 ];
 
 /// Every note, in English. Shared notes first, then one block per reader.
@@ -107,6 +109,14 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "silence_whole_server",
         "MonitorFlow silences every alert of a server, not only the ones the source matched ({matchers}).",
+    ),
+    (
+        "window_cut",
+        "MonitorFlow maintenance windows last at most 7 days: this one ends 7 days after it starts.",
+    ),
+    (
+        "window_offline_kept",
+        "In MonitorFlow a server going offline still notifies: only its checks are silenced.",
     ),
     (
         "smtp_password",
@@ -296,6 +306,34 @@ pub const NOTES: &[(&str, &str)] = &[
     ),
     // PRTG.
     (
+        "zabbix_no_data",
+        "Zabbix stopped collecting data during this maintenance; MonitorFlow keeps watching and only holds notifications.",
+    ),
+    (
+        "zabbix_tags_unmatched",
+        "No imported check comes from a trigger with these tags ({tags}): the whole server is silenced.",
+    ),
+    (
+        "am_active_intervals",
+        "Alertmanager sends this route only within its active time intervals, which MonitorFlow does not have.",
+    ),
+    (
+        "am_interval",
+        "This time interval cannot be said as a MonitorFlow maintenance window: {detail}.",
+    ),
+    (
+        "am_months_weekly",
+        "Weekdays of some months only: MonitorFlow's weekly windows apply every month.",
+    ),
+    (
+        "am_years",
+        "Limited to some years: the window applies from the first of them to the last.",
+    ),
+    (
+        "am_route_labels",
+        "The route also matched other labels ({matchers}): MonitorFlow holds every notification of these servers.",
+    ),
+    (
         "prtg_from_server",
         "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
     ),
@@ -349,11 +387,15 @@ pub const NOTES: &[(&str, &str)] = &[
     ),
     (
         "prtg_paused_sensor",
-        "A paused sensor: MonitorFlow silences whole servers, not one check, so its check runs.",
+        "A paused sensor MonitorFlow has no check for: silencing its whole server would hide more than PRTG did.",
     ),
     (
         "prtg_local_time",
         "The file does not say PRTG's time zone: the window is read as UTC.",
+    ),
+    (
+        "prtg_schedule_unknown",
+        "Paused by the schedule {schedule}, whose periods are not in the source or are a time table: it cannot be moved.",
     ),
     (
         "prtg_triggers",

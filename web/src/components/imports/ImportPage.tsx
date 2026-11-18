@@ -29,6 +29,7 @@ import {
 } from "@/lib/imports";
 import { formatDateTime } from "@/lib/format";
 import { isAdministrator, multiSite, useMe } from "@/lib/me";
+import { browserTimeZone, timeZones } from "@/lib/onCall";
 import { TOKENS_PATH } from "@/lib/routes";
 import { useUrlParams } from "@/lib/urlState";
 
@@ -116,6 +117,7 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
   const [loadError, setLoadError] = useState<unknown>(null);
   const [sourceId, setSourceId] = useState("");
   const [siteId, setSiteId] = useState("");
+  const [zone, setZone] = useState(browserTimeZone);
   const [mode, setMode] = useState<"files" | "connect">("files");
   const [files, setFiles] = useState<File[]>([]);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -178,6 +180,7 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
       const run = await api.previewImport({
         source: source.id,
         ...(multiSite(me) && siteId ? { site_id: siteId } : {}),
+        time_zone: zone,
         ...body,
       });
       // The token is not kept once read.
@@ -249,6 +252,17 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
           </select>
         </label>
       )}
+      <label className={styles.field}>
+        <span>{t("imports.start.zone")}</span>
+        <select className={fieldClass} value={zone} onChange={(e) => setZone(e.target.value)}>
+          {timeZones(zone).map((z) => (
+            <option key={z} value={z}>
+              {z.replaceAll("_", " ")}
+            </option>
+          ))}
+        </select>
+        <span className={styles.note}>{t("imports.start.zoneNote")}</span>
+      </label>
       {source && source.extensions.length > 0 && source.connect.length > 0 && (
         <div
           className={styles.modes}

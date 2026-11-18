@@ -55,7 +55,7 @@ import { ServerLogsTab } from "./ServerLogsTab";
 import { type SensorRules, ServerSensorsTab } from "./ServerSensorsTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
 import styles from "./ServerPage.module.css";
-import { useSilenceBar } from "./Silences";
+import { type SilenceBarParts, useSilenceBar } from "./Silences";
 
 /** Commands loaded at first; "Load more" adds pages of this size. */
 export const COMMANDS_PAGE = 50;
@@ -160,6 +160,12 @@ export function ServerPage({ id }: { id: string | null }) {
   const [details, setDetails] = useState(false);
   const fetcher = useCallback((signal: AbortSignal) => loadServer(id ?? "", commandLimit, signal), [id, commandLimit]);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { enabled: valid });
+  const loaded = data?.server;
+  const silences = useSilenceBar(
+    loaded
+      ? { scope: "server", id: loaded.id, name: loaded.hostname, customerId: loaded.customer_id, siteId: loaded.site_id }
+      : null,
+  );
 
   useEffect(() => {
     if (data) document.title = `${data.server.hostname} · MonitorFlow`;
@@ -198,6 +204,7 @@ export function ServerPage({ id }: { id: string | null }) {
         onChanged={refresh}
         details={details}
         onDetails={setDetails}
+        silences={silences}
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {server.awaiting_agent && !server.revoked_at && <WaitingForAgent server={server} />}
@@ -248,6 +255,8 @@ export function ServerPage({ id }: { id: string | null }) {
             rules={data.rules}
             incidentsFailed={incidents === null}
             onChanged={refresh}
+            checkSilences={silences.checkSilences}
+            onSilenceCheck={silences.silenceCheck}
           />
         )}
         {!device && tab === "logs" && <ServerLogsTab server={server} />}
@@ -285,6 +294,7 @@ function ServerHeader({
   onChanged,
   details,
   onDetails: setDetails,
+  silences,
 }: {
   server: ServerDetail;
   latestAgent: string | null;
@@ -294,18 +304,12 @@ function ServerHeader({
   onChanged: () => void;
   details: boolean;
   onDetails: (open: boolean) => void;
+  silences: SilenceBarParts;
 }) {
   const me = useMe();
   const severalSites = multiSite(me);
   const [removing, setRemoving] = useState(false);
   const live = !server.revoked_at;
-  const silences = useSilenceBar({
-    scope: "server",
-    id: server.id,
-    name: server.hostname,
-    customerId: server.customer_id,
-    siteId: server.site_id,
-  });
   const canRemove = live && administersCustomer(me, server.customer_id);
   const device = server.kind === "device";
   const canEditDevice = device && live && modifiesSite(me, server.customer_id, server.site_id);

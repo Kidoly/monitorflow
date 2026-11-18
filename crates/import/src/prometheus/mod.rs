@@ -50,6 +50,7 @@ impl Collected {
         rules::apply(&mut fleet, &self.rules);
         if let Some(config) = &self.alertmanager {
             alertmanager::channels(&mut fleet.inventory, config);
+            alertmanager::windows(&mut fleet, config);
         }
         alertmanager::silences(&mut fleet, &self.silences);
         let mut inventory = fleet.inventory;

@@ -658,6 +658,7 @@ mod tests {
             enabled: true,
             prototype: false,
             template: None,
+            tags: vec![],
         }
     }
 

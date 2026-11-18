@@ -434,8 +434,34 @@
       "note": {
         "code": "prtg_paused"
       }
+    },
+    {
+      "scope": {
+        "kind": "hosts",
+        "hosts": [
+          "device:2002"
+        ]
+      },
+      "checks": [
+        {
+          "kind": "disk"
+        }
+      ],
+      "starts_at": "2026-11-17T12:00:00Z",
+      "ends_at": "2026-12-17T12:00:00Z",
+      "reason": "Paused in PRTG",
+      "origin": {
+        "kind": "sensor",
+        "name": "Disk /var",
+        "detail": "sshdiskfree"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_paused"
+      }
     }
   ],
+  "windows": [],
   "channels": [
     {
       "name": "Email ops",
@@ -560,17 +586,6 @@
       },
       "why": {
         "code": "prtg_paused_by_rule"
-      }
-    },
-    {
-      "hosts": [],
-      "origin": {
-        "kind": "sensor",
-        "name": "Disk /var",
-        "detail": "sshdiskfree"
-      },
-      "why": {
-        "code": "prtg_paused_sensor"
       }
     },
     {

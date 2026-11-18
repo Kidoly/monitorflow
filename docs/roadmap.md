@@ -183,10 +183,10 @@ Fit into the tools people already use, for a single company and for MSPs alike (
 
 What people moving from another monitoring tool cannot do without today (the "cannot be moved" lists of the importer): watch what cannot run the agent, check a website the way a visitor sees it, and silence exactly what is under maintenance. Each item also makes the importer map what it now covers exactly.
 
-- [ ] Network checks from a probe (ADR-0148): ping (answer, round-trip time, packet loss) and TCP or UDP ports of any address, run by the central server or by a relay of the site, so a network problem between two places is seen. Addresses without an agent are added as devices, with their own page, alerts and dashboards.
-- [ ] SNMP devices (ADR-0149): switches, routers, firewalls, printers, UPSs and NAS watched over SNMP v2c and v3 from a relay or the central server, with what the common MIBs say (uptime, interfaces up or down, traffic and errors, processor, memory, storage, temperature and battery where they exist), added from a template per kind of device. Servers' network interface traffic is measured by the agent too.
+- [x] Network checks from a probe (ADR-0148): ping (answer, round-trip time, packet loss) and TCP or UDP ports of any address, run by the central server or by a relay of the site, so a network problem between two places is seen. Addresses without an agent are added as devices, with their own page, alerts and dashboards.
+- [x] SNMP devices (ADR-0149): switches, routers, firewalls, printers, UPSs and NAS watched over SNMP v2c and v3 from a relay or the central server, with what the common MIBs say (uptime, interfaces up or down, traffic and errors, processor, memory, storage, temperature and battery where they exist), added from a template per kind of device. Servers' network interface traffic is measured by the agent too.
 - [ ] Website checks (ADR-0150): the status code, text expected or not expected in the page, response time, redirects and the certificate (valid, matching the name, days left), from the central server, a relay or a server's agent.
-- [ ] Precise and recurring silences (ADR-0151): silence one check instead of a whole server, and recurring maintenance windows (weekly or monthly, in a time zone) that need no renewing.
+- [x] Precise and recurring silences (ADR-0151): silence one check instead of a whole server, and recurring maintenance windows (weekly or monthly, in a time zone) that need no renewing.
 
 ## Phase 18: Catching up
 

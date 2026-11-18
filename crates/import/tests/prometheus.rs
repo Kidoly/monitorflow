@@ -365,8 +365,31 @@ async fn files_of_a_real_setup() {
     };
     assert!(url.expose().contains(".logic.azure.com/workflows/"));
     assert_eq!(unmovable(&inventory, "on-call"), "no_target");
-    // No silences in files.
+    // No silences in files, but the muted time intervals of routes are
+    // maintenance windows (ADR-0151).
     assert!(inventory.silences.is_empty());
+    let backups = inventory
+        .windows
+        .iter()
+        .find(|w| w.reason == "sunday-backups")
+        .unwrap();
+    assert!(
+        matches!(&backups.scope, SilenceScope::Hosts(h) if h.iter().all(|h| h.starts_with("db-")))
+    );
+    assert_eq!(
+        (backups.rule.weekdays, backups.rule.duration_minutes),
+        (1 << 6, 240)
+    );
+    assert_eq!(backups.rule.time_zone.as_deref(), Some("UTC"));
+    let batch = inventory
+        .windows
+        .iter()
+        .find(|w| w.reason == "nightly-batch")
+        .unwrap();
+    assert_eq!(batch.scope, SilenceScope::Hosts(vec!["web-01".into()]));
+    assert_eq!(batch.checks, vec![Watch::Cpu]);
+    assert_eq!(batch.rule.time_zone.as_deref(), Some("Europe/Paris"));
+    assert_eq!(batch.fidelity, Fidelity::Exact);
 }
 
 #[tokio::test]
@@ -547,13 +570,9 @@ fn assert_live(inventory: &Inventory) {
     assert!(upgrade.ends_at > upgrade.starts_at);
     let batch = silence("Nightly batch on the web server");
     assert_eq!(batch.scope, SilenceScope::Hosts(vec!["web-01".into()]));
-    assert_eq!(
-        batch.fidelity,
-        Fidelity::Approximated(Note::new(
-            "silence_whole_server",
-            args! {"matchers" => "alertname=\"HostHighCpuLoad\""}
-        ))
-    );
+    // The alert rule's check only, not the whole server (ADR-0151).
+    assert_eq!(batch.checks, vec![Watch::Cpu]);
+    assert_eq!(batch.fidelity, Fidelity::Exact);
     assert_eq!(unmovable(inventory, "Old staging machines"), "no_hosts");
 }
 

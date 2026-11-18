@@ -7,6 +7,7 @@
 import { type MessageKey, t } from "@/i18n";
 
 import { checkTitle, describeThreshold, shapeOf } from "./alerts";
+import { checkName, describeRule } from "./maintenance";
 import type {
   EffectiveSensor,
   ImportItem,
@@ -29,6 +30,7 @@ export const KINDS = [
   "check",
   "threshold",
   "silence",
+  "window",
   "channel",
   "builtin",
   "other",
@@ -110,11 +112,24 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
       );
     }
     case "silence":
-      return t("imports.item.silence", {
-        from: formatDateTime(create.starts_at),
-        to: formatDateTime(create.ends_at),
-        reason: create.reason,
-      });
+      return create.checks?.length
+        ? t("imports.item.silenceChecks", {
+            from: formatDateTime(create.starts_at),
+            to: formatDateTime(create.ends_at),
+            checks: create.checks.map(checkName).join(", "),
+            reason: create.reason,
+          })
+        : t("imports.item.silence", {
+            from: formatDateTime(create.starts_at),
+            to: formatDateTime(create.ends_at),
+            reason: create.reason,
+          });
+    case "window": {
+      const rule = describeRule(create);
+      return create.checks?.length
+        ? t("imports.item.windowChecks", { rule, checks: create.checks.map(checkName).join(", "), reason: create.reason })
+        : t("imports.item.window", { rule, reason: create.reason });
+    }
     case "channel": {
       const settings = create.settings;
       const to = Array.isArray(settings.to) ? settings.to.join(", ") : "";

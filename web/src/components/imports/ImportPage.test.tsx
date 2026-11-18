@@ -186,6 +186,8 @@ describe("ImportPage", () => {
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({
       source: "example",
       connection: { url: "https://monitoring.example.com", token: "s3cret" },
+      // Maintenance windows without a zone are read in the browser's.
+      time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
     expect(
       await screen.findByText("Example tool: export.yaml"),

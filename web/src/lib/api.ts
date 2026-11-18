@@ -181,8 +181,8 @@ export interface Server {
   site_offline_alerts?: boolean;
   /** While a silence covers it, when the last one ends (ADR-0079). */
   silenced_until?: string | null;
-  /** That silence: who made it, until when and why (ADR-0130). */
-  silence?: { by: string | null; until: string; reason: string } | null;
+  /** That silence: who made it, until when and why (ADR-0130); `window` for a maintenance window (ADR-0151). */
+  silence?: { by: string | null; until: string; reason: string; window?: boolean } | null;
   /** The latest acknowledgement of its open incidents (ADR-0130). */
   acknowledgement?: { by: string; at: string; note: string | null } | null;
   /** Made by an import and waiting for its agent, which takes it over by enrolling as `peer_id` (ADR-0146). */
@@ -317,6 +317,10 @@ export interface PanelAlert {
   instance: string;
   severity: "warning" | "critical";
   opened_at: string;
+  /** When the last silence covering it ends, if one does now (ADR-0151). */
+  silenced_until?: string | null;
+  /** Whether a maintenance window covers it now. */
+  in_maintenance?: boolean;
 }
 
 /** What one panel shows; `error` is a sentence for the panel. */
@@ -1038,8 +1042,10 @@ export interface Incident {
   /** The worst value seen while open. */
   peak_value: number;
   threshold: ThresholdSnapshot;
-  /** While open and covered by a silence, when the last one ends (ADR-0079). */
+  /** While open and covered by a silence, of its place or of its check, when the last one ends (ADR-0079, ADR-0151). */
   silenced_until?: string | null;
+  /** While open, whether a maintenance window covers it now (ADR-0151). */
+  in_maintenance?: boolean;
   /** Whether a silence ever held back a notification of it. */
   silenced?: boolean;
   /** Who said they are on it, and when (ADR-0082); null until someone does. */
@@ -1072,8 +1078,18 @@ export interface Silence {
   reason: string;
   created_by_username: string | null;
   created_at: string;
+  /** Only these checks of its server or site; null or absent for all of it (ADR-0151). */
+  checks?: SilencedCheck[] | null;
+  /** The maintenance window it is an occurrence of; null for a one-off silence. */
+  window_id?: string | null;
   /** Whether this user may end it. */
   can_end: boolean;
+}
+
+/** A check by its identity: its name and what it watches, `""` for every instance (ADR-0151). */
+export interface SilencedCheck {
+  name: string;
+  instance: string;
 }
 
 /** Body of `POST /api/silences`. */
@@ -1084,6 +1100,63 @@ export interface SilenceRequest {
   starts_at?: string;
   ends_at: string;
   reason: string;
+  /** Only these checks of a server or site. */
+  checks?: SilencedCheck[];
+}
+
+/** How a maintenance window comes back (ADR-0151). */
+export type MaintenanceRepeat = "daily" | "weekly" | "monthly";
+
+/** `monday` to `sunday`. */
+export type WeekdayName = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+
+/** Body of `POST /api/maintenance-windows` and `PUT /api/maintenance-windows/{id}`. */
+export interface MaintenanceWindowRequest {
+  site_id: string;
+  /** Empty: the whole site. */
+  server_ids: string[];
+  /** Null or absent: everything of the servers. */
+  checks?: SilencedCheck[] | null;
+  repeat: MaintenanceRepeat;
+  every: number;
+  weekdays: WeekdayName[];
+  month_day?: number | null;
+  /** 1 to 4, or 5 for the last week. */
+  month_week?: number | null;
+  /** 1 to 12; empty is every month. */
+  months: number[];
+  /** `HH:MM`, local. */
+  start_time: string;
+  duration_minutes: number;
+  time_zone: string;
+  starts_on?: string | null;
+  ends_on?: string | null;
+  reason: string;
+}
+
+/** One window of a rule. */
+export interface MaintenanceOccurrence {
+  starts_at: string;
+  ends_at: string;
+}
+
+/** One maintenance window of `GET /api/maintenance-windows`. */
+export interface MaintenanceWindow extends Omit<MaintenanceWindowRequest, "server_ids" | "starts_on"> {
+  id: string;
+  site_name: string;
+  customer_id: string;
+  /** The whole site; else only `servers`, which may be none left once removed. */
+  whole_site?: boolean;
+  servers: { id: string; hostname: string }[];
+  starts_on: string;
+  /** When the one running now ends; null when none runs. */
+  active_until: string | null;
+  /** The running window, if any, then the next ones. */
+  next: MaintenanceOccurrence[];
+  created_by_username: string | null;
+  created_at: string;
+  updated_at: string;
+  can_change: boolean;
 }
 
 /** One page of incidents: open ones first, then newest first. */
@@ -1390,7 +1463,8 @@ export type ImportCreate =
       duration_s: number;
       hysteresis: number;
     }
-  | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string }
+  | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
+  | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
   | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null };
 
 /** One line of an import's preview. */
@@ -1445,6 +1519,8 @@ export interface ImportRequest {
   site_id?: string;
   files?: { name: string; content: string; base64?: boolean }[];
   connection?: Record<string, string>;
+  /** IANA zone of maintenance windows whose source does not say it (ADR-0151). */
+  time_zone?: string;
 }
 
 export type BackupKind = "daily" | "manual" | "update";
@@ -3414,6 +3490,24 @@ export const api = {
 
   /** Ends a silence now, or calls it off before it starts. */
   endSilence: (id: string) => request<void>(`/api/silences/${encodeURIComponent(id)}/end`, { method: "POST" }),
+
+  /** Maintenance windows of what the user reads, or those covering one site or server (ADR-0151). */
+  maintenanceWindows: (filter: { site_id?: string; server_id?: string }, signal?: AbortSignal) => {
+    const query = new URLSearchParams(filter).toString();
+    return request<{ windows: MaintenanceWindow[] }>(`/api/maintenance-windows${query ? `?${query}` : ""}`, { signal });
+  },
+
+  /** Makes a maintenance window; operators of its site. */
+  createMaintenanceWindow: (body: MaintenanceWindowRequest) =>
+    request<MaintenanceWindow>("/api/maintenance-windows", { method: "POST", body }),
+
+  /** Replaces a maintenance window's rule, place and reason. */
+  updateMaintenanceWindow: (id: string, body: MaintenanceWindowRequest) =>
+    request<MaintenanceWindow>(`/api/maintenance-windows/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  /** Removes a maintenance window; the running one ends now. */
+  removeMaintenanceWindow: (id: string) =>
+    request<void>(`/api/maintenance-windows/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Creates the site `name` under `customerId`; customer administrators only. */
   createSite: (customerId: string, name: string) =>
