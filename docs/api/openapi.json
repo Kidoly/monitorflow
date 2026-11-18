@@ -5474,6 +5474,1043 @@
         }
       }
     },
+    "/api/v1/devices": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Add a device",
+        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
+        "operationId": "create_device",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRequest"
+              },
+              "examples": {
+                "central": {
+                  "summary": "A website's server pinged from the central server",
+                  "value": {
+                    "address": "shop.example.com",
+                    "name": "Shop front",
+                    "probe": "central",
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                  }
+                },
+                "ping": {
+                  "summary": "A switch pinged from the site's relay",
+                  "value": {
+                    "address": "192.0.2.10",
+                    "name": "Core switch",
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                  }
+                },
+                "snmp": {
+                  "summary": "A switch over SNMP v3, with the checks and alerts of its kind",
+                  "value": {
+                    "address": "192.0.2.10",
+                    "name": "Core switch",
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                    "snmp": {
+                      "auth_password": "an auth password",
+                      "auth_protocol": "sha256",
+                      "priv_password": "a privacy password",
+                      "priv_protocol": "aes128",
+                      "user": "monitor",
+                      "version": "v3"
+                    },
+                    "template": "switch"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The device, as a server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerView"
+                },
+                "example": {
+                  "address": "192.0.2.10",
+                  "agent_version": null,
+                  "awaiting_agent": false,
+                  "cert_not_after": null,
+                  "command_kinds": null,
+                  "connected_at": null,
+                  "created_at": "2026-09-01T08:00:00Z",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "acme",
+                  "hostname": "Core switch",
+                  "id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a",
+                  "kind": "device",
+                  "last_heartbeat": null,
+                  "offline_alerts": true,
+                  "open_incidents": 0,
+                  "os_family": "device",
+                  "os_version": null,
+                  "package_updates": false,
+                  "peer_id": "core-switch",
+                  "relay_id": null,
+                  "revoked_at": null,
+                  "silenced_until": null,
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "site_offline_alerts": true,
+                  "status": "device",
+                  "via_relay": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A name or address that is not valid, or a `probe` that is neither `central` nor a relay of the site: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/detect": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "See what an address answers over SNMP",
+        "description": "Runs a detection once, from the probe that would check the address (the site's default, or `probe`): the system's description, name and object ID, which groups answer, and the template that fits. Nothing is stored. A device that does not answer, or refuses the credentials, gives `answers: false` and the reason in `error`. A relay that this central server does not hold the stream of gives 409; try again.\n\n**Who**: operator or above on the site, since it sends credentials to the probe. **Area**: `servers`.",
+        "operationId": "detect_device",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DetectRequest"
+              },
+              "example": {
+                "address": "192.0.2.10",
+                "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                "snmp": {
+                  "community": "a community",
+                  "version": "v2c"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What it answered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Detected"
+                },
+                "example": {
+                  "answers": true,
+                  "description": "24-port gigabit switch",
+                  "error": null,
+                  "groups": [
+                    "interfaces",
+                    "temperature"
+                  ],
+                  "name": "core-switch",
+                  "object_id": "1.3.6.1.4.1.8072.3.2.10",
+                  "probe": "relay-paris",
+                  "template": "switch"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An address, credentials or `probe` that are not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The relay is not connected to this central server now: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/templates": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "List the kinds of SNMP devices",
+        "description": "Each template names the groups of SNMP objects its checks poll (`system`, `interfaces`, `host`, `ups`, `temperature`, `printer`) and the thresholds a device of that kind gets. Every template alerts when SNMP stops answering. A check of group `g` is named after it (`snmp` for `system`, `snmp_if`, `snmp_host`, `snmp_ups`, `snmp_temp`, `snmp_printer`), and so are its metrics, like `monitorflow_snmp_if_in_bytes_per_second`.\n\n**Who**: any role. **Area**: `servers`.",
+        "operationId": "device_templates",
+        "responses": {
+          "200": {
+            "description": "The templates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateList"
+                },
+                "example": {
+                  "templates": [
+                    {
+                      "groups": [
+                        "system",
+                        "ups"
+                      ],
+                      "key": "ups",
+                      "thresholds": [
+                        {
+                          "comparison": "<",
+                          "critical": 1.0,
+                          "duration_s": 120,
+                          "metric": "monitorflow_snmp_up",
+                          "warning": null
+                        },
+                        {
+                          "comparison": ">=",
+                          "critical": 1.0,
+                          "duration_s": 0,
+                          "metric": "monitorflow_snmp_ups_on_battery",
+                          "warning": null
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}": {
+      "put": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Rename a device or change its address",
+        "description": "Changes what is given and keeps the rest. Checks without a `host` of their own follow the new address within seconds.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.update`.",
+        "operationId": "update_device",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceUpdate"
+              },
+              "example": {
+                "address": "192.0.2.11"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The device",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerView"
+                },
+                "example": {
+                  "address": "192.0.2.11",
+                  "agent_version": null,
+                  "awaiting_agent": false,
+                  "cert_not_after": null,
+                  "command_kinds": null,
+                  "connected_at": null,
+                  "created_at": "2026-09-01T08:00:00Z",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "acme",
+                  "hostname": "Core switch",
+                  "id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a",
+                  "kind": "device",
+                  "last_heartbeat": null,
+                  "offline_alerts": true,
+                  "open_incidents": 0,
+                  "os_family": "device",
+                  "os_version": null,
+                  "package_updates": false,
+                  "peer_id": "core-switch",
+                  "relay_id": null,
+                  "revoked_at": null,
+                  "silenced_until": null,
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "site_offline_alerts": true,
+                  "status": "device",
+                  "via_relay": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A name or address that is not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device (a server with an agent is not one), or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/snmp": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Read a device's SNMP credentials, without secrets",
+        "description": "The version, port, user and protocols, and which secrets are set; never the community or a password.\n\n**Who**: any role on the device's site. **Area**: `servers`.",
+        "operationId": "device_snmp",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpCredentials"
+                },
+                "example": {
+                  "auth_password_set": true,
+                  "auth_protocol": "sha256",
+                  "community_set": false,
+                  "port": 161,
+                  "priv_password_set": true,
+                  "priv_protocol": "aes128",
+                  "updated_at": "2026-11-18T10:20:00Z",
+                  "user": "monitor",
+                  "version": "v3"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, none set, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Set a device's SNMP credentials",
+        "description": "Replaces them. A secret left out keeps the stored one while the version stays, so the port or the user change without typing the passwords again. Its probes use them within seconds. v3 passwords have at least 8 characters; privacy needs authentication.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.snmp_update`, without secrets.",
+        "operationId": "set_device_snmp",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnmpCredentialsRequest"
+              },
+              "example": {
+                "community": "a community",
+                "version": "v2c"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The credentials, without secrets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpCredentials"
+                },
+                "example": {
+                  "auth_password_set": true,
+                  "auth_protocol": "sha256",
+                  "community_set": false,
+                  "port": 161,
+                  "priv_password_set": true,
+                  "priv_protocol": "aes128",
+                  "updated_at": "2026-11-18T10:20:00Z",
+                  "user": "monitor",
+                  "version": "v3"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Credentials that are not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Remove a device's SNMP credentials",
+        "description": "Its SNMP checks stop being sent to its probes until credentials are set again.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.snmp_delete`.",
+        "operationId": "delete_device_snmp",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, none set, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/follow-up/policies": {
       "get": {
         "tags": [
@@ -20149,7 +21186,7 @@
           "sensors"
         ],
         "summary": "Replace a sensor row",
-        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping` and `port` (TCP or UDP) checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
         "operationId": "update_sensor_config",
         "parameters": [
           {
@@ -24052,7 +25089,7 @@
           "sensors"
         ],
         "summary": "Add a sensor row to a server",
-        "description": "Adds a sensor to one server, or replaces for it the sensor of the same name and instance that its site or the built-in checks give; with `enabled: false`, removes that sensor from it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "description": "Adds a sensor to one server, or replaces for it the sensor of the same name and instance that its site or the built-in checks give; with `enabled: false`, removes that sensor from it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping` and `port` (TCP or UDP) checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
         "operationId": "create_server_sensor_config",
         "parameters": [
           {
@@ -28830,6 +29867,128 @@
         }
       }
     },
+    "/api/v1/sites/{id}/probes": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "List where a site's network checks can run from",
+        "description": "The central server, then the relays of the site, each with whether it is connected and which one a new check of a device uses when it names none (`default`). A check's `probe` is `central` or the relay's `relay_id`.\n\n**Who**: any role on the site. **Area**: `servers`.",
+        "operationId": "site_probes",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The probes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeList"
+                },
+                "example": {
+                  "probes": [
+                    {
+                      "default": false,
+                      "key": "central",
+                      "name": null,
+                      "online": true,
+                      "probe": "central",
+                      "relay_id": null
+                    },
+                    {
+                      "default": true,
+                      "key": "relay-paris",
+                      "name": "Paris relay",
+                      "online": true,
+                      "probe": "relay",
+                      "relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sites/{id}/sensor_configs": {
       "get": {
         "tags": [
@@ -28956,7 +30115,7 @@
           "sensors"
         ],
         "summary": "Add a sensor row to a site",
-        "description": "Adds a sensor to every server of the site, or replaces the built-in sensor of the same name and instance; with `enabled: false`, removes it. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "description": "Adds a sensor to every server of the site, or replaces the built-in sensor of the same name and instance; with `enabled: false`, removes it. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping` and `port` (TCP or UDP) checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
         "operationId": "create_site_sensor_config",
         "parameters": [
           {
@@ -35044,6 +36203,168 @@
           }
         }
       },
+      "DetectRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/devices/detect`.",
+        "required": [
+          "site_id",
+          "address",
+          "snmp"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "An IP address or a DNS name."
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`central` or a relay of the site; absent: the site's default."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "snmp": {
+            "$ref": "#/components/schemas/SnmpCredentialsRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Detected": {
+        "type": "object",
+        "description": "What an address answered over SNMP.",
+        "required": [
+          "answers",
+          "groups",
+          "probe"
+        ],
+        "properties": {
+          "answers": {
+            "type": "boolean",
+            "description": "Whether it answered at all with these credentials."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "sysDescr, sysName and sysObjectID."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, in words; `null` when it answered."
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The groups that answer, among `interfaces`, `host`, `ups`,\n`temperature`, `printer`."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "object_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probe": {
+            "type": "string",
+            "description": "`central` or the relay that asked."
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The template that fits it; `null` when it did not answer."
+          }
+        }
+      },
+      "DeviceRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/devices`.",
+        "required": [
+          "site_id",
+          "name",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Where its checks reach it: an IP address or a DNS name."
+          },
+          "name": {
+            "type": "string",
+            "description": "What people call it, like `Core switch`: 1 to 128 characters\nwithout control characters. Its ID is made from it."
+          },
+          "ping": {
+            "type": "boolean",
+            "description": "Whether to add a ping every minute, with the thresholds that come\nwith it: critical when it gets no answer for 2 minutes, a warning\nabove 20% packet loss for 5 minutes. `true` by default."
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where its ping runs from: `central`, or the ID of a relay of the\nsite. Absent: the relay of the site when there is one, else the\ncentral server."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The site it is in; its relays can check it."
+          },
+          "snmp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SnmpCredentialsRequest",
+                "description": "How to reach it over SNMP (ADR-0149); needed with `template`.\nStored sealed, never returned."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The kind of device, whose SNMP checks and thresholds it gets, run\nfrom the same probe as its ping: `switch`, `router`, `firewall`,\n`printer`, `ups`, `nas` or `generic`. See\n`GET /api/devices/templates`, and `POST /api/devices/detect` for the\none that fits."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeviceUpdate": {
+        "type": "object",
+        "description": "Body of `PUT /api/devices/{id}`: what changes, the rest stays.",
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "Disk": {
         "type": "object",
         "description": "Space of the file system holding `path`.",
@@ -35113,6 +36434,20 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who runs it (ADR-0148): `null` for the agent, `central` or\n`relay`; probe checks come after the agent's."
+          },
+          "probe_relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "timeout_ms": {
             "type": [
@@ -36331,6 +37666,34 @@
           },
           {
             "type": "object",
+            "description": "A device: an address without an agent, watched from a probe\n(ADR-0148).",
+            "required": [
+              "peer_id",
+              "hostname",
+              "address",
+              "object"
+            ],
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "What its checks reach."
+              },
+              "hostname": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "device"
+                ]
+              },
+              "peer_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A check (a sensor row) of a server.",
             "required": [
               "server",
@@ -36360,6 +37723,10 @@
               },
               "params": {
                 "type": "object"
+              },
+              "probe": {
+                "type": "boolean",
+                "description": "Run from the site's default probe, the relay of the site or the\ncentral server, rather than the agent (ADR-0148)."
               },
               "server": {
                 "type": "string",
@@ -40463,6 +41830,66 @@
           }
         }
       },
+      "Probe": {
+        "type": "object",
+        "description": "One place a site's checks can run from.",
+        "required": [
+          "probe",
+          "key",
+          "online",
+          "default"
+        ],
+        "properties": {
+          "default": {
+            "type": "boolean",
+            "description": "What a new check of a device of this site runs from when it names\nnone."
+          },
+          "key": {
+            "type": "string",
+            "description": "`central`, or the relay's name: the instance its checks default\nto."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The relay's name for people; `null` for the central server."
+          },
+          "online": {
+            "type": "boolean",
+            "description": "Whether it is connected now; the central server always is."
+          },
+          "probe": {
+            "type": "string",
+            "description": "`central` or `relay`.",
+            "example": "relay"
+          },
+          "relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The relay; `null` for the central server."
+          }
+        }
+      },
+      "ProbeList": {
+        "type": "object",
+        "description": "Body of `GET /api/sites/{id}/probes`.",
+        "required": [
+          "probes"
+        ],
+        "properties": {
+          "probes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Probe"
+            },
+            "description": "The central server first, then the relays by name."
+          }
+        }
+      },
       "ProviderList": {
         "type": "object",
         "description": "Body of `GET /api/identity-providers`.",
@@ -42351,6 +43778,20 @@
             "type": "object",
             "description": "As sent, with its types."
           },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who runs it (ADR-0148): `null` for the server's agent, `central`\nfor the central server, `relay` for the relay `probe_relay_id`."
+          },
+          "probe_relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "server_id": {
             "type": [
               "string",
@@ -42432,6 +43873,13 @@
           "params": {
             "type": "object",
             "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused."
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who runs the check, on a server's own row (ADR-0148): `central`\nfor the central server, or the ID of a relay of the server's site.\nAbsent or `null`: the server's agent; for a device, which has none,\nthe relay of its site when there is one, else the central server.\nThe `instance` of such a check defaults to the probe: `central` or\nthe relay's name."
           },
           "timeout_ms": {
             "type": [
@@ -42744,7 +44192,8 @@
         "type": "string",
         "enum": [
           "online",
-          "offline"
+          "offline",
+          "device"
         ]
       },
       "ServerSummary": {
@@ -42843,6 +44292,7 @@
           "customer_id",
           "customer_name",
           "os_family",
+          "kind",
           "package_updates",
           "created_at",
           "status",
@@ -42863,6 +44313,13 @@
                 "type": "null"
               }
             ]
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A device's address, which its checks reach; `null` for an agent."
           },
           "agent_version": {
             "type": [
@@ -42925,6 +44382,11 @@
             "type": "string",
             "format": "uuid"
           },
+          "kind": {
+            "type": "string",
+            "description": "`agent`: the machine runs the agent; `device`: an address without\none, watched by network checks from a probe (ADR-0148).",
+            "example": "agent"
+          },
           "last_heartbeat": {
             "type": [
               "string",
@@ -42944,7 +44406,7 @@
           },
           "os_family": {
             "type": "string",
-            "description": "`debian`, `rhel`, `windows`, or `linux` for any other distribution."
+            "description": "`debian`, `rhel`, `windows`, or `linux` for any other distribution;\n`device` for a device."
           },
           "os_version": {
             "type": [
@@ -43729,6 +45191,190 @@
         ],
         "description": "A snapshot and why it stays; `null` when the next pass of retention\nremoves it, or while it is created."
       },
+      "SnmpCredentials": {
+        "type": "object",
+        "description": "What the API shows of a device's credentials: never a secret.",
+        "required": [
+          "version",
+          "port",
+          "community_set",
+          "auth_password_set",
+          "priv_password_set",
+          "updated_at"
+        ],
+        "properties": {
+          "auth_password_set": {
+            "type": "boolean"
+          },
+          "auth_protocol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "community_set": {
+            "type": "boolean",
+            "description": "Whether a community is stored, for v2c."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "priv_password_set": {
+            "type": "boolean"
+          },
+          "priv_protocol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "SnmpCredentialsRequest": {
+        "type": "object",
+        "description": "Body of the credentials of a device: `version` and what it needs. On a\nchange, a secret left out keeps the stored one when the version stays.",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "auth_password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "v3: at least 8 characters. Secret."
+          },
+          "auth_protocol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "v3: `sha`, `sha256`, `sha384`, `sha512` or `md5`; absent for no\nauthentication."
+          },
+          "community": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "v2c: the community. Secret."
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "161 by default.",
+            "minimum": 0
+          },
+          "priv_password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "v3: at least 8 characters. Secret."
+          },
+          "priv_protocol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "v3: `aes128`, `aes256` or `aes256c` (Cisco's key extension); absent\nfor no privacy. Needs authentication."
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "v3: the user."
+          },
+          "version": {
+            "type": "string",
+            "description": "`v2c` or `v3`.",
+            "example": "v3"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnmpTemplate": {
+        "type": "object",
+        "description": "A kind of device: its groups and thresholds.",
+        "required": [
+          "key",
+          "groups",
+          "thresholds"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What its checks poll: `system`, `interfaces`, `host`, `ups`,\n`temperature`, `printer`."
+          },
+          "key": {
+            "type": "string",
+            "description": "`switch`, `router`, `firewall`, `printer`, `ups`, `nas` or `generic`."
+          },
+          "thresholds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpTemplateThreshold"
+            }
+          }
+        }
+      },
+      "SnmpTemplateThreshold": {
+        "type": "object",
+        "description": "A threshold a template adds.",
+        "required": [
+          "metric",
+          "comparison",
+          "duration_s"
+        ],
+        "properties": {
+          "comparison": {
+            "type": "string",
+            "example": ">"
+          },
+          "critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "duration_s": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "warning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
       "SourcesMode": {
         "type": "string",
         "description": "`replace` sets the host's other sources aside, `add` keeps them\n(ADR-0032).",
@@ -43957,6 +45603,21 @@
           "source": {
             "type": "string",
             "description": "`vg/lv` for LVM, the dataset for ZFS, the device otherwise."
+          }
+        }
+      },
+      "TemplateList": {
+        "type": "object",
+        "description": "Body of `GET /api/devices/templates`.",
+        "required": [
+          "templates"
+        ],
+        "properties": {
+          "templates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpTemplate"
+            }
           }
         }
       },
@@ -45021,6 +46682,10 @@
     {
       "name": "imports",
       "description": "Moving from another monitoring tool. An import reads the other tool's configuration, from export files or through its API, and shows first what MonitorFlow would create: servers waiting for their agent, checks, thresholds, silences and notification channels. Each item is in one of three lists: `exact` (MonitorFlow does the same), `approximated` (close, the note says how it differs) or `not_movable` (the note says why), and says whether MonitorFlow has it already (`present`). Nothing is created until the preview is confirmed, with the items to leave out; items that need one left out are left out too. Importing the same configuration again creates nothing twice. An import can be undone: what it created goes, except servers an agent has taken over. Servers then only need the agent: one that enrolls with a server's ID, or with an install key of its site from a host of that name, takes it over with its checks. The other tool is only read, never changed, and can keep running. A connection's token is used for the request and never stored. Administrators of the target site only; everything is in the audit log. API keys need the `administration` area."
+    },
+    {
+      "name": "devices",
+      "description": "Devices: switches, routers, printers, UPSs or any address watched without the agent, by network checks that run from the central server or from a relay of the device's site (a probe). A device is a server of kind `device`: it is listed, read, silenced, charted and removed with the server routes, its checks are `sensor_configs` rows with a `probe`, and its thresholds are a server's. It is never offline nor waiting for an agent: its checks say what is wrong. The same probe checks can watch a server that has the agent, from outside. Operators of the site add and change devices. Area `servers`."
     }
   ]
 }

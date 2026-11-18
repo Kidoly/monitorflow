@@ -13,7 +13,7 @@ import type { Tone } from "./tone";
  * certificate; "Pending" is info for a token, warn for a patch).
  */
 export const STATUS_TONES = {
-  server: { online: "ok", offline: "bad", revoked: "neutral", waiting: "neutral" },
+  server: { online: "ok", offline: "bad", revoked: "neutral", waiting: "neutral", device: "neutral" },
   sensor: { ok: "ok", warning: "warn", critical: "bad", unknown: "neutral" },
   severity: { critical: "bad", warning: "warn", resolved: "neutral" },
   certificate: { revoked: "bad" },

@@ -29,6 +29,8 @@ use crate::diskio::DiskIoSensor;
 use crate::eventlog::{self, EventLogSensor};
 use crate::log::{self, LogSensor};
 use crate::memory::MemorySensor;
+use crate::net::NetSensor;
+use crate::ping::PingSensor;
 use crate::port::{PortSensor, PortTargets};
 use crate::script::{self, ScriptSensor};
 #[cfg(unix)]
@@ -44,17 +46,23 @@ pub const KINDS: &[&str] = &[
     "eventlog",
     "log",
     "memory",
+    "net",
+    "ping",
     "port",
     "script",
     "systemd",
     "windows_service",
 ];
 
+/// Kinds only a probe runs, the central server or a relay (ADR-0148):
+/// agents refuse them.
+pub const PROBE_KINDS: &[&str] = &["ping"];
+
 /// Whether this platform runs `kind`: `systemd` needs Unix, `eventlog`
 /// and `windows_service` Windows, the others run on both.
 pub fn supported(kind: &str) -> bool {
     match kind {
-        "systemd" => cfg!(unix),
+        "systemd" | "ping" => cfg!(unix),
         "eventlog" | "windows_service" => cfg!(windows),
         _ => KINDS.contains(&kind),
     }
@@ -139,6 +147,11 @@ fn build_with(
     local: Option<&Local>,
 ) -> Result<Arc<dyn Sensor>, BuildError> {
     let mut params = Params::new(kind, params)?;
+    if local.is_some() && PROBE_KINDS.contains(&params.kind) {
+        return Err(
+            params.refused("it runs from a probe, the central server or a relay (ADR-0148)")
+        );
+    }
     if local.is_some() && !supported(params.kind) {
         return Err(BuildError::Unsupported { kind: params.kind });
     }
@@ -149,6 +162,8 @@ fn build_with(
         "eventlog" => Arc::new(EventLogSensor::from_params(&mut params, local)?),
         "log" => Arc::new(LogSensor::from_params(&mut params, local)?),
         "memory" => Arc::new(MemorySensor),
+        "net" => Arc::new(NetSensor::default()),
+        "ping" => Arc::new(PingSensor::from_params(&mut params)?),
         "port" => Arc::new(PortSensor::from_params(&mut params, local)?),
         "script" => Arc::new(ScriptSensor::from_params(&mut params, local)?),
         #[cfg(unix)]
@@ -248,9 +263,10 @@ mod tests {
 
     #[test]
     fn every_kind_builds_with_defaults_or_asks_for_params() {
-        let required: [(&str, &[(&str, &str)]); 6] = [
+        let required: [(&str, &[(&str, &str)]); 7] = [
             ("eventlog", &[("channel", "System")]),
             ("log", &[("path", "/var/log/syslog"), ("pattern", "error")]),
+            ("ping", &[("host", "192.0.2.1")]),
             ("port", &[("port", "22")]),
             ("script", &[("script", "check")]),
             ("systemd", &[("units", "ssh")]),
@@ -274,7 +290,7 @@ mod tests {
         let error = build("gpu", &BTreeMap::new()).err().unwrap();
         assert_eq!(error, BuildError::UnknownKind("gpu".into()));
         assert!(error.to_string().contains(
-            "expected one of: cpu, disk, diskio, eventlog, log, memory, port, script, systemd, windows_service"
+            "expected one of: cpu, disk, diskio, eventlog, log, memory, net, ping, port, script, systemd, windows_service"
         ));
         assert_eq!(
             build("cpu", &params(&[("per_cores", "true")])).err(),
@@ -304,7 +320,10 @@ mod tests {
     #[test]
     fn kinds_of_another_platform_are_refused_by_the_agent() {
         let (here, elsewhere) = if cfg!(windows) {
-            (vec!["eventlog", "log", "windows_service"], vec!["systemd"])
+            (
+                vec!["eventlog", "log", "windows_service"],
+                vec!["systemd", "ping"],
+            )
         } else {
             (vec!["log", "systemd"], vec!["eventlog", "windows_service"])
         };
@@ -313,7 +332,7 @@ mod tests {
         }
         assert!(here.iter().all(|k| supported(k)) && !supported("gpu"));
         let local = Local::default();
-        for kind in &elsewhere {
+        for kind in elsewhere.iter().filter(|k| !PROBE_KINDS.contains(k)) {
             let error = build_local(kind, &BTreeMap::new(), &local).err().unwrap();
             assert!(matches!(error, BuildError::Unsupported { .. }), "{error}");
             assert!(
@@ -341,6 +360,23 @@ mod tests {
         assert!(build("windows_service", &params(&[("services", "a\\b")])).is_err());
         let log = params(&[("path", r"C:\Logs\app.log"), ("pattern", "x")]);
         assert!(build("log", &log).is_ok());
+    }
+
+    #[test]
+    fn agents_refuse_probe_checks() {
+        let local = Local::default();
+        let ping = params(&[("host", "192.0.2.1")]);
+        assert!(build("ping", &ping).is_ok());
+        let error = build_local("ping", &ping, &local).err().unwrap();
+        assert!(
+            matches!(error, BuildError::Refused { kind: "ping", .. }),
+            "{error}"
+        );
+        let udp = params(&[("port", "53"), ("protocol", "udp")]);
+        assert!(build("port", &udp).is_ok());
+        let error = build_local("port", &udp, &local).err().unwrap();
+        assert!(error.to_string().contains("from a probe"), "{error}");
+        assert!(build_local("port", &params(&[("port", "53")]), &local).is_ok());
     }
 
     #[test]

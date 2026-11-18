@@ -56,19 +56,25 @@ fn os(tree: &Tree, device: &Object) -> Os {
     }
 }
 
-/// A device watched only over SNMP or by ping, like a switch or a
-/// printer: no agent can run on it.
+/// A device PRTG watches over the network only, like a switch, a printer
+/// or an address it pings: none of its sensors needs the machine itself
+/// (WMI, SSH, its services or logs). It becomes a device (ADR-0148).
 fn network_device(tree: &Tree, device: &Object) -> bool {
-    let mut snmp = false;
-    for sensor in tree.children(device.id) {
-        let t = sensor.sensor_type.as_deref().unwrap_or("");
-        snmp |= t.starts_with("snmp");
-        match sensors::family(t) {
-            Family::Ping | Family::Traffic | Family::Other => {}
-            _ => return false,
+    tree.children(device.id).all(|sensor| {
+        let t = sensor
+            .sensor_type
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match sensors::family(&t) {
+            Family::Service | Family::EventLog => false,
+            Family::Cpu | Family::Memory | Family::Disk | Family::Traffic => t.starts_with("snmp"),
+            Family::Other => {
+                !(t.starts_with("wmi") || t.starts_with("ssh") || t.starts_with("exe"))
+            }
+            _ => true,
         }
-    }
-    snmp
+    })
 }
 
 /// The names of the groups above `id`, the probe's too when there are
@@ -105,14 +111,7 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
         .count();
     let mut hosts: Vec<i64> = Vec::new();
     for device in tree.objects.iter().filter(|o| o.kind == Kind::Device) {
-        if network_device(tree, device) {
-            out.unmovable.push(Unmovable {
-                hosts: vec![],
-                origin: origin(device),
-                why: Note::plain("snmp"),
-            });
-            continue;
-        }
+        let agentless = network_device(tree, device) && tree.children(device.id).next().is_some();
         hosts.push(device.id);
         out.hosts.push(Host {
             key: host_key(device.id),
@@ -122,6 +121,7 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
             os: os(tree, device),
             groups: groups(tree, device.id, probes),
             origin: origin(device),
+            agentless,
         });
     }
     for sensor in tree.objects.iter().filter(|o| o.kind == Kind::Sensor) {
@@ -200,6 +200,11 @@ fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory
             return;
         }
     }
+    // A device's ports are checked from a probe, as PRTG did.
+    let fidelity = match (&fidelity, out.host(&key).is_some_and(|h| h.agentless)) {
+        (Fidelity::Approximated(n), true) if n.code == "prtg_from_server" => Fidelity::Exact,
+        _ => fidelity,
+    };
     out.checks.push(Check {
         host: key.clone(),
         watch,
@@ -448,14 +453,22 @@ mod tests {
     }
 
     #[test]
-    fn devices_become_hosts_and_switches_do_not() {
+    fn devices_become_hosts_and_switches_devices() {
         let inv = inventory(&tree(), now());
         let hosts: Vec<(&str, &[String])> = inv
             .hosts
             .iter()
             .map(|h| (h.name.as_str(), h.groups.as_slice()))
             .collect();
-        assert_eq!(hosts.len(), 2);
+        assert_eq!(hosts.len(), 3);
+        // The switch is watched over SNMP only: a device (ADR-0148).
+        let switch = inv.host("device:21").unwrap();
+        assert!(switch.agentless);
+        assert!(!inv.host("device:20").unwrap().agentless);
+        assert!(inv
+            .checks
+            .iter()
+            .any(|c| c.host == "device:21" && c.watch == Watch::Traffic));
         // Two probes: the probe is a group too.
         assert_eq!(
             hosts[0],
@@ -467,11 +480,10 @@ mod tests {
             .iter()
             .map(|u| (u.origin.name.as_str(), u.why.code.as_str()))
             .collect();
-        assert!(why.contains(&("switch", "snmp")));
         assert!(why.contains(&("sensor 34", "prtg_not_on_device")));
         // The page on 443 is the port check already there.
         assert!(why.contains(&("sensor 33", "prtg_same_port")));
-        assert_eq!(inv.checks.len(), 2);
+        assert_eq!(inv.checks.len(), 3);
     }
 
     #[test]
@@ -491,8 +503,11 @@ mod tests {
             .iter()
             .find(|s| s.origin.name == "Web")
             .unwrap();
-        // The switch does not move: the group's window covers the server.
-        assert_eq!(group.scope, SilenceScope::Hosts(vec!["device:20".into()]));
+        // The group's window covers the server and the switch.
+        assert_eq!(
+            group.scope,
+            SilenceScope::Hosts(vec!["device:20".into(), "device:21".into()])
+        );
         assert_eq!((group.starts_at, group.ends_at), (window.start, window.end));
         let root = inv
             .silences

@@ -43,6 +43,12 @@
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | POST | `/api/devices` | modify | body [`devices::DeviceRequest`]; 201 [`servers::ServerView`]: a device, pinged from the site's default probe unless told otherwise; audited (ADR-0148) |
+//! | PUT | `/api/devices/{id}` | modify | body [`devices::DeviceUpdate`]; 200 [`servers::ServerView`]; audited |
+//! | GET | `/api/devices/templates` | read | [`devices::TemplateList`]: the kinds of SNMP devices, their checks and thresholds (ADR-0149) |
+//! | POST | `/api/devices/detect` | modify | body [`devices::DetectRequest`]; 200 [`devices::Detected`]: what an address answers over SNMP, from its probe |
+//! | GET, PUT, DELETE | `/api/devices/{id}/snmp` | read, modify | [`crate::snmp::View`] without secrets; body [`crate::snmp::CredentialsRequest`]; audited |
+//! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
 //! | GET | `/api/servers/{id}/recommendations` | read | [`recommendations::RecommendationList`]: checks recommended from what the agent saw (ADR-0134) |
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
 //! | POST | `/api/servers/{id}/recommendations/restore` | modify | body [`recommendations::KeyRequest`], a dismissed one; 204 |
@@ -681,6 +687,7 @@ pub mod commands;
 pub mod customers;
 pub mod dashboard_data;
 pub mod dashboards;
+pub mod devices;
 pub mod display;
 mod error;
 pub mod follow_up;
@@ -706,6 +713,7 @@ pub mod openapi_campaigns;
 mod openapi_checks;
 pub mod openapi_core;
 mod openapi_dashboards;
+mod openapi_devices;
 mod openapi_imports;
 mod openapi_plugins;
 pub mod openapi_remediation;
@@ -914,6 +922,9 @@ pub struct ApiState {
     pub contact_tests: Arc<on_call::TestLimit>,
     /// Discovery and keys of OpenID Connect providers (ADR-0145).
     pub oidc: crate::sso::oidc::Cache,
+    /// Runs one-off probe tests, for "Add a device" (ADR-0149); without
+    /// it, tests run on this central server only.
+    pub probes: Option<crate::probes::Probes>,
 }
 
 impl ApiState {
@@ -938,7 +949,14 @@ impl ApiState {
             login_limits: Arc::default(),
             contact_tests: Arc::new(on_call::test_limit()),
             oidc: crate::sso::oidc::Cache::default(),
+            probes: None,
         }
+    }
+
+    /// Sends one-off tests to relays through `probes` (ADR-0149).
+    pub fn with_probes(mut self, probes: crate::probes::Probes) -> Self {
+        self.probes = Some(probes);
+        self
     }
 
     /// Shows and changes the certificate authority with `rotator`; tokens
@@ -1175,6 +1193,17 @@ pub fn router(state: ApiState) -> Router {
             post(approvals::reject),
         )
         .route("/api/remediation/events", get(remediation_events::list))
+        .route("/api/devices", post(devices::create))
+        .route("/api/devices/templates", get(devices::templates))
+        .route("/api/devices/detect", post(devices::detect))
+        .route("/api/devices/{id}", put(devices::update))
+        .route(
+            "/api/devices/{id}/snmp",
+            get(devices::snmp)
+                .put(devices::set_snmp)
+                .delete(devices::delete_snmp),
+        )
+        .route("/api/sites/{id}/probes", get(devices::probes))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route(
             "/api/servers/{id}/recommendations",
