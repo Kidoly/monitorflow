@@ -99,6 +99,12 @@ export const en = {
     "Zabbix reads the last {count} values; MonitorFlow reads the last {seconds} seconds, the time they take.",
   "note.window_rounded":
     "MonitorFlow reads windows of 1 minute to 1 day; this one is {seconds} seconds.",
+  "note.prometheus_deriv":
+    "Prometheus fits a line to the samples (deriv); MonitorFlow divides the change by the time.",
+  "note.prometheus_compare_window":
+    "Prometheus compares single values; MonitorFlow compares averages over 5 minutes.",
+  "note.prometheus_absent":
+    "Prometheus alerts when no series at all is left (absent); MonitorFlow alerts on each series that stops.",
   "note.zabbix_partial":
     "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
   "note.zabbix_no_measure":
@@ -388,6 +394,12 @@ export const fr: Translation<typeof en> = {
     "Zabbix lit les {count} dernières valeurs, MonitorFlow les {seconds} dernières secondes, le temps qu’elles prennent.",
   "note.window_rounded":
     "MonitorFlow lit des fenêtres de 1 minute à 1 jour, celle-ci fait {seconds} secondes.",
+  "note.prometheus_deriv":
+    "Prometheus ajuste une droite aux mesures (deriv), MonitorFlow divise la variation par la durée.",
+  "note.prometheus_compare_window":
+    "Prometheus compare des valeurs isolées, MonitorFlow des moyennes sur 5 minutes.",
+  "note.prometheus_absent":
+    "Prometheus alerte quand il ne reste aucune série (absent), MonitorFlow sur chaque série qui s’arrête.",
   "note.zabbix_partial":
     "Seule la condition {kept} est reprise ; MonitorFlow ne vérifie pas le reste de l’expression.",
   "note.zabbix_no_measure":

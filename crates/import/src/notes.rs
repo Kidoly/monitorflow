@@ -308,6 +308,18 @@ pub const NOTES: &[(&str, &str)] = &[
         "MonitorFlow reads windows of 1 minute to 1 day; this one is {seconds} seconds.",
     ),
     (
+        "prometheus_deriv",
+        "Prometheus fits a line to the samples (deriv); MonitorFlow divides the change by the time.",
+    ),
+    (
+        "prometheus_compare_window",
+        "Prometheus compares single values; MonitorFlow compares averages over 5 minutes.",
+    ),
+    (
+        "prometheus_absent",
+        "Prometheus alerts when no series at all is left (absent); MonitorFlow alerts on each series that stops.",
+    ),
+    (
         "zabbix_partial",
         "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
     ),
