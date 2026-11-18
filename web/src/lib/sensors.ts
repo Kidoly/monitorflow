@@ -4,7 +4,7 @@ import type { EffectiveSensor, Incident, SensorSeries, SensorValueList } from ".
 import { checkTitle } from "./alerts";
 import { formatSeconds, formatValue, unitOf } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
-import { websiteHost } from "./website";
+import { websiteLabel } from "./website";
 
 /**
  * The metric that stands for a sensor in the server's sensor list, by
@@ -67,7 +67,7 @@ export function seriesTitle(sensor: EffectiveSensor | undefined, metric: string,
       case "port":
         return t("sensors.title.port", { port: shown || sensor.name });
       case "http":
-        return t("sensors.title.website", { host: websiteHost(sensor.params.url) || sensor.name });
+        return t("sensors.title.website", { host: websiteLabel(sensor.params.url) || sensor.name });
       case "log":
       case "eventlog":
       case "script":

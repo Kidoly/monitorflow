@@ -6,7 +6,7 @@ import { t } from "@/i18n";
 import { type WebsiteCertificate, type WebsiteCheck, api, describeError } from "@/lib/api";
 import { formatNumber, formatSeconds } from "@/lib/format";
 import { usePolledData } from "@/lib/usePolledData";
-import { websiteHost } from "@/lib/website";
+import { websiteLabel } from "@/lib/website";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Missing } from "@/components/ui/Missing";
 import { Banner } from "@/components/ui/PageState";
@@ -84,7 +84,7 @@ export function WebsiteChecks({ serverId }: { serverId: string }) {
       header: t("server.websites.column.site"),
       cell: (check) => (
         <PrimaryCell
-          title={websiteHost(check.url) || check.name}
+          title={websiteLabel(check.url) || check.name}
           sub={
             <span className={styles.why}>
               {check.up === false ? failureText(check) : check.url}

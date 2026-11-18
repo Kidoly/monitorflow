@@ -15,7 +15,7 @@ import {
 import { formatNumber, formatPercent, formatSeconds } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
 import { sensorOf } from "./sensors";
-import { websiteHost } from "./website";
+import { websiteHost, websiteLabel } from "./website";
 import { SEVERITY_LABELS, type Severity } from "./thresholds";
 
 /**
@@ -77,7 +77,7 @@ function checkNoun(sensor: EffectiveSensor): string {
     case "script":
       return t("checks.noun.script", { name: params.script ?? sensor.name });
     case "http":
-      return t("checks.noun.website", { host: websiteHost(params.url) || sensor.name });
+      return t("checks.noun.website", { host: websiteLabel(params.url) || sensor.name });
     default:
       return sensor.name;
   }
@@ -104,7 +104,7 @@ export function shapeOf(sensors: EffectiveSensor[], metric: string, instance: st
       return { type: "number", noun: t("checks.noun.certificateDays", { host }), suffix: "" };
     }
     if (short === `${sensor.name}_response_seconds`) {
-      return { type: "number", noun: t("checks.noun.responseTime", { host }), suffix: "", unit: t("format.unit.second") };
+      return { type: "number", noun: t("checks.noun.responseTime", { host: websiteLabel(sensor.params.url) || sensor.name }), suffix: "", unit: t("format.unit.second") };
     }
   }
   if (sensor && event) {
@@ -738,7 +738,7 @@ function ownTitle(sensor: EffectiveSensor): string {
     case "script":
       return t("checks.title.script", { name: params.script ?? sensor.name });
     case "http":
-      return t("checks.title.website", { host: websiteHost(params.url) || sensor.name });
+      return t("checks.title.website", { host: websiteLabel(params.url) || sensor.name });
     default:
       return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }

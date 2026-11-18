@@ -136,7 +136,7 @@ const eventLog = (spec: Template, channel: string): CatalogueEntry =>
 const website = (spec: Template, first: string[], values: Record<string, string> = {}): CatalogueEntry =>
   entry(spec, "website", spec.keywords ?? [], (title) => {
     const type = prefill(kind("http"), title, values);
-    return { ...type, fields: type.fields.map((f) => ({ ...f, advanced: !first.includes(f.key) && f.advanced })) };
+    return { ...type, fields: type.fields.map((f) => ({ ...f, advanced: !first.includes(f.key) })) };
   });
 
 const always = (spec: Template): CatalogueEntry => entry(spec, "agent", spec.keywords ?? [], () => null);
