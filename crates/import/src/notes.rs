@@ -344,10 +344,6 @@ pub const NOTES: &[(&str, &str)] = &[
         "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
     ),
     (
-        "prtg_certificate",
-        "MonitorFlow checks that port {port} answers; the certificate and its expiry are not checked.",
-    ),
-    (
         "prtg_sensor_type",
         "MonitorFlow has no check like this PRTG sensor ({type}).",
     ),

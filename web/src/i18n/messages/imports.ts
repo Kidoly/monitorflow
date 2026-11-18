@@ -126,7 +126,6 @@ export const en = {
 
   "note.prtg_ping": "PRTG pinged it from a probe; MonitorFlow's offline alert tells when its agent stops answering. Ping times are not measured.",
   "note.prtg_from_server": "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
-  "note.prtg_certificate": "MonitorFlow checks that port {port} answers; the certificate and its expiry are not checked.",
   "note.prtg_sensor_type": "MonitorFlow has no check like this PRTG sensor ({type}).",
   "note.prtg_no_setting": "The sensor's settings do not say what it checks.",
   "note.prtg_limit": "MonitorFlow has no threshold for the limits of the channel {channel}.",
@@ -391,7 +390,6 @@ export const fr: Translation<typeof en> = {
 
   "note.prtg_ping": "PRTG l’interrogeait par ping depuis une sonde ; l’alerte hors ligne de MonitorFlow prévient quand son agent ne répond plus. Les temps de ping ne sont pas mesurés.",
   "note.prtg_from_server": "Vérifié par l’agent du serveur lui-même, pas depuis une sonde : un problème réseau entre les deux n’est pas vu.",
-  "note.prtg_certificate": "MonitorFlow vérifie que le port {port} répond ; le certificat et son expiration ne sont pas vérifiés.",
   "note.prtg_sensor_type": "MonitorFlow n’a pas de vérification comme ce capteur PRTG ({type}).",
   "note.prtg_no_setting": "Les réglages du capteur ne disent pas ce qu’il vérifie.",
   "note.prtg_limit": "MonitorFlow n’a pas de seuil pour les limites du canal {channel}.",
