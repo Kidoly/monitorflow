@@ -42744,7 +42744,8 @@
         "type": "string",
         "enum": [
           "online",
-          "offline"
+          "offline",
+          "device"
         ]
       },
       "ServerSummary": {
@@ -42843,6 +42844,7 @@
           "customer_id",
           "customer_name",
           "os_family",
+          "kind",
           "package_updates",
           "created_at",
           "status",
@@ -42863,6 +42865,13 @@
                 "type": "null"
               }
             ]
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A device's address, which its checks reach; `null` for an agent."
           },
           "agent_version": {
             "type": [
@@ -42925,6 +42934,11 @@
             "type": "string",
             "format": "uuid"
           },
+          "kind": {
+            "type": "string",
+            "description": "`agent`: the machine runs the agent; `device`: an address without\none, watched by network checks from a probe (ADR-0148).",
+            "example": "agent"
+          },
           "last_heartbeat": {
             "type": [
               "string",
@@ -42944,7 +42958,7 @@
           },
           "os_family": {
             "type": "string",
-            "description": "`debian`, `rhel`, `windows`, or `linux` for any other distribution."
+            "description": "`debian`, `rhel`, `windows`, or `linux` for any other distribution;\n`device` for a device."
           },
           "os_version": {
             "type": [
