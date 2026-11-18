@@ -21,6 +21,26 @@ route:
       continue: true
     - matchers: ['alertname=~"Blackbox.*"']
       receiver: web-team
+    # Muted while known work runs (ADR-0151): backups of the databases
+    # on Sunday nights, and the CPU alert of the web server during its
+    # nightly batch, in Paris time.
+    - matchers: ['instance=~"db-.*"']
+      receiver: ops-email
+      mute_time_intervals: [sunday-backups]
+    - matchers: ['instance=~"web-01.*"', 'alertname="HostHighCpuLoad"']
+      receiver: ops-email
+      mute_time_intervals: [nightly-batch]
+
+time_intervals:
+  - name: sunday-backups
+    time_intervals:
+      - weekdays: [sunday]
+        times: [{start_time: '01:00', end_time: '05:00'}]
+  - name: nightly-batch
+    time_intervals:
+      - weekdays: ['monday:friday']
+        times: [{start_time: '22:00', end_time: '24:00'}]
+        location: Europe/Paris
 
 receivers:
   - name: ops-email

@@ -9,18 +9,19 @@
 
 use std::collections::BTreeSet;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use monitorflow_common::redact::Secret;
 use serde_json::Value;
 
 use crate::args;
 use crate::model::{
-    Channel, Fidelity, Inventory, Origin, Silence, SilenceScope, Smtp, Target, Unmovable,
+    Channel, Fidelity, Inventory, Origin, Repeat, Rule, Silence, SilenceScope, Smtp, Target,
+    Unmovable, Watch, Window, EVERY_MONTH,
 };
 use crate::notes::Note;
 use crate::text::{host_of, port_of};
 
-use super::config::{AmConfig, AmGlobal};
+use super::config::{AmConfig, AmGlobal, IntervalSpec, Route};
 use super::hosts::Fleet;
 use super::promql::{MatchOp, Matcher};
 
@@ -243,6 +244,8 @@ pub fn silences(fleet: &mut Fleet, silences: &[SilenceIn]) {
             .matchers
             .iter()
             .partition(|m| HOST_LABELS.contains(&m.label.as_str()));
+        let (alertnames, others): (Vec<&Matcher>, Vec<&Matcher>) =
+            others.into_iter().partition(|m| m.label == ALERTNAME);
         let hosts: Vec<String> = if on_hosts.is_empty() {
             vec![]
         } else {
@@ -272,8 +275,9 @@ pub fn silences(fleet: &mut Fleet, silences: &[SilenceIn]) {
             });
             continue;
         }
+        let (checks, fidelity) = checks_of(&fleet.inventory, &hosts, &alertnames);
         let fidelity = if others.is_empty() {
-            Fidelity::Exact
+            fidelity
         } else {
             let matchers = others
                 .iter()
@@ -287,6 +291,7 @@ pub fn silences(fleet: &mut Fleet, silences: &[SilenceIn]) {
         };
         fleet.inventory.silences.push(Silence {
             scope: SilenceScope::Hosts(hosts),
+            checks,
             starts_at: silence.starts_at,
             ends_at: silence.ends_at,
             reason: silence.comment.trim().to_owned(),
@@ -296,11 +301,389 @@ pub fn silences(fleet: &mut Fleet, silences: &[SilenceIn]) {
     }
 }
 
+/// The label naming an alerting rule.
+const ALERTNAME: &str = "alertname";
+
+/// The checks the alerting rules `alertnames` select made on `hosts`,
+/// and how faithful that is; no matcher is every check.
+fn checks_of(
+    inventory: &Inventory,
+    hosts: &[String],
+    alertnames: &[&Matcher],
+) -> (Vec<Watch>, Fidelity) {
+    if alertnames.is_empty() {
+        return (vec![], Fidelity::Exact);
+    }
+    let named = |origin: &Origin| {
+        origin.kind == "alerting_rule" && alertnames.iter().all(|m| m.matches(&origin.name))
+    };
+    let mut checks: Vec<Watch> = Vec::new();
+    let mut add = |watch: Watch| {
+        if !checks.contains(&watch) {
+            checks.push(watch);
+        }
+    };
+    for check in &inventory.checks {
+        if hosts.contains(&check.host) && named(&check.origin) {
+            add(check.watch.clone());
+        }
+    }
+    for threshold in &inventory.thresholds {
+        if threshold.hosts.iter().any(|h| hosts.contains(h)) && named(&threshold.origin) {
+            add(threshold.measure.watch(&inventory.checks));
+        }
+    }
+    let offline = checks.contains(&Watch::Agent);
+    checks.retain(|w| *w != Watch::Agent);
+    let shown = alertnames
+        .iter()
+        .map(|m| m.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if checks.is_empty() {
+        let note = if offline {
+            Note::plain("window_offline_kept")
+        } else {
+            Note::new("silence_whole_server", args! {"matchers" => shown})
+        };
+        return (vec![], Fidelity::Approximated(note));
+    }
+    let fidelity = if offline {
+        Fidelity::Approximated(Note::plain("window_offline_kept"))
+    } else {
+        Fidelity::Exact
+    };
+    (checks, fidelity)
+}
+
+/// A matcher of a route's `matchers`: `severity="critical"`,
+/// `alertname=~"Disk.*"`.
+pub fn parse_matcher(text: &str) -> Option<Matcher> {
+    // The first operator in the text; `=~` before `=` at the same place.
+    let mut found: Option<(usize, MatchOp, usize)> = None;
+    for (token, op) in [
+        ("=~", MatchOp::Re),
+        ("!~", MatchOp::Nre),
+        ("!=", MatchOp::Ne),
+        ("=", MatchOp::Eq),
+    ] {
+        if let Some(at) = text.find(token) {
+            if found.as_ref().is_none_or(|(best, ..)| at < *best) {
+                found = Some((at, op, token.len()));
+            }
+        }
+    }
+    let (at, op, len) = found?;
+    let label = text[..at].trim().trim_start_matches('{').trim().to_owned();
+    let value = text[at + len..].trim().trim_end_matches('}').trim();
+    let value = value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .unwrap_or(value)
+        .to_owned();
+    (!label.is_empty()).then_some(Matcher { label, op, value })
+}
+
+/// What a route selects: its own matchers and its parents'.
+fn route_matchers(route: &Route, inherited: &[Matcher]) -> Vec<Matcher> {
+    let mut all = inherited.to_vec();
+    all.extend(route.matchers.iter().filter_map(|m| parse_matcher(m)));
+    all.extend(route.match_.iter().map(|(label, value)| Matcher {
+        label: label.clone(),
+        op: MatchOp::Eq,
+        value: value.clone(),
+    }));
+    all.extend(route.match_re.iter().map(|(label, value)| Matcher {
+        label: label.clone(),
+        op: MatchOp::Re,
+        value: value.clone(),
+    }));
+    all
+}
+
+const WEEKDAYS: [&str; 7] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+];
+const MONTHS: [&str; 12] = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+];
+
+/// `monday:friday`, `1:5`, `june`: the inclusive range of an entry, by
+/// name or number (1-based for names). `None` when it is not one.
+fn range(entry: &str, names: &[&str]) -> Option<(i32, i32)> {
+    let value = |text: &str| -> Option<i32> {
+        let text = text.trim().to_ascii_lowercase();
+        names
+            .iter()
+            .position(|n| *n == text)
+            .and_then(|i| i32::try_from(i + 1).ok())
+            .or_else(|| text.parse().ok())
+    };
+    match entry.split_once(':') {
+        Some((a, b)) => Some((value(a)?, value(b)?)),
+        None => value(entry).map(|v| (v, v)),
+    }
+}
+
+/// Minutes since midnight of `HH:MM`, `24:00` included.
+fn minutes(text: &str) -> Option<u32> {
+    let (h, m) = text.trim().split_once(':')?;
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    (h <= 24 && m < 60 && h * 60 + m <= 1440).then_some(h * 60 + m)
+}
+
+/// The rules of one time interval, and what is approximated; or why it
+/// cannot be moved.
+pub fn interval_rules(spec: &IntervalSpec) -> Result<(Vec<Rule>, Vec<Note>), Note> {
+    let unsaid = |detail: &str| Note::new("am_interval", args! {"detail" => detail});
+    let mut notes = Vec::new();
+    let mut times = Vec::new();
+    for t in &spec.times {
+        let (Some(start), Some(end)) = (minutes(&t.start_time), minutes(&t.end_time)) else {
+            return Err(unsaid("a time is not HH:MM"));
+        };
+        if end <= start {
+            return Err(unsaid("a time range ends before it starts"));
+        }
+        times.push((start, end - start));
+    }
+    if times.is_empty() {
+        times.push((0, 1440));
+    }
+    let mut weekdays = 0u8;
+    for entry in &spec.weekdays {
+        let (a, b) = range(entry, &WEEKDAYS).ok_or_else(|| unsaid("an unknown weekday"))?;
+        for day in a.max(1)..=b.min(7) {
+            weekdays |= 1 << (day - 1);
+        }
+    }
+    let mut months = 0u16;
+    for entry in &spec.months {
+        let (a, b) = range(entry, &MONTHS).ok_or_else(|| unsaid("an unknown month"))?;
+        for month in a.max(1)..=b.min(12) {
+            months |= 1 << (month - 1);
+        }
+    }
+    let months = if months == 0 { EVERY_MONTH } else { months };
+    let mut days = Vec::new();
+    for entry in &spec.days_of_month {
+        let (a, b) = range(entry, &[]).ok_or_else(|| unsaid("an unknown day of the month"))?;
+        if a < 1 || b < 1 {
+            return Err(unsaid("days counted from the end of the month"));
+        }
+        days.extend((a..=b.min(31)).filter_map(|d| u8::try_from(d).ok()));
+    }
+    let (mut starts_on, mut ends_on) = (None, None);
+    if !spec.years.is_empty() {
+        let mut years: Vec<i32> = Vec::new();
+        for entry in &spec.years {
+            let (a, b) = range(entry, &[]).ok_or_else(|| unsaid("an unknown year"))?;
+            years.extend(a..=b);
+        }
+        years.sort_unstable();
+        years.dedup();
+        let (first, last) = (years[0], years[years.len() - 1]);
+        if usize::try_from(last - first + 1).ok() != Some(years.len()) {
+            notes.push(Note::plain("am_years"));
+        }
+        starts_on = NaiveDate::from_ymd_opt(first, 1, 1);
+        ends_on = NaiveDate::from_ymd_opt(last, 12, 31);
+    }
+    // Alertmanager reads times in UTC unless told; `Local` is its host's
+    // zone, the one chosen for the import.
+    let time_zone = match spec.location.as_deref() {
+        None => Some("UTC".to_owned()),
+        Some("Local") => None,
+        Some(zone) => Some(zone.to_owned()),
+    };
+    let base = Rule {
+        repeat: Repeat::Daily,
+        every: 1,
+        weekdays: 0,
+        month_day: None,
+        month_week: None,
+        months: EVERY_MONTH,
+        start_time: NaiveTime::MIN,
+        duration_minutes: 0,
+        time_zone,
+        starts_on,
+        ends_on,
+    };
+    let shapes: Vec<Rule> = if !days.is_empty() {
+        if weekdays != 0 {
+            notes.push(unsaid(
+                "weekdays and days of the month together; the days are kept",
+            ));
+        }
+        days.iter()
+            .map(|d| Rule {
+                repeat: Repeat::Monthly,
+                month_day: Some(*d),
+                months,
+                ..base.clone()
+            })
+            .collect()
+    } else if weekdays != 0 {
+        if months != EVERY_MONTH {
+            notes.push(Note::plain("am_months_weekly"));
+        }
+        vec![Rule {
+            repeat: Repeat::Weekly,
+            weekdays,
+            ..base.clone()
+        }]
+    } else {
+        if months != EVERY_MONTH {
+            notes.push(Note::plain("am_months_weekly"));
+        }
+        vec![base.clone()]
+    };
+    let mut rules = Vec::new();
+    for shape in shapes {
+        for (start, length) in &times {
+            rules.push(Rule {
+                start_time: NaiveTime::from_num_seconds_from_midnight_opt(start * 60 % 86_400, 0)
+                    .unwrap_or_default(),
+                duration_minutes: *length,
+                ..shape.clone()
+            });
+        }
+    }
+    Ok((rules, notes))
+}
+
+/// The time intervals routes are muted in, as maintenance windows of the
+/// hosts and checks the routes select (ADR-0151).
+pub fn windows(fleet: &mut Fleet, config: &AmConfig) {
+    let Some(root) = &config.route else { return };
+    let mut stack: Vec<(&Route, Vec<Matcher>)> = vec![(root, vec![])];
+    while let Some((route, inherited)) = stack.pop() {
+        let matchers = route_matchers(route, &inherited);
+        for child in &route.routes {
+            stack.push((child, matchers.clone()));
+        }
+        for name in &route.active_time_intervals {
+            fleet.inventory.unmovable.push(Unmovable {
+                hosts: vec![],
+                origin: Origin::new("time_interval", name),
+                why: Note::plain("am_active_intervals"),
+            });
+        }
+        if route.mute_time_intervals.is_empty() {
+            continue;
+        }
+        let (on_hosts, others): (Vec<&Matcher>, Vec<&Matcher>) = matchers
+            .iter()
+            .partition(|m| HOST_LABELS.contains(&m.label.as_str()));
+        let (alertnames, others): (Vec<&Matcher>, Vec<&Matcher>) =
+            others.into_iter().partition(|m| m.label == ALERTNAME);
+        let hosts: Vec<String> = fleet
+            .inventory
+            .hosts
+            .iter()
+            .map(|h| h.key.clone())
+            .filter(|key| {
+                let names = fleet.names_of(key);
+                let jobs = fleet.jobs_of(key);
+                on_hosts.iter().all(|m| {
+                    if m.label == "job" {
+                        keeps(m, &jobs)
+                    } else {
+                        keeps(m, &names)
+                    }
+                })
+            })
+            .collect();
+        let scope = if on_hosts.is_empty() {
+            SilenceScope::Everything
+        } else {
+            SilenceScope::Hosts(hosts.clone())
+        };
+        let (checks, mut fidelity) = checks_of(&fleet.inventory, &hosts, &alertnames);
+        if !others.is_empty() {
+            let shown = others
+                .iter()
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            fidelity =
+                Fidelity::Approximated(Note::new("am_route_labels", args! {"matchers" => shown}));
+        }
+        for name in &route.mute_time_intervals {
+            let origin = Origin::new("time_interval", name);
+            let named = config
+                .time_intervals
+                .iter()
+                .chain(&config.mute_time_intervals)
+                .find(|i| i.name == *name);
+            let Some(named) = named else {
+                fleet.inventory.unmovable.push(Unmovable {
+                    hosts: vec![],
+                    origin,
+                    why: Note::new("am_interval", args! {"detail" => "it is not defined"}),
+                });
+                continue;
+            };
+            if matches!(scope, SilenceScope::Hosts(ref h) if h.is_empty()) {
+                fleet.inventory.unmovable.push(Unmovable {
+                    hosts: vec![],
+                    origin,
+                    why: Note::plain("no_hosts"),
+                });
+                continue;
+            }
+            for spec in &named.time_intervals {
+                match interval_rules(spec) {
+                    Ok((rules, notes)) => {
+                        let fidelity = match (&fidelity, notes.into_iter().next()) {
+                            (Fidelity::Exact, Some(note)) => Fidelity::Approximated(note),
+                            (f, _) => f.clone(),
+                        };
+                        for rule in rules {
+                            fleet.inventory.windows.push(Window {
+                                scope: scope.clone(),
+                                checks: checks.clone(),
+                                rule,
+                                reason: name.clone(),
+                                origin: origin.clone(),
+                                fidelity: fidelity.clone(),
+                            });
+                        }
+                    }
+                    Err(why) => fleet.inventory.unmovable.push(Unmovable {
+                        hosts: vec![],
+                        origin: origin.clone(),
+                        why,
+                    }),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::targets::Target as ScrapeTarget;
     use super::super::Collected;
     use super::*;
+    use crate::model::Measure;
 
     fn config(text: &str) -> AmConfig {
         serde_norway::from_str(text).unwrap()
@@ -474,5 +857,182 @@ receivers:
             .map(|u| (u.origin.name.as_str(), u.why.code.as_str()))
             .collect();
         assert_eq!(unmovable, vec![("None", "no_hosts"), ("1", "no_hosts")]);
+    }
+
+    fn fleet() -> Fleet {
+        let mut collected = Collected::default();
+        for address in ["web-01:9100", "db-01:9100"] {
+            collected.targets.push(ScrapeTarget {
+                job: "node".into(),
+                address: address.into(),
+                labels: [("job".to_owned(), "node".to_owned())].into(),
+                ..ScrapeTarget::default()
+            });
+        }
+        let mut fleet = Fleet::new(&collected);
+        fleet.inventory.thresholds.push(crate::model::Threshold {
+            hosts: vec!["web-01".into(), "db-01".into()],
+            measure: Measure::CpuUsage,
+            direction: crate::model::Direction::Above,
+            warning: Some(0.8),
+            critical: None,
+            for_s: 300,
+            recovery: None,
+            origin: Origin::new("alerting_rule", "HostHighCpuLoad"),
+            fidelity: Fidelity::Exact,
+        });
+        fleet
+    }
+
+    #[test]
+    fn a_silence_of_an_alert_rule_silences_its_check() {
+        let mut fleet = fleet();
+        let at = |h| DateTime::parse_from_rfc3339(h).unwrap().with_timezone(&Utc);
+        silences(
+            &mut fleet,
+            &[SilenceIn {
+                id: "1".into(),
+                matchers: vec![
+                    matcher("instance", MatchOp::Eq, "web-01:9100"),
+                    matcher("alertname", MatchOp::Eq, "HostHighCpuLoad"),
+                ],
+                starts_at: at("2026-11-17T10:00:00Z"),
+                ends_at: at("2026-11-17T12:00:00Z"),
+                comment: "Batch".into(),
+            }],
+        );
+        let s = &fleet.inventory.silences[0];
+        assert_eq!(s.scope, SilenceScope::Hosts(vec!["web-01".into()]));
+        assert_eq!(s.checks, vec![Watch::Cpu]);
+        assert_eq!(s.fidelity, Fidelity::Exact);
+    }
+
+    #[test]
+    fn route_matchers_are_read() {
+        let m = parse_matcher(r#"alertname=~"Host.*""#).unwrap();
+        assert_eq!(
+            (m.label.as_str(), m.op, m.value.as_str()),
+            ("alertname", MatchOp::Re, "Host.*")
+        );
+        let m = parse_matcher("severity != critical").unwrap();
+        assert_eq!(
+            (m.label.as_str(), m.op, m.value.as_str()),
+            ("severity", MatchOp::Ne, "critical")
+        );
+        let m = parse_matcher(r#"instance="db-01:9100""#).unwrap();
+        assert_eq!((m.op, m.value.as_str()), (MatchOp::Eq, "db-01:9100"));
+        assert!(parse_matcher("nothing").is_none());
+    }
+
+    #[test]
+    fn time_intervals_become_rules() {
+        let spec = |yaml: &str| -> IntervalSpec { serde_norway::from_str(yaml).unwrap() };
+        // Weeknights in Paris.
+        let (rules, notes) = interval_rules(&spec(
+            "times: [{start_time: '22:00', end_time: '24:00'}]\nweekdays: ['monday:friday']\nlocation: Europe/Paris",
+        ))
+        .unwrap();
+        assert!(notes.is_empty());
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            (rules[0].repeat, rules[0].weekdays),
+            (Repeat::Weekly, 0b1_1111)
+        );
+        assert_eq!(
+            (
+                rules[0].start_time.to_string().as_str(),
+                rules[0].duration_minutes
+            ),
+            ("22:00:00", 120)
+        );
+        assert_eq!(rules[0].time_zone.as_deref(), Some("Europe/Paris"));
+        // The 1st and 15th of January to March, all day, in UTC by default.
+        let (rules, _) = interval_rules(&spec(
+            "days_of_month: ['1', '15']\nmonths: ['january:march']",
+        ))
+        .unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(
+            (rules[1].repeat, rules[1].month_day, rules[1].months),
+            (Repeat::Monthly, Some(15), 0b111)
+        );
+        assert_eq!(
+            (rules[1].duration_minutes, rules[1].time_zone.as_deref()),
+            (1440, Some("UTC"))
+        );
+        // Years bound the dates; weekdays of some months are approximated.
+        let (rules, notes) = interval_rules(&spec(
+            "weekdays: [saturday]\nmonths: [december]\nyears: ['2026:2027']",
+        ))
+        .unwrap();
+        assert_eq!(rules[0].starts_on, NaiveDate::from_ymd_opt(2026, 1, 1));
+        assert_eq!(rules[0].ends_on, NaiveDate::from_ymd_opt(2027, 12, 31));
+        assert_eq!(notes, vec![Note::plain("am_months_weekly")]);
+        // `Local` is the zone chosen for the import.
+        assert_eq!(
+            interval_rules(&spec("location: Local")).unwrap().0[0].time_zone,
+            None
+        );
+        // Days from the end of the month cannot be said.
+        assert_eq!(
+            interval_rules(&spec("days_of_month: ['-1']"))
+                .unwrap_err()
+                .code,
+            "am_interval"
+        );
+    }
+
+    #[test]
+    fn muted_routes_become_maintenance_windows() {
+        let mut fleet = fleet();
+        let config: AmConfig = serde_norway::from_str(
+            r#"
+route:
+  receiver: ops
+  routes:
+    - matchers: ['instance=~"db-.*"']
+      mute_time_intervals: [backups]
+      routes:
+        - matchers: ['alertname="HostHighCpuLoad"']
+          mute_time_intervals: [batch]
+    - matchers: ['team="web"']
+      mute_time_intervals: [nights]
+    - matchers: ['instance="web-01:9100"']
+      active_time_intervals: [office]
+time_intervals:
+  - name: backups
+    time_intervals:
+      - weekdays: [sunday]
+        times: [{start_time: '01:00', end_time: '05:00'}]
+  - name: batch
+    time_intervals:
+      - days_of_month: ['1']
+mute_time_intervals:
+  - name: nights
+    time_intervals:
+      - times: [{start_time: '00:00', end_time: '06:00'}]
+receivers: [{name: ops}]
+"#,
+        )
+        .unwrap();
+        windows(&mut fleet, &config);
+        let w = &fleet.inventory.windows;
+        let backups = w.iter().find(|w| w.reason == "backups").unwrap();
+        assert_eq!(backups.scope, SilenceScope::Hosts(vec!["db-01".into()]));
+        assert!(backups.checks.is_empty());
+        assert_eq!(backups.fidelity, Fidelity::Exact);
+        let batch = w.iter().find(|w| w.reason == "batch").unwrap();
+        assert_eq!(batch.checks, vec![Watch::Cpu]);
+        assert_eq!(batch.rule.month_day, Some(1));
+        let nights = w.iter().find(|w| w.reason == "nights").unwrap();
+        assert_eq!(nights.scope, SilenceScope::Everything);
+        assert!(
+            matches!(&nights.fidelity, Fidelity::Approximated(n) if n.code == "am_route_labels")
+        );
+        assert!(fleet
+            .inventory
+            .unmovable
+            .iter()
+            .any(|u| u.origin.name == "office" && u.why.code == "am_active_intervals"));
     }
 }

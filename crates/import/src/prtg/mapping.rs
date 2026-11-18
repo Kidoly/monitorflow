@@ -3,13 +3,13 @@
 //! pauses and maintenance windows become silences, and notification
 //! templates become channels.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveTime, Utc};
 use monitorflow_common::redact::Secret;
 
 use crate::args;
 use crate::model::{
-    Channel, Check, Fidelity, Host, Inventory, Origin, Os, Silence, SilenceScope, Target,
-    Threshold, Unmovable, Watch,
+    Channel, Check, Fidelity, Host, Inventory, Measure, Origin, Os, Repeat, Rule, Silence,
+    SilenceScope, Target, Threshold, Unmovable, Watch, Window, EVERY_MONTH, MAX_WINDOW_MINUTES,
 };
 use crate::notes::Note;
 
@@ -56,19 +56,25 @@ fn os(tree: &Tree, device: &Object) -> Os {
     }
 }
 
-/// A device watched only over SNMP or by ping, like a switch or a
-/// printer: no agent can run on it.
+/// A device PRTG watches over the network only, like a switch, a printer
+/// or an address it pings: none of its sensors needs the machine itself
+/// (WMI, SSH, its services or logs). It becomes a device (ADR-0148).
 fn network_device(tree: &Tree, device: &Object) -> bool {
-    let mut snmp = false;
-    for sensor in tree.children(device.id) {
-        let t = sensor.sensor_type.as_deref().unwrap_or("");
-        snmp |= t.starts_with("snmp");
-        match sensors::family(t) {
-            Family::Ping | Family::Traffic | Family::Other => {}
-            _ => return false,
+    tree.children(device.id).all(|sensor| {
+        let t = sensor
+            .sensor_type
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match sensors::family(&t) {
+            Family::Service | Family::EventLog => false,
+            Family::Cpu | Family::Memory | Family::Disk | Family::Traffic => t.starts_with("snmp"),
+            Family::Other => {
+                !(t.starts_with("wmi") || t.starts_with("ssh") || t.starts_with("exe"))
+            }
+            _ => true,
         }
-    }
-    snmp
+    })
 }
 
 /// The names of the groups above `id`, the probe's too when there are
@@ -105,14 +111,7 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
         .count();
     let mut hosts: Vec<i64> = Vec::new();
     for device in tree.objects.iter().filter(|o| o.kind == Kind::Device) {
-        if network_device(tree, device) {
-            out.unmovable.push(Unmovable {
-                hosts: vec![],
-                origin: origin(device),
-                why: Note::plain("snmp"),
-            });
-            continue;
-        }
+        let agentless = network_device(tree, device) && tree.children(device.id).next().is_some();
         hosts.push(device.id);
         out.hosts.push(Host {
             key: host_key(device.id),
@@ -122,9 +121,19 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
             os: os(tree, device),
             groups: groups(tree, device.id, probes),
             origin: origin(device),
+            agentless,
         });
     }
-    for sensor in tree.objects.iter().filter(|o| o.kind == Kind::Sensor) {
+    // Certificates last: one of a site checked already goes to its check.
+    let is_certificate = |o: &&Object| {
+        sensors::family(o.sensor_type.as_deref().unwrap_or("")) == Family::Certificate
+    };
+    let sensors = tree.objects.iter().filter(|o| o.kind == Kind::Sensor);
+    for sensor in sensors
+        .clone()
+        .filter(|o| !is_certificate(o))
+        .chain(sensors.filter(is_certificate))
+    {
         sensor_items(tree, sensor, &hosts, &mut out);
     }
     for object in &tree.objects {
@@ -134,7 +143,7 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
     out
 }
 
-/// Where a port or page check connects, as the planner makes it.
+/// Where a port check connects, as the planner makes it.
 fn port_target(watch: &Watch) -> Option<(String, u16)> {
     match watch {
         Watch::Port { address, port } => Some((
@@ -144,12 +153,16 @@ fn port_target(watch: &Watch) -> Option<(String, u16)> {
                 .to_ascii_lowercase(),
             *port,
         )),
-        Watch::Web(site) => Some((
-            crate::text::host_of(&site.url).to_ascii_lowercase(),
-            crate::text::port_of(&site.url)?,
-        )),
         _ => None,
     }
+}
+
+/// The host and port a website check connects to.
+fn site_target(url: &str) -> (String, Option<u16>) {
+    (
+        crate::text::host_of(url).to_ascii_lowercase(),
+        crate::text::port_of(url),
+    )
 }
 
 fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory) {
@@ -185,7 +198,55 @@ fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory
             lost,
         } => (watch, alert, fidelity, limits, lost),
     };
-    // A page and a certificate of one site are one port check.
+    let certificate =
+        sensors::family(sensor.sensor_type.as_deref().unwrap_or("")) == Family::Certificate;
+    let (watch, limits) = match watch {
+        // A certificate of a site checked already: its limits go to that
+        // check, which reads the certificate too.
+        Watch::Web(site) if certificate => {
+            let target = site_target(&site.url);
+            let existing = out.checks.iter().find_map(|c| match &c.watch {
+                Watch::Web(other) if c.host == key && site_target(&other.url) == target => {
+                    Some(other.url.clone())
+                }
+                _ => None,
+            });
+            match existing {
+                Some(url) => {
+                    let limits = limits
+                        .into_iter()
+                        .map(|mut l| {
+                            l.measure = Measure::CertificateDays { url: url.clone() };
+                            l
+                        })
+                        .collect();
+                    add_limits(out, &key, sensor, limits, lost);
+                    return;
+                }
+                None => (Watch::Web(site), limits),
+            }
+        }
+        // The same page twice is one check.
+        Watch::Web(site) => {
+            let taken = out.checks.iter().find_map(|c| match &c.watch {
+                Watch::Web(other) if c.host == key && other.url == site.url => {
+                    site_target(&other.url).1
+                }
+                _ => None,
+            });
+            if let Some(port) = taken {
+                out.unmovable.push(Unmovable {
+                    hosts: vec![key],
+                    origin: origin(sensor),
+                    why: Note::new("prtg_same_port", args! {"port" => port}),
+                });
+                return;
+            }
+            (Watch::Web(site), limits)
+        }
+        other => (other, limits),
+    };
+    // Two sensors of one port are one port check.
     if let Some(target) = port_target(&watch) {
         let taken = out
             .checks
@@ -200,6 +261,11 @@ fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory
             return;
         }
     }
+    // A device's ports are checked from a probe, as PRTG did.
+    let fidelity = match (&fidelity, out.host(&key).is_some_and(|h| h.agentless)) {
+        (Fidelity::Approximated(n), true) if n.code == "prtg_from_server" => Fidelity::Exact,
+        _ => fidelity,
+    };
     out.checks.push(Check {
         host: key.clone(),
         watch,
@@ -208,6 +274,18 @@ fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory
         origin: origin(sensor),
         fidelity,
     });
+    add_limits(out, &key, sensor, limits, lost);
+}
+
+/// The thresholds of a sensor's limits, and its limits that move nowhere.
+fn add_limits(
+    out: &mut Inventory,
+    key: &str,
+    sensor: &Object,
+    limits: Vec<sensors::Limit>,
+    lost: Vec<String>,
+) {
+    let key = key.to_owned();
     for limit in limits {
         out.thresholds.push(Threshold {
             hosts: vec![key.clone()],
@@ -271,28 +349,42 @@ fn silences(tree: &Tree, object: &Object, hosts: &[i64], now: DateTime<Utc>, out
     {
         return;
     }
-    let whole_server = || {
-        Fidelity::Approximated(Note::new(
-            "silence_whole_server",
-            args! {"matchers" => object.name},
-        ))
+    // A sensor is one check of its device: what is silenced.
+    let checks: Vec<Watch> = if sensor {
+        let device = tree.ancestor(object.id, Kind::Device);
+        match sensors::map(object, device.and_then(|d| d.host.as_deref())) {
+            Mapped::Watch { watch, .. } if watch != Watch::Agent => vec![watch],
+            _ => vec![],
+        }
+    } else {
+        vec![]
     };
+    // A sensor MonitorFlow has no check for is left out: silencing its
+    // whole server would hide far more than PRTG did.
+    let unmapped = sensor && checks.is_empty();
+    let scheduled = object.schedule.as_ref().and_then(|name| {
+        tree.schedules
+            .get(name)
+            .cloned()
+            .flatten()
+            .map(|p| (name, p))
+    });
     match &object.paused {
         None => {}
+        Some(Paused::ByRule) if scheduled.is_some() => {}
         Some(Paused::ByRule) => out.unmovable.push(Unmovable {
             hosts: vec![],
             origin: origin(object),
             why: Note::plain("prtg_paused_by_rule"),
         }),
-        // Silencing a whole server for one paused check would hide far
-        // more than PRTG did.
-        Some(_) if sensor => out.unmovable.push(Unmovable {
+        Some(_) if unmapped => out.unmovable.push(Unmovable {
             hosts: vec![],
             origin: origin(object),
             why: Note::plain("prtg_paused_sensor"),
         }),
         Some(Paused::Indefinitely) => out.silences.push(Silence {
             scope: scope(tree, object, hosts),
+            checks: checks.clone(),
             starts_at: now,
             ends_at: now + Duration::days(MAX_SILENCE_DAYS),
             reason: "Paused in PRTG".into(),
@@ -301,33 +393,105 @@ fn silences(tree: &Tree, object: &Object, hosts: &[i64], now: DateTime<Utc>, out
         }),
         Some(Paused::Until(end)) => out.silences.push(Silence {
             scope: scope(tree, object, hosts),
+            checks: checks.clone(),
             starts_at: now,
             ends_at: *end,
             reason: "Paused in PRTG".into(),
             origin: origin(object),
-            fidelity: if sensor {
-                whole_server()
-            } else {
-                Fidelity::Exact
-            },
+            fidelity: Fidelity::Exact,
         }),
     }
     if let Some(window) = &object.maintenance {
-        out.silences.push(Silence {
-            scope: scope(tree, object, hosts),
-            starts_at: window.start,
-            ends_at: window.end,
-            reason: "Maintenance window from PRTG".into(),
-            origin: origin(object),
-            fidelity: if sensor {
-                whole_server()
-            } else if tree.local_times {
-                Fidelity::Approximated(Note::plain("prtg_local_time"))
-            } else {
-                Fidelity::Exact
-            },
+        if unmapped {
+            out.unmovable.push(Unmovable {
+                hosts: vec![],
+                origin: origin(object),
+                why: Note::plain("prtg_paused_sensor"),
+            });
+        } else {
+            out.silences.push(Silence {
+                scope: scope(tree, object, hosts),
+                checks: checks.clone(),
+                starts_at: window.start,
+                ends_at: window.end,
+                reason: "Maintenance window from PRTG".into(),
+                origin: origin(object),
+                fidelity: if tree.local_times {
+                    Fidelity::Approximated(Note::plain("prtg_local_time"))
+                } else {
+                    Fidelity::Exact
+                },
+            });
+        }
+    }
+    if let Some(name) = &object.schedule {
+        let rules = scheduled
+            .as_ref()
+            .and_then(|(_, periods)| period_list(periods))
+            .filter(|_| !unmapped);
+        match rules {
+            Some(rules) => {
+                for rule in rules {
+                    out.windows.push(Window {
+                        scope: scope(tree, object, hosts),
+                        checks: checks.clone(),
+                        rule,
+                        reason: format!("Schedule {name} from PRTG"),
+                        origin: Origin::new("schedule", name.clone())
+                            .with_detail(tree.path(object.id)),
+                        fidelity: Fidelity::Exact,
+                    });
+                }
+            }
+            None => out.unmovable.push(Unmovable {
+                hosts: vec![],
+                origin: origin(object),
+                why: Note::new("prtg_schedule_unknown", args! {"schedule" => name}),
+            }),
+        }
+    }
+}
+
+/// A schedule's period list, `mo:00:00-mo:06:00` per line, as weekly
+/// rules in PRTG's local time, the zone chosen for the import. `None`
+/// when a line is not a period.
+pub fn period_list(text: &str) -> Option<Vec<Rule>> {
+    const DAYS: [&str; 7] = ["mo", "tu", "we", "th", "fr", "sa", "su"];
+    let point = |p: &str| -> Option<u32> {
+        let mut parts = p.trim().split(':');
+        let day = parts.next()?;
+        let day = DAYS.iter().position(|d| d.eq_ignore_ascii_case(day))?;
+        let hours: u32 = parts.next()?.parse().ok()?;
+        let minutes: u32 = parts.next()?.parse().ok()?;
+        (parts.next().is_none() && hours <= 24 && minutes < 60)
+            .then(|| u32::try_from(day).unwrap_or(0) * 1440 + hours * 60 + minutes)
+    };
+    let mut rules = Vec::new();
+    for line in text
+        .split(['\n', ',', ';'])
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        let (from, to) = line.split_once('-')?;
+        let (start, end) = (point(from)?, point(to)?);
+        let week = 7 * 1440;
+        let length = (end + week - start) % week;
+        let length = if length == 0 { week } else { length };
+        rules.push(Rule {
+            repeat: Repeat::Weekly,
+            every: 1,
+            weekdays: 1 << (start / 1440),
+            month_day: None,
+            month_week: None,
+            months: EVERY_MONTH,
+            start_time: NaiveTime::from_num_seconds_from_midnight_opt((start % 1440) * 60, 0)?,
+            duration_minutes: length.min(MAX_WINDOW_MINUTES),
+            time_zone: None,
+            starts_on: None,
+            ends_on: None,
         });
     }
+    (!rules.is_empty()).then_some(rules)
 }
 
 /// The target of a webhook URL, by its host.
@@ -427,6 +591,23 @@ mod tests {
         let mut page = sensor(33, 20, "http");
         page.settings
             .insert("httpurl".into(), "https://192.0.2.20/".into());
+        let same_page = Object {
+            id: 35,
+            name: "sensor 35".into(),
+            ..page.clone()
+        };
+        // Listed before the page: certificates are read last.
+        let mut certificate = sensor(36, 20, "sslcertificate");
+        certificate.channels.push(super::super::tree::Channel {
+            id: 0,
+            name: "Days to Expiration".into(),
+            unit: "#".into(),
+            limits: Some(super::super::tree::Limits {
+                min_warning: Some(30.0),
+                min_error: Some(7.0),
+                ..Default::default()
+            }),
+        });
         Tree {
             objects: vec![
                 Object::new(0, Kind::Group, "Root", None),
@@ -439,23 +620,34 @@ mod tests {
                 sensor(30, 20, "wmiprocessor"),
                 sensor(31, 21, "snmptraffic"),
                 port,
+                certificate,
                 page,
                 sensor(34, 10, "ping"),
+                same_page,
             ],
             notifications: vec![],
             local_times: false,
+            schedules: Default::default(),
         }
     }
 
     #[test]
-    fn devices_become_hosts_and_switches_do_not() {
+    fn devices_become_hosts_and_switches_devices() {
         let inv = inventory(&tree(), now());
         let hosts: Vec<(&str, &[String])> = inv
             .hosts
             .iter()
             .map(|h| (h.name.as_str(), h.groups.as_slice()))
             .collect();
-        assert_eq!(hosts.len(), 2);
+        assert_eq!(hosts.len(), 3);
+        // The switch is watched over SNMP only: a device (ADR-0148).
+        let switch = inv.host("device:21").unwrap();
+        assert!(switch.agentless);
+        assert!(!inv.host("device:20").unwrap().agentless);
+        assert!(inv
+            .checks
+            .iter()
+            .any(|c| c.host == "device:21" && c.watch == Watch::Traffic));
         // Two probes: the probe is a group too.
         assert_eq!(
             hosts[0],
@@ -467,11 +659,33 @@ mod tests {
             .iter()
             .map(|u| (u.origin.name.as_str(), u.why.code.as_str()))
             .collect();
-        assert!(why.contains(&("switch", "snmp")));
         assert!(why.contains(&("sensor 34", "prtg_not_on_device")));
-        // The page on 443 is the port check already there.
-        assert!(why.contains(&("sensor 33", "prtg_same_port")));
-        assert_eq!(inv.checks.len(), 2);
+        // The port and the page are two checks; the same page twice is
+        // one, and the certificate of the page's site goes to its check.
+        assert!(why.contains(&("sensor 35", "prtg_same_port")));
+        // The port, the page, and the switch's traffic.
+        assert_eq!(inv.checks.len(), 4);
+        assert!(inv
+            .checks
+            .iter()
+            .any(|c| c.watch == Watch::web(crate::model::Website::new("https://192.0.2.20/"))));
+        let days: Vec<_> = inv
+            .thresholds
+            .iter()
+            .filter(|t| t.origin.name == "sensor 36")
+            .map(|t| (&t.measure, t.direction, t.warning, t.critical))
+            .collect();
+        assert_eq!(
+            days,
+            vec![(
+                &Measure::CertificateDays {
+                    url: "https://192.0.2.20/".into()
+                },
+                crate::model::Direction::Below,
+                Some(30.0),
+                Some(7.0)
+            )]
+        );
     }
 
     #[test]
@@ -491,8 +705,11 @@ mod tests {
             .iter()
             .find(|s| s.origin.name == "Web")
             .unwrap();
-        // The switch does not move: the group's window covers the server.
-        assert_eq!(group.scope, SilenceScope::Hosts(vec!["device:20".into()]));
+        // The group's window covers the server and the switch.
+        assert_eq!(
+            group.scope,
+            SilenceScope::Hosts(vec!["device:20".into(), "device:21".into()])
+        );
         assert_eq!((group.starts_at, group.ends_at), (window.start, window.end));
         let root = inv
             .silences
@@ -506,7 +723,12 @@ mod tests {
             .iter()
             .map(|u| (u.origin.name.as_str(), u.why.code.as_str()))
             .collect();
-        assert!(codes.contains(&("sensor 30", "prtg_paused_sensor")));
+        // A paused sensor silences its check, when MonitorFlow has one.
+        let paused = &tree.objects[7];
+        match inv.silences.iter().find(|s| s.origin.name == paused.name) {
+            Some(silence) => assert!(!silence.checks.is_empty(), "{silence:?}"),
+            None => assert!(codes.contains(&(paused.name.as_str(), "prtg_paused_sensor"))),
+        }
         assert!(codes.contains(&("files", "prtg_paused_by_rule")));
     }
 
@@ -577,5 +799,62 @@ mod tests {
                 ("Empty", "no_target")
             ]
         );
+    }
+
+    #[test]
+    fn schedules_become_weekly_windows() {
+        let mut tree = tree();
+        // The port sensor of web follows "Backups", the files device "Grid".
+        tree.objects[9].schedule = Some("Backups".into());
+        tree.objects[6].schedule = Some("Grid".into());
+        tree.schedules.insert(
+            "Backups".into(),
+            Some("sa:23:00-su:02:00\nwe:12:00-we:12:30".into()),
+        );
+        tree.schedules.insert("Grid".into(), None);
+        let inv = inventory(&tree, now());
+        let windows: Vec<_> = inv
+            .windows
+            .iter()
+            .filter(|w| w.origin.name == "Backups")
+            .collect();
+        assert_eq!(windows.len(), 2);
+        assert_eq!(
+            windows[0].scope,
+            SilenceScope::Hosts(vec!["device:20".into()])
+        );
+        assert_eq!(
+            windows[0].checks,
+            vec![Watch::Port {
+                address: Some("192.0.2.20".into()),
+                port: 443
+            }]
+        );
+        assert_eq!(
+            (windows[0].rule.weekdays, windows[0].rule.duration_minutes),
+            (1 << 5, 180)
+        );
+        assert_eq!(windows[0].rule.start_time.to_string(), "23:00:00");
+        assert_eq!(
+            (windows[1].rule.weekdays, windows[1].rule.duration_minutes),
+            (1 << 2, 30)
+        );
+        assert!(inv
+            .unmovable
+            .iter()
+            .any(|u| u.origin.name == "files" && u.why.code == "prtg_schedule_unknown"));
+    }
+
+    #[test]
+    fn period_lists_are_read_or_refused() {
+        // Over the end of the week.
+        let rules = period_list("su:22:00-mo:06:00").unwrap();
+        assert_eq!(
+            (rules[0].weekdays, rules[0].duration_minutes),
+            (1 << 6, 480)
+        );
+        assert!(period_list("mu:00:00-mo:01:00").is_none());
+        assert!(period_list("mo:00:00").is_none());
+        assert!(period_list("").is_none());
     }
 }

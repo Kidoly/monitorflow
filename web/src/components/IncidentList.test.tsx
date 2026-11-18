@@ -82,6 +82,20 @@ describe("IncidentList", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
   });
 
+  it("says an incident is in maintenance, or silenced, until when", async () => {
+    const until = new Date(2026, 9, 19, 16, 0).toISOString();
+    const quiet = incident({ silenced_until: until, in_maintenance: true });
+    const hushed = incident({ id: "3e7b0b4f-0000-4000-8000-000000000009", silenced_until: until, in_maintenance: false });
+    stubFetch({
+      ...options,
+      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [quiet, hushed], next_cursor: null } },
+    });
+    render(<IncidentList filters={NO_FILTERS} />);
+    const rows = within(await table()).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent(/In maintenance\s*until 16:00 today/);
+    expect(rows[2]).toHaveTextContent(/Silenced\s*until 16:00 today/);
+  });
+
   it("names no site while there is only one", async () => {
     stubFetch({
       ...options,

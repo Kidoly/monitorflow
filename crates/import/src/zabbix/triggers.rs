@@ -356,6 +356,7 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
                 enabled: true,
                 prototype: false,
                 http: None,
+                snmp_oid: None,
                 template: None,
             },
             macros,
@@ -794,6 +795,7 @@ mod tests {
                     enabled: true,
                     prototype: false,
                     http: None,
+                    snmp_oid: None,
                     template: None,
                 },
                 Item {
@@ -804,6 +806,7 @@ mod tests {
                     enabled: true,
                     prototype: false,
                     http: None,
+                    snmp_oid: None,
                     template: None,
                 },
             ],
@@ -819,6 +822,7 @@ mod tests {
             enabled: true,
             prototype: false,
             template: None,
+            tags: vec![],
         }
     }
 

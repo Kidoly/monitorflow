@@ -13,6 +13,7 @@ pub mod chat;
 pub mod dispatcher;
 pub mod follow_up;
 pub mod group;
+pub mod maintenance;
 pub mod message;
 pub mod on_call;
 pub mod send;

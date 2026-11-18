@@ -51,12 +51,14 @@ export function formatDateTime(iso: string): string {
 }
 
 /** How a metric's values read, from its name's last word (ADR-0015). */
-export type Unit = "ratio" | "bytes" | "bytes_per_second" | "per_second" | "seconds" | "number";
+export type Unit = "ratio" | "bytes" | "bytes_per_second" | "bits_per_second" | "per_second" | "seconds" | "celsius" | "number";
 
 export function unitOf(metric: string): Unit {
   if (metric.endsWith("_ratio")) return "ratio";
   if (metric.endsWith("_bytes")) return "bytes";
   if (metric.endsWith("_bytes_per_second")) return "bytes_per_second";
+  if (metric.endsWith("_bits_per_second")) return "bits_per_second";
+  if (metric.endsWith("_celsius")) return "celsius";
   if (metric.endsWith("_per_second")) return "per_second";
   if (metric.endsWith("_seconds")) return "seconds";
   return "number";
@@ -114,6 +116,14 @@ export function formatValue(value: number | null | undefined, unit: Unit): strin
       const scaled = value / 1024 ** exponent;
       return scaled >= 100 ? `${formatNumber(scaled, 0)} ${binaryUnit(exponent)}/s` : `${formatBytes(value)}/s`;
     }
+    case "bits_per_second": {
+      // Link speeds: 100 Mbit/s, 1 Gbit/s, 10 Gbit/s.
+      const steps: [number, string][] = [[1e9, "Gbit/s"], [1e6, "Mbit/s"], [1e3, "kbit/s"]];
+      const [size, word] = steps.find(([s]) => Math.abs(value) >= s) ?? [1, "bit/s"];
+      return `${formatNumber(value / size, value % size === 0 ? 0 : 1)} ${word}`;
+    }
+    case "celsius":
+      return `${formatNumber(value, Number.isInteger(value) ? 0 : 1)} °C`;
     case "per_second":
       return `${formatNumber(value, value < 10 ? 1 : 0)}/s`;
     case "seconds":

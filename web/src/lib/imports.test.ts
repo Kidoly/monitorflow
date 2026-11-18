@@ -29,12 +29,12 @@ describe("imports", () => {
   });
 
   it("translates notes and kinds, and falls back to the server's words", () => {
-    expect(noteText({ code: "udp", text: "english" })).toBe("MonitorFlow checks TCP ports only.");
+    expect(noteText({ code: "builtin_net", text: "english" })).toBe("Every server measures the traffic of its network interfaces already.");
     expect(noteText({ code: "from_a_newer_server", text: "As the server says." })).toBe("As the server says.");
     expect(originKind("trigger")).toBe("Trigger");
     expect(originKind("sensor_group")).toBe("sensor_group");
     setActiveLocale("fr");
-    expect(noteText({ code: "web_as_port", args: { port: "443", host: "shop" }, text: "" })).toContain("le port 443 de shop");
+    expect(noteText({ code: "web_password", args: { username: "monitor" }, text: "" })).toContain("le mot de passe de monitor");
   });
 
   it("titles what items create", () => {
@@ -60,6 +60,18 @@ describe("imports", () => {
       create: { object: "channel", kind: "email", settings: { to: ["ops@example.com"] }, has_secret: true, site_id: null },
     });
     expect(itemTitle(channel, [])).toBe("Email to ops@example.com");
+    const window = item("window:Patch", [], {
+      kind: "window",
+      create: {
+        object: "window", servers: ["web-01"], checks: [{ name: "service_nginx", instance: "" }],
+        repeat: "monthly", every: 1, weekdays: ["tuesday"], month_day: null, month_week: 2, months: [],
+        start_time: "22:00", duration_minutes: 240, time_zone: "Europe/Paris", starts_on: null, ends_on: null,
+        reason: "Patch night",
+      },
+    });
+    expect(itemTitle(window, [])).toBe(
+      "On the second Tuesday of every month, 22:00 to 02:00 the next day (Europe/Paris), service_nginx: Patch night",
+    );
   });
 
   it("groups by list and kind, in order", () => {
