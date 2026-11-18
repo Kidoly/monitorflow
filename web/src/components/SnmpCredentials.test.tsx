@@ -50,6 +50,7 @@ describe("SNMP values", () => {
     expect(seriesTitle(ifs, "monitorflow_snmp_if_oper_up", "Gi0/1")).toBe("Interface up Gi0/1");
     expect(formatSensorValue("monitorflow_snmp_if_oper_up", 0)).toBe("down");
     expect(formatSensorValue("monitorflow_snmp_ups_on_battery", 1)).toBe("yes");
+    expect(formatSensorValue("monitorflow_snmp_up", 1)).toBe("answers");
   });
 
   it("read in their units", () => {

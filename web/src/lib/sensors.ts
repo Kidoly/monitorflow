@@ -99,7 +99,7 @@ export function formatSensorValue(metric: string, value: number | null | undefin
   if (short.endsWith("_active")) return value === 1 ? t("sensors.value.active") : t("sensors.value.inactive");
   if (short.endsWith("oper_up") || short.endsWith("admin_up")) return value === 1 ? t("sensors.value.up") : t("sensors.value.down");
   if (short.endsWith("_on_battery") || short.endsWith("_battery_low")) return value === 1 ? t("sensors.value.yes") : t("sensors.value.no");
-  if (short.startsWith("ping") && short.endsWith("_up")) return value === 1 ? t("sensors.value.answers") : t("sensors.value.noAnswer");
+  if ((short.startsWith("ping") || short.startsWith("snmp")) && short.endsWith("_up")) return value === 1 ? t("sensors.value.answers") : t("sensors.value.noAnswer");
   if (short.endsWith("_up")) return value === 1 ? t("sensors.value.open") : t("sensors.value.closed");
   if (short.endsWith("_loaded")) return value === 1 ? t("sensors.value.loaded") : t("sensors.value.notLoaded");
   if (short.endsWith("_installed")) return value === 1 ? t("sensors.value.installed") : t("sensors.value.notInstalled");

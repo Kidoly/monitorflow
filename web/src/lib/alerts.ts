@@ -26,7 +26,7 @@ export type Shape =
   | { type: "percent" | "number"; noun: string; suffix: string; unit?: string }
   | { type: "event"; noun: string; text: string; brief: string; comparison: Comparison; value: number };
 
-type EventWords = "port" | "ping" | "service" | "log" | "eventlog" | "script";
+type EventWords = "port" | "ping" | "snmp" | "service" | "log" | "eventlog" | "script";
 
 /**
  * The fixed trigger of an event, by sensor kind and metric suffix; its
@@ -36,6 +36,7 @@ type EventWords = "port" | "ping" | "service" | "log" | "eventlog" | "script";
 const EVENTS: Record<string, { suffix: string; words: EventWords; comparison: Comparison; value: number }> = {
   port: { suffix: "up", words: "port", comparison: "<", value: 1 },
   ping: { suffix: "up", words: "ping", comparison: "<", value: 1 },
+  snmp: { suffix: "up", words: "snmp", comparison: "<", value: 1 },
   systemd: { suffix: "active", words: "service", comparison: "<", value: 1 },
   windows_service: { suffix: "active", words: "service", comparison: "<", value: 1 },
   log: { suffix: "matches", words: "log", comparison: ">", value: 0 },
