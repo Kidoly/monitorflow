@@ -132,7 +132,8 @@ export interface IdentityProviderTestResult {
   roles: RoleGrant[];
 }
 
-export type ServerStatus = "online" | "offline";
+/** `device`: no agent, watched from the central server or a relay (ADR-0148). */
+export type ServerStatus = "online" | "offline" | "device";
 
 /** A server's one status on the fleet's pages, worst first (ADR-0130). */
 /** `waiting`: made by an import, waiting for its agent (ADR-0146). */
@@ -186,6 +187,10 @@ export interface Server {
   acknowledgement?: { by: string; at: string; note: string | null } | null;
   /** Made by an import and waiting for its agent, which takes it over by enrolling as `peer_id` (ADR-0146). */
   awaiting_agent?: boolean;
+  /** `device`: an address without an agent (ADR-0148); absent is `agent`. */
+  kind?: "agent" | "device";
+  /** A device's address; null for an agent. */
+  address?: string | null;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -541,6 +546,80 @@ export interface EffectiveSensor {
   /** Null: the agent's default. */
   timeout_ms: number | null;
   params: Record<string, string>;
+  /** Who runs it (ADR-0148): null or absent for the agent, `central` or `relay`. */
+  probe?: Probe["probe"] | null;
+  probe_relay_id?: string | null;
+}
+
+/** Where a site's network checks can run from (ADR-0148). */
+export interface Probe {
+  probe: "central" | "relay";
+  relay_id: string | null;
+  /** `central` or the relay's name: the instance its checks default to. */
+  key: string;
+  name: string | null;
+  online: boolean;
+  /** What a device's new check runs from when it names none. */
+  default: boolean;
+}
+
+/** Body of `POST /api/devices`. */
+export interface DeviceRequest {
+  site_id: string;
+  name: string;
+  address: string;
+  /** `central` or a relay's ID; absent: the site's default. */
+  probe?: string;
+  /** Add a ping every minute and its alerts; true when absent. */
+  ping?: boolean;
+  /** How to reach it over SNMP (ADR-0149); needed with `template`. */
+  snmp?: SnmpCredentialsRequest;
+  /** The kind of device whose SNMP checks and alerts it gets. */
+  template?: string;
+}
+
+/** SNMP credentials as sent; a secret left out keeps the stored one while the version stays. */
+export interface SnmpCredentialsRequest {
+  version: "v2c" | "v3";
+  port?: number;
+  community?: string;
+  user?: string;
+  auth_protocol?: string;
+  auth_password?: string;
+  priv_protocol?: string;
+  priv_password?: string;
+}
+
+/** A device's SNMP credentials as the API shows them: never a secret. */
+export interface SnmpCredentials {
+  version: "v2c" | "v3";
+  port: number;
+  user: string | null;
+  auth_protocol: string | null;
+  priv_protocol: string | null;
+  community_set: boolean;
+  auth_password_set: boolean;
+  priv_password_set: boolean;
+  updated_at: string;
+}
+
+/** A kind of SNMP device (ADR-0149). */
+export interface SnmpTemplate {
+  key: string;
+  groups: string[];
+  thresholds: { metric: string; comparison: Comparison; warning: number | null; critical: number | null; duration_s: number }[];
+}
+
+/** What an address answered over SNMP. */
+export interface Detected {
+  answers: boolean;
+  error: string | null;
+  description: string | null;
+  name: string | null;
+  object_id: string | null;
+  groups: string[];
+  template: string | null;
+  probe: string;
 }
 
 /** How often a site's built-in checks run, and whether the site set it (ADR-0097). */
@@ -639,16 +718,21 @@ export interface SensorConfigRequest {
   timeout_ms?: number | null;
   params?: Record<string, string | number | boolean>;
   enabled?: boolean;
+  /** `central` or a relay's ID: it runs from there instead of the agent (ADR-0148). */
+  probe?: string | null;
 }
 
 /** One stored row of `sensor_configs`; exactly one of `site_id` and `server_id` is set. */
 export interface SensorConfigEntry extends Required<
-  Omit<SensorConfigRequest, "timeout_ms">
+  Omit<SensorConfigRequest, "timeout_ms" | "probe">
 > {
   id: string;
   site_id: string | null;
   server_id: string | null;
   timeout_ms: number | null;
+  /** Who runs it (ADR-0148): null or absent for the agent. */
+  probe?: "central" | "relay" | null;
+  probe_relay_id?: string | null;
 }
 
 /** Body of a threshold create or update (ADR-0019); an update replaces every field. */
@@ -1356,7 +1440,18 @@ export interface ImportNote {
 /** What an import item creates. */
 export type ImportCreate =
   | { object: "server"; peer_id: string; hostname: string; os_family: string; addresses: string[] }
-  | { object: "check"; server: string; kind: string; name: string; interval_ms: number; params: Record<string, string> }
+  /** A device, watched from a probe (ADR-0148). */
+  | { object: "device"; peer_id: string; hostname: string; address: string }
+  | {
+      object: "check";
+      server: string;
+      kind: string;
+      name: string;
+      interval_ms: number;
+      params: Record<string, string>;
+      /** Run from the site's default probe (ADR-0148). */
+      probe?: boolean;
+    }
   | {
       object: "threshold";
       server: string;
@@ -1368,7 +1463,8 @@ export type ImportCreate =
       duration_s: number;
       hysteresis: number;
     }
-  | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string }
+  | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
+  | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
   | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null };
 
 /** One line of an import's preview. */
@@ -1423,6 +1519,8 @@ export interface ImportRequest {
   site_id?: string;
   files?: { name: string; content: string; base64?: boolean }[];
   connection?: Record<string, string>;
+  /** IANA zone of maintenance windows whose source does not say it (ADR-0151). */
+  time_zone?: string;
 }
 
 export type BackupKind = "daily" | "manual" | "update";
@@ -3785,6 +3883,30 @@ export const api = {
         signal,
       },
     ),
+
+  /** Adds a device (ADR-0148): an address watched from a probe, pinged by default. */
+  createDevice: (body: DeviceRequest) => request<Server>("/api/devices", { method: "POST", body }),
+
+  updateDevice: (id: string, body: { name?: string; address?: string }) =>
+    request<Server>(`/api/devices/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deviceTemplates: (signal?: AbortSignal) => request<{ templates: SnmpTemplate[] }>("/api/devices/templates", { signal }),
+
+  /** What `address` answers over SNMP, asked from its probe (ADR-0149). */
+  detectDevice: (body: { site_id: string; address: string; probe?: string; snmp: SnmpCredentialsRequest }) =>
+    request<Detected>("/api/devices/detect", { method: "POST", body }),
+
+  deviceSnmp: (id: string, signal?: AbortSignal) =>
+    request<SnmpCredentials>(`/api/devices/${encodeURIComponent(id)}/snmp`, { signal }),
+
+  setDeviceSnmp: (id: string, body: SnmpCredentialsRequest) =>
+    request<SnmpCredentials>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "PUT", body }),
+
+  deleteDeviceSnmp: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "DELETE" }),
+
+  /** Where the site's network checks can run from: the central server, then its relays. */
+  siteProbes: (siteId: string, signal?: AbortSignal) =>
+    request<{ probes: Probe[] }>(`/api/sites/${encodeURIComponent(siteId)}/probes`, { signal }),
 
   createSensor: (owner: ConfigOwner, body: SensorConfigRequest) =>
     request<SensorConfigEntry>(

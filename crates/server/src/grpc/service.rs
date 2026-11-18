@@ -34,6 +34,7 @@ use super::StreamSettings;
 use crate::alerting::Alerts;
 use crate::commands::Commands;
 use crate::ingest::{self, Identity, Ingest, LogRecord};
+use crate::probes::Probes;
 use crate::relay_commands::RelayCommands;
 use crate::renew::PresentedCert;
 use crate::sensor_config::{Resolved, SensorConfigs};
@@ -189,6 +190,7 @@ pub struct AgentStreamService {
     ingest: Ingest,
     sensor_configs: Option<SensorConfigs>,
     alerts: Option<Alerts>,
+    probes: Option<Probes>,
     commands: Option<Commands>,
     relay_commands: Option<RelayCommands>,
     settings: StreamSettings,
@@ -207,6 +209,7 @@ impl AgentStreamService {
             ingest: Ingest::default(),
             sensor_configs: None,
             alerts: None,
+            probes: None,
             commands: None,
             relay_commands: None,
             settings,
@@ -245,6 +248,12 @@ impl AgentStreamService {
     /// no incident opens.
     pub fn with_alerts(mut self, alerts: Alerts) -> Self {
         self.alerts = Some(alerts);
+        self
+    }
+
+    /// Takes relays' probe results and acknowledgements (ADR-0148).
+    pub fn with_probes(mut self, probes: Probes) -> Self {
+        self.probes = Some(probes);
         self
     }
 
@@ -453,6 +462,9 @@ impl AgentService for AgentStreamService {
         if let (Some(commands), PeerRole::Relay) = (&self.relay_commands, role) {
             commands.dispatch(&id);
         }
+        if let (Some(probes), PeerRole::Relay) = (&self.probes, role) {
+            probes.relay_connected();
+        }
         let event = StreamEvent {
             peer: id.clone(),
             site: site.clone(),
@@ -486,6 +498,7 @@ impl AgentService for AgentStreamService {
             ingest: self.ingest.clone(),
             sensor_configs: self.sensor_configs.clone(),
             alerts: self.alerts.clone(),
+            probes: self.probes.clone(),
             commands: self.commands.clone(),
             relay_commands: self.relay_commands.clone(),
             event,
@@ -547,6 +560,7 @@ struct Connection {
     ingest: Ingest,
     sensor_configs: Option<SensorConfigs>,
     alerts: Option<Alerts>,
+    probes: Option<Probes>,
     commands: Option<Commands>,
     relay_commands: Option<RelayCommands>,
     event: StreamEvent,
@@ -644,9 +658,11 @@ impl Connection {
             }
         };
         // Remove first, so a peer that sees the stream end is already gone.
-        if self.registry.remove(self.role, &self.id, self.number) && self.role == PeerRole::Agent {
-            if let Some(alerts) = &self.alerts {
-                alerts.forget(&self.id);
+        if self.registry.remove(self.role, &self.id, self.number) {
+            match (self.role, &self.alerts, &self.probes) {
+                (PeerRole::Agent, Some(alerts), _) => alerts.forget(&self.id),
+                (PeerRole::Relay, _, Some(probes)) => probes.forget(&self.id),
+                _ => {}
             }
         }
         self.ingest
@@ -828,6 +844,33 @@ impl Connection {
             Some(Payload::SensorConfigAck(ack)) => self.sensor_config_ack(sequence, ack),
             Some(Payload::SensorConfig(_)) => {
                 tracing::warn!(agent_id = %id, sequence, "ignoring SensorConfig sent upstream")
+            }
+            Some(Payload::ProbeConfig(_)) => {
+                tracing::warn!(agent_id = %id, sequence, "ignoring ProbeConfig sent upstream")
+            }
+            // Only a relay runs probe checks, and speaks for them on its
+            // own stream; the probes believe it for its devices only.
+            Some(Payload::ProbeResults(results)) => match (&self.probes, self.role) {
+                (Some(probes), PeerRole::Relay) => {
+                    let samples: usize = results.devices.iter().map(|d| d.samples.len()).sum();
+                    self.counters.samples += samples as u64;
+                    tracing::debug!(relay_id = %id, sequence, samples, "probe results");
+                    probes.ingest(id, results);
+                }
+                _ => tracing::debug!(agent_id = %id, sequence, "ignoring probe results"),
+            },
+            Some(Payload::ProbeTest(_)) => {
+                tracing::warn!(agent_id = %id, sequence, "ignoring ProbeTest sent upstream")
+            }
+            Some(Payload::ProbeTestResult(result)) => {
+                if let (Some(probes), PeerRole::Relay) = (&self.probes, self.role) {
+                    probes.test_result(id, result);
+                }
+            }
+            Some(Payload::ProbeConfigAck(ack)) => {
+                if let (Some(probes), PeerRole::Relay) = (&self.probes, self.role) {
+                    probes.acknowledged(id, &ack);
+                }
             }
             Some(Payload::CommandResult(result)) => {
                 self.counters.command_results += 1;

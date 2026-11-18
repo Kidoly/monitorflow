@@ -25,6 +25,7 @@ export function RemovePeer({
   name,
   onRemoved,
   onClose,
+  device,
 }: {
   kind: "servers" | "relays";
   id: string;
@@ -32,13 +33,21 @@ export function RemovePeer({
   onRemoved: () => void;
   /** Opens at once, without its own trigger (chosen from a menu); called on cancel. */
   onClose?: () => void;
+  /** A device (ADR-0148): nothing to uninstall. */
+  device?: boolean;
 }) {
   return (
     <InlineConfirm
       onClose={onClose}
       trigger={t("server.remove.trigger", { name })}
       title={t("server.remove.title", { name })}
-      consequence={kind === "relays" ? t("server.remove.consequenceRelay") : t("server.remove.consequence")}
+      consequence={
+        device
+          ? t("devices.remove.consequence")
+          : kind === "relays"
+            ? t("server.remove.consequenceRelay")
+            : t("server.remove.consequence")
+      }
       confirmLabel={t("server.remove.confirm", { name })}
       pendingLabel={t("server.remove.removing")}
       onConfirm={async () => {

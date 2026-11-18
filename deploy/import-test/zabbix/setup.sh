@@ -186,11 +186,11 @@ item() {
   fi
 }
 
-# trigger HOSTID NAME EXPRESSION PRIORITY [RECOVERY_EXPRESSION]
+# trigger HOSTID NAME EXPRESSION PRIORITY [RECOVERY_EXPRESSION] [TAGS_JSON]
 trigger() {
   local params id
-  params="$(jq -nc --arg n "$2" --arg e "$3" --argjson p "$4" --arg r "${5:-}" \
-    '{description: $n, expression: $e, priority: $p}
+  params="$(jq -nc --arg n "$2" --arg e "$3" --argjson p "$4" --arg r "${5:-}" --argjson t "${6:-[]}" \
+    '{description: $n, expression: $e, priority: $p, tags: $t}
      + (if $r == "" then {recovery_mode: 0} else {recovery_mode: 1, recovery_expression: $r} end)')"
   id="$(api trigger.get "$(jq -nc --arg h "$1" --arg n "$2" '{hostids: $h, filter: {description: $n}, output: ["triggerid"]}')" \
     | jq -r '.[0].triggerid // empty')"
@@ -213,7 +213,8 @@ item "$db01" "$db_if" "Backup age" 'backup.age[pg]' 0 3 1h
 item "$web01" "$web_if" "SSH answers" 'net.tcp.service[ssh]' 0 3 1m
 item "$web01" "$web_if" "Root space used" 'vfs.fs.size[/,pused]' 0 0 1m
 
-trigger "$db01" "PostgreSQL port 5432 is down" 'max(/db-01/net.tcp.port[,5432],3m)=0' 4
+trigger "$db01" "PostgreSQL port 5432 is down" 'max(/db-01/net.tcp.port[,5432],3m)=0' 4 "" \
+  '[{"tag": "service", "value": "postgresql"}]'
 trigger "$db01" "Errors in syslog" 'find(/db-01/log[/var/log/syslog,error],,"regexp","error")=1' 2
 trigger "$db01" "PostgreSQL service is not running" 'last(/db-01/systemd.unit.info[postgresql.service])<>"active"' 3
 trigger "$db01" "No PostgreSQL process" 'last(/db-01/proc.num[postgres])<1' 5
@@ -256,6 +257,17 @@ maintenance "Weekly patching" "$(jq -nc --arg s "$((now / 86400 * 86400))" --arg
   --arg g "$servers_group" '{name: "Weekly patching", maintenance_type: 0,
     active_since: $s, active_till: $e, groups: [{groupid: $g}],
     timeperiods: [{timeperiod_type: 3, every: 1, dayofweek: 64, start_time: 7200, period: 7200}]}')"
+# Recurring ones of every kind (ADR-0151): the second Tuesday and Friday
+# of January and July for the problems tagged service=postgres*, and a
+# nightly hour without data collection.
+maintenance "Database work" "$(jq -nc --arg s "$((now / 86400 * 86400))" --arg e "$((now / 86400 * 86400 + 365 * 86400))" \
+  --arg h "$db01" '{name: "Database work", maintenance_type: 0, active_since: $s, active_till: $e,
+    hosts: [{hostid: $h}], tags_evaltype: 0, tags: [{tag: "service", operator: 0, value: "postgres"}],
+    timeperiods: [{timeperiod_type: 4, every: 2, month: 65, dayofweek: 18, start_time: 79200, period: 14400}]}')"
+maintenance "Nightly backups" "$(jq -nc --arg s "$((now / 86400 * 86400))" --arg e "$((now / 86400 * 86400 + 365 * 86400))" \
+  --arg h "$db01" '{name: "Nightly backups", maintenance_type: 1, active_since: $s, active_till: $e,
+    hosts: [{hostid: $h}],
+    timeperiods: [{timeperiod_type: 2, every: 1, start_time: 3600, period: 3600}]}')"
 
 say "Media types"
 email_id="$(upsert mediatype '{"name": "Ops mail"}' mediatypeid '{

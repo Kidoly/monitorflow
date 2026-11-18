@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 
 use super::config::{
     Config, Host, Interface, InterfaceKind, Item, ItemKind, Macro, Maintenance, MediaKind,
-    MediaType, Period, PeriodKind, Priority, Template, Trigger, UserMedia, WebScenario,
+    MediaType, Period, PeriodKind, Priority, TagFilter, Template, Trigger, UserMedia, WebScenario,
 };
 use super::export::{list, text};
 use crate::http;
@@ -473,6 +473,7 @@ impl Api {
                     "output": fields,
                     "expandExpression": true,
                     "selectHosts": ["hostid"],
+                    "selectTags": "extend",
                     "selectTriggerDiscovery": ["parent_triggerid"],
                 }),
             )
@@ -624,6 +625,7 @@ fn item_of(raw: &Value, prototype: bool, template: Option<String>) -> Item {
         enabled: text(raw, "status") == "0",
         prototype,
         url: Some(text(raw, "url")).filter(|u| !u.is_empty()),
+        snmp_oid: Some(text(raw, "snmp_oid")).filter(|o| !o.is_empty()),
         template,
     }
 }
@@ -639,6 +641,10 @@ fn trigger_of(raw: &Value, prototype: bool) -> Trigger {
         enabled: text(raw, "status") == "0",
         prototype,
         template: None,
+        tags: list(raw, "tags")
+            .into_iter()
+            .map(|t| (text(t, "tag"), text(t, "value")))
+            .collect(),
     }
 }
 
@@ -714,6 +720,17 @@ fn maintenance_of(
                 }
             })
             .collect(),
+        tag_filters: list(raw, "tags")
+            .into_iter()
+            .map(|t| TagFilter {
+                tag: text(t, "tag"),
+                value: text(t, "value"),
+                // 0 is "contains", 2 "equals".
+                contains: text(t, "operator") != "2",
+            })
+            .collect(),
+        tags_all: text(raw, "tags_evaltype") != "2",
+        collect_data: text(raw, "maintenance_type") != "1",
     }
 }
 

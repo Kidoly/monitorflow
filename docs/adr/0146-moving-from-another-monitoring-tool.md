@@ -1,7 +1,7 @@
 # ADR-0146: Moving from another monitoring tool
 
 Date: 2026-11-17
-Status: accepted
+Status: accepted; maintenances move as maintenance windows and check silences instead of their next window or a whole server (ADR-0151)
 
 ## Context
 
