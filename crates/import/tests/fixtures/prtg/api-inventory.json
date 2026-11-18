@@ -533,6 +533,28 @@
       }
     }
   ],
+  "scans": [
+    {
+      "name": "Network",
+      "targets": [
+        "192.0.2.1-254"
+      ],
+      "every": "day",
+      "group": "Local Probe / Network",
+      "origin": {
+        "kind": "group",
+        "name": "Local Probe / Network",
+        "detail": "discoverytype=1"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "scan_proposes",
+        "args": {
+          "action": "PRTG auto-discovery"
+        }
+      }
+    }
+  ],
   "unmovable": [
     {
       "hosts": [

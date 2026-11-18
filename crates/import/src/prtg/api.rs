@@ -321,6 +321,26 @@ async fn maintenance(
     Ok(object)
 }
 
+/// Fills the auto-discovery settings of a probe or group that has it on.
+async fn discovery(fetch: &dyn Fetch, mut object: Object) -> Result<Object, ReadError> {
+    if object.kind == Kind::Device {
+        return Ok(object);
+    }
+    let Some(kind) = get_property(fetch, object.id, "discoverytype").await? else {
+        return Ok(object);
+    };
+    object.settings.insert("discoverytype".into(), kind);
+    if !super::discovery::discovers(&object) {
+        return Ok(object);
+    }
+    for name in &super::discovery::SETTINGS[1..] {
+        if let Some(value) = get_property(fetch, object.id, name).await? {
+            object.settings.insert((*name).to_owned(), value);
+        }
+    }
+    Ok(object)
+}
+
 /// The deliveries a notification template's settings turn on, from the
 /// fields of its settings page: addresses in its email fields and URLs
 /// in its HTTP fields.
@@ -500,7 +520,10 @@ pub async fn read(fetch: Arc<dyn Fetch>, now: DateTime<Utc>) -> Result<Tree, Rea
     containers.extend(devices);
     let containers = each(containers, |o| {
         let fetch = fetch.clone();
-        async move { maintenance(fetch.as_ref(), o, offset).await }
+        async move {
+            let o = maintenance(fetch.as_ref(), o, offset).await?;
+            discovery(fetch.as_ref(), o).await
+        }
     })
     .await?;
     let sensors = each(sensors, |o| {

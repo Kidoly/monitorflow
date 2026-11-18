@@ -8,11 +8,13 @@
 //! measures every server has ([`items`]), triggers thresholds or alerts
 //! ([`triggers`], with the expression parser in [`expression`] and user
 //! macros in [`macros`]), maintenances silences ([`maintenance`]), media
-//! types channels ([`media`]). Stock templates an export links without
+//! types channels ([`media`]), discovery rules network scans
+//! ([`discovery`]). Stock templates an export links without
 //! including are read from Zabbix's defaults ([`stock`]).
 
 pub mod api;
 pub mod config;
+pub mod discovery;
 pub mod export;
 pub mod expression;
 pub mod items;
@@ -74,7 +76,7 @@ impl Source for Zabbix {
         let inventory = map::inventory(&config, context.now);
         if inventory.is_empty() {
             return Err(ReadError::Input(
-                "Nothing to import: the files or the Zabbix have no hosts, media types or maintenances."
+                "Nothing to import: the files or the Zabbix have no hosts, media types, maintenances or discovery rules."
                     .into(),
             ));
         }

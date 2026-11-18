@@ -77,6 +77,8 @@ pub const ORIGIN_KINDS: &[&str] = &[
     "probe",
     "time_interval",
     "schedule",
+    "discovery_rule",
+    "action",
 ];
 
 /// Every note, in English. Shared notes first, then one block per reader.
@@ -278,7 +280,59 @@ pub const NOTES: &[(&str, &str)] = &[
         "unresolved_macro",
         "It uses a value that is not in the source: {macro}.",
     ),
+    (
+        "scan_disabled",
+        "Turned off in the source: the scan is imported without its schedule, to run when asked.",
+    ),
+    (
+        "scan_cut",
+        "A scan tries at most 1,024 addresses: the first 1,024 of the {count} the source scanned are kept.",
+    ),
+    (
+        "scan_skipped",
+        "A scan takes IP addresses, blocks and ranges only: {entries} is left out.",
+    ),
+    (
+        "scan_ports_cut",
+        "A scan tries at most 32 ports: the first 32 of {count} are kept.",
+    ),
+    (
+        "scan_every_hour",
+        "The source scanned every {delay}; MonitorFlow scans every hour, the nearest it allows.",
+    ),
+    (
+        "scan_every_day",
+        "The source scanned every {delay}; MonitorFlow scans every day, the nearest it allows.",
+    ),
+    (
+        "scan_every_week",
+        "The source scanned every {delay}; MonitorFlow scans every week, the nearest it allows.",
+    ),
+    (
+        "scan_proposes",
+        "The source added what it found by itself ({action}); MonitorFlow proposes what a scan finds, and a person adds it.",
+    ),
+    (
+        "scan_snmp_refused",
+        "The SNMP credentials are not moved, as MonitorFlow refuses them: {reason}.",
+    ),
     // Zabbix.
+    (
+        "zabbix_snmp_old",
+        "MonitorFlow does not use SNMPv1: the scan tries the community with SNMPv2c.",
+    ),
+    (
+        "zabbix_snmp_protocol",
+        "MonitorFlow does not use the SNMPv3 protocol {protocol}: the SNMP credentials are not moved.",
+    ),
+    (
+        "zabbix_snmp_first",
+        "A scan tries one set of SNMP credentials besides those of the site's devices: only the first check's are kept.",
+    ),
+    (
+        "zabbix_autoregistration",
+        "MonitorFlow agents connect with the install command of their site: no rule is needed to add them.",
+    ),
     (
         "zabbix_stock_template",
         "Read from the defaults of the stock template {template}, which the export does not include: export it too if it was changed.",
@@ -440,6 +494,14 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "prtg_schedule_unknown",
         "Paused by the schedule {schedule}, whose periods are not in the source or are a time table: it cannot be moved.",
+    ),
+    (
+        "prtg_scan_monthly",
+        "PRTG scanned once a month; MonitorFlow scans every week, the least often it allows.",
+    ),
+    (
+        "prtg_discovery_ad",
+        "PRTG takes these devices from Active Directory; a MonitorFlow scan needs IP addresses, blocks or ranges.",
     ),
     (
         "prtg_triggers",

@@ -9,7 +9,7 @@
           <data><name>Local Probe</name><active>1</active></data>
           <nodes>
             <group id="50">
-              <data><name>Servers &amp; storage</name><active>1</active><maintenable>1</maintenable><maintstart>2026-11-18-20-00-00</maintstart><maintend>2026-11-18-21-00-00</maintend></data>
+              <data><name>Servers &amp; storage</name><active>1</active><discoverytype>2</discoverytype><ipselectmethod>2</ipselectmethod><ipcidr>192.0.2.0/28</ipcidr><discoveryschedule>4</discoveryschedule><maintenable>1</maintenable><maintstart>2026-11-18-20-00-00</maintstart><maintend>2026-11-18-21-00-00</maintend></data>
               <nodes>
                 <device id="2001">
                   <data><name>fs01</name><host>192.0.2.30</host><active>1</active></data>

@@ -210,5 +210,24 @@
       }
     }
   ],
+  "scans": [
+    {
+      "name": "Servers & storage",
+      "targets": [
+        "192.0.2.0/28"
+      ],
+      "every": "week",
+      "group": "Local Probe / Servers & storage",
+      "origin": {
+        "kind": "group",
+        "name": "Local Probe / Servers & storage",
+        "detail": "discoverytype=2"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "prtg_scan_monthly"
+      }
+    }
+  ],
   "unmovable": []
 }

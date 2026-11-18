@@ -140,6 +140,7 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
         silences(tree, object, &hosts, now, &mut out);
     }
     channels(tree, &mut out);
+    super::discovery::scans(tree, &mut out);
     out
 }
 
