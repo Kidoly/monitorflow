@@ -44,7 +44,7 @@ import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, StaleBanner } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
 
-import { ProbeSelect } from "./AddDevice";
+import { ProbeSelect, probeLabel, probeValue, useProbes } from "./AddDevice";
 import { CheckRecommendations } from "./CheckRecommendations";
 import { CheckCatalogue } from "./CheckCatalogue";
 import { type Inherit, IntervalControl, IntervalSelect } from "./IntervalSelect";
@@ -806,6 +806,29 @@ export function AddCheck({
   );
 }
 
+/**
+ * Who runs a check that may run anywhere (ADR-0150): this server's agent,
+ * the default, or one of the site's probes.
+ */
+function RunBySelect({ siteId, value, onChange }: { siteId: string; value: string; onChange: (value: string) => void }) {
+  const probes = useProbes(siteId);
+  const id = useId();
+  return (
+    <div className={admin.field}>
+      <label htmlFor={id}>{t("devices.check.from")}</label>
+      <select id={id} className={fieldClass} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{t("monitoring.runBy.agent")}</option>
+        {probes.map((probe) => (
+          <option key={probeValue(probe)} value={probeValue(probe)}>
+            {probeLabel(probe)}
+          </option>
+        ))}
+      </select>
+      <span className={admin.fieldNote}>{t("monitoring.runBy.hint")}</span>
+    </div>
+  );
+}
+
 /** The form of one catalogue entry. */
 function CheckForm({
   target,
@@ -838,7 +861,7 @@ function CheckForm({
     if (Object.keys(found).length > 0) return;
     const owner = scope === "site" ? siteOwner(target) : ownerOf(target);
     const { sensor, threshold, more } = checkRequests(type, values, intervalMs);
-    if (type.probe && probe) sensor.probe = probe;
+    if ((type.probe || type.anyRunner) && probe) sensor.probe = probe;
     setBusy(true);
     setFailure(null);
     try {
@@ -914,7 +937,10 @@ function CheckForm({
       {type.probe && target.kind === "server" && (
         <ProbeSelect siteId={target.siteId} value={probe} onChange={setProbe} label={t("devices.check.from")} />
       )}
-      {target.kind === "server" && !type.probe && (
+      {type.anyRunner && target.kind === "server" && (
+        <RunBySelect siteId={target.siteId} value={probe} onChange={setProbe} />
+      )}
+      {target.kind === "server" && !type.probe && !probe && (
         <fieldset className={styles.scope}>
           <legend>{t("monitoring.addTo")}</legend>
           <label>

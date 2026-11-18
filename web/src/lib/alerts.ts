@@ -273,6 +273,8 @@ export interface CheckType {
   noAlert?: boolean;
   /** Runs from the central server or a relay, which the form asks (ADR-0148). */
   probe?: boolean;
+  /** Runs on the agent unless the form names a probe (ADR-0150). */
+  anyRunner?: boolean;
   /** Alerts that come with it besides its own event, like a website's certificate (ADR-0150). */
   moreAlerts?: (metricOf: (suffix: string) => string, values: Record<string, string>) => ThresholdRequest[];
 }
@@ -419,7 +421,24 @@ export const CHECK_TYPES: CheckType[] = [
     severity: "warning",
     duration_s: 60,
   },
-  {
+  websiteType(false),
+];
+
+const hostField = (): CheckField => ({
+  key: "host",
+  label: t("devices.check.host"),
+  placeholder: "",
+  hint: t("devices.check.hostHint"),
+  optional: true,
+});
+
+/** What a device can be checked with, from the central server or a relay (ADR-0148). */
+/**
+ * A website check (ADR-0150): run by the server's agent or, chosen in
+ * the form, by a probe; a device's always by a probe (`probe`).
+ */
+function websiteType(probe: boolean): CheckType {
+  return {
     kind: "http",
     get label() {
       return t("checks.type.http");
@@ -479,6 +498,8 @@ export const CHECK_TYPES: CheckType[] = [
     nameFrom: "url",
     severity: "critical",
     duration_s: 120,
+    probe,
+    anyRunner: !probe,
     moreAlerts: (metricOf, values) => {
       const rule = (suffix: string, comparison: Comparison, warning: number | null, critical: number | null, duration_s: number) => ({
         metric: metricOf(suffix),
@@ -496,18 +517,9 @@ export const CHECK_TYPES: CheckType[] = [
         rule("response_seconds", ">", 3, null, 300),
       ];
     },
-  },
-];
+  };
+}
 
-const hostField = (): CheckField => ({
-  key: "host",
-  label: t("devices.check.host"),
-  placeholder: "",
-  hint: t("devices.check.hostHint"),
-  optional: true,
-});
-
-/** What a device can be checked with, from the central server or a relay (ADR-0148). */
 export const DEVICE_CHECK_TYPES: CheckType[] = [
   {
     kind: "ping",
@@ -556,6 +568,7 @@ export const DEVICE_CHECK_TYPES: CheckType[] = [
     duration_s: 60,
     probe: true,
   },
+  websiteType(true),
 ];
 
 /** Which checks a server can run; every check for a site, which can mix systems. */

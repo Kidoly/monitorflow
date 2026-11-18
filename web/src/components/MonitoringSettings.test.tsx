@@ -267,6 +267,43 @@ describe("MonitoringSettings", () => {
     ]);
   });
 
+  it("runs a website check from a relay when the form says so", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      ...serverRoutes([disk()], [sensor({})]),
+      "GET /api/plugins/usable": { status: 200, body: { plugins: [] } },
+      "GET /api/sites/site-1/probes": {
+        status: 200,
+        body: {
+          probes: [
+            { probe: "relay", relay_id: "r-1", key: "relay-paris", name: "relay-paris", online: true, default: true },
+            { probe: "central", relay_id: null, key: "central", name: null, online: true, default: false },
+          ],
+        },
+      },
+      "POST /api/servers/srv-1/sensor_configs": { status: 201, body: {} },
+      "GET /api/servers/srv-1/thresholds": { status: 200, body: { entries: [] } },
+      "POST /api/servers/srv-1/thresholds": { status: 201, body: {} },
+    });
+    render(<MonitoringSettings target={SERVER} canEdit />);
+    await user.click(await screen.findByRole("button", { name: "Add a check" }));
+    const catalogue = screen.getByRole("group", { name: "Check catalogue" });
+    await user.type(within(catalogue).getByLabelText("Find a check"), "website");
+    await user.click(within(catalogue).getByRole("button", { name: /^A website answers/ }));
+    const form = screen.getByRole("form", { name: "Add a check" });
+    const from = await within(form).findByLabelText("Checked from");
+    // This server's agent unless chosen otherwise; a site row cannot have a probe.
+    expect(from).toHaveDisplayValue("This server's agent");
+    expect(within(form).getByText("Add to")).toBeInTheDocument();
+    await within(form).findByRole("option", { name: "Relay relay-paris (recommended)" });
+    await user.selectOptions(from, "r-1");
+    expect(within(form).queryByText("Add to")).not.toBeInTheDocument();
+    await user.type(within(form).getByLabelText("Page address"), "https://shop.example.com/");
+    await user.click(within(form).getByRole("button", { name: "Add check" }));
+    expect(await screen.findByRole("button", { name: "Add a check" })).toBeInTheDocument();
+    expect(bodyOf(fetchMock, "POST /api/servers/srv-1/sensor_configs")).toMatchObject({ kind: "http", probe: "r-1" });
+  });
+
   it("removes a check added here with its alerts, and turns off an inherited one", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({

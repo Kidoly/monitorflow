@@ -11,9 +11,10 @@
 # 2. Starts a private MonitorFlow server from this checkout, trusting the
 #    test authority, and an agent of this checkout in a container that
 #    reaches the sites as web.test, and a relay of the site there too.
-# 3. Adds website checks through the API, run by the agent and by the
-#    central server and by the relay, and checks what they measure through the API, alerts
-#    opening and resolving, and the server page in Chromium.
+# 3. Adds website checks through the API, run by the agent, by the central
+#    server, by the relay and for a device, and checks what they measure
+#    through the API, alerts opening and resolving, and the server page in
+#    Chromium.
 #
 # Usage: run-e2e.sh   (MF_TEST_KEEP=1 leaves everything running)
 # Needs: docker with compose, jq, curl, openssl, psql, cargo, npm, node,
@@ -206,12 +207,14 @@ done
 ok "web-relay online ($RELAY_ID)"
 
 step "website checks"
-# check NAME URL [PARAMS]: a website check of the server, every 10 s.
+# check NAME URL [PARAMS [PROBE [OWNER]]]: a website check of the server
+# (or OWNER), every 10 s, run by its agent or by PROBE (ADR-0148).
 check() {
-    local params=${3:-}
+    local params=${3:-} probe=${4:-} owner=${5:-$SERVER}
     params=$(jq -c --arg u "$2" '. + {url: $u}' <<<"${params:-"{}"}")
-    send POST "/api/servers/$SERVER/sensor_configs" "$(jq -n --arg n "$1" --argjson p "$params" \
-        '{kind: "http", name: $n, interval_ms: 10000, timeout_ms: 4000, params: $p}')" | expect 201 >/dev/null
+    send POST "/api/servers/$owner/sensor_configs" "$(jq -n --arg n "$1" --argjson p "$params" --arg probe "$probe" \
+        '{kind: "http", name: $n, interval_ms: 10000, timeout_ms: 4000, params: $p}
+         + (if $probe == "" then {} else {probe: $probe} end)')" | expect 201 >/dev/null
 }
 # alert METRIC COMPARISON VALUE: a critical alert at once.
 alert() {
@@ -239,22 +242,24 @@ check http_wrong_password https://web.test:8443/private '{"username": "monitor",
 check http_withheld https://web.test:8447/private '{"username": "monitor", "password": "s3cret-page"}'
 check http_toggle http://web.test/toggle
 alert http_toggle_up "<" 1
-# Run by the central server, which reaches the sites at 127.0.0.1. The
-# rows are marked with the probe column of ADR-0148 directly until the
-# API sets it.
-check http_central https://127.0.0.1:18443/ '{"contains": "Welcome"}'
-check http_central_expired https://127.0.0.1:18444/
-check http_central_toggle http://127.0.0.1:18080/toggle
+# Run by the central server, which reaches the sites at 127.0.0.1.
+check http_central https://127.0.0.1:18443/ '{"contains": "Welcome"}' central
+check http_central_expired https://127.0.0.1:18444/ "" central
+check http_central_toggle http://127.0.0.1:18080/toggle "" central
 alert http_central_toggle_up "<" 1
 # Run by the relay, which reaches the sites as web.test like the agent;
 # the central server does not know that name.
-check http_relay https://web.test:8443/ '{"contains": "Welcome"}'
-check http_relay_wrong https://web.test:8445/
-check http_relay_toggle http://web.test/toggle
+check http_relay https://web.test:8443/ '{"contains": "Welcome"}' "$RELAY_ID"
+check http_relay_wrong https://web.test:8445/ "" "$RELAY_ID"
+check http_relay_toggle http://web.test/toggle "" "$RELAY_ID"
 alert http_relay_toggle_up "<" 1
-check http_central_name https://web.test:8443/
-psql "$ADMIN_URL/$DB_NAME" -qc "UPDATE sensor_configs SET probe = 'central' WHERE name LIKE 'http_central%'" \
-    -c "UPDATE sensor_configs SET probe = 'relay', probe_relay_id = '$RELAY_ID' WHERE name LIKE 'http_relay%'" >/dev/null
+check http_central_name https://web.test:8443/ "" central
+# A device, which has no agent: its website check runs from the central
+# server.
+DEVICE=$(send POST /api/devices "$(jq -n --arg site "$SITE" \
+    '{site_id: $site, name: "shop-front", address: "127.0.0.1", probe: "central", ping: false}')" | expect 201 | jq -r .id)
+[[ -n "$DEVICE" && "$DEVICE" != null ]] || fail "no device"
+check http_device https://127.0.0.1:18443/ "" central "$DEVICE"
 # The password is sealed: not in the row, never in an answer.
 psql "$ADMIN_URL/$DB_NAME" -Atc "SELECT secret FROM sensor_configs WHERE name = 'http_private'" | grep -q '^mfs1:' \
     || fail "the password is not sealed"
@@ -300,6 +305,15 @@ is http_central_expired '.run_by == "central" and .certificate.reason == "expire
 is http_relay '.up and .run_by == "relay" and .relay == "web-relay" and .certificate.ok' "run by the relay"
 is http_relay_wrong '.run_by == "relay" and .certificate.reason == "name"' "relay sees the wrong name"
 is http_central_name '.run_by == "central" and .up == false and .reason == "dns"' "the central server does not know web.test, the relay does"
+DEVICE_CHECKS=$(get "/api/servers/$DEVICE/website-checks")
+for _ in $(seq 20); do
+    jq -e '.checks[0].last_at != null' <<<"$DEVICE_CHECKS" >/dev/null && break
+    sleep 3
+    DEVICE_CHECKS=$(get "/api/servers/$DEVICE/website-checks")
+done
+jq -e '.checks | length == 1 and (.[0] | .up and .run_by == "central" and .certificate.ok)' <<<"$DEVICE_CHECKS" >/dev/null \
+    || { echo "$DEVICE_CHECKS"; fail "the device's website check"; }
+ok "http_device: a device's website check, run by the central server"
 # The response time is a metric of its own, in VictoriaMetrics.
 curl -sf "http://127.0.0.1:18428/api/v1/query" --data-urlencode 'query=monitorflow_http_valid_response_seconds' \
     | jq -e '.data.result[0].value[1] | tonumber > 0' >/dev/null || fail "no response time in VictoriaMetrics"
