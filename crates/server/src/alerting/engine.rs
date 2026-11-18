@@ -276,7 +276,8 @@ struct Tracked {
 /// What the engine keeps of one series a richer rule reads.
 #[derive(Debug)]
 struct Feed {
-    summary: Option<Summary>,
+    /// One per window read, shortest first.
+    summaries: Vec<Summary>,
     /// The latest sample.
     last: Option<(i64, f64)>,
     /// When the latest sample arrived, on the server clock.
@@ -284,9 +285,14 @@ struct Feed {
 }
 
 impl Feed {
+    /// The summary that answers a window of `window_ms` most precisely.
+    fn summary(&self, window_ms: i64) -> Option<&Summary> {
+        self.summaries.iter().find(|s| s.span_ms() >= window_ms)
+    }
+
     fn new(need: &Need, arrived: i64) -> Self {
         Self {
-            summary: (need.span_ms > 0).then(|| Summary::new(need.span_ms)),
+            summaries: need.spans.iter().map(|&span| Summary::new(span)).collect(),
             last: None,
             arrived,
         }
@@ -489,7 +495,7 @@ impl Engine {
         if feed.last.is_none_or(|(at, _)| point.at > at) {
             feed.last = Some((point.at, point.value));
         }
-        if let Some(summary) = &mut feed.summary {
+        for summary in &mut feed.summaries {
             summary.push(point.at, point.value);
         }
     }
@@ -513,7 +519,7 @@ impl Engine {
             .feeds
             .get(&key)
             .and_then(|f| f.as_ref())
-            .and_then(|f| f.summary.as_ref());
+            .and_then(|f| f.summary(rule.window_ms()));
         derive(rule, summary, point.at, point.value, past)
     }
 
@@ -579,13 +585,15 @@ impl Engine {
             }
             let value = match condition.function {
                 None => Some(value),
-                Some(function) => feed.summary.as_ref().and_then(|s| {
-                    s.function(
-                        function,
-                        at,
-                        i64::from(condition.window_s.unwrap_or(0)) * 1000,
-                    )
-                }),
+                Some(function) => feed
+                    .summary(i64::from(condition.window_s.unwrap_or(0)) * 1000)
+                    .and_then(|s| {
+                        s.function(
+                            function,
+                            at,
+                            i64::from(condition.window_s.unwrap_or(0)) * 1000,
+                        )
+                    }),
             };
             value.is_some_and(|v| condition.comparison.holds(v, condition.value))
         })
@@ -623,7 +631,7 @@ impl Engine {
                     let Some(feed) = feed else {
                         continue;
                     };
-                    if let Some(summary) = &mut feed.summary {
+                    for summary in &mut feed.summaries {
                         if summary.width_ms() == step_ms {
                             summary.load(from_ms, &points);
                         }
@@ -681,7 +689,7 @@ impl Engine {
             .find(|s| s.server_id == server_id)?
             .needs
             .get(metric)
-            .copied()
+            .cloned()
     }
 
     /// Asks history for what the rules of `server` read, for the metrics
@@ -693,16 +701,15 @@ impl Engine {
             let Some(need) = server.needs.get(metric) else {
                 continue;
             };
-            if need.span_ms > 0 {
-                let step_ms = bucket_width(need.span_ms);
+            for &span in &need.spans {
                 self.ask(Request::Seed {
                     server_id: server.server_id,
                     target: target.clone(),
                     metric: metric.clone(),
                     function: need.seed,
-                    from_ms: now - need.span_ms,
+                    from_ms: now - span,
                     to_ms: now,
-                    step_ms,
+                    step_ms: bucket_width(span),
                 });
             }
             if need.arrival {
