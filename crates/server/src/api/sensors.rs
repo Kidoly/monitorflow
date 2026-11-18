@@ -70,6 +70,14 @@ pub struct EntryRequest {
     /// layers below.
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
+    /// Who runs the check, on a server's own row (ADR-0148): `central`
+    /// for the central server, or the ID of a relay of the server's site.
+    /// Absent or `null`: the server's agent; for a device, which has none,
+    /// the relay of its site when there is one, else the central server.
+    /// The `instance` of such a check defaults to the probe: `central` or
+    /// the relay's name.
+    #[serde(default)]
+    pub probe: Option<String>,
 }
 
 fn enabled_by_default() -> bool {
@@ -93,6 +101,16 @@ pub struct ValidEntry {
 /// [`registry::build`], then the API's shortest interval (ADR-0097). The
 /// error is a message for the client.
 pub fn validate_entry(request: EntryRequest) -> Result<ValidEntry, String> {
+    validate_with_host(request, None)
+}
+
+/// [`validate_entry`] for a check of a device, whose `host` defaults to
+/// the device's `address` when the row names none (ADR-0148). The stored
+/// parameters stay without it, so the check follows the address.
+pub fn validate_with_host(
+    request: EntryRequest,
+    address: Option<&str>,
+) -> Result<ValidEntry, String> {
     let name = request.name.unwrap_or_else(|| request.kind.clone());
     validate::sensor_name(&request.kind).map_err(|e| format!("kind: {e}"))?;
     validate::sensor_name(&name).map_err(|e| format!("name: {e}"))?;
@@ -137,8 +155,31 @@ pub fn validate_entry(request: EntryRequest) -> Result<ValidEntry, String> {
         if !plugin.is_some_and(monitorflow_plugin::manifest::valid_name) {
             return Err(format!("param `{PLUGIN_PARAM}` must name a check plugin"));
         }
+    } else if request.kind == monitorflow_snmp::KIND {
+        // Credentials belong to the device, not to a row (ADR-0149).
+        if let Some(key) = config
+            .params
+            .keys()
+            .find(|k| monitorflow_snmp::CREDENTIAL_PARAMS.contains(&k.as_str()))
+        {
+            return Err(format!(
+                "param `{key}` is not for a check: set a device's SNMP credentials with PUT /api/devices/{{id}}/snmp"
+            ));
+        }
+        let mut checked = config.params.clone();
+        checked
+            .entry("host".into())
+            .or_insert_with(|| address.unwrap_or("192.0.2.1").to_owned());
+        checked.insert("community".into(), "checked".into());
+        monitorflow_snmp::parse(&checked)?;
     } else {
-        registry::build(&request.kind, &config.params).map_err(|e| e.to_string())?;
+        let mut checked = config.params.clone();
+        if let Some(address) = address {
+            checked
+                .entry("host".into())
+                .or_insert_with(|| address.to_owned());
+        }
+        registry::build(&request.kind, &checked).map_err(|e| e.to_string())?;
     }
     check_interval(request.interval_ms)?;
     // Both fit: validate() bounds the interval to 24 h and the timeout by it.
@@ -188,6 +229,10 @@ pub struct Entry {
     /// `false`: removes the sensor of the same name and instance from the
     /// layers below.
     pub enabled: bool,
+    /// Who runs it (ADR-0148): `null` for the server's agent, `central`
+    /// for the central server, `relay` for the relay `probe_relay_id`.
+    pub probe: Option<String>,
+    pub probe_relay_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -227,6 +272,10 @@ pub struct EffectiveSensor {
     pub timeout_ms: Option<u64>,
     /// As sent to the agent: every value is a string.
     pub params: std::collections::BTreeMap<String, String>,
+    /// Who runs it (ADR-0148): `null` for the agent, `central` or
+    /// `relay`; probe checks come after the agent's.
+    pub probe: Option<String>,
+    pub probe_relay_id: Option<Uuid>,
 }
 
 /// Whether the built-in checks run at the built-in interval or the site's.
@@ -286,7 +335,8 @@ pub struct SiteEffective {
 }
 
 const ENTRY_COLUMNS: &str = "id, site_id, server_id, kind, name, instance, interval_ms, \
-                             timeout_ms, params, enabled, created_at, updated_at";
+                             timeout_ms, params, enabled, probe, probe_relay_id, \
+                             created_at, updated_at";
 
 /// A path ID that is not a UUID names nothing.
 pub(super) fn parse_id(id: &str) -> Result<Uuid, ApiError> {
@@ -393,6 +443,8 @@ fn audit_summary(entry: &Entry) -> Value {
         "interval_ms": entry.interval_ms,
         "timeout_ms": entry.timeout_ms,
         "enabled": entry.enabled,
+        "probe": entry.probe,
+        "probe_relay_id": entry.probe_relay_id,
         "param_names": param_names,
     })
 }
@@ -465,6 +517,149 @@ async fn check_plugin(
         .map_err(|e| ApiError::Invalid(e.to_string()))
 }
 
+/// Who runs a row (ADR-0148), resolved and checked against its owner.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunBy {
+    /// `None`: the agent; `central` or `relay`.
+    pub probe: Option<&'static str>,
+    pub relay: Option<Uuid>,
+    /// What the instance of a probe check defaults to: `central` or the
+    /// relay's name.
+    pub key: String,
+    /// The device's address, which its probe checks default to.
+    pub address: Option<String>,
+}
+
+/// The probe of a device's new check when none is named: the relay of
+/// its site that was added first, else the central server.
+pub async fn default_probe(
+    db: impl sqlx::PgExecutor<'_>,
+    site: Uuid,
+) -> Result<RunBy, sqlx::Error> {
+    let relay: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, peer_id FROM relays WHERE site_id = $1 AND revoked_at IS NULL
+         ORDER BY created_at, peer_id LIMIT 1",
+    )
+    .bind(site)
+    .fetch_optional(db)
+    .await?;
+    Ok(match relay {
+        Some((id, peer)) => RunBy {
+            probe: Some("relay"),
+            relay: Some(id),
+            key: peer,
+            address: None,
+        },
+        None => RunBy {
+            probe: Some("central"),
+            key: monitorflow_probe::CENTRAL.into(),
+            ..RunBy::default()
+        },
+    })
+}
+
+/// Who runs a row of `owner` that asks for `wanted`: see
+/// [`EntryRequest::probe`].
+pub(super) async fn run_by(
+    db: &mut PgConnection,
+    owner: Owner,
+    wanted: Option<&str>,
+) -> Result<RunBy, ApiError> {
+    let Owner::Server(server) = owner else {
+        return match wanted {
+            None => Ok(RunBy::default()),
+            Some(_) => Err(ApiError::Invalid(
+                "`probe` is for a server's own check: a site's checks run on its agents".into(),
+            )),
+        };
+    };
+    let target: Option<(Uuid, String, Option<String>)> =
+        sqlx::query_as("SELECT site_id, kind, address FROM servers WHERE id = $1")
+            .bind(server)
+            .fetch_optional(&mut *db)
+            .await?;
+    let (site, kind, address) = target.ok_or(ApiError::NotFound)?;
+    let mut by = match wanted {
+        None if kind == "device" => default_probe(&mut *db, site).await?,
+        None => return Ok(RunBy::default()),
+        Some(probe) if probe == monitorflow_probe::CENTRAL => RunBy {
+            probe: Some("central"),
+            key: probe.into(),
+            ..RunBy::default()
+        },
+        Some(relay) => {
+            let id: Option<Uuid> = relay.parse().ok();
+            let found: Option<String> = sqlx::query_scalar(
+                "SELECT peer_id FROM relays WHERE id = $1 AND site_id = $2 AND revoked_at IS NULL",
+            )
+            .bind(id)
+            .bind(site)
+            .fetch_optional(&mut *db)
+            .await?;
+            let key = found.ok_or_else(|| {
+                ApiError::Invalid(
+                    "`probe` must be `central` or the ID of a relay of the server's site".into(),
+                )
+            })?;
+            RunBy {
+                probe: Some("relay"),
+                relay: id,
+                key,
+                address: None,
+            }
+        }
+    };
+    by.address = address;
+    Ok(by)
+}
+
+/// Whether `valid` may run where `by` says: agents never run probe kinds
+/// or UDP, probes only network kinds, and a probe check of a server
+/// with an agent names its host. A probe check's instance defaults to
+/// the probe.
+pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> {
+    let udp = valid.params.get("protocol").and_then(Value::as_str) == Some("udp");
+    let probe_only = registry::PROBE_KINDS.contains(&valid.kind.as_str())
+        || valid.kind == monitorflow_snmp::KIND
+        || udp;
+    if by.probe.is_none() {
+        if probe_only {
+            return Err(ApiError::Invalid(format!(
+                "a `{}` check runs from the central server or a relay: set `probe`",
+                valid.kind
+            )));
+        }
+        return Ok(());
+    }
+    if !probe_kind(&valid.kind) {
+        return Err(ApiError::Invalid(format!(
+            "the central server and relays run {} checks, not `{}`",
+            PROBE_KINDS_TEXT, valid.kind
+        )));
+    }
+    if valid.kind == monitorflow_snmp::KIND && by.address.is_none() {
+        return Err(ApiError::Invalid(
+            "SNMP checks are for devices: add the address as a device (POST /api/devices)".into(),
+        ));
+    }
+    if by.address.is_none() && valid.params.get("host").is_none() {
+        return Err(ApiError::Invalid(
+            "name the `host` to check: from a probe, the server's own address is not known".into(),
+        ));
+    }
+    if valid.instance.is_empty() {
+        valid.instance.clone_from(&by.key);
+    }
+    Ok(())
+}
+
+/// Kinds a probe runs.
+pub fn probe_kind(kind: &str) -> bool {
+    monitorflow_probe::PROBE_RUNS.contains(&kind)
+}
+
+const PROBE_KINDS_TEXT: &str = "`ping`, `port` and `snmp`";
+
 async fn create(
     state: &ApiState,
     user: &CurrentUser,
@@ -473,15 +668,20 @@ async fn create(
 ) -> Result<(StatusCode, Json<Entry>), ApiError> {
     let site = owner.site(&state.pool).await?;
     authorize(user, site, true)?;
-    let valid = validate_entry(body(request)?).map_err(ApiError::Invalid)?;
-    check_plugin(&state.pool, &valid, site).await?;
-    let (site_id, server_id) = owner.columns();
+    let request = body(request)?;
     let mut tx = state.pool.begin().await?;
+    let by = run_by(&mut tx, owner, request.probe.as_deref()).await?;
+    let mut valid =
+        validate_with_host(request, by.address.as_deref()).map_err(ApiError::Invalid)?;
+    check_run_by(&mut valid, &by)?;
+    check_plugin(&mut *tx, &valid, site).await?;
+    let (site_id, server_id) = owner.columns();
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
     let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO sensor_configs
-             (site_id, server_id, kind, name, instance, interval_ms, timeout_ms, params, enabled)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             (site_id, server_id, kind, name, instance, interval_ms, timeout_ms, params, enabled,
+              probe, probe_relay_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING {ENTRY_COLUMNS}"
     )))
     .bind(site_id)
@@ -493,6 +693,8 @@ async fn create(
     .bind(valid.timeout_ms)
     .bind(&valid.params)
     .bind(valid.enabled)
+    .bind(by.probe)
+    .bind(by.relay)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| write_error(e, &valid))?;
@@ -571,13 +773,21 @@ pub async fn update(
     let id = parse_id(&id)?;
     let mut tx = state.pool.begin().await?;
     let (before, site) = lock_entry(&mut tx, &user, id).await?;
-    let valid = validate_entry(body(request)?).map_err(ApiError::Invalid)?;
+    let request = body(request)?;
+    let owner = match before.server_id {
+        Some(server) => Owner::Server(server),
+        None => Owner::Site(site.unwrap_or_default()),
+    };
+    let by = run_by(&mut tx, owner, request.probe.as_deref()).await?;
+    let mut valid =
+        validate_with_host(request, by.address.as_deref()).map_err(ApiError::Invalid)?;
+    check_run_by(&mut valid, &by)?;
     check_plugin(&mut *tx, &valid, site).await?;
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
     let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE sensor_configs
          SET kind = $2, name = $3, instance = $4, interval_ms = $5, timeout_ms = $6,
-             params = $7, enabled = $8, updated_at = now()
+             params = $7, enabled = $8, probe = $9, probe_relay_id = $10, updated_at = now()
          WHERE id = $1
          RETURNING {ENTRY_COLUMNS}"
     )))
@@ -589,6 +799,8 @@ pub async fn update(
     .bind(valid.timeout_ms)
     .bind(&valid.params)
     .bind(valid.enabled)
+    .bind(by.probe)
+    .bind(by.relay)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| write_error(e, &valid))?;
@@ -638,10 +850,18 @@ pub async fn effective(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    type Revisions = (Uuid, i64, Option<i64>, Option<DateTime<Utc>>, Option<i32>);
+    type Revisions = (
+        Uuid,
+        i64,
+        Option<i64>,
+        Option<DateTime<Utc>>,
+        Option<i32>,
+        bool,
+    );
     let server: Option<Revisions> = sqlx::query_as(
         "SELECT s.site_id, si.sensor_revision + s.sensor_revision,
-                s.sensor_revision_applied, s.sensor_applied_at, si.check_interval_ms
+                s.sensor_revision_applied, s.sensor_applied_at, si.check_interval_ms,
+                s.kind = 'device'
          FROM servers s JOIN sites si ON si.id = s.site_id
          WHERE s.id = $1",
     )
@@ -649,7 +869,7 @@ pub async fn effective(
     .fetch_optional(&mut *tx)
     .await?;
     let site_id = authorize(&user, server.map(|s| s.0), false)?;
-    let (_, revision, applied_revision, applied_at, site_interval) =
+    let (_, revision, applied_revision, applied_at, site_interval, device) =
         server.ok_or(ApiError::NotFound)?;
     let (check_interval_ms, check_interval_origin) = builtin_interval(site_interval);
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
@@ -670,7 +890,7 @@ pub async fn effective(
         applied_revision,
         applied_at,
         in_sync: applied_revision == Some(revision),
-        sensors: effective_sensors(&entries, check_interval_ms),
+        sensors: effective_sensors_of(&entries, check_interval_ms, device),
     }))
 }
 
@@ -721,9 +941,15 @@ pub(super) async fn server_effective(
     .bind(server_id)
     .fetch_all(pool)
     .await?;
-    Ok(effective_sensors(
+    let device: bool = sqlx::query_scalar("SELECT kind = 'device' FROM servers WHERE id = $1")
+        .bind(server_id)
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or(false);
+    Ok(effective_sensors_of(
         &entries,
         builtin_interval(site_interval).0,
+        device,
     ))
 }
 
@@ -732,6 +958,44 @@ pub(super) async fn server_effective(
 /// push uses, then names the row each sensor comes from: the server's
 /// row for its key if any, else the site's, else a built-in default.
 fn effective_sensors(entries: &[Entry], builtin_interval_ms: u64) -> Vec<EffectiveSensor> {
+    effective_sensors_of(entries, builtin_interval_ms, false)
+}
+
+/// [`effective_sensors`] of a server, or of a `device`, which runs no
+/// agent checks at all; then the probe checks, enabled ones, by name and
+/// instance (ADR-0148).
+fn effective_sensors_of(
+    entries: &[Entry],
+    builtin_interval_ms: u64,
+    device: bool,
+) -> Vec<EffectiveSensor> {
+    let mut probe: Vec<EffectiveSensor> = entries
+        .iter()
+        .filter(|e| e.probe.is_some() && e.enabled)
+        .map(|e| EffectiveSensor {
+            origin: Origin::Server,
+            entry_id: Some(e.id),
+            kind: e.kind.clone(),
+            name: e.name.clone(),
+            instance: e.instance.clone(),
+            interval_ms: u64::try_from(e.interval_ms).unwrap_or(0),
+            timeout_ms: e.timeout_ms.map(|t| u64::try_from(t).unwrap_or(0)),
+            params: sensor_config::params(e.params.clone()),
+            probe: e.probe.clone(),
+            probe_relay_id: e.probe_relay_id,
+        })
+        .collect();
+    probe.sort_by(|a, b| (&a.name, &a.instance).cmp(&(&b.name, &b.instance)));
+    if device {
+        return probe;
+    }
+    let entries: Vec<&Entry> = entries.iter().filter(|e| e.probe.is_none()).collect();
+    let mut sensors = agent_sensors(&entries, builtin_interval_ms);
+    sensors.extend(probe);
+    sensors
+}
+
+fn agent_sensors(entries: &[&Entry], builtin_interval_ms: u64) -> Vec<EffectiveSensor> {
     let rows = entries
         .iter()
         .map(|e| Row {
@@ -775,6 +1039,8 @@ fn effective_sensors(entries: &[Entry], builtin_interval_ms: u64) -> Vec<Effecti
                 interval_ms: spec.interval_ms,
                 timeout_ms: spec.timeout_ms,
                 params: spec.params,
+                probe: None,
+                probe_relay_id: None,
             }
         })
         .collect()
@@ -912,6 +1178,8 @@ mod tests {
             timeout_ms: None,
             params: json!({"per_core": false}),
             enabled,
+            probe: None,
+            probe_relay_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -946,6 +1214,7 @@ mod tests {
                 ("cpu", "", Origin::Server, Some(entries[1].id), 5_000),
                 ("disk", "/data", Origin::Server, Some(entries[4].id), 60_000),
                 ("memory", "", Origin::Site, Some(entries[2].id), 10_000),
+                ("net", "", Origin::Default, None, 60_000),
             ]
         );
         assert_eq!(sensors[0].params["per_core"], "false");
@@ -953,6 +1222,6 @@ mod tests {
         assert!(defaults.iter().all(|s| s.origin == Origin::Default
             && s.entry_id.is_none()
             && s.interval_ms == 300_000));
-        assert_eq!(defaults.len(), 4);
+        assert_eq!(defaults.len(), 5);
     }
 }

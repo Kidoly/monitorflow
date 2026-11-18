@@ -157,6 +157,11 @@ pub struct Host {
     /// Groups, folders or jobs it belongs to there.
     pub groups: Vec<String>,
     pub origin: Origin,
+    /// No agent can run on it, like a switch or a printer the source
+    /// watches by ping or SNMP: it becomes a device, watched from a probe
+    /// (ADR-0148).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agentless: bool,
 }
 
 /// Alert severity.
@@ -202,6 +207,27 @@ pub enum Watch {
     /// A web page or API answering. MonitorFlow checks that its port
     /// answers, which the preview says.
     Web { url: String },
+    /// The host, or another address, answering ping, from the central
+    /// server or a relay (ADR-0148).
+    Ping {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        address: Option<String>,
+    },
+    /// A UDP port of the host or another address, from a probe: `query`
+    /// is `dns` or `ntp` for an answer to expect, `none` for no refusal.
+    UdpPort {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        address: Option<String>,
+        port: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+    },
+    /// What a group of the common SNMP objects says (ADR-0149): `system`,
+    /// `interfaces`, `host`, `ups`, `temperature` or `printer`.
+    Snmp { group: String },
+    /// The traffic of the host's network interfaces: the built-in `net`
+    /// check of a server, the SNMP interfaces of a device (ADR-0149).
+    Traffic,
 }
 
 /// The alert that comes with a check: when it fails, an incident of this

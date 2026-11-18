@@ -328,7 +328,7 @@ async fn removed_id(
 }
 
 /// `base`, or `base` with the first free suffix.
-async fn new_id(tx: &mut Transaction<'_, Postgres>, base: &str) -> Result<String, EnrollError> {
+pub async fn new_id(tx: &mut Transaction<'_, Postgres>, base: &str) -> Result<String, EnrollError> {
     for n in 1..=MAX_SUFFIX {
         let candidate = with_suffix(base, n);
         // Any trace of the ID counts, revoked or pending, in any case and

@@ -25,6 +25,12 @@ pub enum Family {
     Certificate,
     EventLog,
     Traffic,
+    /// A DNS server answering (ADR-0148).
+    Dns,
+    /// An NTP server answering.
+    Ntp,
+    /// Another SNMP sensor: uptime, UPS, printer, temperature, custom.
+    Snmp,
     Other,
 }
 
@@ -34,6 +40,10 @@ pub fn family(sensor_type: &str) -> Family {
     let has = |s: &str| t.contains(s);
     if t.starts_with("ping") {
         Family::Ping
+    } else if t.starts_with("dns") {
+        Family::Dns
+    } else if t == "sntp" || t == "ntp" {
+        Family::Ntp
     } else if has("traffic") {
         Family::Traffic
     } else if t == "sslcertificate" {
@@ -52,6 +62,8 @@ pub fn family(sensor_type: &str) -> Family {
         Family::Memory
     } else if has("diskspace") || has("diskfree") || has("volume") {
         Family::Disk
+    } else if t.starts_with("snmp") {
+        Family::Snmp
     } else {
         Family::Other
     }
@@ -82,6 +94,7 @@ pub fn wanted(sensor_type: &str) -> (&'static [&'static str], bool) {
             true,
         ),
         Family::Cpu | Family::Memory | Family::Disk => (&[], true),
+        Family::Dns | Family::Ntp | Family::Snmp => (&[], false),
         Family::Ping | Family::Traffic | Family::Other => (&[], false),
     }
 }
@@ -164,13 +177,48 @@ fn down() -> Option<Alert> {
 pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
     let sensor_type = sensor.sensor_type.as_deref().unwrap_or("");
     match family(sensor_type) {
-        Family::Ping => Mapped::Watch {
-            watch: Watch::Agent,
-            alert: None,
-            fidelity: approximated("prtg_ping", args! {}),
-            limits: Vec::new(),
-            lost: Vec::new(),
-        },
+        // Pinged from a probe of PRTG, from a probe of MonitorFlow (ADR-0148).
+        Family::Ping => probe_watch(Watch::Ping { address: None }, exact(), sensor),
+        Family::Dns => probe_watch(
+            Watch::UdpPort {
+                address: None,
+                port: 53,
+                query: Some("dns".into()),
+            },
+            approximated("dns_as_udp", args! {}),
+            sensor,
+        ),
+        Family::Ntp => probe_watch(
+            Watch::UdpPort {
+                address: None,
+                port: 123,
+                query: Some("ntp".into()),
+            },
+            exact(),
+            sensor,
+        ),
+        Family::Snmp => {
+            let t = sensor_type.to_ascii_lowercase();
+            let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
+            let group = if has(&["uptime", "system"]) {
+                "system"
+            } else if has(&["ups"]) {
+                "ups"
+            } else if has(&["printer", "toner"]) {
+                "printer"
+            } else if has(&["temp"]) {
+                "temperature"
+            } else {
+                return Mapped::Not(Note::plain("snmp_object"));
+            };
+            probe_watch(
+                Watch::Snmp {
+                    group: group.into(),
+                },
+                exact(),
+                sensor,
+            )
+        }
         Family::Cpu => cpu(sensor),
         Family::Memory => memory(sensor),
         Family::Disk => disk(sensor),
@@ -179,8 +227,20 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
         Family::Web => web(sensor, host),
         Family::Certificate => certificate(sensor, host),
         Family::EventLog => event_log(sensor),
-        Family::Traffic => Mapped::Not(Note::plain("network_traffic")),
+        // A server's own `net` check, a device's SNMP interfaces (ADR-0149).
+        Family::Traffic => builtin(Watch::Traffic, sensor, Vec::new()),
         Family::Other => Mapped::Not(Note::new("prtg_sensor_type", args! {"type" => sensor_type})),
+    }
+}
+
+/// A check a probe runs, which fails when the sensor goes down.
+fn probe_watch(watch: Watch, fidelity: Fidelity, sensor: &Object) -> Mapped {
+    Mapped::Watch {
+        watch,
+        alert: down(),
+        fidelity,
+        limits: Vec::new(),
+        lost: lost(sensor, &[]),
     }
 }
 

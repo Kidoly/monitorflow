@@ -77,8 +77,11 @@ async fn a_recorded_install_through_the_api() {
 async fn hosts_and_their_groups() {
     let inv = from_api().await;
     let names: Vec<&str> = inv.hosts.iter().map(|h| h.name.as_str()).collect();
-    // The switch is watched over SNMP only: no agent runs on it.
-    assert_eq!(names, ["dc01", "web01", "branch-fs"]);
+    // The switch is watched over SNMP and the branch file server by ping
+    // only: both become devices (ADR-0148).
+    assert_eq!(names, ["dc01", "web01", "switch01", "branch-fs"]);
+    assert!(inv.host("device:2003").unwrap().agentless);
+    assert!(!inv.host("device:2001").unwrap().agentless);
     let web = inv.host("device:2002").unwrap();
     assert_eq!(web.addresses, ["web01.example.net"]);
     assert_eq!(web.groups, ["Local Probe", "Servers", "Web"]);
@@ -86,10 +89,6 @@ async fn hosts_and_their_groups() {
         inv.host("device:2001").unwrap().os,
         crate::model::Os::Windows
     );
-    assert!(inv
-        .unmovable
-        .iter()
-        .any(|u| u.origin.name == "switch01" && u.why.code == "snmp"));
 }
 
 #[tokio::test]
@@ -101,7 +100,7 @@ async fn checks_and_thresholds() {
         .filter(|c| c.host == "device:2001")
         .map(|c| &c.watch)
         .collect();
-    assert_eq!(watches[0], &Watch::Agent);
+    assert_eq!(watches[0], &Watch::Ping { address: None });
     assert!(watches.contains(&&Watch::Service {
         name: "W32Time".into()
     }));
@@ -185,14 +184,16 @@ async fn silences_follow_pauses_and_maintenance() {
         paused.ends_at - paused.starts_at,
         chrono::Duration::days(30)
     );
-    // The network group holds only the switch, which is not moved: the
-    // planner reports a silence of no host.
+    // The network group holds only the switch, now a device.
     let network = inv
         .silences
         .iter()
         .find(|s| s.origin.name == "Network")
         .unwrap();
-    assert_eq!(network.scope, SilenceScope::Hosts(vec![]));
+    assert_eq!(
+        network.scope,
+        SilenceScope::Hosts(vec!["device:2003".into()])
+    );
     let codes: Vec<&str> = inv.unmovable.iter().map(|u| u.why.code.as_str()).collect();
     assert!(codes.contains(&"prtg_paused_by_rule"));
     // A paused sensor silences its check, not its whole server.

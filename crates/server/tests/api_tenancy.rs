@@ -2046,6 +2046,39 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "enabled": false }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        // Devices and probes (ADR-0148): another customer's site and
+        // servers are not found.
+        ("GET", "/api/sites/{id}/probes") => {
+            let uri = path.replace("{id}", &b.site.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+        }
+        ("POST", "/api/devices") => {
+            let body = json!({ "site_id": b.site, "name": "printer", "address": "192.0.2.9" });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        // Templates are the same for everyone (ADR-0149).
+        ("GET", "/api/devices/templates") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
+        ("POST", "/api/devices/detect") => {
+            let body = json!({ "site_id": b.site, "address": "192.0.2.9",
+                               "snmp": { "version": "v2c", "community": "c" } });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("GET", "/api/devices/{id}/snmp")
+        | ("PUT", "/api/devices/{id}/snmp")
+        | ("DELETE", "/api/devices/{id}/snmp") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "version": "v2c", "community": "c" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
+        ("PUT", "/api/devices/{id}") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "address": "192.0.2.9" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
         ("GET", "/api/sites/{id}/sensor_configs")
         | ("GET", "/api/sites/{id}/thresholds")
         | ("GET", "/api/sites/{id}/sensors")

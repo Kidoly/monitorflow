@@ -132,7 +132,17 @@ fn hosts_and_custom_items(inventory: &Inventory, live: bool) {
     assert_eq!(note(&process.fidelity), Some("process_as_service"));
     assert_eq!(process.alert.as_ref().unwrap().severity, Severity::Critical);
 
-    assert_eq!(why(inventory, "item", "NTP answers"), "udp");
+    // Checked from a probe now (ADR-0148).
+    let ntp = check(
+        inventory,
+        "db-01",
+        &Watch::UdpPort {
+            address: None,
+            port: 123,
+            query: Some("ntp".into()),
+        },
+    );
+    assert_eq!(ntp.interval_s, Some(300));
     assert_eq!(why(inventory, "item", "Backup age"), "script");
     assert_eq!(why(inventory, "trigger", "Backup is old"), "script");
 

@@ -29,7 +29,7 @@ describe("imports", () => {
   });
 
   it("translates notes and kinds, and falls back to the server's words", () => {
-    expect(noteText({ code: "udp", text: "english" })).toBe("MonitorFlow checks TCP ports only.");
+    expect(noteText({ code: "builtin_net", text: "english" })).toBe("Every server measures the traffic of its network interfaces already.");
     expect(noteText({ code: "from_a_newer_server", text: "As the server says." })).toBe("As the server says.");
     expect(originKind("trigger")).toBe("Trigger");
     expect(originKind("sensor_group")).toBe("sensor_group");

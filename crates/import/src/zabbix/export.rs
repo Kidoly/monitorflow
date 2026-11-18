@@ -232,6 +232,7 @@ fn item_of(value: &Value, prototype: bool) -> Item {
         enabled: !disabled(value),
         prototype,
         url: Some(text(value, "url")).filter(|u| !u.is_empty()),
+        snmp_oid: Some(text(value, "snmp_oid")).filter(|o| !o.is_empty()),
         template: None,
     }
 }

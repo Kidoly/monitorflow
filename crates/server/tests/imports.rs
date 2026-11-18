@@ -113,6 +113,7 @@ fn inventory() -> Inventory {
         os: Os::Debian,
         groups: vec![],
         origin: origin("host", name),
+        agentless: false,
     };
     // One time for every call, so two imports read the same windows.
     static NOW: std::sync::OnceLock<chrono::DateTime<Utc>> = std::sync::OnceLock::new();
@@ -341,6 +342,74 @@ db_tests! {
         let (_, run) = call(&pool, "POST", &format!("/api/imports/{second}/confirm"), &cookie, None).await;
         assert_eq!(run["result"]["created"], json!({}), "{run}");
         assert_eq!(count(&pool, tables).await, before);
+    }
+
+    /// A host without an agent becomes a device with its probe checks,
+    /// and the undo removes it (ADR-0148).
+    #[sqlx::test]
+    async fn devices_are_imported_and_undone(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let relay: Uuid = sqlx::query_scalar("INSERT INTO relays (peer_id, site_id, name) VALUES ('relay-paris', $1, 'relay-paris') RETURNING id")
+            .bind(paris)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let switch = Host {
+            key: "sw".into(),
+            name: "core-switch".into(),
+            visible_name: None,
+            addresses: vec!["192.0.2.2".into()],
+            os: Os::Unknown,
+            groups: vec![],
+            origin: origin("host", "core-switch"),
+            agentless: true,
+        };
+        let probe = |watch: Watch, name: &str| Check {
+            host: "sw".into(),
+            watch,
+            interval_s: Some(60),
+            alert: Some(Alert { severity: Severity::Critical, for_s: 60 }),
+            origin: origin("item", name),
+            fidelity: Fidelity::Exact,
+        };
+        let inventory = Inventory {
+            hosts: vec![switch],
+            checks: vec![
+                probe(Watch::Ping { address: None }, "ICMP ping"),
+                probe(Watch::Snmp { group: "interfaces".into() }, "Interfaces"),
+            ],
+            ..Inventory::default()
+        };
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["failed"], json!([]), "{run}");
+        let device: (String, Option<String>, bool) =
+            sqlx::query_as("SELECT kind, address, awaiting_agent FROM servers WHERE peer_id = 'core-switch'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(device, ("device".into(), Some("192.0.2.2".into()), false));
+        let checks: Vec<(String, String, Option<String>, Option<Uuid>)> = sqlx::query_as(
+            "SELECT name, instance, probe, probe_relay_id FROM sensor_configs ORDER BY name",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            checks,
+            [
+                ("ping".into(), "relay-paris".into(), Some("relay".into()), Some(relay)),
+                ("snmp_if".into(), "relay-paris".into(), Some("relay".into()), Some(relay)),
+            ]
+        );
+        assert_eq!(count(&pool, "SELECT count(*) FROM thresholds WHERE metric = 'monitorflow_ping_up'").await, 1);
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["kept_servers"], json!([]));
+        assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 0);
     }
 
     #[sqlx::test]

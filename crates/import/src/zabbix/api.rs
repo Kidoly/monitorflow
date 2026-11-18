@@ -625,6 +625,7 @@ fn item_of(raw: &Value, prototype: bool, template: Option<String>) -> Item {
         enabled: text(raw, "status") == "0",
         prototype,
         url: Some(text(raw, "url")).filter(|u| !u.is_empty()),
+        snmp_oid: Some(text(raw, "snmp_oid")).filter(|o| !o.is_empty()),
         template,
     }
 }

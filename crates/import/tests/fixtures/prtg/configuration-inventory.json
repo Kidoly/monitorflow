@@ -35,18 +35,19 @@
     {
       "host": "device:2001",
       "watch": {
-        "kind": "agent"
+        "kind": "ping"
       },
       "interval_s": 30,
+      "alert": {
+        "severity": "critical",
+        "for_s": 0
+      },
       "origin": {
         "kind": "sensor",
         "name": "Ping",
         "detail": "ping"
       },
-      "fidelity": "approximated",
-      "note": {
-        "code": "prtg_ping"
-      }
+      "fidelity": "exact"
     },
     {
       "host": "device:2001",

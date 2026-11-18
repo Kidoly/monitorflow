@@ -17,6 +17,8 @@ monitorflow-common = { workspace = true, features = ["mirror"] }
 # Self-update (ADR-0055): the agent's command dispatcher, download, root
 # helper and watchdog, run for the relay's own binary and unit.
 monitorflow-agent = { path = "../agent" }
+# Network checks run as a probe (ADR-0148).
+monitorflow-probe.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
