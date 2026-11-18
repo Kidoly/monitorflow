@@ -109,18 +109,20 @@ mod tests {
 
     use super::*;
 
-    fn ping(device: &str, host: &str) -> ProbeCheck {
+    /// A TCP port check: unlike ping, it needs no ICMP socket, which CI
+    /// runners may not allow.
+    fn port(device: &str, port: u16) -> ProbeCheck {
         ProbeCheck {
             device: device.into(),
             spec: Some(SensorSpec {
-                kind: "ping".into(),
-                name: "ping".into(),
+                kind: "port".into(),
+                name: "port".into(),
                 instance: "relay-1".into(),
                 interval_ms: 1_000,
                 timeout_ms: 900,
                 params: BTreeMap::from([
-                    ("host".to_string(), host.to_string()),
-                    ("count".to_string(), "1".to_string()),
+                    ("host".to_string(), "127.0.0.1".to_string()),
+                    ("port".to_string(), port.to_string()),
                 ])
                 .into_iter()
                 .collect(),
@@ -130,12 +132,14 @@ mod tests {
 
     #[tokio::test]
     async fn checks_run_and_are_acknowledged() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let open = listener.local_addr().unwrap().port();
         let (trigger, stop) = shutdown::channel();
         let mut end = start(Arc::new(monitorflow_probe::Builtin), stop);
         let config = ProbeConfig {
             revision: 7,
             checks: vec![
-                ping("lo", "127.0.0.1"),
+                port("lo", open),
                 ProbeCheck {
                     device: "bad".into(),
                     spec: None,
@@ -172,7 +176,7 @@ mod tests {
         assert!(lo
             .samples
             .iter()
-            .any(|s| s.sensor == "ping_up" && s.instance == "relay-1"));
+            .any(|s| s.sensor == "port_up" && s.instance == "relay-1" && s.value == 1.0));
         trigger.fire();
     }
 }
