@@ -273,7 +273,9 @@ export const en = {
   "field.url": "Address",
   "field.token": "API token",
   "field.alertmanager_url": "Alertmanager address",
+  "field.apitoken": "API token",
   "field.username": "User name",
+  "field.passhash": "Passhash",
   "field.password": "Password",
   "waiting.title": "Waiting for its agent",
   "waiting.note":
@@ -557,7 +559,9 @@ export const fr: Translation<typeof en> = {
   "field.url": "Adresse",
   "field.token": "Jeton d’API",
   "field.alertmanager_url": "Adresse d’Alertmanager",
+  "field.apitoken": "Jeton d’API",
   "field.username": "Nom d’utilisateur",
+  "field.passhash": "Passhash",
   "field.password": "Mot de passe",
   "waiting.title": "En attente de son agent",
   "waiting.note":
