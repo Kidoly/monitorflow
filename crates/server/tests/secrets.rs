@@ -150,6 +150,7 @@ db_tests! {
                 Column::AiApiKey,
                 Column::IdentityProviders,
                 Column::ImportRuns,
+                Column::SnmpCredentials,
             ]
         );
         let channels = "SELECT secret FROM notification_channels ORDER BY settings->>'url'";
@@ -176,6 +177,7 @@ db_tests! {
                 "integration_endpoints.secret",
                 "notification_channels.secret",
                 "server_settings.ai_api_key",
+                "snmp_credentials.secret",
                 "user_contacts.secret",
             ]
         );
