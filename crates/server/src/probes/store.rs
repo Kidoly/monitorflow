@@ -7,9 +7,10 @@ use std::time::Duration;
 use monitorflow_probe::{Check, CENTRAL};
 use monitorflow_sensors::SensorConfig;
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use super::ProbeSet;
-use crate::sensor_config::params;
+use crate::sensor_config::{params, with_secret};
 
 #[derive(Debug, Clone)]
 pub struct ProbeStore {
@@ -29,6 +30,7 @@ type Line = (
     serde_json::Value,
     String,
     Option<String>,
+    Option<String>,
 );
 
 impl ProbeStore {
@@ -40,7 +42,7 @@ impl ProbeStore {
     pub async fn load(&self) -> Result<HashMap<String, ProbeSet>, sqlx::Error> {
         let lines: Vec<Line> = sqlx::query_as(
             "SELECT s.peer_id, si.name, s.address, c.kind, c.name, c.instance,
-                    c.interval_ms, c.timeout_ms, c.params, c.probe, r.peer_id
+                    c.interval_ms, c.timeout_ms, c.params, c.probe, r.peer_id, c.secret
              FROM sensor_configs c
              JOIN servers s ON s.id = c.server_id
              JOIN sites si ON si.id = s.site_id
@@ -51,7 +53,73 @@ impl ProbeStore {
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(group(lines))
+        let mut sets = group(lines);
+        let wanted: Vec<&str> = sets
+            .values()
+            .flat_map(|set| &set.checks)
+            .filter(|c| c.kind == monitorflow_snmp::KIND)
+            .map(|c| c.device.as_str())
+            .collect();
+        if !wanted.is_empty() {
+            let credentials = self.credentials(&wanted).await?;
+            add_credentials(&mut sets, &credentials);
+        }
+        Ok(sets)
+    }
+
+    /// The opened SNMP credentials of `devices`, as check parameters, by
+    /// device ID (ADR-0149). Those that do not open are left out, logged.
+    async fn credentials(
+        &self,
+        devices: &[&str],
+    ) -> Result<HashMap<String, BTreeMap<String, String>>, sqlx::Error> {
+        let ids: Vec<String> = devices.iter().map(|d| (*d).to_owned()).collect();
+        let rows: Vec<(String, Uuid)> =
+            sqlx::query_as("SELECT peer_id, id FROM servers WHERE peer_id = ANY($1)")
+                .bind(&ids)
+                .fetch_all(&self.pool)
+                .await?;
+        let mut out = HashMap::new();
+        let mut conn = self.pool.acquire().await?;
+        for (peer, id) in rows {
+            match crate::snmp::load(&mut conn, id).await? {
+                Some(Ok(credentials)) => {
+                    out.insert(peer, credentials.params());
+                }
+                Some(Err(error)) => {
+                    tracing::warn!(device = %peer, %error, "cannot open the SNMP credentials of a device; its SNMP checks do not run")
+                }
+                None => {}
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Adds to each SNMP check its device's credentials; checks of a device
+/// without any are left out, as they could not run.
+fn add_credentials(
+    sets: &mut HashMap<String, ProbeSet>,
+    credentials: &HashMap<String, BTreeMap<String, String>>,
+) {
+    for set in sets.values_mut() {
+        set.checks.retain_mut(|check| {
+            if check.kind != monitorflow_snmp::KIND {
+                return true;
+            }
+            let Some(found) = credentials.get(&check.device) else {
+                tracing::debug!(device = %check.device, "an SNMP check of a device without credentials; not sent");
+                return false;
+            };
+            for (key, value) in found {
+                // A row's own port wins; secrets only come from here.
+                if key == "port" && check.config.params.contains_key("port") {
+                    continue;
+                }
+                check.config.params.insert(key.clone(), value.clone());
+            }
+            true
+        });
     }
 }
 
@@ -64,14 +132,29 @@ fn non_negative(value: i64) -> u64 {
 fn group(lines: Vec<Line>) -> HashMap<String, ProbeSet> {
     let mut sets: HashMap<String, ProbeSet> = HashMap::new();
     for line in lines {
-        let (device, site, address, kind, name, instance, interval, timeout, raw, probe, relay) =
-            line;
+        let (
+            device,
+            site,
+            address,
+            kind,
+            name,
+            instance,
+            interval,
+            timeout,
+            raw,
+            probe,
+            relay,
+            secret,
+        ) = line;
         let probe = match (probe.as_str(), relay) {
             ("central", _) => CENTRAL.to_owned(),
             (_, Some(relay)) => relay,
             _ => continue,
         };
         let mut params: BTreeMap<String, String> = params(raw);
+        // The password of a website check, opened for the probe that runs
+        // it, which gets it over its mTLS stream like an agent.
+        with_secret(&kind, &mut params, secret);
         // A website check names its URL itself (ADR-0150).
         if let Some(address) = address.filter(|_| kind != monitorflow_webcheck::KIND) {
             params.entry("host".into()).or_insert(address);
@@ -115,7 +198,65 @@ mod tests {
             params,
             probe.into(),
             relay.map(str::to_owned),
+            None,
         )
+    }
+
+    #[test]
+    fn snmp_checks_get_their_device_credentials() {
+        let mut sets = group(vec![
+            (
+                "switch".into(),
+                "paris".into(),
+                Some("192.0.2.2".into()),
+                "snmp".into(),
+                "snmp_if".into(),
+                "central".into(),
+                60_000,
+                None,
+                serde_json::json!({"what": "interfaces"}),
+                "central".into(),
+                None,
+                None,
+            ),
+            (
+                "printer".into(),
+                "paris".into(),
+                Some("192.0.2.3".into()),
+                "snmp".into(),
+                "snmp".into(),
+                "central".into(),
+                60_000,
+                None,
+                serde_json::json!({}),
+                "central".into(),
+                None,
+                None,
+            ),
+            line(
+                "nas",
+                Some("192.0.2.5"),
+                "ping",
+                "central",
+                None,
+                serde_json::json!({}),
+            ),
+        ]);
+        let credentials = HashMap::from([(
+            "switch".to_string(),
+            BTreeMap::from([
+                ("community".to_string(), "c".to_string()),
+                ("port".to_string(), "1161".to_string()),
+            ]),
+        )]);
+        add_credentials(&mut sets, &credentials);
+        let checks = &sets[CENTRAL].checks;
+        assert_eq!(checks.len(), 2, "the printer has no credentials");
+        let switch = checks.iter().find(|c| c.device == "switch").unwrap();
+        assert_eq!(switch.config.params["community"], "c");
+        assert_eq!(switch.config.params["port"], "1161");
+        assert_eq!(switch.config.params["host"], "192.0.2.2");
+        assert!(monitorflow_snmp::parse(&switch.config.params).is_ok());
     }
 
     #[test]

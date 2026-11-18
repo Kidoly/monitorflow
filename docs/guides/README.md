@@ -24,6 +24,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor disk space on Linux and Windows servers](monitor-disk-space.md): Get warned before a disk fills up and stops your services: per-disk alerts at 85% and 95% out of the box, plus slow-disk alerts.
 - [How to monitor log files for errors on Linux and Windows](monitor-log-files.md): Get alerted when an error, a failed login or any pattern you choose appears in a log file, and read your servers' system logs in one place.
 - [How to monitor anything with your own script (Bash or PowerShell)](monitor-with-your-own-script.md): Turn any shell or PowerShell script into a check with an alert: exit codes for OK, warning and critical, and name=value lines as metrics.
+- [How to monitor switches, printers, UPSs and other network devices](monitor-network-devices.md): Watch what cannot run the agent: ping, TCP and UDP ports, and SNMP v2c or v3 for interfaces, traffic, UPS battery, temperatures and printer supplies, checked from a relay of the site or the central server.
 
 ## Databases
 
@@ -37,7 +38,7 @@ Guides are also available [in French](fr/README.md).
 
 - [How to monitor nginx](monitor-nginx.md): Get alerted when nginx stops, when ports 80 and 443 stop answering, or when its error log reports critical errors, on every Linux server.
 - [How to monitor Apache](monitor-apache.md): Get alerted when the Apache web server stops or ports 80 and 443 stop answering, on Debian, Ubuntu, RHEL and Rocky servers.
-- [How to monitor a website over HTTPS](monitor-website-https.md): Know when your website stops answering on port 443 or 80, and check its status code and certificate expiry with a short script.
+- [How to monitor a website over HTTPS](monitor-website-https.md): Know when your website stops answering as it should: its status code, the text on the page, how long it takes, its redirects and when its certificate expires.
 - [How to monitor Docker](monitor-docker.md): Get alerted when the Docker engine or containerd stops on a Linux server, and when a published container port stops answering.
 - [How to monitor Proxmox VE](monitor-proxmox-ve.md): Watch your Proxmox VE hosts: the web interface on port 8006, the cluster service, and the disk space, CPU and memory every VM depends on.
 

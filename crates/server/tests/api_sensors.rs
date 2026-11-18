@@ -9,6 +9,8 @@ use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users;
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::Registry;
+use monitorflow_server::probes::ProbeStore;
+use monitorflow_server::sensor_config::SensorConfigStore;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -171,7 +173,7 @@ db_tests! {
             .iter()
             .map(|s| (s["name"].as_str().unwrap(), s["origin"].as_str().unwrap()))
             .collect();
-        assert_eq!(sensors, [("cpu", "default"), ("disk", "default"), ("diskio", "default"), ("memory", "default")]);
+        assert_eq!(sensors, [("cpu", "default"), ("disk", "default"), ("diskio", "default"), ("memory", "default"), ("net", "default")]);
 
         // Lyon's resources do not exist for a Paris viewer.
         for uri in [
@@ -261,6 +263,7 @@ db_tests! {
                 ("disk_data", "server", server_row["id"].clone()),
                 ("diskio", "default", Value::Null),
                 ("memory", "default", Value::Null),
+                ("net", "default", Value::Null),
             ]
         );
         assert_eq!(body["sensors"][0]["params"], json!({ "per_core": "false" }));
@@ -399,8 +402,8 @@ db_tests! {
             .iter()
             .map(|s| (s["name"].as_str().unwrap(), s["origin"].as_str().unwrap()))
             .collect();
-        assert_eq!(sensors, [("cpu", "default"), ("diskio", "default"), ("memory", "default"), ("port_443", "site")]);
-        assert_eq!(body["sensors"][3]["params"], json!({ "port": "443" }));
+        assert_eq!(sensors, [("cpu", "default"), ("diskio", "default"), ("memory", "default"), ("net", "default"), ("port_443", "site")]);
+        assert_eq!(body["sensors"][4]["params"], json!({ "port": "443" }));
 
         for uri in [
             format!("/api/sites/{}/sensors", f.lyon),
@@ -449,7 +452,7 @@ db_tests! {
         let hourly = |name: &str| (name.to_owned(), 3_600_000);
         assert_eq!(
             intervals(&body),
-            [hourly("cpu"), hourly("disk"), hourly("diskio"), hourly("memory"), ("port_443".to_owned(), 30_000)]
+            [hourly("cpu"), hourly("disk"), hourly("diskio"), hourly("memory"), hourly("net"), ("port_443".to_owned(), 30_000)]
         );
         let (_, body) = call(&pool, &viewer, "GET", &format!("/api/sites/{}/sensors", f.paris), None).await;
         assert_eq!(body["check_interval_ms"], 3_600_000);
@@ -650,5 +653,106 @@ db_tests! {
             usage(admin).await,
             [("port_22".to_owned(), 2), ("port_5432".to_owned(), 2), ("port_443".to_owned(), 1)]
         );
+    }
+
+    #[sqlx::test]
+    async fn website_checks_keep_their_password_sealed(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let f = fleet(&pool).await;
+        let operator = session(&pool, "op", Role::Operator, Some(f.paris)).await;
+        let uri = format!("/api/servers/{}/sensor_configs", f.paris_server);
+        let row = |params: Value| {
+            json!({"kind": "http", "instance": "shop", "interval_ms": 60_000, "params": params})
+        };
+
+        // Never in clear on the network, never over a plain URL.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(row(json!({
+            "url": "http://shop.test/", "username": "monitor", "password": "s3cret"
+        })))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("https"), "{body}");
+
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(row(json!({
+            "url": "https://shop.test/", "username": "monitor", "password": "s3cret",
+            "contains": "Add to cart"
+        })))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["secret_set"], true);
+        assert!(body["params"].get("password").is_none(), "{body}");
+        assert!(!body.to_string().contains("s3cret"));
+        let id = body["id"].as_str().unwrap().to_owned();
+        let stored: String = sqlx::query_scalar("SELECT secret FROM sensor_configs WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(stored.starts_with("mfs1:") && !stored.contains("s3cret"), "{stored}");
+
+        // The agent gets it in clear, over its mTLS stream.
+        let store = SensorConfigStore::new(pool.clone());
+        let config = store.load("agent-paris").await.unwrap().unwrap();
+        let check = config.sensors.iter().find(|s| s.kind == "http").unwrap();
+        assert_eq!(check.params["password"], "s3cret");
+        assert_eq!(check.params["username"], "monitor");
+
+        // An update without it keeps it; "" removes it.
+        let (status, body) = call(&pool, &operator, "PUT", &format!("/api/sensor_configs/{id}"),
+            Some(row(json!({"url": "https://shop.test/", "username": "monitor"})))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["secret_set"], true);
+        let config = store.load("agent-paris").await.unwrap().unwrap();
+        let check = config.sensors.iter().find(|s| s.kind == "http").unwrap();
+        assert_eq!(check.params["password"], "s3cret");
+        // A kept password still needs https.
+        let (status, _) = call(&pool, &operator, "PUT", &format!("/api/sensor_configs/{id}"),
+            Some(row(json!({"url": "http://shop.test/", "username": "monitor"})))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, body) = call(&pool, &operator, "PUT", &format!("/api/sensor_configs/{id}"),
+            Some(row(json!({"url": "https://shop.test/", "password": ""})))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["secret_set"], false);
+
+        // Lists, the effective view and the audit log never show it.
+        let (_, list) = call(&pool, &operator, "GET", &uri, None).await;
+        let (_, effective) = call(&pool, &operator, "GET",
+            &format!("/api/servers/{}/sensors", f.paris_server), None).await;
+        for text in [list.to_string(), effective.to_string()] {
+            assert!(!text.contains("s3cret"), "{text}");
+        }
+        for (_, _, details) in audit(&pool).await {
+            assert!(!details.to_string().contains("s3cret"), "{details}");
+        }
+    }
+
+    #[sqlx::test]
+    async fn website_checks_run_by_a_probe_get_their_password_there(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let f = fleet(&pool).await;
+        let operator = session(&pool, "op", Role::Operator, Some(f.paris)).await;
+        let (status, body) = call(&pool, &operator, "POST",
+            &format!("/api/servers/{}/sensor_configs", f.paris_server),
+            Some(json!({"kind": "http", "instance": "shop", "interval_ms": 60_000,
+                        "params": {"url": "https://shop.test/", "password": "t0ken"},
+                        "probe": "central"}))).await;
+        // Who runs it is the row's probe (ADR-0148).
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["probe"], "central");
+
+        let config = SensorConfigStore::new(pool.clone()).load("agent-paris").await.unwrap().unwrap();
+        assert!(config.sensors.iter().all(|s| s.kind != "http"), "{:?}", config.sensors);
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let check = &sets["central"].checks[0];
+        assert_eq!(check.kind, "http");
+        assert_eq!(check.config.params["password"], "t0ken");
+        assert!(!check.config.params.contains_key("host"));
+
+        // Without checks there is nothing to read; with one, the metrics
+        // database answers (none here).
+        let (status, body) = call(&pool, &operator, "GET",
+            &format!("/api/servers/{}/website-checks", f.lyon_server), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        let (status, _) = call(&pool, &operator, "GET",
+            &format!("/api/servers/{}/website-checks", f.paris_server), None).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
     }
 }

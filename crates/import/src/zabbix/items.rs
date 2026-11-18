@@ -1,11 +1,12 @@
 //! Items: what each Zabbix item key becomes in MonitorFlow.
 
 use crate::args;
-use crate::model::Watch;
+use crate::model::{Watch, Website};
 use crate::notes::Note;
 
 use super::config::{Item, ItemKind};
 use super::macros::Macros;
+use super::web;
 
 /// What an item becomes.
 #[derive(Debug, Clone, PartialEq)]
@@ -160,16 +161,38 @@ pub fn map(item: &Item, macros: &Macros) -> Mapped {
         return unmovable("disabled");
     }
     match item.kind {
-        ItemKind::Snmp => return unmovable("snmp"),
+        // What the common MIBs say (ADR-0149), from the OID or the key.
+        ItemKind::Snmp => {
+            let group = item
+                .snmp_oid
+                .as_deref()
+                .and_then(crate::text::snmp_group)
+                .or_else(|| crate::text::snmp_group(&item.key));
+            return match group {
+                Some("interfaces") => Mapped::Check(Watch::Traffic, None),
+                Some(group) => Mapped::Check(
+                    Watch::Snmp {
+                        group: group.into(),
+                    },
+                    None,
+                ),
+                None => unmovable("snmp_object"),
+            };
+        }
         ItemKind::Ipmi | ItemKind::Jmx | ItemKind::Other => return unmovable("no_equivalent"),
         ItemKind::Command => return unmovable("script"),
         ItemKind::HttpAgent => {
-            let Some(url) = &item.url else {
+            let Some(http) = item
+                .http
+                .as_deref()
+                .filter(|h| !h.request.url.trim().is_empty())
+            else {
                 return unmovable("no_equivalent");
             };
-            return check(macros, url, |url| Watch::Web {
-                url: url.to_owned(),
-            });
+            return match web::item(http, macros) {
+                Ok((site, notes)) => Mapped::Check(Watch::web(site), notes.into_iter().next()),
+                Err(note) => Mapped::Unmovable(note),
+            };
         }
         _ => {}
     }
@@ -198,16 +221,22 @@ pub fn map(item: &Item, macros: &Macros) -> Mapped {
                 unmovable("no_equivalent")
             };
         }
+        // Pinged from the Zabbix server: from a probe (ADR-0148).
         "icmpping" | "icmppingloss" | "icmppingsec" => {
-            return Mapped::Agent(Some(Note::plain("ping_as_offline")));
+            let expanded = macros.expand(&item.key);
+            let (_, params) = split_key(expanded.as_deref().unwrap_or(&item.key));
+            return Mapped::Check(
+                Watch::Ping {
+                    address: address(param(&params, 0)),
+                },
+                None,
+            );
         }
         _ => {}
     }
-    if name.starts_with("net.udp.") {
-        return unmovable("udp");
-    }
     if name.starts_with("net.if.") {
-        return unmovable("network_traffic");
+        // Every server measures it; a device's SNMP interfaces do too.
+        return Mapped::Builtin(Watch::Traffic);
     }
     // Checks: their parameters may hold macros, which must have a value.
     let expanded = macros.expand(&item.key);
@@ -226,6 +255,11 @@ pub fn map(item: &Item, macros: &Macros) -> Mapped {
 
 /// Keys of checks MonitorFlow has.
 const CHECK_KEYS: &[&str] = &[
+    "net.udp.service",
+    "net.udp.service.perf",
+    "net.dns",
+    "net.dns.record",
+    "net.dns.perf",
     "net.tcp.service",
     "net.tcp.service.perf",
     "net.tcp.port",
@@ -244,6 +278,7 @@ const CHECK_KEYS: &[&str] = &[
     "web.page.get",
     "web.page.regexp",
     "web.page.perf",
+    "web.certificate.get",
 ];
 
 /// What a key that is not a measure every server has becomes, from its
@@ -264,6 +299,27 @@ fn check_of(name: &str, params: &[String], kind: ItemKind) -> Mapped {
                 None,
             )
         }
+        // Zabbix knows the NTP service only over UDP.
+        "net.udp.service" | "net.udp.service.perf" => match p(0) {
+            "ntp" => Mapped::Check(
+                Watch::UdpPort {
+                    address: address(p(1)),
+                    port: port(p(2)).unwrap_or(123),
+                    query: Some("ntp".into()),
+                },
+                None,
+            ),
+            _ => unmovable("no_equivalent"),
+        },
+        // A DNS server answering; MonitorFlow does not compare the record.
+        "net.dns" | "net.dns.record" | "net.dns.perf" if !p(0).is_empty() => Mapped::Check(
+            Watch::UdpPort {
+                address: address(p(0)),
+                port: 53,
+                query: Some("dns".into()),
+            },
+            Some(Note::plain("dns_as_udp")),
+        ),
         "net.tcp.port" => match port(p(1)) {
             Some(port) => Mapped::Check(
                 Watch::Port {
@@ -346,7 +402,19 @@ fn check_of(name: &str, params: &[String], kind: ItemKind) -> Mapped {
                 let scheme = if port == 443 { "https" } else { "http" };
                 format!("{scheme}://{host}:{port}/{path}")
             };
-            Mapped::Check(Watch::Web { url }, None)
+            Mapped::Check(Watch::web(Website::new(url)), None)
+        }
+        // Zabbix agent 2 reads the certificate of host:port.
+        "web.certificate.get" => {
+            let host = p(0).trim();
+            if host.is_empty() {
+                return unmovable("no_equivalent");
+            }
+            let url = crate::web::https_url(host, port(p(1)).unwrap_or(443));
+            Mapped::Check(
+                Watch::web(Website::new(url).any_status()),
+                Some(Note::plain("web_certificate_only")),
+            )
         }
         "system.run" => unmovable("script"),
         _ => {
@@ -358,18 +426,6 @@ fn check_of(name: &str, params: &[String], kind: ItemKind) -> Mapped {
                 unmovable("no_equivalent")
             }
         }
-    }
-}
-
-/// A check built from `text` with its macros expanded.
-fn check(macros: &Macros, text: &str, watch: impl Fn(&str) -> Watch) -> Mapped {
-    match macros.expand(text) {
-        Ok(text) if text.contains("{#") => Mapped::Unmovable(Note::new(
-            "unresolved_macro",
-            args! {"macro" => lld_macro(std::slice::from_ref(&text)).unwrap_or(text)},
-        )),
-        Ok(text) => Mapped::Check(watch(&text), None),
-        Err(name) => Mapped::Unmovable(Note::new("unresolved_macro", args! {"macro" => name})),
     }
 }
 
@@ -393,7 +449,7 @@ pub fn interval(delay: Option<&str>, macros: &Macros) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::config::Macro;
+    use super::super::config::{HttpAgent, Macro, WebAuth, WebRequest};
     use super::super::macros::HostValues;
     use super::*;
 
@@ -405,7 +461,8 @@ mod tests {
             delay: Some("1m".into()),
             enabled: true,
             prototype: false,
-            url: None,
+            http: None,
+            snmp_oid: None,
             template: None,
         }
     }
@@ -494,7 +551,77 @@ mod tests {
         );
         assert_eq!(
             map(&item("icmpping", ItemKind::Simple), &macros()),
-            Mapped::Agent(Some(Note::plain("ping_as_offline")))
+            Mapped::Check(Watch::Ping { address: None }, None)
+        );
+        assert_eq!(
+            map(
+                &item("icmppingloss[192.0.2.9]", ItemKind::Simple),
+                &macros()
+            ),
+            Mapped::Check(
+                Watch::Ping {
+                    address: Some("192.0.2.9".into())
+                },
+                None
+            )
+        );
+        assert_eq!(agent("net.if.in[eth0]"), Mapped::Builtin(Watch::Traffic));
+    }
+
+    #[test]
+    fn udp_dns_and_snmp_items() {
+        assert_eq!(
+            agent("net.udp.service[ntp,192.0.2.5]"),
+            Mapped::Check(
+                Watch::UdpPort {
+                    address: Some("192.0.2.5".into()),
+                    port: 123,
+                    query: Some("ntp".into())
+                },
+                None
+            )
+        );
+        assert_eq!(
+            agent("net.dns[192.0.2.53,example.org]"),
+            Mapped::Check(
+                Watch::UdpPort {
+                    address: Some("192.0.2.53".into()),
+                    port: 53,
+                    query: Some("dns".into())
+                },
+                Some(Note::plain("dns_as_udp"))
+            )
+        );
+        let snmp = |key: &str, oid: Option<&str>| {
+            let mut item = item(key, ItemKind::Snmp);
+            item.snmp_oid = oid.map(str::to_owned);
+            map(&item, &macros())
+        };
+        assert_eq!(
+            snmp("ifInOctets", None),
+            Mapped::Check(Watch::Traffic, None)
+        );
+        assert_eq!(
+            snmp("system.hw.uptime", Some("get[1.3.6.1.2.1.1.3.0]")),
+            Mapped::Check(
+                Watch::Snmp {
+                    group: "system".into()
+                },
+                None
+            )
+        );
+        assert_eq!(
+            snmp("battery.capacity", Some("1.3.6.1.2.1.33.1.2.4.0")),
+            Mapped::Check(
+                Watch::Snmp {
+                    group: "ups".into()
+                },
+                None
+            )
+        );
+        assert_eq!(
+            code(snmp("cisco.temp", Some("1.3.6.1.4.1.9.9.13.1.3.1.3"))),
+            "snmp_object"
         );
     }
 
@@ -594,29 +721,51 @@ mod tests {
                 r#"web.page.get["{$NGINX.STUB_STATUS.HOST}","basic_status","{$NGINX.STUB_STATUS.PORT}"]"#
             ),
             Mapped::Check(
-                Watch::Web {
-                    url: "http://localhost:8080/basic_status".into()
-                },
+                Watch::web(Website::new("http://localhost:8080/basic_status")),
                 None
             )
         );
         let mut http = item("shop.health", ItemKind::HttpAgent);
-        http.url = Some("https://shop.example.com/health".into());
+        http.http = Some(Box::new(HttpAgent {
+            request: WebRequest {
+                url: "https://shop.example.com/health".into(),
+                method: "GET".into(),
+                status_codes: "200".into(),
+                follow_redirects: true,
+                ..WebRequest::default()
+            },
+            auth: WebAuth::default(),
+        }));
+        let mut expected = Website::new("https://shop.example.com/health");
+        expected.status = Some("200".into());
         assert_eq!(
             map(&http, &macros()),
+            Mapped::Check(Watch::web(expected), None)
+        );
+        // A PUT: approximated.
+        http.http.as_mut().unwrap().request.method = "PUT".into();
+        let Mapped::Check(_, note) = map(&http, &macros()) else {
+            panic!()
+        };
+        assert_eq!(
+            note,
+            Some(Note::new("web_method", args! {"method" => "PUT"}))
+        );
+        // Without a URL there is nothing to check.
+        http.http = None;
+        assert_eq!(code(map(&http, &macros())), "no_equivalent");
+        assert_eq!(
+            agent("web.certificate.get[shop.example.com,8443]"),
             Mapped::Check(
-                Watch::Web {
-                    url: "https://shop.example.com/health".into()
-                },
-                None
+                Watch::web(Website::new("https://shop.example.com:8443/").any_status()),
+                Some(Note::plain("web_certificate_only"))
             )
         );
     }
 
     #[test]
     fn what_cannot_be_moved() {
-        assert_eq!(code(agent("net.udp.service[ntp]")), "udp");
-        assert_eq!(code(agent("net.if.in[eth0]")), "network_traffic");
+        assert_eq!(code(agent("net.udp.service[tftp]")), "no_equivalent");
         assert_eq!(code(agent("system.run[uptime]")), "script");
         assert_eq!(code(agent("backup.age[pg]")), "script");
         assert_eq!(code(agent("system.uptime")), "no_equivalent");
@@ -625,10 +774,6 @@ mod tests {
         assert_eq!(
             code(agent("systemd.unit.info[{#UNIT.NAME}]")),
             "unresolved_macro"
-        );
-        assert_eq!(
-            code(map(&item("ifInOctets", ItemKind::Snmp), &macros())),
-            "snmp"
         );
         assert_eq!(
             code(map(&item("nginx.version", ItemKind::Dependent), &macros())),

@@ -9,10 +9,15 @@ import {
   type EffectiveThreshold,
   type SensorConfigEntry,
   type ServerDetail,
+  type Silence,
+  type SilencedCheck,
   describeError,
 } from "@/lib/api";
 import { checkTitle, saveThreshold, shapeFor, shapeOf } from "@/lib/alerts";
 import { unitOf } from "@/lib/format";
+import { coversCheck } from "@/lib/maintenance";
+import { inOneHour, tomorrowMorning } from "@/lib/silences";
+import { formatDay } from "@/components/ui/time";
 import { modifiesSite, useMe } from "@/lib/me";
 import { sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -31,6 +36,7 @@ import type { Tone } from "@/components/ui/tone";
 
 import { AddCheck, type Target, TurnBackOn, stopChecking, stringParams } from "./MonitoringSettings";
 import styles from "./ServerPage.module.css";
+import { WebsiteChecks } from "./WebsiteChecks";
 
 /** What the Sensors tab reads besides the rows; null where it could not be read. */
 export interface SensorRules {
@@ -55,6 +61,8 @@ export function ServerSensorsTab({
   window,
   incidentsFailed,
   onChanged,
+  checkSilences = [],
+  onSilenceCheck,
 }: {
   server: ServerDetail;
   sensors: EffectiveSensors | { error: string };
@@ -64,11 +72,16 @@ export function ServerSensorsTab({
   window?: { start: number; end: number } | null;
   incidentsFailed: boolean;
   onChanged: () => void;
+  /** Active silences of chosen checks of this server or its site (ADR-0151). */
+  checkSilences?: Silence[];
+  /** Silences one check until a time; operators of the site. */
+  onSilenceCheck?: (check: SilencedCheck, end: Date) => Promise<void>;
 }) {
   const scope = useScope();
   const me = useMe();
   const [adding, setAdding] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [silenceError, setSilenceError] = useState<string | null>(null);
   const { id, site_id: siteId, site_name: siteName, os_family: osFamily } = server;
   const target = useMemo<Target>(() => ({ kind: "server", id, siteId, siteName, osFamily }), [id, siteId, siteName, osFamily]);
   const canEdit = !server.revoked_at && modifiesSite(me, server.customer_id, siteId);
@@ -84,6 +97,17 @@ export function ServerSensorsTab({
   const ruleOfRow = (row: SensorRow) =>
     rules.thresholds ? rowRule(sensors.sensors, rules.thresholds, row.sensor, row.metric, row.instance) : undefined;
 
+  /** The silence of chosen checks covering `row` that ends last, if any. */
+  const silenceOf = (row: SensorRow) =>
+    checkSilences
+      .filter((s) => coversCheck(s.checks ?? [], row.sensor.name, row.sensor.instance))
+      .reduce<Silence | undefined>((a, s) => (a && a.ends_at > s.ends_at ? a : s), undefined);
+
+  function silenceRow(row: SensorRow, end: Date) {
+    setSilenceError(null);
+    onSilenceCheck?.({ name: row.sensor.name, instance: row.sensor.instance }, end).catch((e) => setSilenceError(describeError(e)));
+  }
+
   function menuItems(row: SensorRow): RowMenuItem[] {
     const rule = ruleOfRow(row);
     // A sensor's rule is edited on the page of the metric it alerts on (disk activity: its wait).
@@ -91,6 +115,10 @@ export function ServerSensorsTab({
     const items: RowMenuItem[] = [];
     if (canEdit) items.push({ label: t("server.sensors.edit"), href: scopedHref(sensorHref(server.id, ruleMetric, row.instance, true), scope) });
     items.push({ label: t("server.sensors.openChart"), href: scopedHref(sensorHref(server.id, row.metric, row.instance), scope) });
+    if (canEdit && onSilenceCheck) {
+      items.push({ label: t("maintenance.check.hour"), onSelect: () => silenceRow(row, inOneHour(new Date())) });
+      items.push({ label: t("maintenance.check.tomorrow"), onSelect: () => silenceRow(row, tomorrowMorning(new Date())) });
+    }
     // One disk of several mutes its alert, which needs one to mute.
     const muting = perInstance(row.sensor, row.instance);
     if (canEdit && (!muting || rule?.enabled)) {
@@ -123,8 +151,24 @@ export function ServerSensorsTab({
     {
       key: "status",
       header: t("server.sensors.column.status"),
-      cell: (row) =>
-        row.waiting ? <Label tone="neutral">{t("server.sensors.waiting")}</Label> : <StatusLabel kind="sensor" value={row.status} />,
+      cell: (row) => {
+        const silence = silenceOf(row);
+        return (
+          <>
+            {row.waiting ? <Label tone="neutral">{t("server.sensors.waiting")}</Label> : <StatusLabel kind="sensor" value={row.status} />}
+            {silence && (
+              <>
+                {" "}
+                <Label tone="neutral">
+                  {t(silence.window_id ? "maintenance.check.inMaintenance" : "maintenance.check.silenced", {
+                    when: formatDay(new Date(silence.ends_at), new Date()),
+                  })}
+                </Label>
+              </>
+            )}
+          </>
+        );
+      },
     },
     {
       key: "trend",
@@ -166,6 +210,11 @@ export function ServerSensorsTab({
       {incidentsFailed && (
         <Banner tone="warn">{t("server.sensors.incidentsFailed")}</Banner>
       )}
+      {silenceError && (
+        <Banner tone="bad">
+          <span role="alert">{silenceError}</span>
+        </Banner>
+      )}
       {rows.length === 0 ? (
         <EmptyState actions={addButton || undefined}>{t("server.sensors.none")}</EmptyState>
       ) : (
@@ -190,6 +239,7 @@ export function ServerSensorsTab({
           }
         />
       )}
+      {sensors.sensors.some((s) => s.kind === "http") && <WebsiteChecks serverId={server.id} />}
       {rows.length > 0 && addButton && <div className={styles.addLine}>{addButton}</div>}
       {adding && (
         <div className={styles.addBox}>

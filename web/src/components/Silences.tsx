@@ -3,10 +3,11 @@
 import { type FormEvent, type ReactNode, useCallback, useState } from "react";
 
 import { t } from "@/i18n";
-import { type Silence, type SilenceRequest, type SilenceScope, api, describeError, isUnauthorized } from "@/lib/api";
+import { type Silence, type SilenceRequest, type SilenceScope, type SilencedCheck, api, describeError, isUnauthorized } from "@/lib/api";
 import { customerWide } from "@/lib/customers";
 import { administersEverything, modifiesCustomer, modifiesSite, useMe, useMultiCustomer } from "@/lib/me";
 import { useScope } from "@/lib/scope";
+import { checkName } from "@/lib/maintenance";
 import { MAX_DAYS, defaultReason, fromLocalInput, inOneHour, silenceTitle, tomorrowMorning } from "@/lib/silences";
 import { usePolledData } from "@/lib/usePolledData";
 import { Button, fieldClass } from "@/components/ui/Button";
@@ -18,6 +19,7 @@ import { InfoTip } from "@/components/ui/Hint";
 import { RowMenu } from "@/components/ui/RowMenu";
 import { formatDay } from "@/components/ui/time";
 
+import { MaintenanceWindowsSection, useWindowNotices } from "./MaintenanceWindows";
 import admin from "./AdminPages.module.css";
 import styles from "./Silences.module.css";
 
@@ -144,19 +146,35 @@ function because(silence: Silence): string {
  * custom form. A page that puts the menu in its header uses this hook;
  * `SilenceBar` stacks the three.
  */
-export function useSilenceBar(target: SilenceTarget): { notices: ReactNode; menu: ReactNode; form: ReactNode } {
+export type SilenceBarParts = ReturnType<typeof useSilenceBar>;
+
+/** As [`useSilenceBar`], before the page has loaded what it silences: nothing until then. */
+export function useSilenceBar(target: SilenceTarget | null): {
+  notices: ReactNode;
+  menu: ReactNode;
+  form: ReactNode;
+  /** Active silences of chosen checks (ADR-0151), for the check rows. */
+  checkSilences: Silence[];
+  /** Silences `check` until `end` in one click; rejects with the API's error. */
+  silenceCheck: (check: SilencedCheck, end: Date) => Promise<void>;
+} {
   const multiCustomer = useMultiCustomer();
   const me = useMe();
-  const { scope, id, name } = target;
+  const { scope, id, name } = target ?? { scope: "server" as const, id: "", name: "" };
   const key = scope === "server" ? "server_id" : scope === "relay" ? "relay_id" : "site_id";
   const fetcher = useCallback((signal: AbortSignal) => api.silences({ [key]: id }, signal), [key, id]);
-  const { data, refresh } = usePolledData(fetcher);
+  const { data, refresh } = usePolledData(fetcher, { enabled: target !== null });
   const [custom, setCustom] = useState(false);
+  const windows = useWindowNotices(
+    target && target.scope !== "relay" ? { scope: target.scope, id: target.id, siteId: target.siteId } : null,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const silences = data?.silences ?? [];
-  const active = silences.filter((s) => s.active);
+  // A silence of chosen checks leaves the rest of the page's target watched.
+  const active = silences.filter((s) => s.active && !s.checks);
+  const checkSilences = silences.filter((s) => s.active && s.checks);
   const upcoming = silences.filter((s) => !s.active);
   const now = new Date();
   const last = active.reduce<Silence | null>((a, s) => (a && a.ends_at > s.ends_at ? a : s), null);
@@ -164,6 +182,10 @@ export function useSilenceBar(target: SilenceTarget): { notices: ReactNode; menu
   async function silence(period: Pick<SilenceRequest, "starts_at" | "ends_at" | "reason">) {
     await api.createSilence({ scope, target_id: id, ...period });
     setCustom(false);
+    refresh();
+  }
+  async function silenceCheck(check: SilencedCheck, end: Date) {
+    await api.createSilence({ scope, target_id: id, ends_at: end.toISOString(), reason: defaultReason(), checks: [check] });
     refresh();
   }
   async function until(end: Date) {
@@ -182,7 +204,11 @@ export function useSilenceBar(target: SilenceTarget): { notices: ReactNode; menu
     <>
       {last && (
         <Banner tone="warn">
-          <strong>{t("silences.bar.until", { when: formatDay(new Date(last.ends_at), now) })}</strong>{" "}
+          <strong>
+            {last.window_id
+              ? t("maintenance.runningUntil", { when: formatDay(new Date(last.ends_at), now) }) + "."
+              : t("silences.bar.until", { when: formatDay(new Date(last.ends_at), now) })}
+          </strong>{" "}
           {t("silences.bar.nobody", { name })}
           <ul className={styles.lines}>
             {active.map((s) => (
@@ -195,6 +221,24 @@ export function useSilenceBar(target: SilenceTarget): { notices: ReactNode; menu
           </ul>
         </Banner>
       )}
+      {checkSilences.length > 0 && (
+        <Banner tone="plain">
+          {t("maintenance.check.bar", { checks: [...new Set(checkSilences.flatMap((s) => s.checks ?? []).map(checkName))].join(", ") })}
+          <ul className={styles.lines}>
+            {checkSilences.map((s) => (
+              <li key={s.id}>
+                {t("maintenance.check.line", {
+                  checks: (s.checks ?? []).map(checkName).join(", "),
+                  when: formatDay(new Date(s.ends_at), now),
+                  because: because(s),
+                })}{" "}
+                {s.can_end && <EndSilence silence={s} onEnded={refresh} />}
+              </li>
+            ))}
+          </ul>
+        </Banner>
+      )}
+      {windows.notices}
       {upcoming.map((s) => (
         <Banner key={s.id} tone="plain">
           {s.scope === scope
@@ -214,7 +258,7 @@ export function useSilenceBar(target: SilenceTarget): { notices: ReactNode; menu
       ))}
     </>
   );
-  const menu = modifiesSite(me, target.customerId, target.siteId) && (
+  const menu = target !== null && modifiesSite(me, target.customerId, target.siteId) && (
     <span className={styles.bar}>
       <RowMenu
         label={t("silences.bar.label", { name })}
@@ -224,15 +268,19 @@ export function useSilenceBar(target: SilenceTarget): { notices: ReactNode; menu
           { label: t("silences.bar.hour"), onSelect: () => void until(inOneHour(new Date())) },
           { label: t("silences.bar.tomorrow"), onSelect: () => void until(tomorrowMorning(new Date())) },
           { label: t("silences.bar.custom"), onSelect: () => setCustom(true) },
+          ...(scope === "relay" ? [] : [{ label: t("maintenance.menu.window"), onSelect: windows.openForm }]),
         ]}
       />
       {error && <span role="alert">{error}</span>}
     </span>
   );
-  const form = custom && (
-    <SilenceForm submitLabel={t("silences.bar.submit", { name })} onSubmit={silence} onCancel={() => setCustom(false)} />
+  const form = (
+    <>
+      {custom && <SilenceForm submitLabel={t("silences.bar.submit", { name })} onSubmit={silence} onCancel={() => setCustom(false)} />}
+      {windows.form}
+    </>
   );
-  return { notices, menu, form };
+  return { notices, menu, form, checkSilences, silenceCheck };
 }
 
 /** Notices, the "Silence ▾" menu and the custom form, one under the other. */
@@ -325,14 +373,23 @@ export function SilencesPage() {
   const [adding, setAdding] = useState(false);
   const now = updatedAt ?? new Date();
   // "Everything" belongs to every customer and site of the switcher.
+  // A maintenance window's running occurrence shows with its window.
   const silences = (data?.silences ?? []).filter(
     (s) =>
+      !s.window_id &&
       (!scope.customerId || !s.customer_id || s.customer_id === scope.customerId) &&
       (!scope.siteId || !s.site_id || s.site_id === scope.siteId),
   );
   const canSilence = me?.roles.some((grant) => grant.role !== "viewer") ?? false;
   const columns: Column<Silence>[] = [
-    { key: "what", header: t("silences.column.what"), cell: (s) => silenceTitle(s, multiCustomer) },
+    {
+      key: "what",
+      header: t("silences.column.what"),
+      cell: (s) =>
+        s.checks?.length
+          ? t("maintenance.what.checks", { what: silenceTitle(s, multiCustomer), checks: s.checks.map(checkName).join(", ") })
+          : silenceTitle(s, multiCustomer),
+    },
     {
       key: "state",
       header: t("silences.column.state"),
@@ -375,6 +432,7 @@ export function SilencesPage() {
       ) : (
         <DataTable label={t("silences.title")} columns={columns} rows={silences} rowKey={(s) => s.id} loading={!data} />
       )}
+      <MaintenanceWindowsSection />
     </Page>
   );
 }

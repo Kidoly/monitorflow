@@ -80,6 +80,10 @@ pub enum Column {
     SignInCookie,
     /// Channel secrets of an import's preview (ADR-0146).
     ImportRuns,
+    /// A device's SNMP community and passwords (ADR-0149).
+    SnmpCredentials,
+    /// The password of a website check (ADR-0150).
+    SensorConfigs,
 }
 
 impl Column {
@@ -93,6 +97,8 @@ impl Column {
             Self::IdentityProviders => "identity_providers.secret",
             Self::SignInCookie => "cookie.mf_sso",
             Self::ImportRuns => "import_runs.secrets",
+            Self::SnmpCredentials => "snmp_credentials.secret",
+            Self::SensorConfigs => "sensor_configs.secret",
         }
     }
 

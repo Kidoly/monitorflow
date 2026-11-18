@@ -12,6 +12,8 @@ pub const SEALED: &[Column] = &[
     Column::AiApiKey,
     Column::IdentityProviders,
     Column::ImportRuns,
+    Column::SnmpCredentials,
+    Column::SensorConfigs,
 ];
 
 #[derive(Debug, thiserror::Error)]

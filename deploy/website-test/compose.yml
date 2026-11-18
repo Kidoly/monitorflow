@@ -1,0 +1,51 @@
+# The website test (ADR-0150), local only: see run-e2e.sh.
+name: mf-website-test
+services:
+  # The sites: web.test (and other.test) to containers on `sites`, and
+  # 127.0.0.1 on the host for the central server.
+  web:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./pages.conf:/etc/nginx/pages.conf:ro
+      - ${MF_WEBSITE_OUT:?}/certs:/certs:ro
+      - ${MF_WEBSITE_OUT:?}/pages:/pages:ro
+    networks:
+      sites:
+        aliases: [web.test, other.test]
+    ports:
+      - "127.0.0.1:18080:80"
+      - "127.0.0.1:18443:8443"
+      - "127.0.0.1:18444:8444"
+      - "127.0.0.1:18445:8445"
+      - "127.0.0.1:18446:8446"
+      - "127.0.0.1:18447:8447"
+  # Only when DATABASE_URL is not given, as in CI.
+  postgres:
+    image: postgres:17
+    profiles: [db]
+    environment:
+      POSTGRES_USER: monitorflow
+      POSTGRES_PASSWORD: monitorflow
+      POSTGRES_DB: monitorflow
+    tmpfs: [/var/lib/postgresql/data]
+    ports: ["127.0.0.1:18432:5432"]
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    command: ["-retentionPeriod=1d", "-search.latencyOffset=1s"]
+    ports: ["127.0.0.1:18428:8428"]
+  victorialogs:
+    image: victoriametrics/victoria-logs:latest
+    ports: ["127.0.0.1:18429:9428"]
+  # The web interface and the API on one origin, for the browser.
+  ui:
+    image: nginx:1.27-alpine
+    network_mode: host
+    environment:
+      MF_API_PORT: ${MF_API_PORT:?}
+      MF_UI_PORT: ${MF_UI_PORT:?}
+    volumes:
+      - ./ui.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${MF_WEB_OUT:?}:/srv/web:ro
+networks:
+  sites: {}

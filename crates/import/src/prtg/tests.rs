@@ -77,8 +77,11 @@ async fn a_recorded_install_through_the_api() {
 async fn hosts_and_their_groups() {
     let inv = from_api().await;
     let names: Vec<&str> = inv.hosts.iter().map(|h| h.name.as_str()).collect();
-    // The switch is watched over SNMP only: no agent runs on it.
-    assert_eq!(names, ["dc01", "web01", "branch-fs"]);
+    // The switch is watched over SNMP and the branch file server by ping
+    // only: both become devices (ADR-0148).
+    assert_eq!(names, ["dc01", "web01", "switch01", "branch-fs"]);
+    assert!(inv.host("device:2003").unwrap().agentless);
+    assert!(!inv.host("device:2001").unwrap().agentless);
     let web = inv.host("device:2002").unwrap();
     assert_eq!(web.addresses, ["web01.example.net"]);
     assert_eq!(web.groups, ["Local Probe", "Servers", "Web"]);
@@ -86,10 +89,6 @@ async fn hosts_and_their_groups() {
         inv.host("device:2001").unwrap().os,
         crate::model::Os::Windows
     );
-    assert!(inv
-        .unmovable
-        .iter()
-        .any(|u| u.origin.name == "switch01" && u.why.code == "snmp"));
 }
 
 #[tokio::test]
@@ -101,7 +100,7 @@ async fn checks_and_thresholds() {
         .filter(|c| c.host == "device:2001")
         .map(|c| &c.watch)
         .collect();
-    assert_eq!(watches[0], &Watch::Agent);
+    assert_eq!(watches[0], &Watch::Ping { address: None });
     assert!(watches.contains(&&Watch::Service {
         name: "W32Time".into()
     }));
@@ -135,24 +134,34 @@ async fn checks_and_thresholds() {
         mount: Some("/var".into()),
     });
     assert_eq!(var.warning, Some(0.9));
-    // The page and the certificate are both port 443 of web01: one check.
-    let ports = inv
+    // The page and the certificate of web01 are one website check, with
+    // the page's response time and the certificate's days limits.
+    let url = "https://web01.example.net/health";
+    let pages: Vec<&Watch> = inv
         .checks
         .iter()
-        .filter(|c| matches!(c.watch, Watch::Port { port: 443, .. } | Watch::Web { .. }))
-        .count();
-    assert_eq!(ports, 1);
-    assert!(inv
-        .unmovable
-        .iter()
-        .any(|u| u.origin.name == "Certificate" && u.why.code == "prtg_same_port"));
+        .map(|c| &c.watch)
+        .filter(|w| matches!(w, Watch::Web(_)))
+        .collect();
+    assert_eq!(pages, [&Watch::web(crate::model::Website::new(url))]);
+    let response = find(Measure::WebResponseTime { url: url.into() });
+    assert_eq!(
+        (response.direction, response.warning, response.critical),
+        (Direction::Above, Some(0.5), None)
+    );
+    let days = find(Measure::CertificateDays { url: url.into() });
+    assert_eq!(
+        (days.direction, days.warning, days.critical),
+        (Direction::Below, Some(30.0), Some(7.0))
+    );
+    assert_eq!(days.origin.name, "Certificate");
     let lost: Vec<&str> = inv
         .unmovable
         .iter()
         .filter(|u| u.why.code == "prtg_limit")
         .map(|u| u.why.args["channel"].as_str())
         .collect();
-    assert_eq!(lost, ["CPU 1", "C:\\ Free Bytes", "Response Time",]);
+    assert_eq!(lost, ["CPU 1", "C:\\ Free Bytes"]);
 }
 
 #[tokio::test]
@@ -185,17 +194,25 @@ async fn silences_follow_pauses_and_maintenance() {
         paused.ends_at - paused.starts_at,
         chrono::Duration::days(30)
     );
-    // The network group holds only the switch, which is not moved: the
-    // planner reports a silence of no host.
+    // The network group holds only the switch, now a device.
     let network = inv
         .silences
         .iter()
         .find(|s| s.origin.name == "Network")
         .unwrap();
-    assert_eq!(network.scope, SilenceScope::Hosts(vec![]));
+    assert_eq!(
+        network.scope,
+        SilenceScope::Hosts(vec!["device:2003".into()])
+    );
     let codes: Vec<&str> = inv.unmovable.iter().map(|u| u.why.code.as_str()).collect();
-    assert!(codes.contains(&"prtg_paused_sensor"));
     assert!(codes.contains(&"prtg_paused_by_rule"));
+    // A paused sensor silences its check, not its whole server.
+    let sensor = inv
+        .silences
+        .iter()
+        .find(|s| s.origin.name == "Disk /var")
+        .unwrap();
+    assert_eq!(sensor.checks, vec![crate::model::Watch::Disk]);
 }
 
 #[tokio::test]

@@ -149,6 +149,17 @@ fn builtin_runs_network_kinds_only() {
         .unwrap()
         .contains("does not run"));
     assert!(Builtin.build("ping", &BTreeMap::new()).is_err());
+    let snmp = BTreeMap::from([
+        ("host".to_string(), "192.0.2.1".to_string()),
+        ("community".to_string(), "public".to_string()),
+        ("what".to_string(), "interfaces".to_string()),
+    ]);
+    assert!(Builtin.build("snmp", &snmp).is_ok());
+    assert!(Builtin
+        .build("snmp", &BTreeMap::new())
+        .err()
+        .unwrap()
+        .contains("`host`"));
 }
 
 #[test]
@@ -190,4 +201,26 @@ async fn batches_take_what_is_queued() {
     assert_eq!(next_batch(&mut rx).await.unwrap().len(), 3);
     drop(tx);
     assert!(next_batch(&mut rx).await.is_none());
+}
+
+#[tokio::test]
+async fn tests_run_once_with_full_names() {
+    let factory = Fakes::default();
+    let mut ok = check("nas", "fake", "snmp", "central");
+    ok.config.timeout = Some(Duration::from_millis(500));
+    let samples = test_once(&factory, &ok).await.unwrap();
+    assert_eq!(
+        (samples[0].sensor.as_str(), samples[0].instance.as_str()),
+        ("snmp", "central")
+    );
+    assert_eq!(
+        test_once(&factory, &check("nas", "nope", "x", ""))
+            .await
+            .unwrap_err(),
+        "no `nope`"
+    );
+    assert!(test_once(&factory, &check("nas", "boom", "x", ""))
+        .await
+        .unwrap_err()
+        .contains("unexpectedly"));
 }
