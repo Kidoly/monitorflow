@@ -122,6 +122,12 @@ impl Recorder {
 
 /// The verdict of `error` from the WebPKI verifier.
 fn problem(error: &Error, self_signed: bool) -> Problem {
+    // Signed by itself, whatever the verifier tripped on first: an unknown
+    // issuer, or a CA certificate used for a site, as `openssl req -x509`
+    // makes them.
+    if self_signed {
+        return Problem::SelfSigned;
+    }
     let Error::InvalidCertificate(error) = error else {
         return Problem::Other;
     };
@@ -130,7 +136,6 @@ fn problem(error: &Error, self_signed: bool) -> Problem {
         CertificateError::NotValidYet | CertificateError::NotValidYetContext { .. } => {
             Problem::NotYetValid
         }
-        CertificateError::UnknownIssuer if self_signed => Problem::SelfSigned,
         CertificateError::UnknownIssuer => Problem::Untrusted,
         CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. } => {
             Problem::Name
@@ -280,6 +285,11 @@ mod tests {
             Problem::Name
         );
         assert_eq!(problem(&Error::General("x".into()), false), Problem::Other);
+        let ca_as_site = Error::InvalidCertificate(CertificateError::Other(rustls::OtherError(
+            std::sync::Arc::new(std::io::Error::other("CaUsedAsEndEntity")),
+        )));
+        assert_eq!(problem(&ca_as_site, true), Problem::SelfSigned);
+        assert_eq!(problem(&ca_as_site, false), Problem::Other);
         assert_eq!(Problem::NotYetValid.as_str(), "not_yet_valid");
     }
 
