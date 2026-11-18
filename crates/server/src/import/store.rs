@@ -476,12 +476,31 @@ async fn create_one(
             servers.insert(peer_id.to_ascii_lowercase(), id);
             Ok(Some(id))
         }
+        Create::Device {
+            peer_id,
+            hostname,
+            address,
+        } => {
+            if let Some(id) = server_id(tx, peer_id).await.map_err(db_error)? {
+                servers.insert(peer_id.to_ascii_lowercase(), id);
+                return Ok(None);
+            }
+            let address = crate::api::devices::check_address(address)
+                .map_err(|_| "its address is not valid")?;
+            let (id, made) = crate::api::devices::insert(tx, site_id, hostname, &address)
+                .await
+                .map_err(|e| e.to_string())?;
+            servers.insert(peer_id.to_ascii_lowercase(), id);
+            servers.insert(made.to_ascii_lowercase(), id);
+            Ok(Some(id))
+        }
         Create::Check {
             server: peer_id,
             kind,
             name,
             interval_ms,
             params,
+            probe,
         } => {
             let id = match server(peer_id, servers) {
                 Some(id) => id,
@@ -490,25 +509,47 @@ async fn create_one(
                     .map_err(db_error)?
                     .ok_or("its server is not there")?,
             };
-            let valid = crate::api::sensors::validate_entry(crate::api::sensors::EntryRequest {
-                kind: kind.clone(),
-                name: Some(name.clone()),
-                instance: String::new(),
-                interval_ms: *interval_ms,
-                timeout_ms: None,
-                params: params.clone(),
-                enabled: true,
-            })?;
+            // A probe check runs from the site's default probe (ADR-0148).
+            let by = if *probe {
+                crate::api::sensors::default_probe(&mut **tx, site_id)
+                    .await
+                    .map_err(db_error)?
+            } else {
+                crate::api::sensors::RunBy::default()
+            };
+            let address: Option<String> =
+                sqlx::query_scalar("SELECT address FROM servers WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&mut **tx)
+                    .await
+                    .map_err(db_error)?;
+            let valid = crate::api::sensors::validate_with_host(
+                crate::api::sensors::EntryRequest {
+                    kind: kind.clone(),
+                    name: Some(name.clone()),
+                    instance: String::new(),
+                    interval_ms: *interval_ms,
+                    timeout_ms: None,
+                    params: params.clone(),
+                    enabled: true,
+                    probe: None,
+                },
+                address.as_deref(),
+            )?;
             sqlx::query_scalar(
-                "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, params)
-                 VALUES ($1, $2, $3, '', $4, $5)
+                "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, params,
+                                             probe, probe_relay_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  ON CONFLICT ON CONSTRAINT sensor_configs_key DO NOTHING RETURNING id",
             )
             .bind(id)
             .bind(&valid.kind)
             .bind(&valid.name)
+            .bind(if *probe { by.key.as_str() } else { "" })
             .bind(valid.interval_ms)
             .bind(&valid.params)
+            .bind(by.probe)
+            .bind(by.relay)
             .fetch_optional(&mut **tx)
             .await
             .map_err(db_error)
@@ -877,7 +918,8 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
     // Servers the run made that an agent took over.
     let kept: Vec<(Uuid, String)> = sqlx::query_as(
         "SELECT s.id, s.hostname FROM import_created c JOIN servers s ON s.id = c.object_id
-         WHERE c.run_id = $1 AND c.object = 'server' AND NOT s.awaiting_agent",
+         WHERE c.run_id = $1 AND c.object = 'server' AND NOT s.awaiting_agent
+           AND s.kind = 'agent'",
     )
     .bind(run.id)
     .fetch_all(&mut *tx)
@@ -918,7 +960,7 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
             "server",
             "DELETE FROM servers WHERE id IN
                  (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'server')
-               AND awaiting_agent",
+               AND (awaiting_agent OR kind = 'device')",
         ),
     ] {
         let done = sqlx::query(sql)

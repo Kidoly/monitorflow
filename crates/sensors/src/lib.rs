@@ -9,7 +9,8 @@
 //!
 //! The built-in sensors ([`cpu`], [`memory`], [`disk`], [`diskio`],
 //! `systemd`, [`windows_service`], [`port`], [`script`], [`log`],
-//! [`eventlog`]) are built by kind with [`registry::build`]. One sensor emits several
+//! [`eventlog`], [`net`] (ADR-0149), and the probe kind [`ping`],
+//! ADR-0148) are built by kind with [`registry::build`]. One sensor emits several
 //! metrics by setting [`Sample::sensor`] to a metric suffix, which the
 //! scheduler prefixes with the configured name ([`metric_name`]). See
 //! ADR-0015. `cpu`, `memory`, `disk`, `diskio`, `script` and `log` read
@@ -26,7 +27,9 @@ pub mod diskio;
 pub mod eventlog;
 pub mod log;
 pub mod memory;
+pub mod net;
 mod pattern;
+pub mod ping;
 pub mod port;
 #[cfg(windows)]
 pub mod powershell;

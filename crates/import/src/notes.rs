@@ -167,12 +167,36 @@ pub const NOTES: &[(&str, &str)] = &[
         "It refers to a host that is not part of this import.",
     ),
     (
-        "udp",
-        "MonitorFlow checks TCP ports only.",
+        "network_traffic",
+        "MonitorFlow measures interface traffic but does not move thresholds on it: add one on the server's page.",
     ),
     (
-        "network_traffic",
-        "MonitorFlow does not measure network interface traffic yet.",
+        "snmp_object",
+        "An SNMP object outside the common MIBs MonitorFlow reads: interfaces, host resources, UPS, temperature sensors and printer supplies.",
+    ),
+    (
+        "dns_as_udp",
+        "MonitorFlow checks that the DNS server answers a query; it does not compare the record.",
+    ),
+    (
+        "no_address",
+        "There is no address MonitorFlow can check it at.",
+    ),
+    (
+        "device_no_agent",
+        "It becomes a device, which has no agent to measure this.",
+    ),
+    (
+        "snmp_of_agent",
+        "MonitorFlow polls SNMP on devices; on a server, its agent measures this itself.",
+    ),
+    (
+        "snmp_credentials",
+        "SNMP credentials are not moved: set them on the device's page, and its SNMP checks start.",
+    ),
+    (
+        "builtin_net",
+        "Every server measures the traffic of its network interfaces already.",
     ),
     (
         "no_equivalent",
@@ -189,10 +213,6 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "script",
         "Commands run by the source are not moved: put the script in the agent's scripts directory and add a custom script check.",
-    ),
-    (
-        "snmp",
-        "MonitorFlow watches servers through its agent; SNMP devices cannot be moved.",
     ),
     (
         "no_target",
@@ -247,14 +267,6 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "scrape_as_port",
         "MonitorFlow checks that port {port} answers; it does not read the exporter's metrics.",
-    ),
-    (
-        "ping_as_offline",
-        "The source pings the host; MonitorFlow's offline alert tells when its agent stops answering.",
-    ),
-    (
-        "ping",
-        "MonitorFlow does not ping addresses; it watches servers through their agent.",
     ),
     (
         "disk_wait",
@@ -320,10 +332,6 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "am_route_labels",
         "The route also matched other labels ({matchers}): MonitorFlow holds every notification of these servers.",
-    ),
-    (
-        "prtg_ping",
-        "PRTG pinged it from a probe; MonitorFlow's offline alert tells when its agent stops answering. Ping times are not measured.",
     ),
     (
         "prtg_from_server",
@@ -410,8 +418,8 @@ mod tests {
             "MonitorFlow checks that port 443 of shop.example answers; it does not read the page or its status code."
         );
         assert_eq!(
-            Note::plain("udp").text(),
-            "MonitorFlow checks TCP ports only."
+            Note::plain("builtin_net").text(),
+            "Every server measures the traffic of its network interfaces already."
         );
     }
 

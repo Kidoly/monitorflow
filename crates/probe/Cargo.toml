@@ -1,0 +1,22 @@
+[package]
+name = "monitorflow-probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Network checks run from a probe, the central server or a relay
+# (ADR-0148): which checks run for which device, built by kind through a
+# factory, their samples tagged with the device.
+
+[dependencies]
+monitorflow-common.workspace = true
+monitorflow-sensors.workspace = true
+# SNMP checks of devices (ADR-0149).
+monitorflow-snmp.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+monitorflow-sensors = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }

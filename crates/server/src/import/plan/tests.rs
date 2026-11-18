@@ -20,6 +20,7 @@ fn host(key: &str, name: &str, os: Os) -> Host {
         os,
         groups: vec!["Linux servers".into()],
         origin: Origin::new("host", name),
+        agentless: false,
     }
 }
 
@@ -986,4 +987,148 @@ fn windows_go_to_the_site_in_the_zone_chosen() {
             .unwrap()
             .present
     );
+}
+
+/// Hosts without an agent become devices, and pings, UDP ports and SNMP
+/// become checks a probe runs (ADR-0148, ADR-0149).
+#[test]
+fn devices_and_probe_checks() {
+    let switch = Host {
+        agentless: true,
+        addresses: vec!["192.0.2.2".into()],
+        ..host("sw", "core-switch", Os::Unknown)
+    };
+    let nameless = Host {
+        agentless: true,
+        addresses: vec!["not an address".into()],
+        ..host("x", "bad name!", Os::Unknown)
+    };
+    let inventory = Inventory {
+        hosts: vec![switch, nameless, host("web", "web-01", Os::Debian)],
+        checks: vec![
+            check(
+                "sw",
+                Watch::Ping { address: None },
+                Some(Severity::Critical),
+            ),
+            check("sw", Watch::Traffic, None),
+            check(
+                "sw",
+                Watch::Snmp {
+                    group: "system".into(),
+                },
+                Some(Severity::Critical),
+            ),
+            check("sw", Watch::Cpu, None),
+            check("sw", Watch::Agent, None),
+            check(
+                "web",
+                Watch::Ping { address: None },
+                Some(Severity::Critical),
+            ),
+            check(
+                "web",
+                Watch::UdpPort {
+                    address: Some("192.0.2.53".into()),
+                    port: 53,
+                    query: Some("dns".into()),
+                },
+                None,
+            ),
+            check(
+                "web",
+                Watch::Snmp {
+                    group: "host".into(),
+                },
+                None,
+            ),
+            check("web", Watch::Traffic, None),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    assert_eq!(
+        by_id(&planned, "server:core-switch").create,
+        Some(Create::Device {
+            peer_id: "core-switch".into(),
+            hostname: "core-switch".into(),
+            address: "192.0.2.2".into()
+        })
+    );
+    // An agentless host the name of which is no address and with none.
+    assert!(planned.items.iter().any(|i| i.kind == "server"
+        && i.list == List::NotMovable
+        && i.note.as_ref().is_some_and(|n| n.code == "no_address")));
+    let create = |id: &str| by_id(&planned, id).create.clone().unwrap();
+    let Create::Check {
+        kind,
+        params,
+        probe,
+        ..
+    } = create("check:core-switch:ping")
+    else {
+        panic!()
+    };
+    assert_eq!((kind.as_str(), probe), ("ping", true));
+    assert!(params.is_empty(), "a device's ping checks its address");
+    let Create::Check { kind, params, .. } = create("check:core-switch:snmp_if") else {
+        panic!()
+    };
+    assert_eq!(
+        (kind.as_str(), params["what"].as_str()),
+        ("snmp", Some("interfaces"))
+    );
+    let Create::Check { params, .. } = create("check:core-switch:snmp_host") else {
+        panic!()
+    };
+    assert_eq!(
+        params["what"], "host",
+        "what an agent measures comes from SNMP on a device"
+    );
+    assert_eq!(
+        by_id(&planned, "check:core-switch:snmp")
+            .note
+            .as_ref()
+            .unwrap()
+            .code,
+        "snmp_credentials"
+    );
+    let alert = planned
+        .items
+        .iter()
+        .find(|i| {
+            i.id.starts_with("threshold:core-switch:monitorflow_snmp_up")
+        })
+        .unwrap();
+    assert!(
+        matches!(&alert.create, Some(Create::Threshold { comparison, critical: Some(c), .. }) if comparison == "<" && *c == 1.0)
+    );
+    assert!(planned
+        .items
+        .iter()
+        .any(|i| i.note.as_ref().is_some_and(|n| n.code == "device_no_agent")));
+    // A server is pinged at its address, and its own traffic is built in.
+    let Create::Check { params, probe, .. } = create("check:web-01:ping_10_0_0_5") else {
+        panic!()
+    };
+    assert_eq!((params["host"].as_str(), probe), (Some("10.0.0.5"), true));
+    let Create::Check { params, .. } = create("check:web-01:udp_53") else {
+        panic!()
+    };
+    assert_eq!(
+        (
+            params["protocol"].as_str(),
+            params["query"].as_str(),
+            params["host"].as_str()
+        ),
+        (Some("udp"), Some("dns"), Some("192.0.2.53"))
+    );
+    assert!(planned
+        .items
+        .iter()
+        .any(|i| i.note.as_ref().is_some_and(|n| n.code == "snmp_of_agent")));
+    assert!(planned
+        .items
+        .iter()
+        .any(|i| i.kind == "builtin" && i.note.as_ref().is_some_and(|n| n.code == "builtin_net")));
 }
