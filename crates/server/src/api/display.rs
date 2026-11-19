@@ -715,35 +715,48 @@ pub async fn start(
 
 /// The link of the screen session in the request's cookie. 401 without a
 /// live session or once the link stops working, so the screen opens its
-/// link again and learns why; 429 over the request limit.
-async fn session_link(state: &ApiState, headers: &HeaderMap) -> Result<Live, ApiError> {
+/// link again and learns why; 429 over the request limit. Only live
+/// sessions are counted per session: cookies that match none count as
+/// failures of their source, so made-up ones cannot crowd real screens
+/// out of the per-session counter.
+async fn session_link(
+    state: &ApiState,
+    peer: &Peer,
+    headers: &HeaderMap,
+) -> Result<Live, ApiError> {
     let token = session_token(headers, &state.settings).ok_or(ApiError::Unauthorized)?;
-    let hash = token.hash();
-    if !state
-        .display_limits
-        .requests
-        .allow(&hash, &Vec::new(), Instant::now())
-    {
+    let limits = &state.display_limits;
+    let from = state.settings.trusted_proxies.source(peer, headers).await;
+    if limits.failures.is_blocked(from) {
         return Err(too_many());
     }
+    let hash = token.hash();
     // SQL-safe: interpolates only the constant LIVE.
-    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let link: Option<Live> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{LIVE} AND l.id = (SELECT link_id FROM display_sessions
                             WHERE token_hash = $1 AND expires_at > now())"
     )))
-    .bind(hash)
+    .bind(&hash)
     .fetch_optional(&state.pool)
-    .await?
-    .ok_or(ApiError::Unauthorized)
+    .await?;
+    let Some(link) = link else {
+        limits.failures.record_failure(from);
+        return Err(ApiError::Unauthorized);
+    };
+    if !limits.requests.allow(&hash, &Vec::new(), Instant::now()) {
+        return Err(too_many());
+    }
+    Ok(link)
 }
 
 /// `GET /api/display`, with a screen session: what the screen shows now,
 /// so a changed dashboard or link shows without reloading.
 pub async fn view(
     State(state): State<ApiState>,
+    peer: Peer,
     headers: HeaderMap,
 ) -> Result<Json<ScreenView>, ApiError> {
-    let link = session_link(&state, &headers).await?;
+    let link = session_link(&state, &peer, &headers).await?;
     let (_, shown) = screen(&state, &link).await?;
     Ok(Json(screen_view(&link, shown)))
 }
@@ -764,11 +777,12 @@ fn within(sharing: Sharing) -> Within {
 /// not show.
 pub async fn data(
     State(state): State<ApiState>,
+    peer: Peer,
     headers: HeaderMap,
     request: Result<Json<ScreenDataRequest>, JsonRejection>,
 ) -> Result<Json<DataResponse>, ApiError> {
     let request = body(request)?;
-    let link = session_link(&state, &headers).await?;
+    let link = session_link(&state, &peer, &headers).await?;
     let (maker, shown) = screen(&state, &link).await?;
     let (row, spec) = shown
         .into_iter()
