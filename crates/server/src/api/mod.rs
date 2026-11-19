@@ -106,6 +106,12 @@
 //! | POST | `/api/maintenance-windows` | modify the site | body [`maintenance_windows::WindowRequest`]; 201 [`maintenance_windows::WindowView`]; audited |
 //! | PUT | `/api/maintenance-windows/{id}` | modify the sites | the same body; [`maintenance_windows::WindowView`]; audited |
 //! | DELETE | `/api/maintenance-windows/{id}` | modify the site | 204; the running window ends; audited |
+//! | GET | `/api/snmp-lookups` | read a site of the customer | `customer_id`; [`snmp_library::LookupList`]: built-in lookups and the customers' own (ADR-0157) |
+//! | POST | `/api/snmp-lookups` | modify the whole customer | body [`snmp_library::LookupRequest`]; 201 [`snmp_library::LookupView`]; 409 for a name in use; audited |
+//! | GET, PUT, DELETE | `/api/snmp-lookups/{id}` | read; modify the whole customer | [`snmp_library::LookupView`]; built-in ones never change; 409 on DELETE while a check names it; audited |
+//! | GET, POST | `/api/snmp-mibs` | read; modify the whole customer | [`snmp_library::MibList`]; body [`snmp_library::MibUpload`], 201 [`snmp_library::Uploaded`]; audited |
+//! | DELETE | `/api/snmp-mibs/{id}` | modify the whole customer | 204; audited |
+//! | GET | `/api/snmp-objects` | read a site of the customer | `q` or `oids`; [`snmp_library::ObjectList`]: names from the library and the MIBs |
 //! | GET | `/api/business-services` | customer-wide grant | `customer_id`; [`business_services::ServiceList`] (ADR-0155) |
 //! | POST | `/api/business-services` | modify the whole customer | body [`business_services::ServiceRequest`]; 201 [`business_services::ServiceView`]; 409 for a name in use; audited |
 //! | PUT | `/api/business-services/{id}` | modify the whole customer | the same body; [`business_services::ServiceView`]; audited |
@@ -760,6 +766,7 @@ mod openapi_plugins;
 pub mod openapi_remediation;
 mod openapi_reports;
 mod openapi_settings;
+mod openapi_snmp;
 mod openapi_sso;
 mod openapi_system;
 mod openapi_users;
@@ -792,6 +799,7 @@ pub mod settings;
 pub mod setup;
 pub mod silences;
 pub mod sites;
+pub mod snmp_library;
 pub mod sources;
 pub mod sso_login;
 pub mod third_party;
@@ -1160,6 +1168,24 @@ pub fn router(state: ApiState) -> Router {
             "/api/report-schedules/{id}/send",
             post(report_schedules::send_now),
         )
+        .route(
+            "/api/snmp-lookups",
+            get(snmp_library::list_lookups).post(snmp_library::create_lookup),
+        )
+        .route(
+            "/api/snmp-lookups/{id}",
+            get(snmp_library::get_lookup)
+                .put(snmp_library::update_lookup)
+                .delete(snmp_library::delete_lookup),
+        )
+        .route(
+            "/api/snmp-mibs",
+            get(snmp_library::list_mibs)
+                .post(snmp_library::upload_mibs)
+                .layer(DefaultBodyLimit::max(snmp_library::MAX_UPLOAD)),
+        )
+        .route("/api/snmp-mibs/{id}", delete(snmp_library::delete_mib))
+        .route("/api/snmp-objects", get(snmp_library::objects))
         .route(
             "/api/business-services",
             get(business_services::list).post(business_services::create),
