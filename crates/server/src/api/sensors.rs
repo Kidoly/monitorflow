@@ -187,8 +187,13 @@ pub fn validate_full(
     let name = request.name.unwrap_or_else(|| request.kind.clone());
     validate::sensor_name(&request.kind).map_err(|e| format!("kind: {e}"))?;
     validate::sensor_name(&name).map_err(|e| format!("name: {e}"))?;
-    if request.params.len() > MAX_PARAMS {
-        return Err(format!("at most {MAX_PARAMS} params allowed"));
+    let max_params = if request.kind == monitorflow_snmp::CUSTOM_KIND {
+        crate::snmp_custom::MAX_PARAMS
+    } else {
+        MAX_PARAMS
+    };
+    if request.params.len() > max_params {
+        return Err(format!("at most {max_params} params allowed"));
     }
     for (key, value) in &request.params {
         if key.is_empty() || key.len() > MAX_PARAM_NAME_LEN || key.chars().any(char::is_control) {
@@ -259,6 +264,9 @@ pub fn validate_full(
             .or_insert_with(|| address.unwrap_or("192.0.2.1").to_owned());
         checked.insert("community".into(), "checked".into());
         monitorflow_snmp::parse(&checked)?;
+    } else if request.kind == monitorflow_snmp::CUSTOM_KIND {
+        // Credentials belong to the device, lookups are named (ADR-0157).
+        crate::snmp_custom::check_row(&config.params, address)?;
     } else if request.kind == monitorflow_vmware::KIND {
         // Credentials belong to the device, not to a row (ADR-0156).
         if let Some(key) = config.params.keys().find(|k| {
@@ -728,6 +736,7 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
     let udp = valid.params.get("protocol").and_then(Value::as_str) == Some("udp");
     let probe_only = registry::PROBE_KINDS.contains(&valid.kind.as_str())
         || valid.kind == monitorflow_snmp::KIND
+        || valid.kind == monitorflow_snmp::CUSTOM_KIND
         || valid.kind == monitorflow_vmware::KIND
         || udp;
     if by.probe.is_none() {
@@ -750,7 +759,8 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
             "vCenter checks are for devices: add the vCenter or ESXi host as a device (POST /api/devices)".into(),
         ));
     }
-    if valid.kind == monitorflow_snmp::KIND && by.address.is_none() {
+    let snmp = valid.kind == monitorflow_snmp::KIND || valid.kind == monitorflow_snmp::CUSTOM_KIND;
+    if snmp && by.address.is_none() {
         return Err(ApiError::Invalid(
             "SNMP checks are for devices: add the address as a device (POST /api/devices)".into(),
         ));
@@ -767,12 +777,36 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
     Ok(())
 }
 
+/// The lookups a custom SNMP check names are built in or its customer's
+/// own (ADR-0157).
+async fn check_lookups(
+    tx: &mut PgConnection,
+    valid: &ValidEntry,
+    site: Option<Uuid>,
+) -> Result<(), ApiError> {
+    if valid.kind != monitorflow_snmp::CUSTOM_KIND {
+        return Ok(());
+    }
+    let params = crate::sensor_config::params(valid.params.clone());
+    let refs = crate::snmp_custom::lookup_refs(&params).map_err(ApiError::Invalid)?;
+    let customer: Option<Uuid> = sqlx::query_scalar("SELECT customer_id FROM sites WHERE id = $1")
+        .bind(site)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some(customer) = customer else {
+        return Err(ApiError::NotFound);
+    };
+    crate::snmp_custom::check_owned(tx, &refs, customer)
+        .await?
+        .map_err(ApiError::Invalid)
+}
+
 /// Kinds a probe runs.
 pub fn probe_kind(kind: &str) -> bool {
     monitorflow_probe::PROBE_RUNS.contains(&kind) || kind == monitorflow_webcheck::KIND
 }
 
-const PROBE_KINDS_TEXT: &str = "`ping`, `port`, `snmp`, `vmware` and `http`";
+const PROBE_KINDS_TEXT: &str = "`ping`, `port`, `snmp`, `snmp_custom`, `vmware` and `http`";
 
 async fn create(
     state: &ApiState,
@@ -789,6 +823,7 @@ async fn create(
         validate_with_host(request, by.address.as_deref()).map_err(ApiError::Invalid)?;
     check_run_by(&mut valid, &by)?;
     check_plugin(&mut *tx, &valid, site).await?;
+    check_lookups(&mut tx, &valid, site).await?;
     let (site_id, server_id) = owner.columns();
     let secret = valid.sealed_secret()?;
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
@@ -899,6 +934,7 @@ pub async fn update(
         .map_err(ApiError::Invalid)?;
     check_run_by(&mut valid, &by)?;
     check_plugin(&mut *tx, &valid, site).await?;
+    check_lookups(&mut tx, &valid, site).await?;
     let keep = valid.secret == SecretChange::Keep;
     let secret = valid.sealed_secret()?;
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.

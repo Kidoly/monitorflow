@@ -332,6 +332,78 @@ db_tests! {
         assert!(sets["central"].checks.iter().all(|c| c.kind != "snmp"), "no credentials, no SNMP checks");
     }
 
+    /// Custom SNMP checks (ADR-0157): SNMPv1 credentials, lookups built in
+    /// or the customer's own, expanded for the probe.
+    #[sqlx::test]
+    async fn custom_snmp_checks_name_their_lookups(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let operator = session(&pool, "op", Role::Operator, Some(paris)).await;
+        let body = json!({"site_id": paris, "name": "Old UPS", "address": "192.0.2.40",
+                          "snmp": {"version": "v1", "community": "secret-community"}});
+        let (status, device) = call(&pool, &operator, "POST", "/api/devices", Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "{device}");
+        let id = device["id"].as_str().unwrap().to_owned();
+        let (_, view) = call(&pool, &operator, "GET", &format!("/api/devices/{id}/snmp"), None).await;
+        assert_eq!((view["version"].as_str(), view["community_set"].as_bool()), (Some("v1"), Some(true)));
+        let customer: Uuid = sqlx::query_scalar("SELECT customer_id FROM sites WHERE id = $1").bind(paris).fetch_one(&pool).await.unwrap();
+        let other: Uuid = sqlx::query_scalar("INSERT INTO customers (name) VALUES ('Other') RETURNING id").fetch_one(&pool).await.unwrap();
+        let definition = json!({"entries": [{"value": 1, "name": "Online", "state": "ok"}, {"value": 2, "name": "On battery", "state": "critical"}]});
+        let lookup = |owner: Uuid| {
+            let pool = pool.clone();
+            let definition = definition.clone();
+            async move {
+                sqlx::query_scalar::<_, Uuid>("INSERT INTO snmp_lookups (customer_id, name, definition) VALUES ($1, 'Power', $2) RETURNING id")
+                    .bind(owner).bind(definition).fetch_one(&pool).await.unwrap()
+            }
+        };
+        let mine = lookup(customer).await;
+        let theirs = lookup(other).await;
+        let check = |lookup: String| json!({"kind": "snmp_custom", "name": "snmp_power", "interval_ms": 60000,
+            "params": {"oid1": "1.3.6.1.4.1.318.1.1.1.4.1.1.0", "name1": "Output", "lookup1": lookup,
+                       "oid2": "1.3.6.1.4.1.318.1.1.1.2.2.1.0", "name2": "Charge", "unit2": "%", "lookup2": ""}});
+        let uri = format!("/api/servers/{id}/sensor_configs");
+        let (status, error) = call(&pool, &operator, "POST", &uri, Some(check(theirs.to_string()))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "another customer's lookup");
+        assert!(error["error"].as_str().unwrap().contains("no lookup"), "{error}");
+        for (key, value) in [("community", "x"), ("lookup1_map", "{}"), ("oid11", "1.3.6.1")] {
+            let mut bad = check(mine.to_string());
+            bad["params"][key] = json!(value);
+            assert_eq!(call(&pool, &operator, "POST", &uri, Some(bad)).await.0, StatusCode::BAD_REQUEST, "{key}");
+        }
+        let (status, row) = call(&pool, &operator, "POST", &uri, Some(check(mine.to_string()))).await;
+        assert_eq!(status, StatusCode::CREATED, "{row}");
+        let mut builtin = check("builtin:truth_value".into());
+        builtin["name"] = json!("snmp_power2");
+        assert_eq!(call(&pool, &operator, "POST", &uri, Some(builtin)).await.0, StatusCode::CREATED);
+        // A server with an agent has no address: custom SNMP is for devices.
+        let server: Uuid = sqlx::query_scalar("INSERT INTO servers (peer_id, hostname, site_id, os_family) VALUES ('web-1', 'web-1', $1, 'debian') RETURNING id")
+            .bind(paris).fetch_one(&pool).await.unwrap();
+        let mut on_server = check(mine.to_string());
+        on_server["probe"] = json!("central");
+        assert_eq!(call(&pool, &operator, "POST", &format!("/api/servers/{server}/sensor_configs"), Some(on_server)).await.0, StatusCode::BAD_REQUEST);
+
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let sent: Vec<_> = sets["central"].checks.iter().filter(|c| c.kind == "snmp_custom").collect();
+        assert_eq!(sent.len(), 2);
+        for c in &sent {
+            assert_eq!(c.config.params["version"], "v1");
+            assert_eq!(c.config.params["community"], "secret-community");
+            let custom = monitorflow_snmp::custom::parse(&c.config.params).unwrap();
+            assert!(custom.channels[0].lookup.is_some());
+        }
+        let power = sent.iter().find(|c| c.config.name == "snmp_power").unwrap();
+        assert!(power.config.params["lookup1_map"].contains("On battery"));
+        // A changed lookup reaches the probe at its next read.
+        sqlx::query("UPDATE snmp_lookups SET definition = jsonb_set(definition, '{entries,1,name}', '\"Battery\"') WHERE id = $1")
+            .bind(mine).execute(&pool).await.unwrap();
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let power = sets["central"].checks.iter().find(|c| c.config.name == "snmp_power").unwrap();
+        assert!(power.config.params["lookup1_map"].contains("Battery") && !power.config.params["lookup1_map"].contains("On battery"));
+        let audit: Vec<String> = sqlx::query_scalar("SELECT details::text FROM audit_log").fetch_all(&pool).await.unwrap();
+        assert!(audit.iter().all(|d| !d.contains("secret-")), "{audit:?}");
+    }
+
     /// Detection from the central server against net-snmp, when
     /// `MF_SNMPD` names one (deploy/probe-test/run-e2e.sh starts it).
     #[sqlx::test]
