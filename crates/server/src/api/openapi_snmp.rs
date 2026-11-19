@@ -9,21 +9,26 @@ use utoipa::OpenApi;
 
 use super::openapi::{Common, ErrorBody};
 use super::openapi_core::ex;
+use super::snmp_checks as checks;
 use super::snmp_library as lib;
 
 #[derive(OpenApi)]
 #[openapi(
     paths(list_lookups, get_lookup, create_lookup, update_lookup, delete_lookup, list_mibs,
-          upload_mibs, delete_mib, objects),
+          upload_mibs, delete_mib, objects, list_checks, create_check, update_check, delete_check,
+          read_device, test_check),
     components(schemas(ErrorBody, lib::LookupView, lib::MibView, lib::MibFile, lib::OfferedLookup,
-                       lib::Suggestion, lib::ObjectView)),
+                       lib::Suggestion, lib::ObjectView, checks::Limits, checks::ChannelRequest,
+                       checks::ChannelValue, checks::ChannelView, checks::CheckView, checks::ReadObject,
+                       checks::TestedChannel, checks::TestedRow)),
     modifiers(&Common),
     tags((name = "snmp", description = "What custom SNMP checks of devices read (ADR-0157): lookups that \
 name the values of an enumerated object and give each a state (`ok`, `warning`, `critical`), built in or a \
 customer's own; MIB files a customer uploads to name the objects of its devices; and the names the library \
 of common vendor objects and those MIBs give to OIDs. Lookups and MIBs belong to a customer: anyone who \
-reads one of its sites reads them, and operators and above of the whole customer change them. Area \
-`servers`."))
+reads one of its sites reads them, and operators and above of the whole customer change them. Custom \
+checks of a device, with their channels and limits, and Test and Browse from the device's probe, are under \
+`/api/v1/devices/{id}/snmp-checks` and `/api/v1/devices/{id}/snmp`. Area `servers`."))
 )]
 pub(super) struct Doc;
 
@@ -228,3 +233,162 @@ that is not numeric, or over 50: `invalid`", body = ErrorBody),
         (status = 404, description = "The customer is outside the key's reach: `not_found`", body = ErrorBody),
     ))]
 fn objects() {}
+
+fn check_request() -> Value {
+    json!({
+        "name": "snmp_fw", "probe": "central", "interval_ms": 60000,
+        "channels": [
+            {"oid": "1.3.6.1.4.1.12356.101.4.1.8.0", "name": "Sessions", "unit": "sessions",
+             "limits": {"comparison": ">", "warning": 5000, "critical": 8000, "duration_s": 300}},
+            {"oid": "1.3.6.1.2.1.2.2.1.10.1", "name": "Inbound", "type": "counter", "multiply": 8, "unit": "bit/s"},
+            {"oid": "1.3.6.1.4.1.12356.101.4.1.1.0", "name": "Firmware", "type": "text",
+             "match": "matches", "expect": "^v7\\.", "severity": "warning"},
+            {"oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1", "name": "HA state", "lookup": "builtin:ok_warning_failed"}
+        ]
+    })
+}
+
+fn check() -> Value {
+    json!({
+        "entry_id": ex::SENSOR_CONFIG, "name": "snmp_fw", "instance": "central", "probe": "central",
+        "probe_relay_id": null, "interval_ms": 60000, "enabled": true, "table": null, "name_column": null,
+        "channels": [
+            {"oid": "1.3.6.1.4.1.12356.101.4.1.8.0", "name": "Sessions", "unit": "sessions",
+             "limits": {"comparison": ">", "warning": 5000.0, "critical": 8000.0, "duration_s": 300},
+             "key": "sessions", "metric": "monitorflow_snmp_fw_sessions", "state_metric": null,
+             "values": [{"instance": "", "value": 1532.0, "state": null, "text": null, "at": "2026-11-19T10:00:00Z"}]},
+            {"oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1", "name": "HA state", "lookup": "builtin:ok_warning_failed",
+             "limits": null, "key": "ha", "metric": "monitorflow_snmp_fw_ha",
+             "state_metric": "monitorflow_snmp_fw_ha_state",
+             "values": [{"instance": "", "value": 1.0, "state": 0, "text": "OK", "at": "2026-11-19T10:00:00Z"}]}
+        ]
+    })
+}
+
+#[utoipa::path(get, path = "/api/v1/devices/{id}/snmp-checks", tag = "snmp",
+    summary = "List a device's custom SNMP checks",
+    description = "Each custom SNMP check of the device (kind `snmp_custom`), its channels as \
+`POST /api/v1/devices/{id}/snmp-checks` takes them, each with its limits (the device's threshold on the \
+channel's metric for every instance), the series it writes, and its last values: per row of a table, the \
+value, the state (0 OK, 1 warning, 2 critical) and the text of a lookup or a text channel. Values are empty \
+when VictoriaMetrics does not answer.\n\n\
+**Who**: any role on the device's site. **Area**: `servers`.",
+    params(("id" = uuid::Uuid, Path, description = "The device")),
+    responses(
+        (status = 200, description = "The checks", body = checks::CheckList, example = json!({"checks": [check()]})),
+        (status = 404, description = "No such device, or outside the key's reach: `not_found`", body = ErrorBody),
+    ))]
+fn list_checks() {}
+
+#[utoipa::path(post, path = "/api/v1/devices/{id}/snmp-checks", tag = "snmp",
+    summary = "Add a custom SNMP check to a device",
+    description = "Watches any objects of the device: 1 to 10 channels, each a numeric OID with its name, \
+optional `key` (the metric suffix, from the name), `type` (`gauge` as read, `counter` for a rate per second \
+from the second reading, or `text`), `unit`, `multiply` or `divide` (tenths of a degree: `divide` 10), \
+`lookup` (`builtin:<name>` or a lookup of the customer, from `GET /api/v1/snmp-lookups`), and for a text \
+`match` (`contains`, `not_contains`, `equals`, `not_equals`, `matches` with a regular expression, \
+`not_matches`), `expect` and `severity` (`warning` or `critical`, the default). With `table` (a table or its \
+entry) and `name_column`, each `oid` is a column, and every row of the table is an instance named by that \
+column; new rows appear by themselves. A channel's `limits` become the device's threshold on its metric; \
+a channel with a lookup or an expected text also gets a rule on its `_state` series, warning at 1 and \
+critical at 2. The check runs from `probe` (the site's relay by default, else the central server) with the \
+device's SNMP credentials, every `interval_ms` (a minute by default). Thresholds, richer rules, silences, \
+dependencies and reports apply to these series like any other.\n\n\
+**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `snmp_check.create`. \
+**Not safe to repeat**: send `Idempotency-Key` to retry.",
+    params(("id" = uuid::Uuid, Path, description = "The device")),
+    request_body(content = checks::CheckRequest, example = json!(check_request())),
+    responses(
+        (status = 201, description = "The new check", body = checks::CheckView, example = json!(check())),
+        (status = 400, description = "A channel that does not read (an OID that is not numeric, an unknown \
+type, a scaling of 0, a text with limits or scaling, a counter with a lookup, a pattern that does not \
+compile, a column outside `table`), a lookup of another customer, a name too long for its metrics, bad \
+limits, a probe that is not the central server or a relay of the site: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may only read the site: `forbidden`; or outside the key's areas: \
+`api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such device, or outside the key's reach: `not_found`", body = ErrorBody),
+        (status = 409, description = "The device has a check of that name: `conflict`", body = ErrorBody),
+    ))]
+fn create_check() {}
+
+#[utoipa::path(put, path = "/api/v1/devices/{id}/snmp-checks/{name}", tag = "snmp",
+    summary = "Change a custom SNMP check",
+    description = "Replaces the check's channels, probe and interval, as when adding one; the name stays the \
+path's. Each channel's `limits` replace its rule for every instance (absent or `null`: none); rules of \
+channels removed go too, and rules on one row or of the richer kinds stay.\n\n\
+**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `snmp_check.update`. Safe \
+to repeat.",
+    params(("id" = uuid::Uuid, Path, description = "The device"), ("name" = String, Path, description = "The check")),
+    request_body(content = checks::CheckRequest, example = json!(check_request())),
+    responses(
+        (status = 200, description = "Changed", body = checks::CheckView, example = json!(check())),
+        (status = 400, description = "As when adding one: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may only read the site: `forbidden`; or outside the key's areas: \
+`api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such device or check, or outside the key's reach: `not_found`", body = ErrorBody),
+    ))]
+fn update_check() {}
+
+#[utoipa::path(delete, path = "/api/v1/devices/{id}/snmp-checks/{name}", tag = "snmp",
+    summary = "Remove a custom SNMP check",
+    description = "Removes the check and the rules of its channels for every instance; its history stays.\n\n\
+**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `snmp_check.delete`.",
+    params(("id" = uuid::Uuid, Path, description = "The device"), ("name" = String, Path, description = "The check")),
+    responses(
+        (status = 204, description = "Removed"),
+        (status = 403, description = "The key may only read the site: `forbidden`; or outside the key's areas: \
+`api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such device or check, or outside the key's reach: `not_found`", body = ErrorBody),
+    ))]
+fn delete_check() {}
+
+#[utoipa::path(post, path = "/api/v1/devices/{id}/snmp/read", tag = "snmp",
+    summary = "Read or walk a device's objects",
+    description = "\"Test\" and \"Browse\": reads up to 20 `oids`, or walks the subtree of `walk` (500 \
+objects by default, `max` 2000 at most), from `probe` (the site's default when absent) with the device's \
+SNMP credentials, and names what a MIB of the customer or the library knows. Each object has its SNMP \
+`type` (`noSuchObject` when the device has none) and its `value` as text. Changes nothing.\n\n\
+**Who**: operator or above on the device's site, as it sends the credentials to the probe. **Area**: \
+`servers`. Not audited.",
+    params(("id" = uuid::Uuid, Path, description = "The device")),
+    request_body(content = checks::ReadRequest, example = json!({"walk": "1.3.6.1.4.1.12356.101.4.1", "max": 100})),
+    responses(
+        (status = 200, description = "What answered", body = checks::ReadResult, example = json!({
+            "probe": "central", "cut": false, "objects": [
+                {"oid": "1.3.6.1.4.1.12356.101.4.1.1.0", "name": "fgSysVersion", "type": "OctetString", "value": "v7.2.5"},
+                {"oid": "1.3.6.1.4.1.12356.101.4.1.8.0", "name": "fgSysSesCount", "type": "Gauge32", "value": "1532"}]
+        })),
+        (status = 400, description = "Neither or both of `oids` and `walk`, an OID that is not numeric, over \
+20 OIDs or a `max` over 2000, a device without SNMP credentials, or the device did not answer (the message \
+says why): `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may only read the site: `forbidden`; or outside the key's areas: \
+`api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such device, or outside the key's reach: `not_found`", body = ErrorBody),
+        (status = 409, description = "The relay is not connected to this central server now: `conflict`", body = ErrorBody),
+    ))]
+fn read_device() {}
+
+#[utoipa::path(post, path = "/api/v1/devices/{id}/snmp/test", tag = "snmp",
+    summary = "Test a custom SNMP check before saving it",
+    description = "Reads once what the check in the body would (its objects, or up to 50 rows of its table), \
+from its probe, and says for each channel the SNMP type and raw value, and the value, state and text it \
+would write with its scaling and lookup. A counter says its rate comes from the second reading. Changes \
+nothing.\n\n\
+**Who**: operator or above on the device's site. **Area**: `servers`. Not audited.",
+    params(("id" = uuid::Uuid, Path, description = "The device")),
+    request_body(content = checks::CheckRequest, example = json!(check_request())),
+    responses(
+        (status = 200, description = "What each channel would write", body = checks::Tested, example = json!({
+            "probe": "central", "cut": false, "rows": [{"instance": "", "channels": [
+                {"key": "sessions", "name": "Sessions", "oid": "1.3.6.1.4.1.12356.101.4.1.8.0", "type": "Gauge32",
+                 "raw": "1532", "value": 1532.0, "state": null, "text": null, "note": null},
+                {"key": "ha", "name": "HA state", "oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1", "type": "Integer",
+                 "raw": "1", "value": 1.0, "state": 0, "text": "OK", "note": null}]}]
+        })),
+        (status = 400, description = "As when adding a check, or the device did not answer: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may only read the site: `forbidden`; or outside the key's areas: \
+`api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such device, or outside the key's reach: `not_found`", body = ErrorBody),
+        (status = 409, description = "The relay is not connected to this central server now: `conflict`", body = ErrorBody),
+    ))]
+fn test_check() {}

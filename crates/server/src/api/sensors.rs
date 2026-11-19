@@ -131,7 +131,7 @@ pub struct ValidEntry {
 impl ValidEntry {
     /// The secret to store, sealed: `None` to clear it, or keep it with
     /// [`SecretChange::Keep`].
-    fn sealed_secret(&self) -> Result<Option<String>, ApiError> {
+    pub(super) fn sealed_secret(&self) -> Result<Option<String>, ApiError> {
         match &self.secret {
             SecretChange::Set(secret) => secrets::seal(Column::SensorConfigs, secret)
                 .map(Some)
@@ -448,7 +448,8 @@ pub struct SiteEffective {
     pub sensors: Vec<EffectiveSensor>,
 }
 
-const ENTRY_COLUMNS: &str = "id, site_id, server_id, kind, name, instance, interval_ms, \
+pub(super) const ENTRY_COLUMNS: &str =
+    "id, site_id, server_id, kind, name, instance, interval_ms, \
                              timeout_ms, params, enabled, probe, probe_relay_id, \
                              secret IS NOT NULL AS secret_set, created_at, updated_at";
 
@@ -779,7 +780,7 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
 
 /// The lookups a custom SNMP check names are built in or its customer's
 /// own (ADR-0157).
-async fn check_lookups(
+pub(super) async fn check_lookups(
     tx: &mut PgConnection,
     valid: &ValidEntry,
     site: Option<Uuid>,

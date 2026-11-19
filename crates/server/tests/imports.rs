@@ -904,4 +904,71 @@ db_tests! {
         assert_eq!(run["result"]["removed"]["service"], 1);
         assert_eq!(count(&pool, "SELECT count(*) FROM business_services").await, 0);
     }
+
+    /// PRTG custom SNMP sensors with their lookup files (ADR-0157): custom
+    /// checks of devices, the lookups they name, and their channels' rules.
+    #[sqlx::test]
+    async fn custom_snmp_sensors_of_prtg_are_imported(pool: PgPool) {
+        use monitorflow_import::source::{Context, File, Input, Source};
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let file = |name: &str, text: &str| File { name: name.into(), content: text.as_bytes().to_vec() };
+        let input = Input::Files(vec![
+            file("PRTG Configuration.dat", include_str!("../../import/tests/fixtures/prtg/configuration-snmp.dat")),
+            file("raid.ovl", include_str!("../../import/tests/fixtures/prtg/raid.ovl")),
+            file("ha.ovl", include_str!("../../import/tests/fixtures/prtg/ha.ovl")),
+        ]);
+        let inventory = monitorflow_import::prtg::Prtg.read(input, &Context::new(Utc::now())).await.unwrap();
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["failed"], json!([]), "{run}");
+        let checks: Vec<(String, String, Value)> = sqlx::query_as(
+            "SELECT s.peer_id, c.name, c.params FROM sensor_configs c JOIN servers s ON s.id = c.server_id
+             WHERE c.kind = 'snmp_custom' ORDER BY s.peer_id, c.name",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let names: Vec<(&str, &str)> = checks.iter().map(|(p, n, _)| (p.as_str(), n.as_str())).collect();
+        assert_eq!(names, [
+            ("fw-edge", "snmp_firewall_health"), ("fw-edge", "snmp_firmware"), ("fw-edge", "snmp_sessions"),
+            ("nas-files", "snmp_power_source"), ("nas-files", "snmp_raid_volumes"), ("nas-files", "snmp_temperature"),
+        ]);
+        let lookups: Vec<(Uuid, String)> = sqlx::query_as("SELECT id, name FROM snmp_lookups ORDER BY name").fetch_all(&pool).await.unwrap();
+        assert_eq!(lookups.iter().map(|l| l.1.as_str()).collect::<Vec<_>>(), ["oid.test.hastate", "oid.test.raidstatus"]);
+        let raid = &checks[4].2;
+        assert_eq!(raid["table"], json!("1.3.6.1.4.1.6574.3.1.1"));
+        assert_eq!(raid["lookup1"], json!(lookups[1].0.to_string()));
+        assert_eq!(checks[0].2["lookup3"], json!(lookups[0].0.to_string()));
+        assert_eq!(checks[5].2["divide1"], json!("10"));
+        let rules: Vec<(String, String, Option<f64>, Option<f64>)> = sqlx::query_as(
+            "SELECT metric, comparison, warning, critical FROM thresholds WHERE metric LIKE 'monitorflow_snmp_%' ORDER BY metric",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let metric = |m: &str| rules.iter().find(|r| r.0 == m).unwrap_or_else(|| panic!("no {m} in {rules:?}")).clone();
+        assert_eq!(metric("monitorflow_snmp_sessions_sessions"), ("monitorflow_snmp_sessions_sessions".into(), ">".into(), Some(5000.0), Some(8000.0)));
+        assert_eq!(metric("monitorflow_snmp_firewall_health_cpu").2, Some(80.0));
+        assert_eq!(metric("monitorflow_snmp_firewall_health_ha_state").3, Some(2.0));
+        assert_eq!(metric("monitorflow_snmp_raid_volumes_status_state").1, ">=");
+        assert_eq!(metric("monitorflow_snmp_firmware_firmware_state").3, Some(2.0));
+        // The checks run as the probe reads them, once the device has credentials.
+        let nas: Uuid = sqlx::query_scalar("SELECT id FROM servers WHERE peer_id = 'nas-files'").fetch_one(&pool).await.unwrap();
+        let (status, _) = call(&pool, "PUT", &format!("/api/devices/{nas}/snmp"), &cookie, Some(json!({"version": "v2c", "community": "nas"}))).await;
+        assert_eq!(status, StatusCode::OK);
+        let sets = monitorflow_server::probes::ProbeStore::new(pool.clone()).load().await.unwrap();
+        let sent: Vec<_> = sets.values().flat_map(|s| &s.checks).filter(|c| c.kind == "snmp_custom").collect();
+        assert_eq!(sent.len(), 3, "the NAS's checks; the firewall has no credentials yet");
+        for c in sent {
+            monitorflow_snmp::custom::build(&c.config.params).unwrap();
+        }
+        // Undo removes the checks and rules; lookups stay for other checks.
+        let (status, _) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(count(&pool, "SELECT count(*) FROM sensor_configs WHERE kind = 'snmp_custom'").await, 0);
+        assert_eq!(count(&pool, "SELECT count(*) FROM snmp_lookups").await, 2);
+    }
 }

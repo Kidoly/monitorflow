@@ -371,3 +371,80 @@ fn statuses_become_pauses() {
     );
     assert!(api::objects("[]", Kind::Device).is_err());
 }
+
+/// Custom SNMP sensors of each kind, with lookup files beside the
+/// configuration file (ADR-0157).
+#[tokio::test]
+async fn custom_snmp_sensors_with_their_lookup_files() {
+    use crate::model::{Num, SnmpState, SnmpValue};
+    let file = |name: &str, text: &str| File {
+        name: name.into(),
+        content: text.as_bytes().to_vec(),
+    };
+    let input = Input::Files(vec![
+        file(
+            "PRTG Configuration.dat",
+            include_str!("../../tests/fixtures/prtg/configuration-snmp.dat"),
+        ),
+        file(
+            "raid.ovl",
+            include_str!("../../tests/fixtures/prtg/raid.ovl"),
+        ),
+        file("ha.ovl", include_str!("../../tests/fixtures/prtg/ha.ovl")),
+    ]);
+    let inv = Prtg.read(input, &Context::new(now())).await.unwrap();
+    let custom = |name: &str| {
+        let check = inv
+            .checks
+            .iter()
+            .find(|c| c.origin.name == name)
+            .unwrap_or_else(|| panic!("no {name}: {:?}", inv.checks));
+        match &check.watch {
+            Watch::SnmpCustom(c) => ((**c).clone(), check.fidelity.clone(), check.interval_s),
+            other => panic!("{other:?}"),
+        }
+    };
+    let (sessions, fidelity, interval) = custom("Sessions");
+    assert_eq!((fidelity, interval), (Fidelity::Exact, Some(60)));
+    assert_eq!(sessions.channels[0].oid, "1.3.6.1.4.1.12356.101.4.1.8.0");
+    assert_eq!(sessions.channels[0].unit.as_deref(), Some("sessions"));
+    assert_eq!(
+        sessions.channels[0].limits.as_ref().unwrap().critical,
+        Some(Num(8000.0))
+    );
+
+    let (health, fidelity, _) = custom("Firewall health");
+    assert_eq!(fidelity, Fidelity::Exact);
+    let names: Vec<&str> = health.channels.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["CPU", "Inbound", "HA state"]);
+    assert_eq!(health.channels[0].unit.as_deref(), Some("%"));
+    assert_eq!(health.channels[1].value, SnmpValue::Counter);
+    assert_eq!(health.channels[1].multiply, Some(Num(8.0)));
+    let ha = health.channels[2].lookup.as_ref().unwrap();
+    assert_eq!((ha.entries.len(), ha.otherwise), (3, SnmpState::Critical));
+
+    let (firmware, _, interval) = custom("Firmware");
+    assert_eq!(interval, Some(300));
+    assert_eq!(firmware.channels[0].expect.as_ref().unwrap().1, "v7.");
+
+    let (raid, fidelity, _) = custom("RAID volumes");
+    assert_eq!(fidelity, Fidelity::Exact);
+    assert_eq!(raid.table.as_deref(), Some("1.3.6.1.4.1.6574.3.1.1"));
+    assert_eq!(
+        raid.name_column.as_deref(),
+        Some("1.3.6.1.4.1.6574.3.1.1.2")
+    );
+    let status = raid.channels[0].lookup.as_ref().unwrap();
+    assert_eq!(status.entries[2].max, Some(12));
+
+    let (temp, _, _) = custom("Temperature");
+    assert_eq!(temp.channels[0].divide, Some(Num(10.0)));
+
+    // A lookup no file had: the check moves, and says to pick its names.
+    let (_, fidelity, _) = custom("Power source");
+    assert!(
+        matches!(fidelity, Fidelity::Approximated(n) if n.code == "snmp_lookup_missing" && n.args["name"] == "oid.test.missing")
+    );
+    // Hosts watched by SNMP only are devices.
+    assert!(inv.hosts.iter().all(|h| h.agentless), "{:?}", inv.hosts);
+}
