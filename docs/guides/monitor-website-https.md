@@ -32,7 +32,7 @@ Every website check comes with these alerts, which you can change like any other
 
 An expired certificate does not hide the rest: the page is still read, so you see both its status code and what is wrong with the certificate.
 
-The check runs on the agent of the server you add it to, unless **"Checked from"** names the central server or a relay of the site. Add it to the web server to check the site as it serves it, to another server to check it across the network, or have the central server or a relay check it from outside, like a visitor. A device, which has no agent, gets website checks too, run from the central server or a relay. Each server can limit where its checks connect with `port_targets` in its `agent.toml`, redirects included; anywhere by default.
+The check runs on the agent of the server you add it to, unless **"Checked from"** names the central server or a relay of the site. Add it to the web server to check the site as it serves it, to another server to check it across the network, or have the central server or a relay check it from outside, like a visitor. A device, which has no agent, gets website checks too, run from the central server or a relay. Each server can limit where its checks connect with `port_targets` in its `agent.toml`, redirects included; anywhere by default. The central server never checks a link-local address (`169.254.x.x`, `fe80::`), where cloud machines serve their own credentials, even after a redirect.
 
 ## Set it up
 
@@ -42,7 +42,7 @@ The check runs on the agent of the server you add it to, unless **"Checked from"
 4. In **"Page address"**, enter the address as a visitor types it, like `https://www.example.com/`. In **"Text the page must hold"**, enter a text that only shows when the page works, like `Add to cart`, or leave it empty.
 5. Keep **"Raise critical when it fails"** ticked, choose **"This server only"** under **"Add to"**, and click **"Add check"**.
 
-**"More options"** holds the rest: a text the page must not hold, the status codes that pass (`200-299` by default), whether redirects are followed, `GET` or `HEAD`, IPv4 or IPv6, extra headers, and a user name and password for a page behind a password. The password is sent over https only, kept sealed and never shown again; without a user name, it is sent as a bearer token, as many APIs want.
+**"More options"** holds the rest: a text the page must not hold, the status codes that pass (`200-299` by default), whether redirects are followed, `GET` or `HEAD`, IPv4 or IPv6, extra headers (sent only to the host of the address, never over http after https), and a user name and password for a page behind a password. The password is sent over https only, kept sealed and never shown again; without a user name, it is sent as a bearer token, as many APIs want.
 
 The **"Websites"** list of the **"Sensors"** tab then shows each site: whether it answers, why not, its status code, its response time, where its redirects end, and its certificate with its days left, its expiry and who issued it.
 
