@@ -14,7 +14,7 @@ use std::time::Duration;
 use monitorflow_common::tls::PeerRole;
 use sqlx::PgPool;
 use tokio::task::JoinSet;
-use tokio::time::{interval, sleep, MissedTickBehavior};
+use tokio::time::{interval, sleep, Instant, MissedTickBehavior};
 use uuid::Uuid;
 
 use super::backup;
@@ -49,6 +49,11 @@ pub const WAIT: Duration = Duration::from_secs(10);
 /// long after, so that a customer gets at most one round of messages per
 /// window. With [`POLL`], the most an event waits for grouping.
 pub const WINDOW: Duration = Duration::from_secs(60);
+/// How long one channel may keep failing in a pass before the rest of its
+/// messages are given up: the pass waits for every channel, so a
+/// destination that never answers would otherwise hold back every other
+/// customer's notifications, [`TIMEOUT`](super::send::TIMEOUT) per message.
+pub const BUDGET: Duration = Duration::from_secs(120);
 
 /// Events of a pass copied for one channel or one person, by event ID.
 #[derive(Debug, Default)]
@@ -75,6 +80,8 @@ pub struct Dispatcher {
     retries: Vec<Duration>,
     /// Whether chat channels get their service's pace.
     paced: bool,
+    /// How long a channel may keep failing in one pass, [`BUDGET`].
+    budget: Duration,
     /// The updater's shared directory (`server_update_dir`), to hear of
     /// failed backups; `None` without an updater.
     status_dir: Option<PathBuf>,
@@ -94,6 +101,7 @@ impl Dispatcher {
             public_http: public_http_client(),
             retries: vec![Duration::from_secs(2), Duration::from_secs(10)],
             paced: true,
+            budget: BUDGET,
             status_dir: None,
             wait: WAIT,
             window: WINDOW,
@@ -119,6 +127,12 @@ impl Dispatcher {
     /// Without waits between tries, for tests.
     pub fn with_retries(mut self, retries: Vec<Duration>) -> Self {
         self.retries = retries;
+        self
+    }
+
+    /// How long a channel may keep failing in one pass, for tests.
+    pub fn with_budget(mut self, budget: Duration) -> Self {
+        self.budget = budget;
         self
     }
 
@@ -358,7 +372,7 @@ impl Dispatcher {
         let resolved: HashMap<Uuid, i64> = fresh
             .iter()
             .filter(|e| e.event == "incident.resolved")
-            .filter_map(|e| Some((incident_id(e)?, e.id)))
+            .filter_map(|e| Some((silence::incident_of(e)?, e.id)))
             .collect();
         if !resolved.is_empty() {
             let ids: Vec<Uuid> = resolved.keys().copied().collect();
@@ -406,7 +420,7 @@ impl Dispatcher {
                 continue;
             }
             for event in events.iter().filter(|e| extra.unrouted.contains(&e.id)) {
-                if let Some(incident) = incident_id(event) {
+                if let Some(incident) = silence::incident_of(event) {
                     told.entry(incident).or_default().channels.push(channel.id);
                 }
             }
@@ -419,7 +433,7 @@ impl Dispatcher {
         for (channel, ids) in people {
             let events: Vec<&Event> = fresh.iter().filter(|e| ids.contains(&e.id)).collect();
             for event in events.iter().filter(|e| problem(e)) {
-                if let Some(incident) = incident_id(event) {
+                if let Some(incident) = silence::incident_of(event) {
                     told.entry(incident).or_default().users.push(channel.id);
                 }
             }
@@ -492,7 +506,9 @@ impl Dispatcher {
     }
 
     /// Sends `messages` in order. After a delivery failed every try, the
-    /// rest get one try each, so a dead channel does not hold the pass.
+    /// rest get one try each, so a dead channel does not hold the pass; once
+    /// the channel has spent its [`BUDGET`] and still fails, it gets nothing
+    /// more this pass, so one that never answers does not hold the others.
     /// Chat channels get their service's pace, a burst is gathered, and a
     /// service still limiting after every try gets nothing more this pass.
     /// What a silence released is owed (ADR-0079): it is never gathered,
@@ -511,7 +527,13 @@ impl Dispatcher {
         let messages = gathered.as_deref().unwrap_or(messages);
         let mut last = Ok(());
         let mut sent = 0usize;
+        let started = Instant::now();
         for (index, message) in messages.iter().enumerate() {
+            if last.is_err() && started.elapsed() >= self.budget {
+                tracing::warn!(channel = %channel.id, kind = channel.destination.kind(), left = messages.len() - index, "channel still failing after its time for this pass; the rest are not sent");
+                self.requeue_owed(channel, &messages[index..]).await;
+                break;
+            }
             if let (Some(service), true) = (service, index > 0 && self.paced) {
                 sleep(service.pace()).await;
             }
@@ -711,14 +733,6 @@ impl Links {
     }
 }
 
-fn incident_id(event: &Event) -> Option<Uuid> {
-    event
-        .event
-        .starts_with("incident.")
-        .then(|| event.details["incident"]["id"].as_str()?.parse().ok())
-        .flatten()
-}
-
 /// Whether `event` tells of an incident still a problem: opened or worse,
 /// or a follow-up step.
 fn problem(event: &Event) -> bool {
@@ -744,7 +758,7 @@ fn acknowledgeable(
             e.site_id
                 .is_some_and(|site| directory.acknowledges(person, Coverage::Site(site)))
         })
-        .filter_map(|e| incident_id(e))
+        .filter_map(|e| silence::incident_of(e))
         .collect();
     incidents.sort();
     incidents.dedup();
@@ -860,7 +874,7 @@ async fn still_failing(db: &mut sqlx::PgConnection, holds: &Holds) -> Result<(),
 /// devices and checks are behind it, as `incident.behind` (ADR-0152).
 fn count_behind(holds: &Holds, events: &mut [Event]) {
     for event in events.iter_mut().filter(|e| e.event == "incident.opened") {
-        let Some(id) = incident_id(event) else {
+        let Some(id) = silence::incident_of(event) else {
             continue;
         };
         let behind = holds.behind_incident(id).len();

@@ -175,16 +175,34 @@ pub async fn send(
     outcome
 }
 
+/// Whether a channel covering `coverage` may carry the report of
+/// `customer`, `None` for everything: one covering everything, or that
+/// customer as a whole. Checked when a schedule is saved, and again when
+/// it is sent, since a channel may move or narrow in between.
+pub fn channel_fits(coverage: notify::Coverage, customer: Option<Uuid>) -> bool {
+    match (coverage, customer) {
+        (notify::Coverage::Everything, _) => true,
+        (notify::Coverage::Customer(c), Some(customer)) => c == customer,
+        _ => false,
+    }
+}
+
 async fn make_and_send(pool: &PgPool, schedule: &Stored, period: Span) -> Result<Sent, String> {
     let (zone, language) = (schedule.zone(), schedule.language());
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-    let report = for_customer(&mut conn, schedule.customer_id, period, Utc::now())
-        .await
-        .map_err(|e| format!("The report could not be made: {e}"))?;
     let channel = notify::load(&mut *conn, schedule.channel_id)
         .await
         .map_err(|e| e.to_string())?
         .ok_or("The email channel was removed.")?;
+    if !channel_fits(channel.coverage, schedule.customer_id) {
+        return Err(
+            "The email channel no longer covers this customer as a whole, or everything: choose another one."
+                .into(),
+        );
+    }
+    let report = for_customer(&mut conn, schedule.customer_id, period, Utc::now())
+        .await
+        .map_err(|e| format!("The report could not be made: {e}"))?;
     drop(conn);
     let mut attachments = Vec::new();
     if schedule.pdf {
@@ -216,6 +234,29 @@ async fn make_and_send(pool: &PgPool, schedule: &Stored, period: Span) -> Result
     Ok(Sent { period, recipients })
 }
 
+/// Takes `schedule`, as read, for one sending: not when another server
+/// holds it, nor when its last period moved since it was read, as another
+/// server has sent that period meanwhile.
+pub async fn claim(
+    pool: &PgPool,
+    schedule: &Stored,
+    now: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    let claimed = sqlx::query(
+        "UPDATE report_schedules SET claimed_until = $2
+         WHERE id = $1 AND (claimed_until IS NULL OR claimed_until < $3)
+           AND last_period_end IS NOT DISTINCT FROM $4",
+    )
+    .bind(schedule.id)
+    .bind(now + CLAIM)
+    .bind(now)
+    .bind(schedule.last_period_end)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(claimed > 0)
+}
+
 /// One look: sends what is due and not held by another server.
 pub async fn pass(pool: &PgPool, now: DateTime<Utc>) -> Result<usize, sqlx::Error> {
     // SQL-safe: interpolates only the constant SELECT.
@@ -237,17 +278,7 @@ pub async fn pass(pool: &PgPool, now: DateTime<Utc>) -> Result<usize, sqlx::Erro
         ) else {
             continue;
         };
-        let claimed = sqlx::query(
-            "UPDATE report_schedules SET claimed_until = $2
-             WHERE id = $1 AND (claimed_until IS NULL OR claimed_until < $3)",
-        )
-        .bind(schedule.id)
-        .bind(now + CLAIM)
-        .bind(now)
-        .execute(pool)
-        .await?
-        .rows_affected();
-        if claimed == 0 {
+        if !claim(pool, &schedule, now).await? {
             continue;
         }
         match send(

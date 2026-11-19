@@ -486,19 +486,22 @@ impl Engine {
         self.out.write(key, tracked, Some(rule), change).await;
     }
 
-    /// Records `point` in its feed, when a rule reads it.
+    /// Records `point` in its feed, when a rule reads it. Nothing is kept
+    /// of the others: an agent chooses its instances, and one sending new
+    /// names would otherwise grow the map without end.
     fn feed(&mut self, server: &ServerRules, point: &Point, arrived: i64) {
+        let Some(need) = server.needs.get(&point.metric) else {
+            return;
+        };
         let key = (
             server.server_id,
             point.metric.clone(),
             point.instance.clone(),
         );
-        let feed = self.feeds.entry(key).or_insert_with(|| {
-            server
-                .needs
-                .get(&point.metric)
-                .map(|need| Feed::new(need, arrived))
-        });
+        let feed = self
+            .feeds
+            .entry(key)
+            .or_insert_with(|| Some(Feed::new(need, arrived)));
         let Some(feed) = feed else {
             return;
         };
@@ -1079,6 +1082,10 @@ impl Output {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use super::super::rules::Rules;
+    use super::super::store::CheckIntervals;
     use super::*;
 
     const MINUTE: u64 = 60_000;
@@ -1093,6 +1100,49 @@ mod tests {
         assert_eq!(series_max_gap(base, Some(15 * MINUTE)), 1_800_000);
         assert_eq!(series_max_gap(base, Some(60 * MINUTE)), 7_200_000);
         assert_eq!(series_max_gap(u64::MAX, Some(MINUTE)), i64::MAX);
+    }
+
+    #[tokio::test]
+    async fn only_series_a_rule_reads_are_fed() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .unwrap();
+        let mut engine = Engine {
+            settings: EngineSettings::default(),
+            rules: HashMap::new(),
+            series: HashMap::new(),
+            feeds: HashMap::new(),
+            loaded_at: HashMap::new(),
+            pasts: HashMap::new(),
+            asked: HashSet::new(),
+            history: None,
+            out: Output {
+                store: AlertStore::new(pool),
+                notifier: Arc::new(LogNotifier),
+                counters: Arc::new(Counters::default()),
+                holds: Holds::default(),
+            },
+        };
+        let server = ServerRules {
+            server_id: Uuid::from_u128(1),
+            peer: "web-1".into(),
+            site: "paris".into(),
+            revision: 1,
+            rules: Rules::default(),
+            intervals: CheckIntervals::default(),
+            needs: BTreeMap::new(),
+        };
+        // An agent naming a new instance in every sample.
+        for n in 0..1000 {
+            let point = Point {
+                metric: "monitorflow_disk_used_percent".into(),
+                instance: format!("/mnt/{n}"),
+                at: n,
+                value: 1.0,
+            };
+            engine.feed(&server, &point, n);
+        }
+        assert!(engine.feeds.is_empty());
     }
 
     #[test]
