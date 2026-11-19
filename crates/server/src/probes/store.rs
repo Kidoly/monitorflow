@@ -54,11 +54,7 @@ impl ProbeStore {
         .fetch_all(&self.pool)
         .await?;
         let mut sets = group(lines);
-        for kind in [
-            monitorflow_snmp::KIND,
-            monitorflow_snmp::CUSTOM_KIND,
-            monitorflow_vmware::KIND,
-        ] {
+        for kind in CREDENTIALED {
             let wanted: Vec<&str> = sets
                 .values()
                 .flat_map(|set| &set.checks)
@@ -121,6 +117,14 @@ impl ProbeStore {
         Ok(out)
     }
 }
+
+/// Kinds whose checks run with their device's credentials (ADR-0149,
+/// ADR-0156, ADR-0157).
+pub const CREDENTIALED: [&str; 3] = [
+    monitorflow_snmp::KIND,
+    monitorflow_snmp::CUSTOM_KIND,
+    monitorflow_vmware::KIND,
+];
 
 /// Adds to each check of `kind` its device's credentials; checks of a
 /// device without any are left out, as they could not run.
@@ -204,6 +208,11 @@ fn group(lines: Vec<Line>) -> HashMap<String, ProbeSet> {
         // The password of a website check, opened for the probe that runs
         // it, which gets it over its mTLS stream like an agent.
         with_secret(&kind, &mut params, secret);
+        // The device's credentials go to the device's address alone: a
+        // `host` of the row is dropped, whenever it was stored.
+        if CREDENTIALED.contains(&kind.as_str()) {
+            params.remove("host");
+        }
         // A website check names its URL itself (ADR-0150).
         if let Some(address) = address.filter(|_| kind != monitorflow_webcheck::KIND) {
             params.entry("host".into()).or_insert(address);

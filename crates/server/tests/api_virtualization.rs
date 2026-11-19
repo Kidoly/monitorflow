@@ -326,6 +326,10 @@ db_tests! {
             Some(json!({"kind": "vmware", "name": "vmware_2", "interval_ms": 300000, "params": {"user": "x"}}))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(error["error"].as_str().unwrap().contains("/vmware"), "{error}");
+        let (status, error) = call(&pool, &operator, "POST", &format!("/api/servers/{id}/sensor_configs"),
+            Some(json!({"kind": "vmware", "name": "vmware_2", "interval_ms": 300000, "probe": "central", "params": {"host": "198.51.100.7"}}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(error["error"].as_str().unwrap().contains("host"), "{error}");
         let agent = server(&pool, paris, "web-01", "agent", None).await;
         let (status, _) = call(&pool, &operator, "POST", &format!("/api/servers/{agent}/sensor_configs"),
             Some(json!({"kind": "vmware", "name": "vmware", "interval_ms": 300000, "probe": "central", "params": {"host": "vc"}}))).await;

@@ -96,10 +96,7 @@ pub async fn list(
     params: Result<Query<ListParams>, QueryRejection>,
 ) -> Result<Json<List>, ApiError> {
     let id = parse_id(&id)?;
-    let site: Option<uuid::Uuid> = sqlx::query_scalar("SELECT site_id FROM servers WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.pool)
-        .await?;
+    let site = super::sensors::site_of_server(&state.pool, id).await?;
     authorize(&user, site, false)?;
     site.ok_or(ApiError::NotFound)?;
     let Query(params) = params.map_err(|e| ApiError::Invalid(e.body_text()))?;

@@ -707,6 +707,17 @@ db_tests! {
         let (status, _) = call(&pool, &operator, "PUT", &format!("/api/sensor_configs/{id}"),
             Some(row(json!({"url": "http://shop.test/", "username": "monitor"})))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        // Nor does it follow the check to another host or port.
+        for url in ["https://other.test/", "https://shop.test:8443/"] {
+            let (status, body) = call(&pool, &operator, "PUT", &format!("/api/sensor_configs/{id}"),
+                Some(row(json!({"url": url, "username": "monitor"})))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert!(body["error"].as_str().unwrap().contains("password"), "{body}");
+        }
+        let (status, body) = call(&pool, &operator, "PUT", &format!("/api/sensor_configs/{id}"),
+            Some(row(json!({"url": "https://shop.test/cart", "username": "monitor"})))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["secret_set"], true);
         let (status, body) = call(&pool, &operator, "PUT", &format!("/api/sensor_configs/{id}"),
             Some(row(json!({"url": "https://shop.test/", "password": ""})))).await;
         assert_eq!(status, StatusCode::OK, "{body}");

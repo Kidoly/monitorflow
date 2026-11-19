@@ -145,6 +145,33 @@ impl ValidEntry {
     }
 }
 
+/// Whether the `url` params of two website checks have the same scheme,
+/// host and port: a kept password goes only where it was meant for.
+fn same_origin(before: &Value, after: &Value) -> bool {
+    let origin = |params: &Value| {
+        params["url"]
+            .as_str()
+            .and_then(|url| reqwest::Url::parse(url).ok())
+            .map(|url| url.origin())
+    };
+    match (origin(before), origin(after)) {
+        (Some(a), Some(b)) => a.is_tuple() && a == b,
+        _ => false,
+    }
+}
+
+/// Refuses a `host` in a row of a kind that runs with its device's
+/// credentials: they would go wherever it names.
+fn refuse_host(params: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
+    if params.contains_key("host") {
+        return Err(
+            "param `host` is not for a check of this kind: it runs against the device's address"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// Checks `request` as the agent will: ADR-0012's name, instance,
 /// interval and timeout rules, then the kind and its parameters with
 /// [`registry::build`], then the API's shortest interval (ADR-0097). The
@@ -248,7 +275,9 @@ pub fn validate_full(
         }
         monitorflow_webcheck::build(&check, None).map_err(|e| e.to_string())?;
     } else if request.kind == monitorflow_snmp::KIND {
-        // Credentials belong to the device, not to a row (ADR-0149).
+        // Credentials belong to the device, not to a row (ADR-0149), and
+        // go to its address only.
+        refuse_host(&config.params)?;
         if let Some(key) = config
             .params
             .keys()
@@ -265,10 +294,14 @@ pub fn validate_full(
         checked.insert("community".into(), "checked".into());
         monitorflow_snmp::parse(&checked)?;
     } else if request.kind == monitorflow_snmp::CUSTOM_KIND {
-        // Credentials belong to the device, lookups are named (ADR-0157).
+        // Credentials belong to the device and go to its address only,
+        // lookups are named (ADR-0157).
+        refuse_host(&config.params)?;
         crate::snmp_custom::check_row(&config.params, address)?;
     } else if request.kind == monitorflow_vmware::KIND {
-        // Credentials belong to the device, not to a row (ADR-0156).
+        // Credentials belong to the device, not to a row (ADR-0156), and
+        // go to its address only.
+        refuse_host(&config.params)?;
         if let Some(key) = config.params.keys().find(|k| {
             monitorflow_vmware::CREDENTIAL_PARAMS.contains(&k.as_str()) || k.as_str() == "port"
         }) {
@@ -933,6 +966,12 @@ pub async fn update(
     let by = run_by(&mut tx, owner, request.probe.as_deref()).await?;
     let mut valid = validate_full(request, by.address.as_deref(), before.secret_set)
         .map_err(ApiError::Invalid)?;
+    if valid.secret == SecretChange::Keep && !same_origin(&before.params, &valid.params) {
+        return Err(ApiError::Invalid(format!(
+            "param `{}` must be given again when the address of the check changes",
+            monitorflow_webcheck::SECRET_PARAM
+        )));
+    }
     check_run_by(&mut valid, &by)?;
     check_plugin(&mut *tx, &valid, site).await?;
     check_lookups(&mut tx, &valid, site).await?;
