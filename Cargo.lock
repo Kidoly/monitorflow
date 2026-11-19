@@ -1846,6 +1846,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "url",
  "utoipa",
  "wasmi",
  "wat",

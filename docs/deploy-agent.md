@@ -154,7 +154,7 @@ By default a port check connects wherever the central server names: a database o
 port_targets = ["127.0.0.1", "::1", "10.0.0.0/8:22", "192.168.0.0/16:8000-8999", "db.example.com:5432"]
 ```
 
-Each entry is an address, an address range (CIDR) or a host name, with an optional port or port range; write IPv6 with ports in brackets, like `"[fd00::/8]:443"`. A listed host name connects to whatever it resolves to; any other host name connects only to the addresses it resolves to inside a range listed for its port, and reports down otherwise. Website checks follow the same list, for the site's address and every redirect[^0150]. Checks outside the list show as refused by this server's agent. An empty list turns port checks and website checks off. The agent does not start if an entry cannot be read, and says which.
+Each entry is an address, an address range (CIDR) or a host name, with an optional port or port range; write IPv6 with ports in brackets, like `"[fd00::/8]:443"`. A listed host name connects to whatever it resolves to; any other host name connects only to the addresses it resolves to inside a range listed for its port, and reports down otherwise. Website checks follow the same list, for the site's address and every redirect[^0150], and so do the requests of plugin checks[^0103]. Checks outside the list show as refused by this server's agent. An empty list turns port checks and website checks off, and refuses every request of a plugin check. The agent does not start if an entry cannot be read, and says which.
 
 ## Snapshots before a change
 
@@ -382,6 +382,7 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0091]: [ADR-0091: System logs](adr/0091-system-logs.md)
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
+[^0103]: [ADR-0103: Plugins](adr/0103-plugins.md)
 [^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)
 [^0111]: [ADR-0111: Agent-side limit on where port checks connect](adr/0111-port-check-targets.md)
 [^0150]: [ADR-0150: Website checks](adr/0150-website-checks.md)
