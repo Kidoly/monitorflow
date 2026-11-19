@@ -23,4 +23,6 @@ pub use model::{
 };
 pub use pin::write_pins;
 pub use runner::{Runner, Step, MIN_WINDOW_LEFT, POLL};
-pub use store::{Actor, CampaignError, CampaignRow, CampaignStore, NewCampaign};
+pub use store::{
+    Actor, CampaignError, CampaignRow, CampaignStore, NewCampaign, MAX_PINNED_SNAPSHOTS,
+};

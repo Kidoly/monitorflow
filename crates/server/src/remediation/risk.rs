@@ -291,10 +291,17 @@ fn posix(command: &str, rules: &RuleSet) -> Decision {
     let words: Vec<&str> = std::iter::once(program.as_str())
         .chain(args.iter().map(|w| w.text.as_str()))
         .collect();
+    allowed_or_unknown(&words, unknown, rules)
+}
+
+/// For a command no built-in rule decides: the highest administrator allow
+/// rule below high impact that matches all of `words`, else high impact
+/// for the reason `unknown`.
+fn allowed_or_unknown(words: &[&str], unknown: String, rules: &RuleSet) -> Decision {
     let allowed = rules
         .allow
         .iter()
-        .filter(|rule| rule.tier < Tier::HighImpact && rule.pattern.matches_all(&words))
+        .filter(|rule| rule.tier < Tier::HighImpact && rule.pattern.matches_all(words))
         .max_by_key(|rule| rule.tier);
     match allowed {
         Some(rule) => Decision {

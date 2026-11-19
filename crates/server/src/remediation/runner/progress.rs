@@ -188,30 +188,7 @@ fn output(payload: &Value) -> String {
     out
 }
 
-/// The last `max` bytes of `text`, after a marker when cut.
-pub fn tail(text: &str, max: usize) -> String {
-    if text.len() <= max {
-        return text.to_owned();
-    }
-    let mut start = text.len() - max;
-    while !text.is_char_boundary(start) {
-        start += 1;
-    }
-    format!("[TRUNCATED: {start} bytes] {}", &text[start..])
-}
-
-/// The first `max` bytes of `text`, after which a marker says what was
-/// cut: AI text is bounded before it is stored.
-pub fn head(text: &str, max: usize) -> String {
-    if text.len() <= max {
-        return text.to_owned();
-    }
-    let mut end = max;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{} [TRUNCATED: {} bytes]", &text[..end], text.len() - end)
-}
+pub use crate::remediation::redact::{head, tail};
 
 #[cfg(test)]
 mod tests {

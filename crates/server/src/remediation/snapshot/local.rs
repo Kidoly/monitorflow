@@ -446,15 +446,13 @@ pub fn due(sets: &[SnapshotSet], now: DateTime<Utc>) -> Vec<String> {
 /// The name of the snapshot before step `step` of remediation incident
 /// `incident`: deterministic, so a retried step finds the one it took.
 pub fn incident_name(incident: Uuid, step: u32) -> String {
-    let hex = incident.simple().to_string();
-    format!("monitorflow-incident-{}-{step}", &hex[..12])
+    format!("monitorflow-incident-{}-{step}", super::short_id(incident))
 }
 
 /// The name of the snapshot update campaign `campaign` takes of each of
 /// its servers before its update.
 pub fn campaign_name(campaign: Uuid) -> String {
-    let hex = campaign.simple().to_string();
-    format!("monitorflow-campaign-{}", &hex[..12])
+    format!("monitorflow-campaign-{}", super::short_id(campaign))
 }
 
 /// Takes local snapshots through agents' commands.
