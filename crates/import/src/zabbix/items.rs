@@ -198,6 +198,11 @@ pub fn map(item: &Item, macros: &Macros) -> Mapped {
     }
     let (name, params) = split_key(&item.key);
     let name = name.as_str();
+    // The VMware templates read a vCenter or ESXi host through its API:
+    // its `vmware` check, once its password is set (ADR-0156).
+    if name.starts_with("vmware.") {
+        return Mapped::Check(Watch::Vmware, Some(Note::plain("vmware_password")));
+    }
     let builtin = match name {
         n if n.starts_with("system.cpu.") => Some(Watch::Cpu),
         n if n.starts_with("vm.memory.") || n.starts_with("system.swap.") => Some(Watch::Memory),

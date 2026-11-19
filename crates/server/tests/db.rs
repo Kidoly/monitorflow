@@ -156,6 +156,7 @@ db_tests! {
                 "commands",
                 "customers",
                 "dashboards",
+                "dependencies",
                 "display_link_dashboards",
                 "display_links",
                 "display_sessions",
@@ -230,7 +231,8 @@ db_tests! {
                 "user_roles",
                 "users",
                 "virtual_objects",
-                "virtual_sources"
+                "virtual_sources",
+                "vmware_credentials"
             ]
         );
     }
