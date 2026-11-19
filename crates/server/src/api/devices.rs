@@ -356,13 +356,20 @@ fn save_error(error: snmp::SaveError) -> ApiError {
 }
 
 /// Adds the checks of `template`'s groups, run by `by` every minute, and
-/// its thresholds; what the device has already stays.
+/// its thresholds; what the device has already stays. The template is
+/// recorded on the device, to suggest switches, routers and firewalls as
+/// parents (ADR-0152).
 pub async fn add_template(
     db: &mut PgConnection,
     device: Uuid,
     template: &snmp::Template,
     by: &RunBy,
 ) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE servers SET device_template = $2 WHERE id = $1")
+        .bind(device)
+        .bind(template.key)
+        .execute(&mut *db)
+        .await?;
     for group in template.groups {
         sqlx::query(
             "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, params, probe, probe_relay_id)
@@ -911,23 +918,28 @@ pub async fn set_vmware(
     vmware::save(&mut tx, id, &credentials)
         .await
         .map_err(vmware_save_error)?;
+    // The check, and its alerts where the device has none of them, as an
+    // imported vCenter has its check but not yet its alerts.
     let has_check: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM sensor_configs WHERE server_id = $1 AND kind = 'vmware')",
     )
     .bind(id)
     .fetch_one(&mut *tx)
     .await?;
-    if !has_check {
+    if has_check {
+        vmware::add_thresholds(&mut tx, id, &vmware::VMWARE_THRESHOLDS).await?;
+    } else {
         let probe =
             super::sensors::run_by(&mut tx, super::sensors::Owner::Server(id), None).await?;
         add_vmware(&mut tx, id, &probe).await?;
     }
+    let added = !has_check;
     record(
         &mut tx,
         &user,
         "device.vmware_update",
         id,
-        json!({"credentials": vmware::audit(&credentials), "check_added": !has_check}),
+        json!({"credentials": vmware::audit(&credentials), "check_added": added}),
     )
     .await?;
     let view = vmware::view(&mut tx, id).await?.ok_or(ApiError::NotFound)?;

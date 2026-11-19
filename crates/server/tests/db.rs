@@ -156,6 +156,7 @@ db_tests! {
                 "commands",
                 "customers",
                 "dashboards",
+                "dependencies",
                 "display_link_dashboards",
                 "display_links",
                 "display_sessions",

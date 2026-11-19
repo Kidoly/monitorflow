@@ -12,6 +12,7 @@ pub mod cluster;
 pub mod commands;
 pub mod crl;
 pub mod db;
+pub mod dependencies;
 pub mod discovery;
 pub mod edition;
 pub mod enroll;
