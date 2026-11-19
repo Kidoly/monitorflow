@@ -96,6 +96,187 @@ impl FromStr for Comparison {
     }
 }
 
+/// What a rule judges at each evaluation (ADR-0153).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum Kind {
+    /// The sample itself.
+    #[default]
+    Value,
+    /// A [`Function`] of the samples of a window.
+    Window,
+    /// The window's average against the same window `offset_s` earlier.
+    Compare,
+    /// Seconds left until the value reaches `target`.
+    Forecast,
+    /// Seconds since the last sample arrived.
+    NoData,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 5] = [
+        Self::Value,
+        Self::Window,
+        Self::Compare,
+        Self::Forecast,
+        Self::NoData,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Value => "value",
+            Self::Window => "window",
+            Self::Compare => "compare",
+            Self::Forecast => "forecast",
+            Self::NoData => "nodata",
+        }
+    }
+
+    /// Whether the rule reads a summary of its series' past.
+    pub fn needs_summary(self) -> bool {
+        matches!(self, Self::Window | Self::Compare | Self::Forecast)
+    }
+}
+
+impl fmt::Display for Kind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown rule kind `{0}`")]
+pub struct UnknownKind(String);
+
+impl FromStr for Kind {
+    type Err = UnknownKind;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|k| k.as_str() == s)
+            .ok_or_else(|| UnknownKind(s.to_owned()))
+    }
+}
+
+/// The function of a `window` rule or condition, or how a `compare` rule
+/// compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Function {
+    Avg,
+    Min,
+    Max,
+    /// The last sample minus the first one of the window.
+    Change,
+    /// The change per second.
+    Rate,
+    /// Now divided by then.
+    Ratio,
+    /// Now minus then.
+    Difference,
+}
+
+impl Function {
+    pub const ALL: [Function; 7] = [
+        Self::Avg,
+        Self::Min,
+        Self::Max,
+        Self::Change,
+        Self::Rate,
+        Self::Ratio,
+        Self::Difference,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Avg => "avg",
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::Change => "change",
+            Self::Rate => "rate",
+            Self::Ratio => "ratio",
+            Self::Difference => "difference",
+        }
+    }
+
+    /// Whether a `window` rule or a condition may use it.
+    pub fn over_window(self) -> bool {
+        !matches!(self, Self::Ratio | Self::Difference)
+    }
+}
+
+impl fmt::Display for Function {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown function `{0}`")]
+pub struct UnknownFunction(String);
+
+impl FromStr for Function {
+    type Err = UnknownFunction;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|f| f.as_str() == s)
+            .ok_or_else(|| UnknownFunction(s.to_owned()))
+    }
+}
+
+/// A condition joined with "and" to a rule (ADR-0153): a metric of the same
+/// server past one limit.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Condition {
+    pub metric: String,
+    /// `None`: the rule's series' instance, else the series without one.
+    #[serde(default)]
+    pub instance: Option<String>,
+    /// `None`: the latest sample; else a window function.
+    #[serde(default, with = "function_name")]
+    pub function: Option<Function>,
+    /// Seconds, with a function.
+    #[serde(default)]
+    pub window_s: Option<u32>,
+    #[serde(with = "comparison_text")]
+    pub comparison: Comparison,
+    pub value: f64,
+}
+
+mod function_name {
+    use super::Function;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(f: &Option<Function>, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(f.map_or("value", Function::as_str))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Function>, D::Error> {
+        let text = Option::<String>::deserialize(d)?;
+        match text.as_deref() {
+            None | Some("value") => Ok(None),
+            Some(other) => other.parse().map(Some).map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+mod comparison_text {
+    use super::Comparison;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(c: &Comparison, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(c.as_str())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Comparison, D::Error> {
+        String::deserialize(d)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// One threshold on one metric.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rule {
@@ -103,6 +284,9 @@ pub struct Rule {
     pub metric: String,
     /// `None` matches every instance.
     pub instance: Option<String>,
+    pub kind: Kind,
+    /// How a value is compared with the limits; for a forecast, the side
+    /// of `target` the value is heading to.
     pub comparison: Comparison,
     pub warning: Option<f64>,
     pub critical: Option<f64>,
@@ -110,7 +294,41 @@ pub struct Rule {
     /// escalates.
     pub duration_s: u32,
     pub hysteresis: f64,
+    /// `window` and `compare` rules.
+    pub function: Option<Function>,
+    /// Seconds: the window of `window` and `compare`, the learning window
+    /// of `forecast`.
+    pub window_s: u32,
+    /// Seconds back for `compare`.
+    pub offset_s: u32,
+    /// The value a forecast is about.
+    pub target: Option<f64>,
+    pub conditions: Vec<Condition>,
 }
+
+impl Default for Rule {
+    fn default() -> Self {
+        Self {
+            metric: String::new(),
+            instance: None,
+            kind: Kind::Value,
+            comparison: Comparison::Gt,
+            warning: None,
+            critical: None,
+            duration_s: 0,
+            hysteresis: 0.0,
+            function: None,
+            window_s: 0,
+            offset_s: 0,
+            target: None,
+            conditions: Vec::new(),
+        }
+    }
+}
+
+/// Longest time left a forecast reports: 10 years, so stored values stay
+/// finite. Never an alarm.
+pub const FOREVER_S: f64 = 10.0 * 365.0 * 86_400.0;
 
 impl Rule {
     pub fn threshold(&self, severity: Severity) -> Option<f64> {
@@ -124,10 +342,24 @@ impl Rule {
         i64::from(self.duration_s) * 1000
     }
 
+    pub fn window_ms(&self) -> i64 {
+        i64::from(self.window_s) * 1000
+    }
+
+    /// How the judged number is compared with the limits: time left alarms
+    /// when low, silence when long, others as the row says.
+    pub fn judged(&self) -> Comparison {
+        match self.kind {
+            Kind::Forecast => Comparison::Le,
+            Kind::NoData => Comparison::Gt,
+            _ => self.comparison,
+        }
+    }
+
     /// The copy stored with an incident, so later edits do not rewrite
     /// why it opened.
     pub fn snapshot(&self) -> serde_json::Value {
-        json!({
+        let mut snapshot = json!({
             "metric": self.metric,
             "instance": self.instance,
             "comparison": self.comparison.as_str(),
@@ -135,11 +367,22 @@ impl Rule {
             "critical": self.critical,
             "duration_s": self.duration_s,
             "hysteresis": self.hysteresis,
-        })
+        });
+        if self.kind != Kind::Value {
+            snapshot["kind"] = json!(self.kind.as_str());
+            snapshot["function"] = json!(self.function.map(Function::as_str));
+            snapshot["window_s"] = json!((self.window_s > 0).then_some(self.window_s));
+            snapshot["offset_s"] = json!((self.offset_s > 0).then_some(self.offset_s));
+            snapshot["target"] = json!(self.target);
+        }
+        if !self.conditions.is_empty() {
+            snapshot["conditions"] = json!(self.conditions);
+        }
+        snapshot
     }
 
-    fn key(&self) -> (String, Option<String>) {
-        (self.metric.clone(), self.instance.clone())
+    fn key(&self) -> (String, Option<String>, Kind) {
+        (self.metric.clone(), self.instance.clone(), self.kind)
     }
 }
 
@@ -155,6 +398,7 @@ pub fn builtin_defaults() -> Vec<Rule> {
             critical,
             duration_s: minutes * 60,
             hysteresis: 0.02,
+            ..Rule::default()
         };
     vec![
         rule(
@@ -207,30 +451,48 @@ pub struct Row {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Rules {
     /// `None`: muted by a disabled row.
-    entries: BTreeMap<(String, Option<String>), Option<Rule>>,
+    entries: BTreeMap<(String, Option<String>, Kind), Option<Rule>>,
 }
 
 impl Rules {
-    /// The threshold for a series, if one applies and is not muted.
-    pub fn lookup(&self, metric: &str, instance: &str) -> Option<&Rule> {
-        let exact = (metric.to_owned(), Some(instance.to_owned()));
+    /// The rule of `kind` for a series, if one applies and is not muted.
+    pub fn lookup_kind(&self, metric: &str, instance: &str, kind: Kind) -> Option<&Rule> {
+        let exact = (metric.to_owned(), Some(instance.to_owned()), kind);
         match self.entries.get(&exact) {
             Some(entry) => entry.as_ref(),
-            None => self.entries.get(&(metric.to_owned(), None))?.as_ref(),
+            None => self.entries.get(&(metric.to_owned(), None, kind))?.as_ref(),
         }
     }
 
-    /// The thresholds in force, sorted by `(metric, instance)`.
+    /// The `value` threshold for a series, if one applies and is not muted.
+    pub fn lookup(&self, metric: &str, instance: &str) -> Option<&Rule> {
+        self.lookup_kind(metric, instance, Kind::Value)
+    }
+
+    /// Every rule that applies to a series, one per kind.
+    pub fn matching<'a>(
+        &'a self,
+        metric: &'a str,
+        instance: &'a str,
+    ) -> impl Iterator<Item = &'a Rule> + 'a {
+        Kind::ALL
+            .into_iter()
+            .filter_map(move |kind| self.lookup_kind(metric, instance, kind))
+    }
+
+    /// The thresholds in force, sorted by `(metric, instance, kind)`.
     pub fn enabled(&self) -> impl Iterator<Item = &Rule> {
         self.entries.values().flatten()
     }
 
     /// Every key with its threshold, `None` when muted, sorted by
-    /// `(metric, instance)`. For the API's view of the layers.
-    pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, Option<&str>, Option<&Rule>)> {
-        self.entries
-            .iter()
-            .map(|((metric, instance), rule)| (metric.as_str(), instance.as_deref(), rule.as_ref()))
+    /// `(metric, instance, kind)`. For the API's view of the layers.
+    pub(crate) fn entries(
+        &self,
+    ) -> impl Iterator<Item = (&str, Option<&str>, Kind, Option<&Rule>)> {
+        self.entries.iter().map(|((metric, instance, kind), rule)| {
+            (metric.as_str(), instance.as_deref(), *kind, rule.as_ref())
+        })
     }
 }
 
@@ -256,11 +518,8 @@ mod tests {
         Rule {
             metric: metric.into(),
             instance: instance.map(Into::into),
-            comparison: Comparison::Gt,
             warning: Some(warning),
-            critical: None,
-            duration_s: 0,
-            hysteresis: 0.0,
+            ..Rule::default()
         }
     }
 
@@ -377,5 +636,75 @@ mod tests {
         assert_eq!(snapshot["comparison"], ">");
         assert_eq!(snapshot["critical"], 0.95);
         assert_eq!(snapshot["duration_s"], 300);
+    }
+
+    #[test]
+    fn kinds_of_one_series_live_side_by_side() {
+        let forecast = Rule {
+            metric: DISK.into(),
+            kind: Kind::Forecast,
+            comparison: Comparison::Ge,
+            target: Some(1.0),
+            window_s: 86_400,
+            warning: Some(259_200.0),
+            ..Rule::default()
+        };
+        let rules = resolve(vec![
+            Row {
+                layer: Layer::Site,
+                rule: forecast.clone(),
+                enabled: true,
+            },
+            row(Layer::Server, DISK, Some("/tmp"), 0.0, false),
+        ]);
+        let kinds: Vec<_> = rules.matching(DISK, "/").map(|r| r.kind).collect();
+        assert_eq!(kinds, [Kind::Value, Kind::Forecast]);
+        // Muting the value threshold of /tmp leaves its forecast.
+        let kinds: Vec<_> = rules.matching(DISK, "/tmp").map(|r| r.kind).collect();
+        assert_eq!(kinds, [Kind::Forecast]);
+        assert_eq!(forecast.judged(), Comparison::Le);
+        let snapshot = forecast.snapshot();
+        assert_eq!(snapshot["kind"], "forecast");
+        assert_eq!(snapshot["target"], 1.0);
+        assert_eq!(snapshot["comparison"], ">=");
+        // A plain threshold's snapshot is as before.
+        assert!(builtin_defaults()[0].snapshot().get("kind").is_none());
+        for kind in Kind::ALL {
+            assert_eq!(kind.as_str().parse(), Ok(kind));
+        }
+        for function in Function::ALL {
+            assert_eq!(function.as_str().parse(), Ok(function));
+        }
+        assert!("median".parse::<Function>().is_err());
+    }
+
+    #[test]
+    fn conditions_read_and_write_plain_json() {
+        let condition: Condition = serde_json::from_value(json!({
+            "metric": "monitorflow_cpu_load1", "comparison": ">", "value": 8
+        }))
+        .unwrap();
+        assert_eq!(
+            (condition.function, condition.instance.clone()),
+            (None, None)
+        );
+        assert_eq!(
+            serde_json::to_value(&condition).unwrap()["function"],
+            "value"
+        );
+        let windowed: Condition = serde_json::from_value(json!({
+            "metric": "monitorflow_cpu_load1", "function": "avg", "window_s": 300,
+            "comparison": "<=", "value": 1
+        }))
+        .unwrap();
+        assert_eq!(windowed.function, Some(Function::Avg));
+        assert_eq!(windowed.comparison, Comparison::Le);
+        for bad in [
+            json!({"metric": "m", "comparison": "=", "value": 1}),
+            json!({"metric": "m", "comparison": ">", "value": 1, "extra": 1}),
+            json!({"metric": "m", "function": "median", "comparison": ">", "value": 1}),
+        ] {
+            assert!(serde_json::from_value::<Condition>(bad).is_err());
+        }
     }
 }

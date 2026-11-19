@@ -24,6 +24,16 @@ pub fn incident(metric: &str, severity: &str, open: bool, value: f64, threshold:
         return format!("No contact for over {}", plural(minutes, "minute"));
     }
     let short = metric.strip_prefix(PREFIX).unwrap_or(metric);
+    let sentence = match threshold["kind"].as_str() {
+        Some("nodata") => nodata(value, open),
+        Some("forecast") => forecast(metric, value, open, threshold),
+        Some("window") => window(metric, severity, open, value, threshold),
+        Some("compare") => compare(metric, severity, open, value, threshold),
+        _ => None,
+    };
+    if let Some(sentence) = sentence {
+        return with_conditions(sentence, threshold);
+    }
     if short.ends_with("_status") {
         return script_status(value, open);
     }
@@ -57,6 +67,130 @@ pub fn incident(metric: &str, severity: &str, open: bool, value: f64, threshold:
         _ if open => format!("{} past the {severity} limit", capitalized(&shown)),
         _ => format!("Peaked at {shown}"),
     }
+}
+
+/// ", while 1 more condition holds" for a rule joined with others.
+fn with_conditions(sentence: String, threshold: &Value) -> String {
+    match threshold["conditions"].as_array().map_or(0, Vec::len) {
+        0 => sentence,
+        1 => format!("{sentence}, while 1 more condition holds"),
+        n => format!("{sentence}, while {n} more conditions hold"),
+    }
+}
+
+/// "No data for 12 minutes" (ADR-0153).
+fn nodata(silence_s: f64, open: bool) -> Option<String> {
+    let silence = span(silence_s as i64);
+    Some(if open {
+        format!("No data for {silence}")
+    } else {
+        format!("Was silent for {silence}")
+    })
+}
+
+/// "Expected to reach 100% in about 2 days": the time left until the
+/// forecast's target.
+fn forecast(metric: &str, left_s: f64, open: bool, threshold: &Value) -> Option<String> {
+    let target = format_value(metric, threshold["target"].as_f64()?);
+    Some(match (open, left_s) {
+        (true, s) if s < 1.0 => format!("Has reached {target}"),
+        (true, s) => format!("Expected to reach {target} in about {}", span(s as i64)),
+        (false, s) if s < 1.0 => format!("Reached {target}"),
+        (false, s) => format!("Was expected to reach {target} within {}", span(s as i64)),
+    })
+}
+
+/// "Average over 15 minutes", "Rate over 5 minutes".
+fn function_over(function: &str, window_s: u64) -> String {
+    let name = match function {
+        "avg" => "Average",
+        "min" => "Lowest value",
+        "max" => "Highest value",
+        "change" => "Change",
+        "rate" => "Rate",
+        other => other,
+    };
+    format!("{name} over {}", span(window_s as i64))
+}
+
+/// The limit sentence for a value already formatted: "is 6.2, above the
+/// warning limit of 4", or "peaked at 6.2, above ...".
+fn against_limit(
+    shown: &str,
+    severity: &str,
+    open: bool,
+    threshold: &Value,
+    limit: impl Fn(f64) -> String,
+) -> String {
+    let side = threshold["comparison"]
+        .as_str()
+        .and_then(|c| Comparison::from_str(c).ok())
+        .map_or("past", |c| match c {
+            Comparison::Gt => "above",
+            Comparison::Ge => "at or above",
+            Comparison::Lt => "below",
+            Comparison::Le => "at or below",
+        });
+    let verb = if open { "is" } else { "peaked at" };
+    match threshold[severity].as_f64() {
+        Some(l) => format!(
+            "{verb} {shown}, {side} the {severity} limit of {}",
+            limit(l)
+        ),
+        None => format!("{verb} {shown}"),
+    }
+}
+
+/// "Average over 15 minutes is 6.2, above the warning limit of 4".
+fn window(
+    metric: &str,
+    severity: &str,
+    open: bool,
+    value: f64,
+    threshold: &Value,
+) -> Option<String> {
+    let function = threshold["function"].as_str()?;
+    let over = function_over(function, threshold["window_s"].as_u64()?);
+    let format = |v: f64| match function {
+        "rate" => format!("{} per second", format_value(metric, v)),
+        _ => format_value(metric, v),
+    };
+    let rest = against_limit(&format(value), severity, open, threshold, format);
+    Some(format!("{over} {rest}"))
+}
+
+/// "2.5 times last week's, above the warning limit of 2 times".
+fn compare(
+    metric: &str,
+    severity: &str,
+    open: bool,
+    value: f64,
+    threshold: &Value,
+) -> Option<String> {
+    let when = match threshold["offset_s"].as_u64()? {
+        86_400 => "yesterday",
+        _ => "last week",
+    };
+    let over = function_over("avg", threshold["window_s"].as_u64()?);
+    Some(match threshold["function"].as_str()? {
+        "ratio" => {
+            let times = |v: f64| format!("{} times {when}'s", number(v, 2));
+            format!(
+                "{over} {}",
+                against_limit(&times(value), severity, open, threshold, times)
+            )
+        }
+        _ => {
+            let diff = |v: f64| {
+                let sign = if v > 0.0 { "+" } else { "" };
+                format!("{sign}{} on {when}", format_value(metric, v))
+            };
+            format!(
+                "{over} {}",
+                against_limit(&diff(value), severity, open, threshold, diff)
+            )
+        }
+    })
 }
 
 /// The sentence for a sensor whose last sample is `age_s` seconds old,
@@ -370,5 +504,58 @@ mod tests {
         assert_eq!(format_value("m_matches", 1_234_567.891), "1,234,567.89");
         assert_eq!(format_value("m_value", -0.001), "0");
         assert_eq!(format_value("m_value", -42.0), "-42");
+    }
+
+    #[test]
+    fn richer_rules_read_in_plain_words() {
+        let disk = "monitorflow_disk_used_ratio";
+        let forecast = json!({"kind": "forecast", "comparison": ">=", "target": 1.0,
+                              "warning": 259200.0, "critical": 86400.0});
+        assert_eq!(
+            incident(disk, "warning", true, 2.5 * 86_400.0, &forecast),
+            "Expected to reach 100% in about 2 days"
+        );
+        assert_eq!(
+            incident(disk, "critical", true, 0.0, &forecast),
+            "Has reached 100%"
+        );
+        assert_eq!(
+            incident(disk, "critical", false, 5_400.0, &forecast),
+            "Was expected to reach 100% within 90 minutes"
+        );
+        let nodata = json!({"kind": "nodata", "comparison": ">", "warning": 300.0});
+        assert_eq!(
+            incident(disk, "warning", true, 720.0, &nodata),
+            "No data for 12 minutes"
+        );
+        assert_eq!(
+            incident(disk, "warning", false, 900.0, &nodata),
+            "Was silent for 15 minutes"
+        );
+        let window = json!({"kind": "window", "function": "avg", "window_s": 900,
+                            "comparison": ">", "warning": 4.0});
+        assert_eq!(
+            incident("monitorflow_cpu_load1", "warning", true, 6.2, &window),
+            "Average over 15 minutes is 6.2, above the warning limit of 4"
+        );
+        let rate = json!({"kind": "window", "function": "rate", "window_s": 300,
+                          "comparison": ">", "critical": 1048576.0});
+        assert_eq!(
+            incident("monitorflow_disk_written_bytes", "critical", false, 2097152.0, &rate),
+            "Rate over 5 minutes peaked at 2 MiB per second, above the critical limit of 1 MiB per second"
+        );
+        let ratio = json!({"kind": "compare", "function": "ratio", "window_s": 3600,
+                           "offset_s": 604800, "comparison": ">", "warning": 2.0,
+                           "conditions": [{"metric": "m"}]});
+        assert_eq!(
+            incident("monitorflow_cpu_load1", "warning", true, 2.5, &ratio),
+            "Average over 60 minutes is 2.5 times last week's, above the warning limit of 2 times last week's, while 1 more condition holds"
+        );
+        let difference = json!({"kind": "compare", "function": "difference", "window_s": 86400,
+                                "offset_s": 86400, "comparison": ">", "warning": 0.1});
+        assert_eq!(
+            incident(disk, "warning", true, 0.15, &difference),
+            "Average over 24 hours is +15% on yesterday, above the warning limit of +10% on yesterday"
+        );
     }
 }

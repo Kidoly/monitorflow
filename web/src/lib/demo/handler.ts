@@ -12,6 +12,9 @@ import {
   type BackupsView,
   type CertificateAuthorityView,
   type DashboardData,
+  type Dependency,
+  type DependencyEnd,
+  type DependencyPage,
   type EffectiveThreshold,
   type IncidentList,
   type Panel,
@@ -19,6 +22,7 @@ import {
   type Preferences,
   type PublicAddress,
   type RequestOptions,
+  type Server,
   type ServerDetail,
   type ServerSettings,
   type ServerUpdateView,
@@ -221,10 +225,38 @@ const ROUTES: [RegExp, Handler][] = [
       updates: [],
     };
   }],
+  // Dependencies (ADR-0152): the demo's are its relay's, automatic.
+  [/^\/api\/dependencies$/, () => ({ dependencies: [] })],
+  [/^\/api\/servers\/([^/]+)\/dependencies$/, ([id]) => {
+    const me = server(id!);
+    return { ...noDependencies(), parents: me.relay_id === RELAY.id ? [behindRelay(me)] : [] };
+  }],
+  [/^\/api\/relays\/([^/]+)\/dependencies$/, ([id]) => {
+    if (id !== RELAY.id) throw new NotFound();
+    const behind = SERVERS.filter((s) => s.relay_id === RELAY.id);
+    return { ...noDependencies(), children: behind.map(behindRelay), behind: behind.map(endOf) };
+  }],
   [/^\/api\/maintenance-windows$/, (_, q) => {
     const site = q.get("site_id") ?? SERVERS.find((s) => s.id === q.get("server_id"))?.site_id;
     return { windows: MAINTENANCE_WINDOWS.filter((w) => !site || w.site_id === site) };
   }],
+  // Availability (ADR-0155): every demo server up all along.
+  [/^\/api\/availability$/, (_, q) => {
+    const from = q.get("from") ?? new Date().toISOString();
+    const to = q.get("to") ?? new Date().toISOString();
+    const counted = Math.max(0, (Date.parse(to) - Date.parse(from)) / 1000);
+    const numbers = { availability: 100, counted_seconds: counted, down_seconds: 0, maintenance_seconds: 0, outages: 0, longest_seconds: 0 };
+    const machines = SERVERS.map((s) => ({
+      id: s.id, name: s.hostname, device: false, site_id: s.site_id, site_name: s.site_name,
+      customer_id: s.customer_id, numbers, outage_list: [],
+    }));
+    return {
+      customer_id: null, customer_name: null, from, to, generated_at: new Date().toISOString(),
+      summary: { services: 0, services_met: 0, services_missed: 0, machines: machines.length, outages: 0, down_seconds: 0, maintenance_seconds: 0 },
+      services: [], machines, checks: [], maintenance: [],
+    };
+  }],
+  [/^\/api\/business-services$/, () => ({ services: [] })],
   [/^\/api\/silences$/, (_, q) => {
     const target = q.get("server_id") ?? q.get("relay_id") ?? q.get("site_id");
     return { silences: SILENCES.filter((s) => !target || s.target_id === target || s.site_id === target) };
@@ -610,4 +642,19 @@ function autoUpdate(): AutoUpdateStatus {
     agents: { latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(SERVERS.length), sites, history },
     relays: { latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(1), sites: [sites[0]!], history: [] },
   };
+}
+
+/** A demo server as an end of a dependency. */
+function endOf(s: Server): DependencyEnd {
+  return { kind: s.kind === "device" ? "device" : "server", server_id: s.id, relay_id: null, name: s.hostname, site_id: s.site_id, check: null };
+}
+
+/** A demo server behind the demo relay, automatically. */
+function behindRelay(s: Server): Dependency {
+  const parent: DependencyEnd = { kind: "relay", server_id: null, relay_id: RELAY.id, name: RELAY.name, site_id: RELAY.site_id, check: null };
+  return { id: null, automatic: true, child: endOf(s), parent, created_at: null, created_by: null, can_change: false };
+}
+
+function noDependencies(): DependencyPage {
+  return { parents: [], children: [], behind: [], suggestions: [], unreachable: null, unreachable_checks: [], can_change: false };
 }

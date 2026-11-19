@@ -398,6 +398,20 @@ db_tests! {
         settle(&pool, &tester).await;
         assert_eq!(fake.asked.lock().unwrap()[0].0, "relay-paris");
 
+        // What a relay's scan adds is checked from the relay, so it is
+        // behind it (ADR-0152) without anything set.
+        let (status, added) = call(&pool, &admin, "POST", &format!("/api/network-scans/{id}/add"),
+            Some(json!({"all": true}))).await;
+        assert_eq!(status, StatusCode::OK, "{added}");
+        let device = added["added"][0]["server_id"].as_str().unwrap().to_owned();
+        let (status, page) = call(&pool, &admin, "GET", &format!("/api/servers/{device}/dependencies"), None).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let parents = page["parents"].as_array().unwrap();
+        assert!(
+            parents.iter().any(|p| p["automatic"] == true && p.to_string().contains("relay-paris")),
+            "{page}"
+        );
+
         // The schedule queues the next one an hour after the last.
         assert_eq!(netscan::schedule(&pool).await.unwrap(), 0);
         sqlx::query("UPDATE network_scan_runs SET queued_at = now() - interval '61 minutes'")

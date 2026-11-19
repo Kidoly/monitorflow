@@ -10,7 +10,9 @@ import * as campaigns from "./campaigns";
 import * as checks from "./checks";
 import * as common from "./common";
 import * as dashboards from "./dashboards";
+import * as dependencies from "./dependencies";
 import * as devices from "./devices";
+import * as discovery from "./discovery";
 import * as display from "./display";
 import * as fleet from "./fleet";
 import * as followUp from "./followUp";
@@ -28,7 +30,9 @@ import * as onCall from "./onCall";
 import * as plugins from "./plugins";
 import * as relays from "./relays";
 import * as remediation from "./remediation";
+import * as reports from "./reports";
 import * as rollback from "./rollback";
+import * as rules from "./rules";
 import * as sensors from "./sensors";
 import * as server from "./server";
 import * as serverUpdate from "./serverUpdate";
@@ -39,6 +43,7 @@ import * as silences from "./silences";
 import * as sites from "./sites";
 import * as ui from "./ui";
 import * as users from "./users";
+import * as virtualization from "./virtualization";
 
 // One file per area of the interface, English and French side by side.
 // An area added here is typed into `MessageKey`.
@@ -53,7 +58,9 @@ export const en = {
   checks: checks.en,
   common: common.en,
   dashboards: dashboards.en,
+  dependencies: dependencies.en,
   devices: devices.en,
+  discovery: discovery.en,
   display: display.en,
   fleet: fleet.en,
   followUp: followUp.en,
@@ -71,7 +78,9 @@ export const en = {
   plugins: plugins.en,
   relays: relays.en,
   remediation: remediation.en,
+  reports: reports.en,
   rollback: rollback.en,
+  rules: rules.en,
   sensors: sensors.en,
   server: server.en,
   serverUpdate: serverUpdate.en,
@@ -82,6 +91,7 @@ export const en = {
   sites: sites.en,
   ui: ui.en,
   users: users.en,
+  virtualization: virtualization.en,
 };
 
 export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
@@ -95,7 +105,9 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   checks: checks.fr,
   common: common.fr,
   dashboards: dashboards.fr,
+  dependencies: dependencies.fr,
   devices: devices.fr,
+  discovery: discovery.fr,
   display: display.fr,
   fleet: fleet.fr,
   followUp: followUp.fr,
@@ -113,7 +125,9 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   plugins: plugins.fr,
   relays: relays.fr,
   remediation: remediation.fr,
+  reports: reports.fr,
   rollback: rollback.fr,
+  rules: rules.fr,
   sensors: sensors.fr,
   server: server.fr,
   serverUpdate: serverUpdate.fr,
@@ -124,4 +138,5 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   sites: sites.fr,
   ui: ui.fr,
   users: users.fr,
+  virtualization: virtualization.fr,
 };

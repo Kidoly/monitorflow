@@ -3,7 +3,7 @@
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 
 import { t } from "@/i18n";
-import { ApiError, type ServerDetail, type SnmpCredentials, api, describeError } from "@/lib/api";
+import { ApiError, type ServerDetail, type SnmpCredentials, type VmwareCredentials, api, describeError } from "@/lib/api";
 import { modifiesSite, multiCustomer, useMe } from "@/lib/me";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { FactsBox } from "@/components/ui/FactsBox";
@@ -12,6 +12,7 @@ import { formatExact } from "@/components/ui/time";
 import styles from "./AdminPages.module.css";
 import { validAddress } from "./AddDevice";
 import { EditSnmp, snmpSummary } from "./SnmpCredentials";
+import { EditVmware, vmwareSummary } from "./VmwareCredentials";
 
 /** The Details of a device (ADR-0148): no agent, certificate or updates to speak of. */
 export function DeviceFacts({ server, onChanged }: { server: ServerDetail; onChanged?: () => void }) {
@@ -19,6 +20,9 @@ export function DeviceFacts({ server, onChanged }: { server: ServerDetail; onCha
   // undefined while loading, null without credentials (ADR-0149).
   const [snmp, setSnmp] = useState<SnmpCredentials | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
+  // The same for vCenter credentials (ADR-0156).
+  const [vmware, setVmware] = useState<VmwareCredentials | null | undefined>(undefined);
+  const [editingVmware, setEditingVmware] = useState(false);
   const canEdit = !server.revoked_at && modifiesSite(me, server.customer_id, server.site_id);
   const load = useCallback(
     (signal?: AbortSignal) =>
@@ -27,11 +31,33 @@ export function DeviceFacts({ server, onChanged }: { server: ServerDetail; onCha
       }),
     [server.id],
   );
+  const loadVmware = useCallback(
+    (signal?: AbortSignal) =>
+      api.deviceVmware(server.id, signal).then(setVmware, (e: unknown) => {
+        if (e instanceof ApiError && e.status === 404) setVmware(null);
+      }),
+    [server.id],
+  );
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
+    void loadVmware(controller.signal);
     return () => controller.abort();
-  }, [load]);
+  }, [load, loadVmware]);
+  if (editingVmware && vmware !== undefined) {
+    return (
+      <EditVmware
+        server={server}
+        stored={vmware}
+        onClose={() => setEditingVmware(false)}
+        onSaved={() => {
+          setEditingVmware(false);
+          void loadVmware();
+          onChanged?.();
+        }}
+      />
+    );
+  }
   if (editing && snmp !== undefined) {
     return (
       <EditSnmp
@@ -63,6 +89,24 @@ export function DeviceFacts({ server, onChanged }: { server: ServerDetail; onCha
                     {canEdit && (
                       <Button variant="ghost" size="small" onClick={() => setEditing(true)}>
                         {snmp ? t("devices.snmp.change") : t("devices.snmp.set")}
+                      </Button>
+                    )}
+                  </>
+                ),
+              },
+            ]),
+        // Shown once set, or to someone who can set it.
+        ...(vmware === undefined || (vmware === null && !canEdit)
+          ? []
+          : [
+              {
+                label: t("virtualization.vmware.fact"),
+                value: (
+                  <>
+                    {vmwareSummary(vmware)}{" "}
+                    {canEdit && (
+                      <Button variant="ghost" size="small" onClick={() => setEditingVmware(true)}>
+                        {vmware ? t("virtualization.vmware.change") : t("virtualization.vmware.set")}
                       </Button>
                     )}
                   </>
