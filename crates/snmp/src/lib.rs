@@ -28,6 +28,8 @@
 //! never stored with the check nor shown.
 
 pub mod custom;
+pub mod library;
+pub mod mib;
 mod mibs;
 mod read;
 mod sensor;
