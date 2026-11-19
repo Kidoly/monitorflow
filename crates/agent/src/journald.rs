@@ -51,6 +51,10 @@ pub const RATE_PER_SECOND: f64 = 10.0;
 pub const READ_PER_SECOND: f64 = 200.0;
 /// Bytes of a message kept; the rest is cut at a character boundary.
 pub const MAX_MESSAGE: usize = 4096;
+/// Bytes of a unit, identifier or boot ID; a longer one is left out, as
+/// the server does. Anyone may write to the journal and pick its
+/// identifier: uncut, 500 lines of a batch could hold hundreds of MiB.
+pub const MAX_FIELD: usize = 256;
 /// Bytes of one JSON line of `journalctl`; a longer line is skipped.
 const MAX_LINE: usize = 1024 * 1024;
 /// File of the saved cursor, in the data directory.
@@ -178,15 +182,24 @@ pub fn parse(line: &[u8]) -> Option<(String, LogEntry)> {
         // Lines without one are logged at the default, info; but this
         // reads only up to warning, so the filter matched a priority.
         priority: number("PRIORITY").map_or(6, |p| p.min(7) as u32),
-        unit: text("_SYSTEMD_UNIT"),
-        identifier,
-        boot_id: text("_BOOT_ID"),
+        unit: field(text("_SYSTEMD_UNIT")),
+        identifier: field(identifier),
+        boot_id: field(text("_BOOT_ID")),
         pid: number("_PID")
             .and_then(|p| u32::try_from(p).ok())
             .unwrap_or(0),
         source: SOURCE.to_owned(),
     };
     Some((cursor, entry))
+}
+
+/// `value`, or empty when longer than [`MAX_FIELD`].
+fn field(value: String) -> String {
+    if value.len() <= MAX_FIELD {
+        value
+    } else {
+        String::new()
+    }
 }
 
 /// `text` cut to at most `max` bytes at a character boundary.
@@ -521,6 +534,30 @@ mod tests {
         assert!(parse(b"not json").is_none());
         let long = format!("{}é", "a".repeat(MAX_MESSAGE - 1));
         assert_eq!(truncate(long, MAX_MESSAGE).len(), MAX_MESSAGE - 1);
+    }
+
+    /// A local user picks the identifier of what they write to the
+    /// journal: a huge one must not reach the queue or the batch.
+    #[test]
+    fn long_identifiers_units_and_boot_ids_are_left_out() {
+        let huge = "x".repeat(512 * 1024);
+        let line = format!(
+            r#"{{"__CURSOR":"c","__REALTIME_TIMESTAMP":"1000","MESSAGE":"m","SYSLOG_IDENTIFIER":"{huge}","_SYSTEMD_UNIT":"{huge}","_BOOT_ID":"{huge}"}}"#
+        );
+        let (_, entry) = parse(line.as_bytes()).unwrap();
+        assert_eq!(
+            (
+                entry.identifier.as_str(),
+                entry.unit.as_str(),
+                entry.boot_id.as_str()
+            ),
+            ("", "", "")
+        );
+        let fits = "u".repeat(MAX_FIELD);
+        let line = format!(
+            r#"{{"__CURSOR":"c","__REALTIME_TIMESTAMP":"1000","SYSLOG_IDENTIFIER":"{fits}"}}"#
+        );
+        assert_eq!(parse(line.as_bytes()).unwrap().1.identifier, fits);
     }
 
     #[test]
