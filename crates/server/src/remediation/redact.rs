@@ -338,6 +338,14 @@ fn sas_kind(_: &str) -> Option<Kind> {
     Some(Kind::AzureSasSignature)
 }
 
+fn password_kind(_: &str) -> Option<Kind> {
+    Some(Kind::Password)
+}
+
+fn token_kind(_: &str) -> Option<Kind> {
+    Some(Kind::Token)
+}
+
 /// In order: whole blocks, then formats with a known prefix, then
 /// credentials in URLs, headers and connection strings, then key-value
 /// pairs. High entropy runs last, over what is left.
@@ -391,11 +399,47 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             r#"(?i)((?:^|[;\s"'])(?:password|pwd|accountkey|sharedaccesskey|sharedaccesssignature)\s*=\s*)([^;"'\r\n]+)(;)"#,
             connection_kind,
         ),
-        // `DB_PASSWORD=x`, `"api_key": "x"`, `X-Auth-Token: x`, `?token=x`:
-        // a key ending in one of these words, `=` or `:`, then a quoted
-        // or bare value.
+        // `Authorization: Token x`, and the whole value of a cookie
+        // header, which holds sessions.
         Rule::value(
-            r#"(?i)(\b[a-z0-9_.-]*?(?:password|passwd|passphrase|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?key|credentials?)["']?\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;&]+)()"#,
+            r"(?i)(\bauthorization\s*[:=]\s*token\s+)([A-Za-z0-9._~+/-]{8,}=*)()",
+            token_kind,
+        ),
+        Rule::value(r"(?i)(\b(?:set-)?cookie\s*:\s*)([^\r\n]+)()", token_kind),
+        // Docker's `config.json`: `"auth": "<base64 of user:password>"`.
+        Rule::value(
+            r#"(?i)("auth"\s*:\s*")([A-Za-z0-9+/]{4,}=*)(")"#,
+            basic_kind,
+        ),
+        // Passwords given on command lines, as `ps` shows them:
+        // `--password x`, `mysql -px`, `sshpass -p x`.
+        Rule::value(
+            r#"(?i)((?:^|\s)--?(?:password|passwd|pass)\s+)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)()"#,
+            password_kind,
+        ),
+        Rule::value(
+            r"(\bmysql(?:dump|admin|check|import|show|slap)?\s(?:[^\r\n|;&]*?\s)?-p)([^\s]+)()",
+            password_kind,
+        ),
+        Rule::value(
+            r"(\bsshpass\s(?:[^\r\n|;&]*?\s)?-p\s*)(\S+)()",
+            password_kind,
+        ),
+        // `.netrc`: `machine host login user password x`.
+        Rule::value(
+            r"(?i)(\bmachine\s+\S+\s+(?:login\s+\S+\s+)?password\s+)(\S+)()",
+            password_kind,
+        ),
+        // `<password>x</password>`, `<token>x</token>`.
+        Rule::value(
+            r"(?i)(<(?:password|passwd|secret|token|api_?key|client_?secret)>)([^<\r\n]+)(</)",
+            key_kind,
+        ),
+        // `DB_PASSWORD=x`, `"api_key": "x"`, `X-Auth-Token: x`, `?token=x`,
+        // `SMTP_PASS=x`, `SECRET_KEY=x`: a key ending in one of these
+        // words, `=` or `:`, then a quoted or bare value.
+        Rule::value(
+            r#"(?i)(\b[a-z0-9_.-]*?(?:password|passwd|passphrase|pwd|(?:\b|[_.-])pass|(?:secret|encryption|signing|master)[_-]?(?:key|salt)|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?key|credentials?)["']?\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;&]+)()"#,
             key_kind,
         ),
     ]
