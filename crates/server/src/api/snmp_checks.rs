@@ -617,10 +617,9 @@ async fn last_values(state: &ApiState, peer: String, site: String, metrics: &[St
     let target = Target { peer, site };
     // Names are `[a-z0-9_]`, checked when saved: no escaping needed.
     let selector = format!(
-        "{{__name__=~{},peer={},site={}}}",
+        "{{__name__=~{},{}}}",
         quote(&metrics.join("|")),
-        quote(&target.peer),
-        quote(&target.site)
+        target.matchers()
     );
     let now = Utc::now().timestamp().to_string();
     let mut results = Vec::new();

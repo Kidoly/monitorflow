@@ -153,12 +153,7 @@ fn selector(metrics: &BTreeSet<String>, instance: Option<&str>, target: &Target)
     // Metric names are `[a-z0-9_]` (checked when sensors are saved), so
     // they need no escaping inside the regex.
     let names = metrics.iter().cloned().collect::<Vec<_>>().join("|");
-    let mut selector = format!(
-        "{{__name__=~{},peer={},site={}",
-        quote(&names),
-        quote(&target.peer),
-        quote(&target.site)
-    );
+    let mut selector = format!("{{__name__=~{},{}", quote(&names), target.matchers());
     if let Some(instance) = instance {
         selector.push_str(&format!(",instance={}", quote(instance)));
     }

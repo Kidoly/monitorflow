@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use super::access::authorize;
 use super::auth::CurrentUser;
-use super::metrics::{backend_error, quote, Target};
+use super::metrics::{backend_error, build_query, Target};
 use super::sensors::{body, parse_id};
 use super::thresholds::{validate_entry, EntryRequest};
 use super::{ApiError, ApiState};
@@ -98,12 +98,7 @@ fn checked(request: PreviewRequest) -> Result<(Rule, u32), ApiError> {
 
 /// The selector of `metric` of `target`, of one instance when given.
 fn selector(metric: &str, target: &Target, instance: Option<&str>) -> String {
-    let instance = instance.map_or_else(String::new, |i| format!(",instance={}", quote(i)));
-    format!(
-        "{metric}{{peer={},site={}{instance}}}",
-        quote(&target.peer),
-        quote(&target.site)
-    )
+    build_query(metric, target, instance, None, None)
 }
 
 async fn range(
@@ -112,14 +107,13 @@ async fn range(
     promql: String,
     (from, to, step): (i64, i64, i64),
 ) -> Result<Vec<(String, Points)>, ApiError> {
-    let params = vec![
+    let mut params = vec![
         ("query", promql),
         ("start", (from / 1000).to_string()),
         ("end", (to / 1000).to_string()),
         ("step", format!("{step}s")),
-        ("extra_label", format!("peer={}", target.peer)),
-        ("extra_label", format!("site={}", target.site)),
     ];
+    params.extend(target.extra_labels());
     let data = vm
         .get("/api/v1/query_range", &params)
         .await

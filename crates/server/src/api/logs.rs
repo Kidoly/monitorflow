@@ -11,22 +11,17 @@
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::Json;
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::access::authorize;
 use super::auth::CurrentUser;
 use super::metrics::{quote, Target};
 use super::{ApiError, ApiState};
 use crate::ingest::journal::SOURCE;
 use crate::vm_query::QueryError;
 
-/// Longest range, as for metrics.
-pub const MAX_RANGE: Duration = Duration::days(31);
-/// Range without `start`.
-pub const DEFAULT_RANGE: Duration = Duration::hours(1);
 /// Lines without `limit`.
 pub const DEFAULT_LIMIT: usize = 200;
 /// Most lines in one answer.
@@ -108,17 +103,7 @@ pub struct Request {
 
 impl Request {
     pub fn check(params: LogParams, now: DateTime<Utc>) -> Result<Self, ApiError> {
-        let end = params.end.unwrap_or(now);
-        let start = params.start.unwrap_or(end - DEFAULT_RANGE);
-        if start >= end {
-            return Err(ApiError::Invalid("start must be before end".into()));
-        }
-        if end - start > MAX_RANGE {
-            return Err(ApiError::Invalid(format!(
-                "range must be at most {} days",
-                MAX_RANGE.num_days()
-            )));
-        }
+        let (start, end) = super::metrics::window(params.start, params.end, now)?;
         let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
         if !(1..=MAX_LIMIT).contains(&limit) {
             return Err(ApiError::Invalid(format!("limit must be 1 to {MAX_LIMIT}")));
@@ -147,11 +132,7 @@ impl Request {
 
 /// The LogsQL stream filter of `target`.
 pub fn stream(target: &Target) -> String {
-    format!(
-        "{{peer={},site={}}}",
-        quote(&target.peer),
-        quote(&target.site)
-    )
+    format!("{{{}}}", target.matchers())
 }
 
 /// The filters of the lines query, without the pipes.
@@ -250,16 +231,7 @@ pub async fn list(
         .map(|Query(p)| p)
         .map_err(|rejection| ApiError::Invalid(rejection.body_text()))?;
     let request = Request::check(params, Utc::now())?;
-    let row: Option<(String, Uuid, String)> = sqlx::query_as(
-        "SELECT s.peer_id, s.site_id, si.name FROM servers s
-         JOIN sites si ON si.id = s.site_id WHERE s.id = $1",
-    )
-    .bind(server)
-    .fetch_optional(&state.pool)
-    .await?;
-    authorize(&user, row.as_ref().map(|r| r.1), false)?;
-    let (peer, _, site) = row.ok_or(ApiError::NotFound)?;
-    let target = Target { peer, site };
+    let target = super::metrics::server_target(&state, &user, server).await?;
     let vl = state
         .logs
         .clone()
@@ -297,6 +269,7 @@ pub async fn list(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
 
     fn target() -> Target {
         Target {
@@ -355,6 +328,11 @@ mod tests {
         }));
         assert!(refused(LogParams {
             start: Some(now() - Duration::days(32)),
+            ..LogParams::default()
+        }));
+        // The earliest date there is, without `start`: refused, no panic.
+        assert!(refused(LogParams {
+            end: Some(DateTime::<Utc>::MIN_UTC),
             ..LogParams::default()
         }));
         assert!(refused(LogParams {
