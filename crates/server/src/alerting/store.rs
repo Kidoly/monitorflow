@@ -1,6 +1,9 @@
 //! Thresholds, incidents and alert states in PostgreSQL (ADR-0017).
 
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
+use monitorflow_common::tls::PeerRole;
 use serde_json::json;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -8,6 +11,8 @@ use uuid::Uuid;
 use super::rules::{resolve, Row, Rule, Rules};
 use super::state::{SeriesState, Transition};
 use super::Severity;
+use crate::dependencies::{self, store::Streams, Holds};
+use crate::grpc::Registry;
 use crate::ingest::validate::METRIC_PREFIX;
 use crate::sensor_config::{Layer, SensorConfigStore, Spec};
 
@@ -117,14 +122,46 @@ fn non_negative(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AlertStore {
     pool: PgPool,
+    /// Who has a stream, for dependencies (ADR-0152); without it, the last
+    /// time each peer was heard from.
+    registry: Option<Registry>,
+}
+
+impl std::fmt::Debug for AlertStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AlertStore").finish_non_exhaustive()
+    }
 }
 
 impl AlertStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            registry: None,
+        }
+    }
+
+    /// Reads who has a stream from `registry`, every instance's streams.
+    pub fn with_registry(mut self, registry: Registry) -> Self {
+        self.registry = Some(registry);
+        self
+    }
+
+    /// What dependencies hold now (ADR-0152).
+    pub async fn holds(&self) -> Result<Holds, sqlx::Error> {
+        let live: Option<HashSet<(PeerRole, String)>> = self.registry.as_ref().map(|registry| {
+            registry
+                .live_all()
+                .into_iter()
+                .map(|p| (p.role, p.id))
+                .collect()
+        });
+        let streams = live.as_ref().map_or(Streams::LastSeen, Streams::Live);
+        let mut conn = self.pool.acquire().await?;
+        dependencies::store::holds(&mut conn, streams).await
     }
 
     /// The thresholds of the agent `peer_id` and the intervals of its

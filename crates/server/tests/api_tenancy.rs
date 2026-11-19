@@ -165,6 +165,8 @@ struct Tenant {
     customer_silence: Uuid,
     /// A weekly maintenance window of the site (ADR-0151).
     window: Uuid,
+    /// The server set behind the relay (ADR-0152).
+    dependency: Uuid,
     /// A viewer of the customer with a contact, on its on-call schedule
     /// (ADR-0081), which has an override.
     member: Uuid,
@@ -352,6 +354,13 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let dependency =
+        one("INSERT INTO dependencies (server_id, parent_relay_id) VALUES ($1, $2) RETURNING id")
+            .bind(server)
+            .bind(relay)
+            .fetch_one(pool)
+            .await
+            .unwrap();
     let member = one(
         "WITH u AS (INSERT INTO users (username) VALUES ($1) RETURNING id),
               r AS (INSERT INTO user_roles (user_id, role, customer_id)
@@ -428,6 +437,7 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         silence,
         customer_silence,
         window,
+        dependency,
         remediation,
         pending,
         campaign,
@@ -2018,6 +2028,51 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         ("DELETE", "/api/maintenance-windows/{id}") => {
             let uri = path.replace("{id}", &b.window.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("GET", "/api/dependencies") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.dependency), "{body}");
+            assert!(!Ctx::mentions(&body, b.dependency), "{body}");
+            assert!(!Ctx::mentions(&body, b.server), "{body}");
+            for query in [
+                format!("server_id={}", b.server),
+                format!("relay_id={}", b.relay),
+            ] {
+                let uri = format!("{path}?{query}");
+                assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            }
+        }
+        ("POST", "/api/dependencies") => {
+            // B's parent, or B's child, as if they did not exist.
+            let body =
+                json!({"parent": {"server_id": b.server}, "children": [{"server_id": a.server}]});
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            let body =
+                json!({"parent": {"relay_id": a.relay}, "children": [{"server_id": b.server}]});
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            let body =
+                json!({"parent": {"relay_id": b.relay}, "children": [{"server_id": a.server}]});
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("DELETE", "/api/dependencies/{id}") => {
+            let uri = path.replace("{id}", &b.dependency.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("GET", "/api/servers/{id}/dependencies") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let uri = path.replace("{id}", &a.server.to_string());
+            let body = ctx.call(method, &uri, None).await.1;
+            assert!(Ctx::mentions(&body, a.dependency), "{body}");
+            assert!(!Ctx::mentions(&body, b.server), "{body}");
+        }
+        ("GET", "/api/relays/{id}/dependencies") => {
+            let uri = path.replace("{id}", &b.relay.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let uri = path.replace("{id}", &a.relay.to_string());
+            let body = ctx.call(method, &uri, None).await.1;
+            assert!(Ctx::mentions(&body, a.server), "{body}");
+            assert!(!Ctx::mentions(&body, b.server), "{body}");
         }
         ("POST", "/api/silences/{id}/end") => {
             for id in [b.silence, b.customer_silence] {
