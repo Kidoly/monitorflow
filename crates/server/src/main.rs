@@ -482,14 +482,14 @@ async fn main() -> anyhow::Result<()> {
     );
     // Threshold engine (ADR-0017): open incidents and pending timers are
     // reloaded before any stream can deliver samples.
+    let registry = Registry::default();
     let alerts = Alerts::start(
-        AlertStore::new(pool.clone()),
+        AlertStore::new(pool.clone()).with_registry(registry.clone()),
         EngineSettings::default(),
         Arc::new(LogNotifier),
     )
     .await
     .context("loading the threshold engine state")?;
-    let registry = Registry::default();
     let sensor_configs = SensorConfigs::spawn(
         SensorConfigStore::new(pool.clone()).with_plugin_grants(ca.clone()),
         registry.clone(),
@@ -520,6 +520,7 @@ async fn main() -> anyhow::Result<()> {
     .context("joining the server instances")?;
     let offline_pool = pool.clone();
     let offline_registry = registry.clone();
+    let dispatcher_registry = registry.clone();
     // Settings of the web interface that apply without a restart (ADR-0069).
     let api_settings = ApiSettings::from_config(&config);
     api_settings
@@ -798,7 +799,8 @@ async fn main() -> anyhow::Result<()> {
         },
         async {
             let dispatcher = notify::Dispatcher::new(notify_pool, config.web_base_url())
-                .with_status_dir(config.server_update_dir.clone());
+                .with_status_dir(config.server_update_dir.clone())
+                .with_registry(dispatcher_registry);
             cluster::lead(cluster.leadership(), stopped.clone(), |until| {
                 dispatcher.clone().run(notify::dispatcher::POLL, until)
             })
