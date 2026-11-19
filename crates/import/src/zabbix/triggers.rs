@@ -441,6 +441,7 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
                 prototype: false,
                 http: None,
                 snmp_oid: None,
+                snmp: Default::default(),
                 template: None,
             },
             macros,
@@ -1074,6 +1075,7 @@ mod tests {
                     prototype: false,
                     http: None,
                     snmp_oid: None,
+                    snmp: Default::default(),
                     template: None,
                 },
                 Item {
@@ -1085,6 +1087,7 @@ mod tests {
                     prototype: false,
                     http: None,
                     snmp_oid: None,
+                    snmp: Default::default(),
                     template: None,
                 },
             ],

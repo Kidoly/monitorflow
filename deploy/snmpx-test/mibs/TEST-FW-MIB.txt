@@ -1,0 +1,41 @@
+-- A made-up MIB for the custom SNMP test (ADR-0157): names for the
+-- objects of the firewall recording. Written for the test; no vendor's.
+TEST-FW-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Gauge32, enterprises FROM SNMPv2-SMI
+    DisplayString FROM SNMPv2-TC;
+
+testFw MODULE-IDENTITY
+    LAST-UPDATED "202611190000Z"
+    ORGANIZATION "MonitorFlow tests"
+    CONTACT-INFO "none"
+    DESCRIPTION  "Objects of the test firewall."
+    ::= { enterprises 12356 101 }
+
+testFwSystem OBJECT IDENTIFIER ::= { testFw 4 1 }
+testFwHa     OBJECT IDENTIFIER ::= { testFw 13 2 1 1 }
+
+testFwVersion OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Firmware version."
+    ::= { testFwSystem 1 }
+
+testFwSessions OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "sessions"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Open sessions."
+    ::= { testFwSystem 8 }
+
+testFwHaRole OBJECT-TYPE
+    SYNTAX      INTEGER { master(1), backup(2), failed(3) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Role of this unit in its cluster."
+    ::= { testFwHa 15 }
+
+END

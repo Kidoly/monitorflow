@@ -2054,3 +2054,123 @@ fn dependencies_follow_the_servers_and_checks_they_name() {
         );
     }
 }
+
+/// Custom SNMP checks (ADR-0157): one check of the device with its
+/// channels, the lookups it comes with, and its channels' rules.
+#[test]
+fn custom_snmp_checks_with_their_lookups_and_rules() {
+    use monitorflow_import::model::{
+        Num, SnmpChannel, SnmpCustom, SnmpLimits, SnmpLookup, SnmpLookupEntry, SnmpState, SnmpValue,
+    };
+    let nas = Host {
+        agentless: true,
+        addresses: vec!["192.0.2.41".into()],
+        ..host("nas", "nas-files", Os::Unknown)
+    };
+    let entry = |value: i64, name: &str, state| SnmpLookupEntry {
+        value: Some(value),
+        max: None,
+        text: None,
+        name: name.into(),
+        state,
+    };
+    let channel = |oid: &str, name: &str| SnmpChannel {
+        oid: oid.into(),
+        name: name.into(),
+        value: SnmpValue::Gauge,
+        unit: None,
+        multiply: None,
+        divide: None,
+        lookup: None,
+        expect: None,
+        limits: None,
+    };
+    let custom = SnmpCustom {
+        table: None,
+        name_column: None,
+        channels: vec![
+            SnmpChannel {
+                divide: Some(Num(10.0)),
+                unit: Some("°C".into()),
+                limits: Some(SnmpLimits {
+                    above: true,
+                    warning: Some(Num(50.0)),
+                    critical: Some(Num(60.0)),
+                }),
+                ..channel("1.3.6.1.4.1.6574.1.2.0", "Temperature")
+            },
+            SnmpChannel {
+                lookup: Some(SnmpLookup {
+                    name: "oid.test.status".into(),
+                    builtin: None,
+                    entries: vec![
+                        entry(1, "Normal", SnmpState::Ok),
+                        entry(2, "Failed", SnmpState::Critical),
+                    ],
+                    otherwise: SnmpState::Warning,
+                }),
+                ..channel("1.3.6.1.4.1.6574.1.1.0", "System status")
+            },
+        ],
+    };
+    let mut item = check("nas", Watch::SnmpCustom(Box::new(custom.clone())), None);
+    item.origin = Origin::new("sensor", "NAS health");
+    let on_agent = check("web", Watch::SnmpCustom(Box::new(custom)), None);
+    let inventory = Inventory {
+        hosts: vec![nas, host("web", "web-01", Os::Debian)],
+        checks: vec![item, on_agent],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let check = by_id(&planned, "check:nas-files:snmp_nas_health");
+    assert_eq!(check.list, List::Approximated, "credentials come after");
+    let Some(Create::Check {
+        kind,
+        params,
+        probe,
+        lookups,
+        ..
+    }) = &check.create
+    else {
+        panic!()
+    };
+    assert_eq!((kind.as_str(), *probe), ("snmp_custom", true));
+    assert_eq!(params["divide1"], json!("10"));
+    assert_eq!(params["name2"], json!("System status"));
+    assert!(!params.contains_key("lookup2"));
+    assert_eq!(
+        (lookups[0].channel, lookups[0].name.as_str()),
+        (2, "oid.test.status")
+    );
+    let rule = |metric: &str| {
+        by_id(&planned, &format!("threshold:nas-files:{metric}"))
+            .create
+            .clone()
+            .unwrap()
+    };
+    let Create::Threshold {
+        comparison,
+        warning,
+        critical,
+        ..
+    } = rule("monitorflow_snmp_nas_health_temperature")
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (comparison.as_str(), warning, critical),
+        (">", Some(50.0), Some(60.0))
+    );
+    let Create::Threshold {
+        comparison,
+        critical,
+        ..
+    } = rule("monitorflow_snmp_nas_health_system_status_state")
+    else {
+        panic!()
+    };
+    assert_eq!((comparison.as_str(), critical), (">=", Some(2.0)));
+    // A server with its agent has no SNMP of its own to read.
+    assert!(planned.items.iter().any(|i| i.list == List::NotMovable
+        && i.note.as_ref().is_some_and(|n| n.code == "snmp_of_agent")));
+}
