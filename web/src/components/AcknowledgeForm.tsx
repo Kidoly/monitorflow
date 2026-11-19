@@ -10,6 +10,7 @@ import { Logo } from "@/components/ui/Logo";
 import { rich, t } from "@/i18n";
 import { type AcknowledgeLink, ApiError, LOGIN_PATH, api, describeError } from "@/lib/api";
 
+import { takeFragmentSecret } from "./fragmentSecret";
 import styles from "./LoginForm.module.css";
 
 type State =
@@ -31,15 +32,10 @@ export function AcknowledgeForm() {
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
-  // Read once: the effect strips the fragment, and may run twice in development.
   const secret = useRef<string | null>(null);
 
   useEffect(() => {
-    if (secret.current === null) {
-      secret.current = window.location.hash.slice(1);
-      // Keep the secret out of the history and of anything copied from the address bar.
-      if (secret.current) window.history.replaceState(null, "", window.location.pathname);
-    }
+    takeFragmentSecret(secret);
     if (!secret.current) {
       setState({ kind: "gone" });
       return;
