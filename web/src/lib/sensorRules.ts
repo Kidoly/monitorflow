@@ -53,7 +53,8 @@ export function perInstance(sensor: EffectiveSensor, instance: string): boolean 
  * included: the exact instance's wins over the one for every instance.
  */
 export function ruleOf(thresholds: EffectiveThreshold[], metric: string, instance: string): EffectiveThreshold | undefined {
-  const ofMetric = thresholds.filter((t) => t.metric === metric);
+  // The plain threshold: richer rules of the same metric are listed on the alerts panel (ADR-0153).
+  const ofMetric = thresholds.filter((t) => t.metric === metric && (t.kind ?? "value") === "value");
   return ofMetric.find((t) => t.instance === instance) ?? ofMetric.find((t) => t.instance === null);
 }
 

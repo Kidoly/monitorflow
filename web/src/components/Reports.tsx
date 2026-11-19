@@ -214,7 +214,8 @@ export function ReportsPage({ children }: { children?: ReactNode }) {
     [key],
   );
   const { data, error, refresh } = usePolledData(fetcher, { intervalMs: REFRESH_MS, enabled: query !== null });
-  const report = data && query && data.from === query.from ? data : null;
+  // The server writes times without milliseconds: compare them as times.
+  const report = data && query && Date.parse(data.from) === Date.parse(query.from) ? data : null;
   const zone = browserTimeZone();
   const language = activeLocale();
   return (

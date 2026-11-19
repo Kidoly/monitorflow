@@ -70,6 +70,14 @@ export const en = {
   "note.device_no_agent": "It becomes a device, which has no agent to measure this.",
   "note.snmp_of_agent": "MonitorFlow polls SNMP on devices; on a server, its agent measures this itself.",
   "note.snmp_credentials": "SNMP credentials are not moved: set them on the device's page, and its SNMP checks start.",
+  "note.vmware_password": "The vCenter password is not moved: set the credentials on the device's page (a Read-only account is enough), and its check starts with the alerts that come with it.",
+  "note.vmware_discovered": "The source found it through its vCenter: it is listed on the vCenter's page, with the vCenter's alerts, and is not added again.",
+  "note.vmware_every_datastore": "MonitorFlow applies this to every datastore of the vCenter, not to one.",
+  "note.vmware_wbem": "MonitorFlow reads the host's hardware sensors through the vCenter API, not WBEM.",
+  "note.vmware_of_agent": "MonitorFlow reads a vCenter or an ESXi host as a device, and this host has an agent.",
+  "note.hyperv_group": "The agent's account must join Hyper-V Administrators on the host; then its Hyper-V check starts.",
+  "note.hyperv_windows": "Hyper-V is read by the agent of a Windows server.",
+  "note.virtual_partial": "MonitorFlow reads the state, processor, memory, storage and snapshots of each virtual machine; traffic per network adapter and storage latency are not measured.",
   "note.builtin_net": "Every server measures the traffic of its network interfaces already.",
   "note.no_equivalent": "MonitorFlow has no check of this kind.",
   "note.expression":
@@ -89,6 +97,24 @@ export const en = {
     "Read from the defaults of the stock template {template}, which the export does not include: export it too if it was changed.",
   "note.zabbix_template_missing":
     "The template {template} is not among the uploaded files: export it too, or connect to the Zabbix API.",
+  "note.zabbix_change":
+    "Zabbix compares the last two values; MonitorFlow compares the change over {seconds} seconds.",
+  "note.zabbix_fit":
+    "Zabbix fits a {fit} trend; MonitorFlow fits a straight line.",
+  "note.zabbix_trend":
+    "Zabbix averages its hourly trends; MonitorFlow averages the values themselves over the same {seconds} seconds.",
+  "note.zabbix_values_window":
+    "Zabbix reads the last {count} values; MonitorFlow reads the last {seconds} seconds, the time they take.",
+  "note.window_rounded":
+    "MonitorFlow reads windows of 1 minute to 1 day; this one is {seconds} seconds.",
+  "note.prometheus_deriv":
+    "Prometheus fits a line to the samples (deriv); MonitorFlow divides the change by the time.",
+  "note.prometheus_compare_window":
+    "Prometheus compares single values; MonitorFlow compares averages over 5 minutes.",
+  "note.prometheus_absent":
+    "Prometheus alerts when no series at all is left (absent); MonitorFlow alerts on each series that stops.",
+  "note.kind_taken":
+    "MonitorFlow keeps one rule of each kind per measure, and moves {kept} on it.",
   "note.zabbix_partial":
     "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
   "note.zabbix_no_measure":
@@ -133,7 +159,10 @@ export const en = {
   "note.prtg_same_port": "Another sensor of this device checks port {port} already.",
   "note.prtg_not_on_device": "It belongs to a probe or a group, not to a device.",
   "note.prtg_paused": "Paused in PRTG with no end: the silence lasts 30 days, the longest MonitorFlow allows.",
-  "note.prtg_paused_by_rule": "Paused by a schedule or a dependency in PRTG, which MonitorFlow does not have.",
+  "note.prtg_paused_by_rule": "Paused by a schedule in PRTG, which MonitorFlow does not have.",
+  "note.dependency_whole_check": "The whole check depends on it: in the source only {trigger} did.",
+  "note.dependency_unmapped": "It depends on {parent}, which is not moved.",
+  "note.dependency_group": "Group {group} depends on it in PRTG: each of its devices does.",
   "note.prtg_paused_sensor": "A paused sensor MonitorFlow has no check for: silencing its whole server would hide more than PRTG did.",
   "note.service_hosts": "MonitorFlow counts each host whose problems the service's tags select as a whole member: {hosts}.",
   "note.service_children": "Child services are flattened: their hosts are members of this service, under its rule.",
@@ -234,6 +263,7 @@ export const en = {
   "kind.server": "Servers",
   "kind.check": "Checks",
   "kind.threshold": "Alerts",
+  "kind.dependency": "Depends on",
   "kind.silence": "Silences",
   "kind.window": "Maintenance windows",
   "kind.service": "Business services",
@@ -244,6 +274,7 @@ export const en = {
   "item.hosts": { one: "{count} server", other: "{count} servers" },
   "item.needsOut": "left out with what it needs",
   "item.silence": "From {from} to {to}: {reason}",
+  "item.dependency": "{child} depends on {parent}",
   "item.silenceChecks": "From {from} to {to}, {checks}: {reason}",
   "item.window": "{rule}: {reason}",
   "item.windowChecks": "{rule}, {checks}: {reason}",
@@ -257,7 +288,10 @@ export const en = {
   "count.server": { one: "{count} server", other: "{count} servers" },
   "count.check": { one: "{count} check", other: "{count} checks" },
   "count.threshold": { one: "{count} alert", other: "{count} alerts" },
+  "count.service": { one: "{count} business service", other: "{count} business services" },
+  "count.dependency": { one: "{count} dependency", other: "{count} dependencies" },
   "count.silence": { one: "{count} silence", other: "{count} silences" },
+  "count.window": { one: "{count} maintenance window", other: "{count} maintenance windows" },
   "count.channel": { one: "{count} channel", other: "{count} channels" },
   "count.builtin": { one: "{count} item", other: "{count} items" },
   "count.other": { one: "{count} item", other: "{count} items" },
@@ -289,7 +323,9 @@ export const en = {
   "field.url": "Address",
   "field.token": "API token",
   "field.alertmanager_url": "Alertmanager address",
+  "field.apitoken": "API token",
   "field.username": "User name",
+  "field.passhash": "Passhash",
   "field.password": "Password",
   "waiting.title": "Waiting for its agent",
   "waiting.note":
@@ -364,6 +400,14 @@ export const fr: Translation<typeof en> = {
   "note.device_no_agent": "Il devient un équipement, sans agent pour mesurer cela.",
   "note.snmp_of_agent": "MonitorFlow interroge SNMP sur les équipements ; sur un serveur, son agent le mesure lui-même.",
   "note.snmp_credentials": "Les identifiants SNMP ne sont pas repris : saisissez-les sur la page de l’équipement et ses contrôles SNMP démarrent.",
+  "note.vmware_password": "Le mot de passe du vCenter n’est pas repris : saisissez les identifiants sur la page de l’équipement (un compte en lecture seule suffit) et son contrôle démarre avec les alertes qui l’accompagnent.",
+  "note.vmware_discovered": "La source l’a trouvé par son vCenter : il est listé sur la page du vCenter, avec les alertes du vCenter, et n’est pas ajouté une seconde fois.",
+  "note.vmware_every_datastore": "MonitorFlow l’applique à toutes les banques de données du vCenter, pas à une seule.",
+  "note.vmware_wbem": "MonitorFlow lit les capteurs matériels de l’hôte par l’API du vCenter, pas par WBEM.",
+  "note.vmware_of_agent": "MonitorFlow lit un vCenter ou un hôte ESXi comme un équipement, et cet hôte a un agent.",
+  "note.hyperv_group": "Le compte de l’agent doit rejoindre les Administrateurs Hyper-V de l’hôte ; son contrôle Hyper-V démarre ensuite.",
+  "note.hyperv_windows": "Hyper-V est lu par l’agent d’un serveur Windows.",
+  "note.virtual_partial": "MonitorFlow lit l’état, le processeur, la mémoire, le stockage et les instantanés de chaque machine virtuelle ; le trafic par carte réseau et la latence du stockage ne sont pas mesurés.",
   "note.builtin_net": "Chaque serveur mesure déjà le trafic de ses interfaces réseau.",
   "note.no_equivalent": "MonitorFlow n’a pas de vérification de ce genre.",
   "note.expression":
@@ -384,6 +428,24 @@ export const fr: Translation<typeof en> = {
     "Lu dans les valeurs par défaut du modèle fourni {template}, absent de l’export : exportez-le aussi s’il a été modifié.",
   "note.zabbix_template_missing":
     "Le modèle {template} n’est pas parmi les fichiers envoyés : exportez-le aussi, ou connectez-vous à l’API de Zabbix.",
+  "note.zabbix_change":
+    "Zabbix compare les deux dernières valeurs, MonitorFlow la variation sur {seconds} secondes.",
+  "note.zabbix_fit":
+    "Zabbix ajuste une tendance {fit}, MonitorFlow une droite.",
+  "note.zabbix_trend":
+    "Zabbix fait la moyenne de ses tendances horaires, MonitorFlow celle des valeurs elles-mêmes sur les mêmes {seconds} secondes.",
+  "note.zabbix_values_window":
+    "Zabbix lit les {count} dernières valeurs, MonitorFlow les {seconds} dernières secondes, le temps qu’elles prennent.",
+  "note.window_rounded":
+    "MonitorFlow lit des fenêtres de 1 minute à 1 jour, celle-ci fait {seconds} secondes.",
+  "note.prometheus_deriv":
+    "Prometheus ajuste une droite aux mesures (deriv), MonitorFlow divise la variation par la durée.",
+  "note.prometheus_compare_window":
+    "Prometheus compare des valeurs isolées, MonitorFlow des moyennes sur 5 minutes.",
+  "note.prometheus_absent":
+    "Prometheus alerte quand il ne reste aucune série (absent), MonitorFlow sur chaque série qui s’arrête.",
+  "note.kind_taken":
+    "MonitorFlow garde une règle de chaque sorte par mesure, et y reprend {kept}.",
   "note.zabbix_partial":
     "Seule la condition {kept} est reprise ; MonitorFlow ne vérifie pas le reste de l’expression.",
   "note.zabbix_no_measure":
@@ -428,7 +490,10 @@ export const fr: Translation<typeof en> = {
   "note.prtg_same_port": "Un autre capteur de cet équipement vérifie déjà le port {port}.",
   "note.prtg_not_on_device": "Il appartient à une sonde ou à un groupe, pas à un équipement.",
   "note.prtg_paused": "En pause dans PRTG sans fin prévue : le silence dure 30 jours, le plus long que MonitorFlow permet.",
-  "note.prtg_paused_by_rule": "En pause dans PRTG par un horaire ou une dépendance, que MonitorFlow n’a pas.",
+  "note.prtg_paused_by_rule": "En pause dans PRTG par un horaire, que MonitorFlow n’a pas.",
+  "note.dependency_whole_check": "Tout le contrôle en dépend : dans la source, seul {trigger} en dépendait.",
+  "note.dependency_unmapped": "Il dépend de {parent}, qui n’est pas repris.",
+  "note.dependency_group": "Le groupe {group} en dépend dans PRTG : chacun de ses équipements aussi.",
   "note.prtg_paused_sensor": "Un capteur en pause sans contrôle équivalent dans MonitorFlow : mettre tout son serveur en silence cacherait plus que PRTG.",
   "note.service_hosts": "MonitorFlow compte chaque hôte dont le service sélectionne les problèmes par ses tags comme un membre entier\u00a0: {hosts}.",
   "note.service_children": "Les services enfants sont aplatis\u00a0: leurs hôtes sont membres de ce service, sous sa règle.",
@@ -528,6 +593,7 @@ export const fr: Translation<typeof en> = {
   "kind.server": "Serveurs",
   "kind.check": "Vérifications",
   "kind.threshold": "Alertes",
+  "kind.dependency": "Dépend de",
   "kind.silence": "Silences",
   "kind.window": "Fenêtres de maintenance",
   "kind.service": "Services métier",
@@ -538,6 +604,7 @@ export const fr: Translation<typeof en> = {
   "item.hosts": { one: "{count} serveur", other: "{count} serveurs" },
   "item.needsOut": "laissé de côté avec ce dont il dépend",
   "item.silence": "Du {from} au {to} : {reason}",
+  "item.dependency": "{child} dépend de {parent}",
   "item.silenceChecks": "Du {from} au {to}, {checks} : {reason}",
   "item.window": "{rule} : {reason}",
   "item.windowChecks": "{rule}, {checks} : {reason}",
@@ -554,7 +621,10 @@ export const fr: Translation<typeof en> = {
     other: "{count} vérifications",
   },
   "count.threshold": { one: "{count} alerte", other: "{count} alertes" },
+  "count.service": { one: "{count} service métier", other: "{count} services métier" },
+  "count.dependency": { one: "{count} dépendance", other: "{count} dépendances" },
   "count.silence": { one: "{count} silence", other: "{count} silences" },
+  "count.window": { one: "{count} fenêtre de maintenance", other: "{count} fenêtres de maintenance" },
   "count.channel": { one: "{count} canal", other: "{count} canaux" },
   "count.builtin": { one: "{count} élément", other: "{count} éléments" },
   "count.other": { one: "{count} élément", other: "{count} éléments" },
@@ -589,7 +659,9 @@ export const fr: Translation<typeof en> = {
   "field.url": "Adresse",
   "field.token": "Jeton d’API",
   "field.alertmanager_url": "Adresse d’Alertmanager",
+  "field.apitoken": "Jeton d’API",
   "field.username": "Nom d’utilisateur",
+  "field.passhash": "Passhash",
   "field.password": "Mot de passe",
   "waiting.title": "En attente de son agent",
   "waiting.note":

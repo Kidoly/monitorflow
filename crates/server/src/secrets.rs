@@ -84,6 +84,8 @@ pub enum Column {
     SnmpCredentials,
     /// The password of a website check (ADR-0150).
     SensorConfigs,
+    /// The password of a vCenter or ESXi host (ADR-0156).
+    VmwareCredentials,
 }
 
 impl Column {
@@ -99,6 +101,7 @@ impl Column {
             Self::ImportRuns => "import_runs.secrets",
             Self::SnmpCredentials => "snmp_credentials.secret",
             Self::SensorConfigs => "sensor_configs.secret",
+            Self::VmwareCredentials => "vmware_credentials.secret",
         }
     }
 

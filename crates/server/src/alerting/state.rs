@@ -90,6 +90,22 @@ impl SeriesState {
         value: f64,
         max_gap_ms: i64,
     ) -> Option<Evaluation> {
+        self.evaluate_gated(rule, at, Some(value), true, max_gap_ms)
+    }
+
+    /// [`Self::evaluate`] for a richer rule (ADR-0153): `value` is the
+    /// number its kind judges, `None` when it cannot be judged yet (the
+    /// timers stay as they are), and `gates` whether every condition
+    /// joined with "and" holds. When one does not, the rule's condition
+    /// does not hold either.
+    pub fn evaluate_gated(
+        &mut self,
+        rule: &Rule,
+        at: i64,
+        value: Option<f64>,
+        gates: bool,
+        max_gap_ms: i64,
+    ) -> Option<Evaluation> {
         let timers = (self.warning_since, self.critical_since);
         if let Some(last) = self.last_at {
             if at <= last {
@@ -101,6 +117,28 @@ impl SeriesState {
             }
         }
         self.last_at = Some(at);
+        let transition = value.and_then(|value| self.judge(rule, at, value, gates));
+        Some(Evaluation {
+            transition,
+            timers_changed: timers != (self.warning_since, self.critical_since),
+        })
+    }
+
+    /// Judges a `nodata` rule on the server's clock: `silence_s` seconds
+    /// since the series' last sample arrived, at `now`. Never ignored, and
+    /// no gap: the silence is the measure.
+    pub fn evaluate_silence(&mut self, rule: &Rule, now: i64, silence_s: f64) -> Evaluation {
+        let timers = (self.warning_since, self.critical_since);
+        self.last_at = Some(self.last_at.map_or(now, |last| last.max(now)));
+        let transition = self.judge(rule, now, silence_s, true);
+        Evaluation {
+            transition,
+            timers_changed: timers != (self.warning_since, self.critical_since),
+        }
+    }
+
+    fn judge(&mut self, rule: &Rule, at: i64, value: f64, gates: bool) -> Option<Transition> {
+        let comparison = rule.judged();
         let mut target = None;
         for severity in [Severity::Warning, Severity::Critical] {
             let firing = self.firing;
@@ -109,23 +147,20 @@ impl SeriesState {
                 *since = None;
                 continue;
             };
-            if rule.comparison.holds(value, threshold) {
+            if gates && comparison.holds(value, threshold) {
                 since.get_or_insert(at);
             } else {
                 *since = None;
             }
             let matured = since.is_some_and(|s| at - s >= rule.duration_ms());
-            let held = firing >= Some(severity)
-                && !rule.comparison.recovered(value, threshold, rule.hysteresis);
+            let held = gates
+                && firing >= Some(severity)
+                && !comparison.recovered(value, threshold, rule.hysteresis);
             if matured || held {
                 target = Some(severity);
             }
         }
-        let transition = self.move_to(target);
-        Some(Evaluation {
-            transition,
-            timers_changed: timers != (self.warning_since, self.critical_since),
-        })
+        self.move_to(target)
     }
 
     /// Resolves an open incident whose threshold was removed or muted, and
@@ -151,7 +186,7 @@ impl SeriesState {
 
 #[cfg(test)]
 mod tests {
-    use super::super::rules::Comparison;
+    use super::super::rules::{Comparison, Kind};
     use super::*;
     use Severity::{Critical, Warning};
 
@@ -168,6 +203,7 @@ mod tests {
             critical: Some(0.95),
             duration_s: 300,
             hysteresis,
+            ..Rule::default()
         }
     }
 
@@ -498,5 +534,108 @@ mod tests {
         assert_eq!(state.clear(), None);
         assert_eq!(Transition::Resolved { from: Critical }.severity(), None);
         assert_eq!(Transition::Opened(Warning).kind(), "opened");
+    }
+
+    #[test]
+    fn gates_that_do_not_hold_stop_timers_and_resolve() {
+        let rule = disk(0.0);
+        let mut state = SeriesState::default();
+        let eval = |state: &mut SeriesState, t: i64, v: Option<f64>, gates: bool| {
+            state
+                .evaluate_gated(&rule, t * S, v, gates, GAP)
+                .and_then(|e| e.transition)
+        };
+        assert_eq!(eval(&mut state, 0, Some(0.9), false), None);
+        assert_eq!(state.warning_since, None);
+        assert_eq!(eval(&mut state, 60, Some(0.9), true), None);
+        assert_eq!(
+            eval(&mut state, 360, Some(0.9), true),
+            Some(Transition::Opened(Warning))
+        );
+        // A sample that cannot be judged changes nothing.
+        assert_eq!(eval(&mut state, 420, None, true), None);
+        assert_eq!(state.firing, Some(Warning));
+        assert_eq!(
+            eval(&mut state, 480, Some(0.9), false),
+            Some(Transition::Resolved { from: Warning })
+        );
+    }
+
+    #[test]
+    fn forecasts_alarm_on_little_time_left() {
+        let rule = Rule {
+            kind: Kind::Forecast,
+            comparison: Comparison::Ge,
+            warning: Some(3.0 * 86_400.0),
+            critical: Some(86_400.0),
+            hysteresis: 3_600.0,
+            target: Some(1.0),
+            window_s: 86_400,
+            ..Rule::default()
+        };
+        let mut state = SeriesState::default();
+        let day = 86_400.0;
+        let transitions = run(
+            &mut state,
+            &rule,
+            &[
+                (0, 4.0 * day),
+                (60, 2.5 * day),
+                (120, 0.5 * day),
+                (180, 3.02 * day),
+                (240, 5.0 * day),
+            ],
+        );
+        assert_eq!(
+            transitions,
+            [
+                None,
+                Some(Transition::Opened(Warning)),
+                Some(Transition::Escalated {
+                    from: Warning,
+                    to: Critical
+                }),
+                // Within the hour of hysteresis: still a warning.
+                Some(Transition::Deescalated {
+                    from: Critical,
+                    to: Warning
+                }),
+                Some(Transition::Resolved { from: Warning }),
+            ]
+        );
+    }
+
+    #[test]
+    fn silence_opens_on_the_server_clock_and_a_sample_resolves() {
+        let rule = Rule {
+            kind: Kind::NoData,
+            warning: Some(300.0),
+            critical: Some(900.0),
+            ..Rule::default()
+        };
+        let mut state = SeriesState::default();
+        assert_eq!(
+            state.evaluate_silence(&rule, 100 * S, 100.0).transition,
+            None
+        );
+        assert_eq!(
+            state.evaluate_silence(&rule, 400 * S, 301.0).transition,
+            Some(Transition::Opened(Warning))
+        );
+        assert_eq!(
+            state.evaluate_silence(&rule, 1_000 * S, 901.0).transition,
+            Some(Transition::Escalated {
+                from: Warning,
+                to: Critical
+            })
+        );
+        // A sample arriving earlier on the clock than the last sweep still
+        // counts: silence is never out of order.
+        assert_eq!(
+            state.evaluate_silence(&rule, 990 * S, 0.0).transition,
+            Some(Transition::Resolved { from: Critical })
+        );
+        assert_eq!(state.last_at, Some(1_000 * S));
+        assert!(state.is_ok());
     }
 }
