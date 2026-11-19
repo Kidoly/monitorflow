@@ -87,7 +87,8 @@ pub enum Status {
 }
 
 /// The one status of a server on the fleet's pages, worst first
-/// (ADR-0130): a silence wins, then being offline, then the worst open
+/// (ADR-0130): a silence wins, then being unreachable behind a parent that
+/// is down (ADR-0152), then being offline, then the worst open
 /// incident nobody acknowledged; a server whose open incidents are all
 /// acknowledged is `acknowledged`, the rest `ok`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
@@ -101,6 +102,8 @@ pub enum ServerState {
     Ok,
     /// Made by an import, waiting for its agent (ADR-0146).
     Waiting,
+    /// Behind a parent that is down (ADR-0152): what it shows is stale.
+    Unreachable,
 }
 
 impl ServerState {
@@ -194,6 +197,9 @@ pub struct ServerView {
     /// Made by an import and waiting for its agent, which takes it over
     /// by enrolling with `peer_id` (ADR-0146).
     pub awaiting_agent: bool,
+    /// While a parent it depends on is down (ADR-0152): which, and its
+    /// incident; `null` otherwise.
+    pub unreachable: Option<super::dependencies::UnreachableNote>,
 }
 
 /// Body of `GET /api/servers/{id}`: the listing row plus the agent's
@@ -352,6 +358,8 @@ pub struct ServerSummary {
     pub ok: u64,
     /// Made by an import and waiting for their agent (ADR-0146).
     pub waiting: u64,
+    /// Behind a parent that is down (ADR-0152).
+    pub unreachable: u64,
     pub total: u64,
 }
 
@@ -365,6 +373,7 @@ impl ServerSummary {
             ServerState::Offline => &mut self.offline,
             ServerState::Ok => &mut self.ok,
             ServerState::Waiting => &mut self.waiting,
+            ServerState::Unreachable => &mut self.unreachable,
         };
         *count += 1;
         self.total += 1;
@@ -373,6 +382,7 @@ impl ServerSummary {
 
 #[derive(sqlx::FromRow)]
 struct SummaryRow {
+    id: Uuid,
     peer_id: String,
     awaiting_agent: bool,
     device: bool,
@@ -396,7 +406,7 @@ pub async fn summary(
     }
     let (all_sites, sites) = user.readable_sites().bind();
     let rows: Vec<SummaryRow> = sqlx::query_as(concat!(
-        "SELECT s.peer_id, s.awaiting_agent, s.kind = 'device' AS device,
+        "SELECT s.id, s.peer_id, s.awaiting_agent, s.kind = 'device' AS device,
                 silenced_until(s.id, NULL, s.site_id, si.customer_id) IS NOT NULL AS silenced,
                 o.open_incidents, o.unacknowledged, o.unacknowledged_critical
          FROM servers s
@@ -414,10 +424,18 @@ pub async fn summary(
     .bind(params.customer_id)
     .fetch_all(&state.pool)
     .await?;
+    let holds = {
+        let mut conn = state.pool.acquire().await?;
+        super::dependencies::holds(&state, &mut conn).await?
+    };
     let mut summary = ServerSummary::default();
     for row in rows {
         if row.awaiting_agent {
             summary.add(ServerState::Waiting);
+            continue;
+        }
+        if !row.silenced && super::dependencies::unreachable(&holds, row.id) {
+            summary.add(ServerState::Unreachable);
             continue;
         }
         // A device is never offline: its checks say what is wrong.
@@ -516,10 +534,11 @@ pub async fn list(
         None
     };
 
-    let servers = rows
+    let mut servers: Vec<ServerView> = rows
         .into_iter()
         .map(|row| ServerView::new(&state, row))
         .collect();
+    super::dependencies::mark_unreachable(&state, &mut servers).await?;
     Ok(Json(ServerList {
         servers,
         next_cursor,
@@ -546,8 +565,11 @@ pub async fn detail(
     let row = row.ok_or(ApiError::NotFound)?;
     let certificate = latest_certificate(&state.pool, PeerRole::Agent, &row.peer_id).await?;
     let ai_commands_change = super::ai_commands::last_change(&state.pool, row.id).await?;
+    let mut server = [ServerView::new(&state, row)];
+    super::dependencies::mark_unreachable(&state, &mut server).await?;
+    let [server] = server;
     Ok(Json(ServerDetail {
-        server: ServerView::new(&state, row),
+        server,
         certificate,
         ai_commands_change,
     }))
@@ -687,6 +709,7 @@ impl ServerView {
                 }),
             silenced_until: row.silenced_until,
             cert_not_after: row.cert_not_after,
+            unreachable: None,
         }
     }
 }
