@@ -2379,6 +2379,28 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "version": "v2c", "community": "c" }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        // Custom SNMP checks (ADR-0157): B's device does not exist for A.
+        ("GET", "/api/devices/{id}/snmp-checks")
+        | ("POST", "/api/devices/{id}/snmp-checks")
+        | ("PUT", "/api/devices/{id}/snmp-checks/{name}")
+        | ("DELETE", "/api/devices/{id}/snmp-checks/{name}")
+        | ("POST", "/api/devices/{id}/snmp/test")
+        | ("POST", "/api/devices/{id}/snmp/read") => {
+            let uri = path
+                .replace("{id}", &b.server.to_string())
+                .replace("{name}", "snmp_x");
+            let check = json!({"name": "snmp_x", "channels": [{"oid": "1.3.6.1.2.1.1.3.0", "name": "Uptime"}]});
+            let body = if path.ends_with("/read") {
+                json!({"oids": ["1.3.6.1.2.1.1.3.0"]})
+            } else {
+                check
+            };
+            assert_eq!(
+                ctx.status(method, &uri, Some(body)).await,
+                not_found,
+                "{uri}"
+            );
+        }
         // Network scans (ADR-0154): another customer's scans are not
         // listed nor found, and none can be made in its site.
         ("GET", "/api/network-scans") => {

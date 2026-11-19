@@ -54,6 +54,10 @@
 //! | POST | `/api/virtual-objects/{id}/install-agent` | admin | 201 [`servers::ServerView`]: a server waiting for its agent, named after the virtual machine and tied to it; audited |
 //! | POST | `/api/devices/vmware/test` | modify | body [`devices::VmwareTestRequest`]; 200 [`devices::VmwareTested`]: what a vCenter or ESXi host answers, its certificate, and the login when it is trusted |
 //! | GET, PUT, DELETE | `/api/devices/{id}/vmware` | read, modify | [`crate::vmware::View`] without the password; body [`crate::vmware::CredentialsRequest`]; audited |
+//! | GET, POST | `/api/devices/{id}/snmp-checks` | read, modify | [`snmp_checks::CheckList`]; body [`snmp_checks::CheckRequest`], 201 [`snmp_checks::CheckView`]: a custom SNMP check with its channels' limits (ADR-0157); audited |
+//! | PUT, DELETE | `/api/devices/{id}/snmp-checks/{name}` | modify | the same body; [`snmp_checks::CheckView`]; 204; audited |
+//! | POST | `/api/devices/{id}/snmp/read` | modify | body [`snmp_checks::ReadRequest`]; [`snmp_checks::ReadResult`]: Test and Browse from the device's probe |
+//! | POST | `/api/devices/{id}/snmp/test` | modify | body [`snmp_checks::CheckRequest`]; [`snmp_checks::Tested`]: what each channel would write |
 //! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
 //! | GET, POST | `/api/network-scans` | read, modify | [`network_scans::ScanList`] (`?site_id=`); body [`network_scans::ScanRequest`], 201 [`network_scans::ScanView`], queued at once; audited (ADR-0154) |
 //! | GET, PUT, DELETE | `/api/network-scans/{id}` | read, modify | [`network_scans::ScanView`]; body [`network_scans::ScanUpdate`]; 204; audited |
@@ -799,6 +803,7 @@ pub mod settings;
 pub mod setup;
 pub mod silences;
 pub mod sites;
+pub mod snmp_checks;
 pub mod snmp_library;
 pub mod sources;
 pub mod sso_login;
@@ -1319,6 +1324,16 @@ pub fn router(state: ApiState) -> Router {
                 .put(devices::set_snmp)
                 .delete(devices::delete_snmp),
         )
+        .route(
+            "/api/devices/{id}/snmp-checks",
+            get(snmp_checks::list).post(snmp_checks::create),
+        )
+        .route(
+            "/api/devices/{id}/snmp-checks/{name}",
+            put(snmp_checks::update).delete(snmp_checks::remove),
+        )
+        .route("/api/devices/{id}/snmp/read", post(snmp_checks::read))
+        .route("/api/devices/{id}/snmp/test", post(snmp_checks::test))
         .route("/api/sites/{id}/probes", get(devices::probes))
         .route(
             "/api/network-scans",
