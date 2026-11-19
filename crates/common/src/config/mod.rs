@@ -250,7 +250,10 @@ impl Check<'_> {
         GrpcUrl::parse(value).map(drop).map_err(|reason| {
             self.fail(
                 key,
-                format!("must be an https URL like https://host:7443 ({reason}), got `{value}`"),
+                format!(
+                    "must be an https URL like https://host:7443 ({reason}), got `{}`",
+                    redact_url_password(value)
+                ),
             )
         })
     }
@@ -258,8 +261,10 @@ impl Check<'_> {
     /// HTTP endpoints of storage backends; `http` is allowed for development.
     pub fn http_url(&self, key: &str, value: &str) -> Result<(), ConfigError> {
         self.required(key, value)?;
-        self.url(key, value, &["http", "https"])
-            .map_err(|_| self.fail(key, format!("must be an http or https URL, got `{value}`")))
+        self.url(key, value, &["http", "https"]).map_err(|_| {
+            let value = redact_url_password(value);
+            self.fail(key, format!("must be an http or https URL, got `{value}`"))
+        })
     }
 
     fn url(&self, key: &str, value: &str, schemes: &[&str]) -> Result<(), ConfigError> {

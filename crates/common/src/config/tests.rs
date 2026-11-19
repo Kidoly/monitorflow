@@ -691,6 +691,14 @@ fn storage_urls_accept_http_but_not_other_schemes() {
         msg.contains("key `victoriametrics_url`: must be an http or https URL"),
         "{msg}"
     );
+    // A store URL may carry credentials: the error, which is logged, does
+    // not.
+    let msg = err::<ServerConfig>(
+        &format!("{SERVER_MIN}\nvictoriametrics_url = \"ftp://vm:hunter4@vm\""),
+        &[],
+    );
+    assert!(msg.contains("ftp://vm:[redacted]@vm"), "{msg}");
+    assert!(!msg.contains("hunter4"), "{msg}");
 }
 
 #[test]

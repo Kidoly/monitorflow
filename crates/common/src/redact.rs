@@ -40,7 +40,8 @@ impl FromStr for Secret {
 }
 
 /// Returns `url` with the password in its userinfo and any `password=`
-/// query parameter replaced by [`REDACTED`].
+/// or `sslpassword=` (libpq's client key passphrase) query parameter
+/// replaced by [`REDACTED`].
 pub fn redact_url_password(url: &str) -> String {
     let mut out = url.to_owned();
     if let Some(scheme_end) = out.find("://") {
@@ -60,7 +61,12 @@ pub fn redact_url_password(url: &str) -> String {
         let query = query
             .split('&')
             .map(|pair| match pair.split_once('=') {
-                Some((k, _)) if k.eq_ignore_ascii_case("password") => format!("{k}={REDACTED}"),
+                Some((k, _))
+                    if k.eq_ignore_ascii_case("password")
+                        || k.eq_ignore_ascii_case("sslpassword") =>
+                {
+                    format!("{k}={REDACTED}")
+                }
                 _ => pair.to_owned(),
             })
             .collect::<Vec<_>>()
@@ -94,6 +100,10 @@ mod tests {
         assert_eq!(
             redact_url_password("postgres://db/mf?user=mf&password=hunter2&sslmode=require"),
             "postgres://db/mf?user=mf&password=[redacted]&sslmode=require"
+        );
+        assert_eq!(
+            redact_url_password("postgres://db/mf?sslkey=k.pem&sslpassword=hunter2"),
+            "postgres://db/mf?sslkey=k.pem&sslpassword=[redacted]"
         );
     }
 
