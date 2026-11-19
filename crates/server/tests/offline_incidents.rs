@@ -198,6 +198,12 @@ db_tests! {
         assert!(open_offline(&pool).await.is_empty());
 
         // Still not back five minutes later: the agent's own incident.
+        // The relay's return is that long ago for its incident too, which
+        // dependencies read (ADR-0152).
+        sqlx::query("UPDATE incidents SET resolved_at = resolved_at - interval '6 minutes'")
+            .execute(&pool)
+            .await
+            .unwrap();
         let long_ago: HashMap<_, _> = online(&up)
             .into_iter()
             .map(|(peer, at)| (peer, at - Duration::minutes(6)))

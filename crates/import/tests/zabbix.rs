@@ -477,6 +477,51 @@ async fn the_nginx_template_is_missing_from_a_hosts_export() {
 }
 
 #[tokio::test]
+async fn trigger_dependencies_become_dependencies() {
+    use monitorflow_import::model::DependencyEnd;
+
+    let inventory = read(vec![fixture("7.0", "dependencies.yaml")]).await;
+    let pairs: Vec<(&DependencyEnd, &DependencyEnd, Option<&str>)> = inventory
+        .dependencies
+        .iter()
+        .map(|d| (&d.child, &d.parent, note(&d.fidelity)))
+        .collect();
+    let https = Watch::Port {
+        address: None,
+        port: 443,
+    };
+    // The agent's trigger: the server as a whole behind the switch, which
+    // its ping says is down.
+    assert!(pairs.contains(&(
+        &DependencyEnd::host("app-01"),
+        &DependencyEnd::host("sw-core"),
+        None
+    )));
+    // A check its agent runs, on that agent: nothing to add, the agent
+    // being down already stops it.
+    assert!(!pairs
+        .iter()
+        .any(|(_, parent, _)| **parent == DependencyEnd::host("app-01")));
+    // Two triggers on the HTTPS check: the whole check depends, said so.
+    assert!(pairs.contains(&(
+        &DependencyEnd::check("app-01", https.clone()),
+        &DependencyEnd::host("sw-core"),
+        Some("dependency_whole_check")
+    )));
+    assert_eq!(
+        inventory.dependencies.len(),
+        2,
+        "{:#?}",
+        inventory.dependencies
+    );
+    // A trigger that is not exported.
+    assert_eq!(
+        why(&inventory, "trigger", "Nginx is not running"),
+        "dependency_unmapped"
+    );
+}
+
+#[tokio::test]
 async fn files_that_are_not_exports_are_refused() {
     let error = Zabbix
         .read(

@@ -99,6 +99,10 @@
 //! | POST | `/api/maintenance-windows` | modify the site | body [`maintenance_windows::WindowRequest`]; 201 [`maintenance_windows::WindowView`]; audited |
 //! | PUT | `/api/maintenance-windows/{id}` | modify the sites | the same body; [`maintenance_windows::WindowView`]; audited |
 //! | DELETE | `/api/maintenance-windows/{id}` | modify the site | 204; the running window ends; audited |
+//! | GET | `/api/dependencies` | any role | `server_id` or `relay_id`; [`dependencies::DependencyList`]: what is behind what (ADR-0152) |
+//! | POST | `/api/dependencies` | modify every end's site | body [`dependencies::DependencyRequest`]: children behind one parent, all or none; 201 [`dependencies::DependencyList`]; 409 on a loop or a duplicate; audited |
+//! | DELETE | `/api/dependencies/{id}` | modify both ends' sites | 204; audited |
+//! | GET | `/api/servers/{id}/dependencies`, `/api/relays/{id}/dependencies` | any role | [`dependencies::PageView`]: parents with automatic ones, children, what is behind, suggestions, and why it is unreachable |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
@@ -698,6 +702,7 @@ pub mod commands;
 pub mod customers;
 pub mod dashboard_data;
 pub mod dashboards;
+pub mod dependencies;
 pub mod devices;
 pub mod display;
 mod error;
@@ -725,6 +730,7 @@ pub mod openapi_campaigns;
 mod openapi_checks;
 pub mod openapi_core;
 mod openapi_dashboards;
+mod openapi_dependencies;
 mod openapi_devices;
 mod openapi_imports;
 mod openapi_maintenance;
@@ -1114,6 +1120,19 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/maintenance-windows/{id}",
             put(maintenance_windows::update).delete(maintenance_windows::remove),
+        )
+        .route(
+            "/api/dependencies",
+            get(dependencies::list).post(dependencies::create),
+        )
+        .route("/api/dependencies/{id}", delete(dependencies::remove))
+        .route(
+            "/api/servers/{id}/dependencies",
+            get(dependencies::server_page),
+        )
+        .route(
+            "/api/relays/{id}/dependencies",
+            get(dependencies::relay_page),
         )
         .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
         .route("/api/sites/{id}/check-interval", put(check_interval::site))

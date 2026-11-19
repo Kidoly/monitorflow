@@ -356,13 +356,20 @@ fn save_error(error: snmp::SaveError) -> ApiError {
 }
 
 /// Adds the checks of `template`'s groups, run by `by` every minute, and
-/// its thresholds; what the device has already stays.
+/// its thresholds; what the device has already stays. The template is
+/// recorded on the device, to suggest switches, routers and firewalls as
+/// parents (ADR-0152).
 pub async fn add_template(
     db: &mut PgConnection,
     device: Uuid,
     template: &snmp::Template,
     by: &RunBy,
 ) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE servers SET device_template = $2 WHERE id = $1")
+        .bind(device)
+        .bind(template.key)
+        .execute(&mut *db)
+        .await?;
     for group in template.groups {
         sqlx::query(
             "INSERT INTO sensor_configs (server_id, kind, name, instance, interval_ms, params, probe, probe_relay_id)
