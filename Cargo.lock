@@ -2011,6 +2011,9 @@ dependencies = [
  "async-snmp",
  "async-trait",
  "monitorflow-sensors",
+ "regex",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

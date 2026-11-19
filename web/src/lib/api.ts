@@ -829,7 +829,7 @@ export interface Virtualization {
 
 /** SNMP credentials as sent; a secret left out keeps the stored one while the version stays. */
 export interface SnmpCredentialsRequest {
-  version: "v2c" | "v3";
+  version: "v1" | "v2c" | "v3";
   port?: number;
   community?: string;
   user?: string;
@@ -841,7 +841,7 @@ export interface SnmpCredentialsRequest {
 
 /** A device's SNMP credentials as the API shows them: never a secret. */
 export interface SnmpCredentials {
-  version: "v2c" | "v3";
+  version: "v1" | "v2c" | "v3";
   port: number;
   user: string | null;
   auth_protocol: string | null;
@@ -850,6 +850,175 @@ export interface SnmpCredentials {
   auth_password_set: boolean;
   priv_password_set: boolean;
   updated_at: string;
+}
+
+/** The state a lookup entry gives (ADR-0157). */
+export type SnmpState = "ok" | "warning" | "critical";
+
+/** One entry of a lookup: an integer, a range from `value` to `max`, or a text. */
+export interface SnmpLookupEntry {
+  value?: number;
+  max?: number;
+  text?: string;
+  name: string;
+  state: SnmpState;
+}
+
+/** Names and states for the values of an enumerated object, built in or a customer's own. */
+export interface SnmpLookup {
+  id: string;
+  builtin: boolean;
+  customer_id: string | null;
+  name: string;
+  entries: SnmpLookupEntry[];
+  otherwise: SnmpState;
+  used_by: number;
+  updated_at: string | null;
+  can_change: boolean;
+}
+
+export interface SnmpLookupRequest {
+  customer_id?: string;
+  name: string;
+  entries: SnmpLookupEntry[];
+  otherwise?: SnmpState;
+}
+
+/** An uploaded MIB module. */
+export interface SnmpMib {
+  id: string;
+  customer_id: string;
+  module: string;
+  file_name: string;
+  objects: number;
+  uploaded_at: string;
+  can_change: boolean;
+}
+
+export interface SnmpOfferedLookup {
+  name: string;
+  module: string;
+  entries: SnmpLookupEntry[];
+}
+
+/** What a channel reading an object should be. */
+export interface SnmpSuggestion {
+  type: SnmpValueType;
+  unit: string;
+  multiply: number;
+  divide: number;
+  lookup: string | null;
+  table: string | null;
+  name_column: string | null;
+}
+
+/** An object the library or a MIB names. */
+export interface SnmpObject {
+  name: string;
+  module: string;
+  source: "library" | "mib";
+  oid: string;
+  kind: "node" | "scalar" | "table" | "entry" | "column" | "notification";
+  syntax: string | null;
+  enumeration: [number, string][];
+  units: string | null;
+  description: string;
+  suggestion: SnmpSuggestion;
+}
+
+export type SnmpValueType = "gauge" | "counter" | "text";
+
+/** A channel's limits: an ordinary threshold of the device. */
+export interface SnmpLimits {
+  comparison: string;
+  warning: number | null;
+  critical: number | null;
+  duration_s: number;
+}
+
+export interface SnmpChannelRequest {
+  oid: string;
+  name: string;
+  key?: string;
+  type?: SnmpValueType;
+  unit?: string;
+  multiply?: number;
+  divide?: number;
+  lookup?: string;
+  match?: string;
+  expect?: string;
+  severity?: "warning" | "critical";
+  limits?: SnmpLimits | null;
+}
+
+export interface SnmpCheckRequest {
+  name: string;
+  probe?: string;
+  interval_ms?: number;
+  enabled?: boolean;
+  table?: string;
+  name_column?: string;
+  channels: SnmpChannelRequest[];
+}
+
+export interface SnmpChannelValue {
+  instance: string;
+  value: number | null;
+  state: number | null;
+  text: string | null;
+  at: string | null;
+}
+
+export interface SnmpChannel extends SnmpChannelRequest {
+  key: string;
+  metric: string;
+  state_metric: string | null;
+  values: SnmpChannelValue[];
+}
+
+/** A custom SNMP check of a device (ADR-0157). */
+export interface SnmpCheck {
+  entry_id: string;
+  name: string;
+  instance: string;
+  probe: string | null;
+  probe_relay_id: string | null;
+  interval_ms: number;
+  enabled: boolean;
+  table: string | null;
+  name_column: string | null;
+  channels: SnmpChannel[];
+}
+
+export interface SnmpReadObject {
+  oid: string;
+  name: string | null;
+  type: string;
+  value: string;
+}
+
+export interface SnmpRead {
+  probe: string;
+  objects: SnmpReadObject[];
+  cut: boolean;
+}
+
+export interface SnmpTestedChannel {
+  key: string;
+  name: string;
+  oid: string;
+  type: string | null;
+  raw: string | null;
+  value: number | null;
+  state: number | null;
+  text: string | null;
+  note: string | null;
+}
+
+export interface SnmpTested {
+  probe: string;
+  rows: { instance: string; channels: SnmpTestedChannel[] }[];
+  cut: boolean;
 }
 
 /** A kind of SNMP device (ADR-0149). */
@@ -4561,6 +4730,47 @@ export const api = {
     request<SnmpCredentials>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "PUT", body }),
 
   deleteDeviceSnmp: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "DELETE" }),
+
+  /** A device's custom SNMP checks, their channels' limits and last values (ADR-0157). */
+  snmpChecks: (id: string, signal?: AbortSignal) =>
+    request<{ checks: SnmpCheck[] }>(`/api/devices/${encodeURIComponent(id)}/snmp-checks`, { signal }),
+
+  createSnmpCheck: (id: string, body: SnmpCheckRequest) =>
+    request<SnmpCheck>(`/api/devices/${encodeURIComponent(id)}/snmp-checks`, { method: "POST", body }),
+
+  updateSnmpCheck: (id: string, name: string, body: SnmpCheckRequest) =>
+    request<SnmpCheck>(`/api/devices/${encodeURIComponent(id)}/snmp-checks/${encodeURIComponent(name)}`, { method: "PUT", body }),
+
+  deleteSnmpCheck: (id: string, name: string) =>
+    request<void>(`/api/devices/${encodeURIComponent(id)}/snmp-checks/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  /** Test and Browse: reads OIDs or walks a subtree from the device's probe. */
+  readSnmp: (id: string, body: { oids?: string[]; walk?: string; max?: number; probe?: string }) =>
+    request<SnmpRead>(`/api/devices/${encodeURIComponent(id)}/snmp/read`, { method: "POST", body }),
+
+  /** What each channel of a check would write, read once from its probe. */
+  testSnmpCheck: (id: string, body: SnmpCheckRequest) =>
+    request<SnmpTested>(`/api/devices/${encodeURIComponent(id)}/snmp/test`, { method: "POST", body }),
+
+  snmpLookups: (signal?: AbortSignal) => request<{ lookups: SnmpLookup[] }>("/api/snmp-lookups", { signal }),
+
+  createSnmpLookup: (body: SnmpLookupRequest) => request<SnmpLookup>("/api/snmp-lookups", { method: "POST", body }),
+
+  updateSnmpLookup: (id: string, body: SnmpLookupRequest) =>
+    request<SnmpLookup>(`/api/snmp-lookups/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteSnmpLookup: (id: string) => request<void>(`/api/snmp-lookups/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  snmpMibs: (signal?: AbortSignal) => request<{ mibs: SnmpMib[] }>("/api/snmp-mibs", { signal }),
+
+  uploadSnmpMibs: (body: { customer_id?: string; files: { name: string; text: string }[] }) =>
+    request<{ mibs: SnmpMib[]; offered_lookups: SnmpOfferedLookup[] }>("/api/snmp-mibs", { method: "POST", body }),
+
+  deleteSnmpMib: (id: string) => request<void>(`/api/snmp-mibs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Objects of the library and the MIBs whose name or OID matches `q`. */
+  snmpObjects: (q: string, signal?: AbortSignal) =>
+    request<{ objects: SnmpObject[]; names: Record<string, string> }>(`/api/snmp-objects?q=${encodeURIComponent(q)}`, { signal }),
 
   /** What a vCenter or ESXi host answers, from its probe; logs in only once its certificate is trusted (ADR-0156). */
   testVmware: (body: { site_id: string; address: string; probe?: string; vmware: VmwareCredentialsRequest }) =>

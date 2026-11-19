@@ -100,12 +100,29 @@ fn bad_parameters_are_refused_without_quoting_secrets() {
             "{error}"
         );
     }
+    // SNMPv1 takes a community, like v2c (ADR-0157).
+    assert_eq!(
+        parse(&params(&[
+            ("host", "x"),
+            ("version", "v1"),
+            ("community", "c")
+        ]))
+        .unwrap()
+        .credentials,
+        Credentials::V1 {
+            community: "c".into()
+        }
+    );
+    assert!(parse(&params(&[("host", "x"), ("version", "v1")]))
+        .unwrap_err()
+        .contains("needs a `community`"));
     assert!(parse(&params(&[
         ("host", "x"),
-        ("version", "v1"),
+        ("version", "v4"),
         ("community", "c")
     ]))
-    .is_err());
+    .unwrap_err()
+    .contains("`v1`, `v2c` or `v3`"));
 }
 
 fn ifs(rows: &[(u32, u32, Val)]) -> mibs::Table {

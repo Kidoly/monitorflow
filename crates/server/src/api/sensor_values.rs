@@ -93,6 +93,12 @@ fn primary(sensor: &EffectiveSensor) -> (String, Option<String>, Rollup) {
             _ => (Some("up"), None, Rollup::Min),
         },
         "log" | "eventlog" => (Some("matches"), None, Rollup::Max),
+        // A custom check stands for its first channel (ADR-0157).
+        "snmp_custom" => match crate::snmp_custom::primary_suffix(&sensor.params) {
+            Some((suffix, true)) => return primary_named(sensor, &suffix, Rollup::Max),
+            Some((suffix, false)) => return primary_named(sensor, &suffix, Rollup::Last),
+            None => (None, None, Rollup::Last),
+        },
         "script" => (Some("status"), None, Rollup::Max),
         _ => (None, None, Rollup::Last),
     };
@@ -109,6 +115,20 @@ fn primary(sensor: &EffectiveSensor) -> (String, Option<String>, Rollup) {
     let instance = Some(sensor.instance.as_str())
         .filter(|i| !i.is_empty() && !own_instances)
         .or(instance)
+        .map(str::to_owned);
+    (metric, instance, rollup)
+}
+
+/// A custom SNMP check's metric: a table names its rows itself.
+fn primary_named(
+    sensor: &EffectiveSensor,
+    suffix: &str,
+    rollup: Rollup,
+) -> (String, Option<String>, Rollup) {
+    let metric = format!("{METRIC_PREFIX}{}_{suffix}", sensor.name);
+    let table = sensor.params.contains_key("table");
+    let instance = Some(sensor.instance.as_str())
+        .filter(|i| !i.is_empty() && !table)
         .map(str::to_owned);
     (metric, instance, rollup)
 }
@@ -327,6 +347,42 @@ mod tests {
             probe: None,
             probe_relay_id: None,
         }
+    }
+
+    #[test]
+    fn custom_snmp_checks_stand_for_their_first_channel() {
+        let with = |pairs: &[(&str, &str)], instance: &str| EffectiveSensor {
+            params: pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..sensor("snmp_custom", "snmp_fw", instance)
+        };
+        let gauge = with(
+            &[("oid1", "1.3.6.1.4.1.1.0"), ("name1", "Sessions")],
+            "central",
+        );
+        let (metric, instance, rollup) = primary(&gauge);
+        assert_eq!(
+            (metric.as_str(), instance.as_deref()),
+            ("monitorflow_snmp_fw_sessions", Some("central"))
+        );
+        assert_eq!(rollup.function(), Rollup::Last.function());
+        let table = with(
+            &[
+                ("table", "1.3.6.1.4.1.6574.3.1.1"),
+                ("oid1", "1.3.6.1.4.1.6574.3.1.1.3"),
+                ("name1", "RAID"),
+                ("lookup1", "builtin:ok_warning_failed"),
+            ],
+            "central",
+        );
+        let (metric, instance, rollup) = primary(&table);
+        assert_eq!(
+            (metric.as_str(), instance),
+            ("monitorflow_snmp_fw_raid_state", None)
+        );
+        assert_eq!(rollup.function(), Rollup::Max.function());
     }
 
     #[test]

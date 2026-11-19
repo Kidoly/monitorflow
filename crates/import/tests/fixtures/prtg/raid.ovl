@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValueLookup id="oid.test.raidstatus" desiredValue="1" undefinedState="Warning">
+  <Lookups>
+    <SingleInt state="Ok" value="1">Normal</SingleInt>
+    <SingleInt state="Warning" value="2">Repairing</SingleInt>
+    <Range state="Error" from="11" to="12">Degraded or crashed</Range>
+  </Lookups>
+</ValueLookup>

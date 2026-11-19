@@ -61,6 +61,12 @@ pub struct Channel {
     pub unit: String,
     /// `None` when limits are off.
     pub limits: Option<Limits>,
+    /// Its lookup, by PRTG's ID, with its values when a lookup file read
+    /// had them (ADR-0157).
+    pub lookup: Option<crate::model::SnmpLookup>,
+    /// PRTG's multiplication and division of its value.
+    pub factor_m: Option<f64>,
+    pub factor_d: Option<f64>,
 }
 
 /// A probe, group, device or sensor.
@@ -87,6 +93,9 @@ pub struct Object {
     pub channels: Vec<Channel>,
     /// Its "dependency" setting (ADR-0152).
     pub depends: Option<Depends>,
+    /// Of a custom SNMP sensor: the lookups it names, by PRTG's ID, with
+    /// their values when a lookup file had them (ADR-0157).
+    pub lookups: BTreeMap<String, crate::model::SnmpLookup>,
 }
 
 /// What an object's dependency setting says, when it is not "use parent".
@@ -134,6 +143,7 @@ impl Object {
             settings: BTreeMap::new(),
             channels: Vec::new(),
             depends: None,
+            lookups: BTreeMap::new(),
         }
     }
 
