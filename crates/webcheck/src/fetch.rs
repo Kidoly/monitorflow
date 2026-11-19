@@ -142,7 +142,8 @@ impl Limits {
         }
     }
 
-    fn allows(&self, url: &Url, addr: SocketAddr) -> bool {
+    /// Whether `addr`, which `url`'s host resolved to, may be connected to.
+    pub fn allows(&self, url: &Url, addr: SocketAddr) -> bool {
         let Some(targets) = &self.targets else {
             return true;
         };

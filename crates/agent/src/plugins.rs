@@ -6,6 +6,7 @@
 //! against the key it names, and `[plugins]` in `agent.toml` allows it.
 
 use std::collections::{BTreeMap, HashMap};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,11 +15,14 @@ use async_trait::async_trait;
 use monitorflow_common::config::AgentPluginsConfig;
 use monitorflow_common::plugin_grant;
 use monitorflow_common::proto::v1::{PluginGrant, PluginGrantSet};
-use monitorflow_plugin::http::ReqwestHttp;
+use monitorflow_plugin::http::{Destinations, ReqwestHttp};
 use monitorflow_plugin::manifest::PLUGIN_PARAM;
 use monitorflow_plugin::package::Package;
 use monitorflow_plugin::{Kind, Manifest, Plugin, Runner};
+use monitorflow_sensors::port::PortTargets;
 use monitorflow_sensors::{self as sensors, validate, Sample, Sensor, SensorError};
+use monitorflow_webcheck::Limits;
+use reqwest::Url;
 use rustls::pki_types::CertificateDer;
 use serde::Deserialize;
 use serde_json::json;
@@ -28,6 +32,29 @@ use crate::sensor_config::FactoryError;
 /// The certificate authority certificates the agent trusts now; they
 /// change when the certificate authority does (ADR-0088).
 pub type CaCerts = Arc<dyn Fn() -> Vec<CertificateDer<'static>> + Send + Sync>;
+
+/// Where plugins may connect: the website check's view of
+/// `sensors.port_targets`.
+struct Targets(Limits);
+
+impl Targets {
+    fn new(targets: PortTargets) -> Self {
+        Self(Limits {
+            targets: Some(targets),
+            roots: None,
+        })
+    }
+}
+
+impl Destinations for Targets {
+    fn check(&self, url: &Url) -> Result<(), String> {
+        self.0.check(url)
+    }
+
+    fn allows(&self, url: &Url, addr: SocketAddr) -> bool {
+        self.0.allows(url, addr)
+    }
+}
 
 /// A granted plugin, ready to run.
 struct Granted {
@@ -55,11 +82,20 @@ pub struct PluginChecks {
 }
 
 impl PluginChecks {
-    pub fn new(agent_id: &str, ca_certs: CaCerts, config: AgentPluginsConfig) -> Self {
-        let http = ReqwestHttp::new(
-            ReqwestHttp::default_client(),
-            tokio::runtime::Handle::current(),
-        );
+    /// Plugins' requests stay within `port_targets` when the agent sets
+    /// it, like port and website checks (ADR-0111): the server chooses
+    /// the URL settings a plugin's host rules come from.
+    pub fn new(
+        agent_id: &str,
+        ca_certs: CaCerts,
+        config: AgentPluginsConfig,
+        port_targets: Option<PortTargets>,
+    ) -> Self {
+        let runtime = tokio::runtime::Handle::current();
+        let http = match port_targets {
+            None => ReqwestHttp::new(ReqwestHttp::default_client(), runtime),
+            Some(targets) => ReqwestHttp::bounded(Arc::new(Targets::new(targets)), runtime),
+        };
         Self::with_runner(agent_id, ca_certs, config, Runner::new(Arc::new(http)))
     }
 
