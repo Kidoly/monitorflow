@@ -17,8 +17,8 @@ use serde_json::{json, Value};
 use super::config::{
     Action, ActionSource, Config, DiscoveryCheck, DiscoveryRule, Host, HttpAgent, Interface,
     InterfaceKind, Item, ItemKind, Macro, Maintenance, MediaKind, MediaType, Period, PeriodKind,
-    Priority, Service, Sla, StatusRule, TagFilter, Template, Trigger, TriggerRef, UserMedia,
-    WebAuth, WebRequest, WebScenario,
+    Priority, Service, Sla, SnmpItem, StatusRule, TagFilter, Template, Trigger, TriggerRef,
+    UserMedia, WebAuth, WebRequest, WebScenario,
 };
 use super::export::{list, text};
 use crate::http;
@@ -527,7 +527,11 @@ impl Api {
             "authtype",
             "username",
             "password",
-            "timeout"
+            "timeout",
+            "snmp_oid",
+            "units",
+            "value_type",
+            "valuemapid"
         ]);
         let items = self
             .get(
@@ -536,15 +540,55 @@ impl Api {
                     "hostids": host_ids,
                     "output": fields,
                     "selectItemDiscovery": ["parent_itemid"],
+                    "selectPreprocessing": ["type", "params"],
                 }),
             )
             .await?;
         let prototypes = self
             .get(
                 "itemprototype.get",
-                json!({"hostids": host_ids, "output": fields}),
+                json!({"hostids": host_ids, "output": fields, "selectPreprocessing": ["type", "params"]}),
             )
             .await?;
+        // Value maps of SNMP items (ADR-0157), by ID.
+        let snmp = |raw: &Value| item_kind(&text(raw, "type")) == ItemKind::Snmp;
+        let map_ids: HashSet<String> = items
+            .iter()
+            .chain(&prototypes)
+            .filter(|raw| snmp(raw))
+            .map(|raw| text(raw, "valuemapid"))
+            .filter(|id| !id.is_empty() && id != "0")
+            .collect();
+        let mut valuemaps: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        if !map_ids.is_empty() {
+            let ids: Vec<&String> = map_ids.iter().collect();
+            for map in self
+                .get(
+                    "valuemap.get",
+                    json!({"valuemapids": ids, "output": ["valuemapid", "name"], "selectMappings": "extend"}),
+                )
+                .await?
+            {
+                let pairs = list(&map, "mappings")
+                    .into_iter()
+                    .map(|m| (text(m, "value"), text(m, "newvalue")))
+                    .collect();
+                valuemaps.insert(text(&map, "valuemapid"), pairs);
+            }
+        }
+        let with_map = |raw: &Value, mut item: Item| {
+            if let Some(pairs) = valuemaps.get(&text(raw, "valuemapid")) {
+                item.snmp.valuemap = pairs.clone();
+            }
+            item
+        };
+        // An SNMP prototype stands for its table: its discovered items are
+        // left out (ADR-0157).
+        let snmp_prototypes: HashSet<String> = prototypes
+            .iter()
+            .filter(|raw| snmp(raw))
+            .map(|raw| text(raw, "itemid"))
+            .collect();
         let discovered: HashSet<String> = items
             .iter()
             .filter_map(|i| i.get("itemDiscovery"))
@@ -569,17 +613,20 @@ impl Api {
                 .get(&text(raw, "templateid"))
                 .or_else(|| prototype_owner.get(&parent))
                 .cloned();
+            if snmp_prototypes.contains(&parent) {
+                continue;
+            }
             if let Some(host) = hosts.get_mut(&text(raw, "hostid")) {
-                host.items.push(item_of(raw, false, owner));
+                host.items.push(with_map(raw, item_of(raw, false, owner)));
             }
         }
         for raw in &prototypes {
-            if discovered.contains(&text(raw, "itemid")) {
+            if discovered.contains(&text(raw, "itemid")) && !snmp(raw) {
                 continue;
             }
             let owner = owners.get(&text(raw, "templateid")).cloned();
             if let Some(host) = hosts.get_mut(&text(raw, "hostid")) {
-                host.items.push(item_of(raw, true, owner));
+                host.items.push(with_map(raw, item_of(raw, true, owner)));
             }
         }
         Ok(())
@@ -765,6 +812,29 @@ fn item_of(raw: &Value, prototype: bool, template: Option<String>) -> Item {
         http: (kind == ItemKind::HttpAgent).then(|| Box::new(http_agent_of(raw))),
         snmp_oid: Some(text(raw, "snmp_oid")).filter(|o| !o.is_empty()),
         template,
+        snmp: if kind == ItemKind::Snmp {
+            SnmpItem {
+                units: Some(text(raw, "units")).filter(|u| !u.is_empty()),
+                text: matches!(text(raw, "value_type").as_str(), "1" | "2" | "4"),
+                preprocessing: list(raw, "preprocessing")
+                    .into_iter()
+                    .map(|step| {
+                        let params = text(step, "params")
+                            .split('\n')
+                            .map(str::to_owned)
+                            .filter(|p| !p.is_empty())
+                            .collect();
+                        (
+                            super::config::preprocessing_name(&text(step, "type")),
+                            params,
+                        )
+                    })
+                    .collect(),
+                valuemap: Vec::new(),
+            }
+        } else {
+            SnmpItem::default()
+        },
     }
 }
 

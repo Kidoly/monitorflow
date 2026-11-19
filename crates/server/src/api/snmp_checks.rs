@@ -896,7 +896,27 @@ async fn read_on(
             ApiError::Invalid(format!("The device's SNMP credentials do not open: {e}"))
         })?;
     drop(conn);
-    let by = probe_for(state, site, probe).await?;
+    // Where the device is checked from, unless told: its SNMP checks'
+    // probe, else the site's default.
+    let probe = match probe {
+        Some(p) => Some(p.to_owned()),
+        None => {
+            let mut conn = state.pool.acquire().await?;
+            let row: Option<(String, Option<Uuid>)> = sqlx::query_as(
+                "SELECT probe, probe_relay_id FROM sensor_configs
+                 WHERE server_id = $1 AND probe IS NOT NULL AND kind IN ('snmp', 'snmp_custom')
+                 ORDER BY kind = 'snmp_custom' DESC, created_at LIMIT 1",
+            )
+            .bind(id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            row.map(|(probe, relay)| match relay {
+                Some(r) if probe == "relay" => r.to_string(),
+                _ => probe,
+            })
+        }
+    };
+    let by = probe_for(state, site, probe.as_deref()).await?;
     params.extend(credentials.params());
     params.insert(
         "host".into(),

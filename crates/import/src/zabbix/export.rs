@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::config::{
     Config, Host, HttpAgent, Interface, InterfaceKind, Item, ItemKind, Macro, MediaKind, MediaType,
-    Priority, Template, Trigger, TriggerRef, WebAuth, WebRequest, WebScenario,
+    Priority, SnmpItem, Template, Trigger, TriggerRef, WebAuth, WebRequest, WebScenario,
 };
 use super::expression;
 use crate::source::{File, ReadError};
@@ -175,14 +175,27 @@ fn template_of(value: &Value) -> Template {
 fn items_of(value: &Value) -> (Vec<Item>, Vec<Trigger>) {
     let mut items = Vec::new();
     let mut triggers = Vec::new();
+    let valuemaps = valuemaps_of(value);
+    let with_map = |raw: &Value, mut item: Item| {
+        if item.kind == ItemKind::Snmp {
+            let name = raw
+                .get("valuemap")
+                .map(|v| text(v, "name"))
+                .unwrap_or_default();
+            if let Some(pairs) = valuemaps.get(&name) {
+                item.snmp.valuemap = pairs.clone();
+            }
+        }
+        item
+    };
     for item in list(value, "items") {
-        items.push(item_of(item, false));
+        items.push(with_map(item, item_of(item, false)));
         triggers.extend(list(item, "triggers").into_iter().map(trigger_of));
     }
     for rule in list(value, "discovery_rules") {
         let enabled = !disabled(rule);
         for item in list(rule, "item_prototypes") {
-            let mut prototype = item_of(item, true);
+            let mut prototype = with_map(item, item_of(item, true));
             prototype.enabled &= enabled;
             items.push(prototype);
             for trigger in list(item, "trigger_prototypes") {
@@ -234,7 +247,40 @@ fn item_of(value: &Value, prototype: bool) -> Item {
         http: (kind == ItemKind::HttpAgent).then(|| Box::new(http_agent_of(value))),
         snmp_oid: Some(text(value, "snmp_oid")).filter(|o| !o.is_empty()),
         template: None,
+        snmp: if kind == ItemKind::Snmp {
+            SnmpItem {
+                units: Some(text(value, "units")).filter(|u| !u.is_empty()),
+                text: matches!(text(value, "value_type").as_str(), "CHAR" | "TEXT" | "LOG"),
+                preprocessing: list(value, "preprocessing")
+                    .into_iter()
+                    .map(|step| {
+                        let params = list(step, "parameters")
+                            .into_iter()
+                            .filter_map(|p| p.as_str().map(str::to_owned))
+                            .collect();
+                        (text(step, "type"), params)
+                    })
+                    .collect(),
+                valuemap: Vec::new(),
+            }
+        } else {
+            SnmpItem::default()
+        },
     }
+}
+
+/// The value maps of a host or template, by name: value and name pairs.
+fn valuemaps_of(value: &Value) -> std::collections::HashMap<String, Vec<(String, String)>> {
+    list(value, "valuemaps")
+        .into_iter()
+        .map(|map| {
+            let pairs = list(map, "mappings")
+                .into_iter()
+                .map(|m| (text(m, "value"), text(m, "newvalue")))
+                .collect();
+            (text(map, "name"), pairs)
+        })
+        .collect()
 }
 
 fn trigger_of(value: &Value) -> Trigger {
