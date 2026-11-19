@@ -253,10 +253,21 @@ pub fn build_query(
     }
 }
 
-/// `(start, end, step)` of a range query, bounded.
-pub fn range(params: &RangeParams, now: DateTime<Utc>) -> Result<(i64, i64, i64), ApiError> {
-    let end = params.end.unwrap_or(now);
-    let start = params.start.unwrap_or(end - DEFAULT_RANGE);
+/// `(start, end)` of a query: `end` defaults to `now`, `start` to
+/// [`DEFAULT_RANGE`] before `end`, and they are at most [`MAX_RANGE`]
+/// apart. Shared with the logs (ADR-0091).
+pub(super) fn window(
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), ApiError> {
+    let end = end.unwrap_or(now);
+    let start = match start {
+        Some(start) => start,
+        None => end
+            .checked_sub_signed(DEFAULT_RANGE)
+            .ok_or_else(|| ApiError::Invalid("end is too far in the past".into()))?,
+    };
     if start >= end {
         return Err(ApiError::Invalid("start must be before end".into()));
     }
@@ -266,6 +277,12 @@ pub fn range(params: &RangeParams, now: DateTime<Utc>) -> Result<(i64, i64, i64)
             MAX_RANGE.num_days()
         )));
     }
+    Ok((start, end))
+}
+
+/// `(start, end, step)` of a range query, bounded.
+pub fn range(params: &RangeParams, now: DateTime<Utc>) -> Result<(i64, i64, i64), ApiError> {
+    let (start, end) = window(params.start, params.end, now)?;
     let seconds = (end - start).num_seconds().max(1);
     let step = params
         .step
@@ -511,6 +528,22 @@ mod tests {
             peer: "agent-1".into(),
             site: "o\"brien\\paris".into(),
         }
+    }
+
+    #[test]
+    fn dates_at_the_edge_of_time_are_refused_not_a_panic() {
+        let end: DateTime<Utc> = serde_json::from_value(json!("-262143-01-01T00:00:00Z")).unwrap();
+        let params = RangeParams {
+            server_id: Uuid::nil(),
+            metric: "monitorflow_cpu".into(),
+            instance: None,
+            start: None,
+            end: Some(end),
+            step: None,
+            agg: None,
+            rollup: None,
+        };
+        assert!(range(&params, Utc::now()).is_err());
     }
 
     #[test]

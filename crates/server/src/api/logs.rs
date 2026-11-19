@@ -11,7 +11,7 @@
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::Json;
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -23,10 +23,6 @@ use super::{ApiError, ApiState};
 use crate::ingest::journal::SOURCE;
 use crate::vm_query::QueryError;
 
-/// Longest range, as for metrics.
-pub const MAX_RANGE: Duration = Duration::days(31);
-/// Range without `start`.
-pub const DEFAULT_RANGE: Duration = Duration::hours(1);
 /// Lines without `limit`.
 pub const DEFAULT_LIMIT: usize = 200;
 /// Most lines in one answer.
@@ -108,17 +104,7 @@ pub struct Request {
 
 impl Request {
     pub fn check(params: LogParams, now: DateTime<Utc>) -> Result<Self, ApiError> {
-        let end = params.end.unwrap_or(now);
-        let start = params.start.unwrap_or(end - DEFAULT_RANGE);
-        if start >= end {
-            return Err(ApiError::Invalid("start must be before end".into()));
-        }
-        if end - start > MAX_RANGE {
-            return Err(ApiError::Invalid(format!(
-                "range must be at most {} days",
-                MAX_RANGE.num_days()
-            )));
-        }
+        let (start, end) = super::metrics::window(params.start, params.end, now)?;
         let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
         if !(1..=MAX_LIMIT).contains(&limit) {
             return Err(ApiError::Invalid(format!("limit must be 1 to {MAX_LIMIT}")));
@@ -297,6 +283,7 @@ pub async fn list(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
 
     fn target() -> Target {
         Target {
@@ -355,6 +342,11 @@ mod tests {
         }));
         assert!(refused(LogParams {
             start: Some(now() - Duration::days(32)),
+            ..LogParams::default()
+        }));
+        // The earliest date there is, without `start`: refused, no panic.
+        assert!(refused(LogParams {
+            end: Some(DateTime::<Utc>::MIN_UTC),
             ..LogParams::default()
         }));
         assert!(refused(LogParams {

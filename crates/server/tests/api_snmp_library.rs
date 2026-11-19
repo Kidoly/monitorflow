@@ -171,6 +171,17 @@ db_tests! {
         assert_eq!(status, StatusCode::CREATED, "{row}");
         let (_, one) = call(&pool, &viewer, "GET", &format!("/api/snmp-lookups/{id}"), None).await;
         assert_eq!(one["used_by"], json!(1));
+        // Built-in lookups are everyone's: each counts the checks they read.
+        let check = json!({"kind": "snmp_custom", "name": "snmp_ports", "interval_ms": 60000,
+            "params": {"table": "1.3.6.1.2.1.2.2.1", "oid1": "1.3.6.1.2.1.2.2.1.8", "lookup1": "builtin:if_status"}});
+        let (status, row) = call(&pool, &site_operator, "POST", &format!("/api/servers/{}/sensor_configs", nas["id"].as_str().unwrap()), Some(check)).await;
+        assert_eq!(status, StatusCode::CREATED, "{row}");
+        let lyon = site(&pool, "lyon").await;
+        let lyon_viewer = session(&pool, "lyon-viewer", Role::Viewer, Some(lyon)).await;
+        for (who, count) in [(&viewer, 1), (&lyon_viewer, 0)] {
+            let (_, one) = call(&pool, who, "GET", "/api/snmp-lookups/builtin:if_status", None).await;
+            assert_eq!(one["used_by"], json!(count));
+        }
         let mut renamed = body;
         renamed["name"] = json!("Volume state");
         let (status, changed) = call(&pool, &admin, "PUT", &format!("/api/snmp-lookups/{id}"), Some(renamed)).await;
