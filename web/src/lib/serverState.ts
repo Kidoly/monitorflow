@@ -3,7 +3,16 @@ import type { Tone } from "@/components/ui/tone";
 import { t } from "@/i18n";
 
 /** The states in the order of the status strip (ADR-0130). */
-export const SERVER_STATES: readonly ServerState[] = ["critical", "warning", "acknowledged", "silenced", "offline", "ok", "waiting"];
+export const SERVER_STATES: readonly ServerState[] = [
+  "critical",
+  "warning",
+  "acknowledged",
+  "silenced",
+  "unreachable",
+  "offline",
+  "ok",
+  "waiting",
+];
 
 /** The tint of each state. OK is the quiet one. */
 export const STATE_TONES: Record<ServerState, Tone> = {
@@ -12,6 +21,8 @@ export const STATE_TONES: Record<ServerState, Tone> = {
   offline: "bad",
   acknowledged: "info",
   silenced: "neutral",
+  // Its parent's incident says what is wrong (ADR-0152).
+  unreachable: "neutral",
   ok: "ok",
   waiting: "neutral",
 };

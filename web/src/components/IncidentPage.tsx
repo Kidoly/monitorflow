@@ -43,6 +43,7 @@ import { formatClock, formatDay, formatDuration, formatExact, formatShortDate } 
 import type { Tone } from "@/components/ui/tone";
 
 import { AcknowledgeButton } from "./AcknowledgeButton";
+import { IncidentDependencies } from "./Dependencies";
 import styles from "./DetailPages.module.css";
 
 /** The incident page for the `id` query parameter. */
@@ -208,6 +209,7 @@ export function IncidentPage({ id }: { id: string | null }) {
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       <Acknowledgement incident={incident} now={now} onDone={refresh} />
       <SentTogether incident={incident} now={now} />
+      <IncidentDependencies incident={incident} />
       <StatTiles
         compact
         label={t("incidents.tile.summary")}

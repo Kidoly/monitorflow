@@ -40004,6 +40004,50 @@
           },
           {
             "type": "object",
+            "description": "A dependency (ADR-0152): the server, or one of its checks, is behind\nthe parent server or one of its checks.",
+            "required": [
+              "server",
+              "parent",
+              "object"
+            ],
+            "properties": {
+              "check": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SilencedCheck",
+                    "description": "One check of it; `null` for all of it."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "dependency"
+                ]
+              },
+              "parent": {
+                "type": "string"
+              },
+              "parent_check": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SilencedCheck"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "server": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A notification channel.",
             "required": [
               "kind",
@@ -43596,6 +43640,7 @@
             "type": "object",
             "required": [
               "alerts",
+              "unreachable",
               "kind"
             ],
             "properties": {
@@ -43610,6 +43655,13 @@
                 "enum": [
                   "alerts"
                 ]
+              },
+              "unreachable": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/UnreachableServer"
+                },
+                "description": "Its servers behind a parent that is down (ADR-0152): they open\nno incident of their own meanwhile."
               }
             }
           },
@@ -48649,6 +48701,30 @@
           }
         ],
         "description": "A check of a page's server that is unreachable, while the server is not."
+      },
+      "UnreachableServer": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Unreachable"
+          },
+          {
+            "type": "object",
+            "required": [
+              "server_id",
+              "hostname"
+            ],
+            "properties": {
+              "hostname": {
+                "type": "string"
+              },
+              "server_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ],
+        "description": "A server of an alerts panel that is unreachable now."
       },
       "UpdateChannel": {
         "type": "string",
