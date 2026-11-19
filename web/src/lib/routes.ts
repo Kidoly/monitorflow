@@ -113,6 +113,8 @@ export const API_DOCS_PATH = "/settings/api-keys/docs/";
 
 /** Email, chat and webhook notifications (ADR-0060, ADR-0077). */
 export const NOTIFICATIONS_PATH = "/settings/notifications/";
+/** Lookups and MIB files of custom SNMP checks (ADR-0157). */
+export const SNMP_LIBRARY_PATH = "/settings/snmp/";
 /** Signed events for other tools, like a PSA (ADR-0102). */
 export const INTEGRATIONS_PATH = "/settings/integrations/";
 /** AI setup, global administrators only (ADR-0064). */

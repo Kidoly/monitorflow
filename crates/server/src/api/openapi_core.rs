@@ -272,6 +272,14 @@ A website check is kind `http` (ADR-0150): `params.url` and optional `method`, `
 `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over \
 `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the \
 stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\n\
+A custom SNMP check of a device is kind `snmp_custom` (ADR-0157), run by a probe with the device's credentials: \
+up to 10 channels, `oidN` (a numeric OID) with optional `nameN`, `keyN` (the metric suffix, from the name), \
+`typeN` (`gauge`, `counter` for a rate per second, or `text`), `unitN`, `multiplyN`, `divideN`, `lookupN` \
+(`builtin:<name>` or the ID of a lookup of the customer) and, for a text, `matchN` (`contains`, \
+`not_contains`, `equals`, `not_equals`, `matches`, `not_matches`), `expectN` and `severityN` (`warning` or \
+`critical`); or a `table` OID with a `name_column`, each `oidN` then a column of it. Credentials and \
+`lookupN_map` are refused: they are added when the check is sent to its probe. \
+`/api/v1/devices/{id}/snmp-checks` reads and writes the same rows with their thresholds.\n\n\
 Audited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the \
 parameters but never their values. Connected agents get the change within seconds."
     };
@@ -327,6 +335,11 @@ that its site or the built-in checks give; with `enabled: false`, removes that s
         ("website" = (summary = "Check that a website answers with its shop",
             value = json!({"kind": "http", "name": "http", "instance": "shop", "interval_ms": 60000,
                            "params": {"url": "https://shop.example.com/", "contains": "Add to cart"}}))),
+        ("snmp_custom" = (summary = "Watch a firewall's sessions and HA state over SNMP (a device, ADR-0157)",
+            value = json!({"kind": "snmp_custom", "name": "snmp_fw", "interval_ms": 60000, "probe": "central",
+                           "params": {"oid1": "1.3.6.1.4.1.12356.101.4.1.8.0", "name1": "Sessions", "unit1": "sessions",
+                                      "oid2": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1", "name2": "HA state",
+                                      "lookup2": "builtin:ok_warning_failed"}}))),
         ("remove" = (summary = "Stop checking disk activity on this server",
             value = json!({"kind": "diskio", "interval_ms": 60000, "enabled": false}))),
     )),

@@ -12,7 +12,7 @@ describe("settings catalogue", () => {
   it("shows global administrators every page, their own preferences first", () => {
     const groups = visibleSettings(global);
     expect(groups.map((g) => t(g.heading))).toEqual(["You", "Fleet", "Alerting", "Access", "AI & extensions", "System"]);
-    expect(ids(groups)).toHaveLength(17);
+    expect(ids(groups)).toHaveLength(18);
     expect(ids(groups)[0]).toBe("preferences");
   });
 
@@ -25,6 +25,7 @@ describe("settings catalogue", () => {
       "add-servers",
       "import",
       "notifications",
+      "snmp",
       "integrations",
       "users",
       "api-keys",
@@ -35,9 +36,10 @@ describe("settings catalogue", () => {
   it("filters by name, description and keywords, every word, ignoring case", () => {
     const groups = visibleSettings(global);
     expect(ids(filterSettings(groups, "back", global))).toEqual(["backups"]);
+    expect(ids(filterSettings(groups, "mib", global))).toEqual(["snmp"]);
     expect(ids(filterSettings(groups, "SLACK", global))).toEqual(["notifications"]);
     expect(ids(filterSettings(groups, "install command", global))).toEqual(["add-servers"]);
-    expect(ids(filterSettings(groups, "  ", global))).toHaveLength(17);
+    expect(ids(filterSettings(groups, "  ", global))).toHaveLength(18);
     expect(ids(filterSettings(groups, "dark theme", global))).toEqual(["preferences"]);
     expect(filterSettings(groups, "nothing like this", global)).toEqual([]);
   });

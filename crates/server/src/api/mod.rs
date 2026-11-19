@@ -54,6 +54,10 @@
 //! | POST | `/api/virtual-objects/{id}/install-agent` | admin | 201 [`servers::ServerView`]: a server waiting for its agent, named after the virtual machine and tied to it; audited |
 //! | POST | `/api/devices/vmware/test` | modify | body [`devices::VmwareTestRequest`]; 200 [`devices::VmwareTested`]: what a vCenter or ESXi host answers, its certificate, and the login when it is trusted |
 //! | GET, PUT, DELETE | `/api/devices/{id}/vmware` | read, modify | [`crate::vmware::View`] without the password; body [`crate::vmware::CredentialsRequest`]; audited |
+//! | GET, POST | `/api/devices/{id}/snmp-checks` | read, modify | [`snmp_checks::CheckList`]; body [`snmp_checks::CheckRequest`], 201 [`snmp_checks::CheckView`]: a custom SNMP check with its channels' limits (ADR-0157); audited |
+//! | PUT, DELETE | `/api/devices/{id}/snmp-checks/{name}` | modify | the same body; [`snmp_checks::CheckView`]; 204; audited |
+//! | POST | `/api/devices/{id}/snmp/read` | modify | body [`snmp_checks::ReadRequest`]; [`snmp_checks::ReadResult`]: Test and Browse from the device's probe |
+//! | POST | `/api/devices/{id}/snmp/test` | modify | body [`snmp_checks::CheckRequest`]; [`snmp_checks::Tested`]: what each channel would write |
 //! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
 //! | GET, POST | `/api/network-scans` | read, modify | [`network_scans::ScanList`] (`?site_id=`); body [`network_scans::ScanRequest`], 201 [`network_scans::ScanView`], queued at once; audited (ADR-0154) |
 //! | GET, PUT, DELETE | `/api/network-scans/{id}` | read, modify | [`network_scans::ScanView`]; body [`network_scans::ScanUpdate`]; 204; audited |
@@ -106,6 +110,12 @@
 //! | POST | `/api/maintenance-windows` | modify the site | body [`maintenance_windows::WindowRequest`]; 201 [`maintenance_windows::WindowView`]; audited |
 //! | PUT | `/api/maintenance-windows/{id}` | modify the sites | the same body; [`maintenance_windows::WindowView`]; audited |
 //! | DELETE | `/api/maintenance-windows/{id}` | modify the site | 204; the running window ends; audited |
+//! | GET | `/api/snmp-lookups` | read a site of the customer | `customer_id`; [`snmp_library::LookupList`]: built-in lookups and the customers' own (ADR-0157) |
+//! | POST | `/api/snmp-lookups` | modify the whole customer | body [`snmp_library::LookupRequest`]; 201 [`snmp_library::LookupView`]; 409 for a name in use; audited |
+//! | GET, PUT, DELETE | `/api/snmp-lookups/{id}` | read; modify the whole customer | [`snmp_library::LookupView`]; built-in ones never change; 409 on DELETE while a check names it; audited |
+//! | GET, POST | `/api/snmp-mibs` | read; modify the whole customer | [`snmp_library::MibList`]; body [`snmp_library::MibUpload`], 201 [`snmp_library::Uploaded`]; audited |
+//! | DELETE | `/api/snmp-mibs/{id}` | modify the whole customer | 204; audited |
+//! | GET | `/api/snmp-objects` | read a site of the customer | `q` or `oids`; [`snmp_library::ObjectList`]: names from the library and the MIBs |
 //! | GET | `/api/business-services` | customer-wide grant | `customer_id`; [`business_services::ServiceList`] (ADR-0155) |
 //! | POST | `/api/business-services` | modify the whole customer | body [`business_services::ServiceRequest`]; 201 [`business_services::ServiceView`]; 409 for a name in use; audited |
 //! | PUT | `/api/business-services/{id}` | modify the whole customer | the same body; [`business_services::ServiceView`]; audited |
@@ -760,6 +770,7 @@ mod openapi_plugins;
 pub mod openapi_remediation;
 mod openapi_reports;
 mod openapi_settings;
+mod openapi_snmp;
 mod openapi_sso;
 mod openapi_system;
 mod openapi_users;
@@ -792,6 +803,8 @@ pub mod settings;
 pub mod setup;
 pub mod silences;
 pub mod sites;
+pub mod snmp_checks;
+pub mod snmp_library;
 pub mod sources;
 pub mod sso_login;
 pub mod third_party;
@@ -1161,6 +1174,24 @@ pub fn router(state: ApiState) -> Router {
             post(report_schedules::send_now),
         )
         .route(
+            "/api/snmp-lookups",
+            get(snmp_library::list_lookups).post(snmp_library::create_lookup),
+        )
+        .route(
+            "/api/snmp-lookups/{id}",
+            get(snmp_library::get_lookup)
+                .put(snmp_library::update_lookup)
+                .delete(snmp_library::delete_lookup),
+        )
+        .route(
+            "/api/snmp-mibs",
+            get(snmp_library::list_mibs)
+                .post(snmp_library::upload_mibs)
+                .layer(DefaultBodyLimit::max(snmp_library::MAX_UPLOAD)),
+        )
+        .route("/api/snmp-mibs/{id}", delete(snmp_library::delete_mib))
+        .route("/api/snmp-objects", get(snmp_library::objects))
+        .route(
             "/api/business-services",
             get(business_services::list).post(business_services::create),
         )
@@ -1293,6 +1324,16 @@ pub fn router(state: ApiState) -> Router {
                 .put(devices::set_snmp)
                 .delete(devices::delete_snmp),
         )
+        .route(
+            "/api/devices/{id}/snmp-checks",
+            get(snmp_checks::list).post(snmp_checks::create),
+        )
+        .route(
+            "/api/devices/{id}/snmp-checks/{name}",
+            put(snmp_checks::update).delete(snmp_checks::remove),
+        )
+        .route("/api/devices/{id}/snmp/read", post(snmp_checks::read))
+        .route("/api/devices/{id}/snmp/test", post(snmp_checks::test))
         .route("/api/sites/{id}/probes", get(devices::probes))
         .route(
             "/api/network-scans",

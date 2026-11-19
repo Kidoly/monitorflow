@@ -2,8 +2,8 @@
 # A table for snmpd's `pass` (ADR-0157 test): one row per line of
 # /work/rows, as `index|name|state|count`, under
 # .1.3.6.1.4.1.8072.9999.9999.1.1: column 2 the name, 3 a state (an
-# integer), 4 a Counter64. `-g OID` answers that object, `-n OID` the one
-# after it, as snmpd asks.
+# integer), 4 a Counter32 (SNMPv1 carries no Counter64). `-g OID` answers
+# that object, `-n OID` the one after it, as snmpd asks.
 BASE=.1.3.6.1.4.1.8072.9999.9999.1.1
 ROWS=/work/rows
 [ -r "$ROWS" ] || exit 0
@@ -14,7 +14,7 @@ list() {
             case $col in
                 2) echo "$BASE.$col.$index string $name" ;;
                 3) echo "$BASE.$col.$index integer $state" ;;
-                4) echo "$BASE.$col.$index counter64 $count" ;;
+                4) echo "$BASE.$col.$index counter $count" ;;
             esac
         done
     done

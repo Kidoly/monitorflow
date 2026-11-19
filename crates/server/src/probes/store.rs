@@ -54,7 +54,11 @@ impl ProbeStore {
         .fetch_all(&self.pool)
         .await?;
         let mut sets = group(lines);
-        for kind in [monitorflow_snmp::KIND, monitorflow_vmware::KIND] {
+        for kind in [
+            monitorflow_snmp::KIND,
+            monitorflow_snmp::CUSTOM_KIND,
+            monitorflow_vmware::KIND,
+        ] {
             let wanted: Vec<&str> = sets
                 .values()
                 .flat_map(|set| &set.checks)
@@ -66,6 +70,15 @@ impl ProbeStore {
                 add_credentials(&mut sets, kind, &credentials);
             }
         }
+        let wanted: Vec<Uuid> = sets
+            .values()
+            .flat_map(|set| &set.checks)
+            .filter(|c| c.kind == monitorflow_snmp::CUSTOM_KIND)
+            .flat_map(|c| crate::snmp_custom::own_ids(&c.config.params))
+            .collect();
+        let mut conn = self.pool.acquire().await?;
+        let stored = crate::snmp_custom::load_lookups(&mut conn, &wanted).await?;
+        add_lookups(&mut sets, &stored);
         Ok(sets)
     }
 
@@ -133,6 +146,28 @@ fn add_credentials(
                 check.config.params.insert(key.clone(), value.clone());
             }
             true
+        });
+    }
+}
+
+/// Adds to each custom SNMP check the definitions of its lookups
+/// (ADR-0157); a check naming a lookup that is gone is left out.
+fn add_lookups(
+    sets: &mut HashMap<String, ProbeSet>,
+    stored: &HashMap<Uuid, monitorflow_snmp::custom::Lookup>,
+) {
+    for set in sets.values_mut() {
+        set.checks.retain_mut(|check| {
+            if check.kind != monitorflow_snmp::CUSTOM_KIND {
+                return true;
+            }
+            match crate::snmp_custom::expand(&mut check.config.params, stored) {
+                Ok(()) => true,
+                Err(error) => {
+                    tracing::warn!(device = %check.device, check = %check.config.name, %error, "a custom SNMP check is not sent");
+                    false
+                }
+            }
         });
     }
 }
@@ -271,6 +306,50 @@ mod tests {
         assert_eq!(switch.config.params["port"], "1161");
         assert_eq!(switch.config.params["host"], "192.0.2.2");
         assert!(monitorflow_snmp::parse(&switch.config.params).is_ok());
+    }
+
+    #[test]
+    fn custom_checks_get_credentials_and_their_lookups() {
+        let mine = Uuid::new_v4();
+        let gone = Uuid::new_v4();
+        let custom = |name: &str, lookup: String| {
+            let mut row = line(
+                "nas",
+                Some("192.0.2.5"),
+                name,
+                "central",
+                None,
+                serde_json::json!({"oid1": "1.3.6.1.4.1.6574.1.1.0", "lookup1": lookup}),
+            );
+            row.3 = monitorflow_snmp::CUSTOM_KIND.into();
+            row
+        };
+        let mut sets = group(vec![
+            custom("snmp_state", mine.to_string()),
+            custom("snmp_gone", gone.to_string()),
+            custom("snmp_builtin", "builtin:truth_value".into()),
+        ]);
+        let credentials = HashMap::from([(
+            "nas".to_string(),
+            BTreeMap::from([("community".to_string(), "c".to_string())]),
+        )]);
+        add_credentials(&mut sets, monitorflow_snmp::CUSTOM_KIND, &credentials);
+        let stored = HashMap::from([(
+            mine,
+            monitorflow_snmp::library::lookup_from(&[(1, "normal".into())]),
+        )]);
+        add_lookups(&mut sets, &stored);
+        let checks = &sets[CENTRAL].checks;
+        let names: Vec<&str> = checks.iter().map(|c| c.config.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["snmp_state", "snmp_builtin"],
+            "the gone lookup's check is not sent"
+        );
+        for check in checks {
+            assert_eq!(check.config.params["community"], "c");
+            monitorflow_snmp::custom::build(&check.config.params).unwrap();
+        }
     }
 
     #[test]
