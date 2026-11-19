@@ -62,13 +62,24 @@ pub fn verify_upstream(layout: &Layout, signature: &Path, file: &Path) -> Invoca
     Invocation::new(Tool::Gpg, args)
 }
 
+/// Status lines that refuse a signature even with `VALIDSIG`: gpg reports
+/// a correct signature by an expired or revoked key, or an expired one,
+/// with both and ends well. apt refuses them too.
+const REFUSED: [&str; 5] = [
+    "[GNUPG:] BADSIG ",
+    "[GNUPG:] ERRSIG ",
+    "[GNUPG:] EXPKEYSIG ",
+    "[GNUPG:] REVKEYSIG ",
+    "[GNUPG:] EXPSIG ",
+];
+
 /// Whether the status lines of a successful [`verify_upstream`] report a
 /// valid signature: gpg also ends well on some outcomes that are not one.
 pub fn verified(status: &str) -> bool {
     status.lines().any(|l| l.starts_with("[GNUPG:] VALIDSIG "))
         && !status
             .lines()
-            .any(|l| l.starts_with("[GNUPG:] BADSIG ") || l.starts_with("[GNUPG:] ERRSIG "))
+            .any(|l| REFUSED.iter().any(|refused| l.starts_with(refused)))
 }
 
 /// Signs the apt `Release` file at `release` with `key` into `InRelease`
@@ -261,6 +272,18 @@ mod tests {
         assert!(!verified("[GNUPG:] NEWSIG\n[GNUPG:] NO_PUBKEY A\n"));
         assert!(!verified(&format!("{good}[GNUPG:] BADSIG C D\n")));
         assert!(!verified(""));
+        // What gpg 2.4 prints, exiting 0, for a key that has expired since.
+        let expired = "[GNUPG:] NEWSIG\n\
+            [GNUPG:] KEY_CONSIDERED 901EB5B5AD854BC0A3258CD033EA85C4A4277EC5 0\n\
+            [GNUPG:] KEYEXPIRED 1577923200\n\
+            [GNUPG:] SIG_ID IH1WPp+o5AUm54/u9fX2CTi//P8 2020-01-01 1577837400\n\
+            [GNUPG:] EXPKEYSIG 33EA85C4A4277EC5 Old Archive <old@example.com>\n\
+            [GNUPG:] VALIDSIG 901EB5B5AD854BC0A3258CD033EA85C4A4277EC5 2020-01-01 1577837400 0 4 0 22 10 00 901EB5B5AD854BC0A3258CD033EA85C4A4277EC5\n";
+        assert!(!verified(expired));
+        for refused in ["REVKEYSIG 33EA85C4A4277EC5 A", "EXPSIG 33EA85C4A4277EC5 A"] {
+            let status = good.replace("GOODSIG A B", refused);
+            assert!(!verified(&status), "{status}");
+        }
     }
 
     /// gpg holding at most one key, set by `--quick-generate-key` or by an

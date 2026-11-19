@@ -207,6 +207,7 @@ impl Staging {
             .await
             .map_err(io(&upstream))?;
         let suite = self.mirror.distribution.clone();
+        upstream_release_fits(&text, &suite, self.now)?;
         let listed = apt::release(&suite, &text)?;
         let architectures = if self.mirror.architectures.is_empty() {
             field(&text, "Architectures")
@@ -452,6 +453,44 @@ fn field<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
+/// Refuses an upstream `Release` that is signed but not the one asked
+/// for: another suite of the same archive (`-proposed` for `-updates`), or
+/// one past its `Valid-Until`, which an old copy replayed would be. Ours
+/// drops that field, so the check cannot be left to apt on the hosts.
+fn upstream_release_fits(text: &str, suite: &str, now: DateTime<Utc>) -> Result<(), MetaError> {
+    let file = format!("{}/Release", apt::suite_dir(suite));
+    let mut names: Vec<&str> = ["Suite", "Codename"]
+        .into_iter()
+        .filter_map(|name| field(text, name))
+        .collect();
+    names.dedup();
+    if !names.is_empty() && !names.contains(&suite) {
+        return Err(MetaError::invalid(
+            &file,
+            format!(
+                "is the Release of `{}`, not of `{suite}`",
+                names.join("` and `")
+            ),
+        ));
+    }
+    if let Some(value) = field(text, "Valid-Until") {
+        let until = DateTime::parse_from_rfc2822(value)
+            .map(|d| d.to_utc())
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(value, "%a, %d %b %Y %H:%M:%S UTC")
+                    .map(|d| d.and_utc())
+            })
+            .map_err(|_| MetaError::invalid(&file, format!("bad Valid-Until `{value}`")))?;
+        if until < now {
+            return Err(MetaError::invalid(
+                &file,
+                format!("expired on {value}: an old copy, or the upstream is not updated"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Our `Release` for `suite`: the upstream's descriptive fields, our date,
 /// our components and architectures, and the SHA-256 of `files` only. No
 /// `Valid-Until`, as a pinned snapshot must not expire, and no
@@ -574,6 +613,48 @@ mod tests {
         assert_eq!(
             listed[0].path,
             "dists/trixie-security/main/binary-amd64/Packages.xz"
+        );
+    }
+
+    #[test]
+    fn only_the_upstream_release_of_the_suite_asked_for_and_not_expired_is_taken() {
+        let now = DateTime::parse_from_rfc3339("2026-11-19T10:00:00Z")
+            .unwrap()
+            .to_utc();
+        let release = |suite: &str, codename: &str, until: &str| {
+            format!("Origin: Ubuntu\nSuite: {suite}\nCodename: {codename}\n{until}SHA256:\n")
+        };
+        let fits = |text: &str, suite: &str| upstream_release_fits(text, suite, now);
+        // Ubuntu names the release in Codename, Debian the archive in Suite.
+        assert!(fits(&release("noble-updates", "noble", ""), "noble-updates").is_ok());
+        assert!(fits(&release("oldstable", "bookworm", ""), "bookworm").is_ok());
+        assert!(fits("Origin: Example\nSHA256:\n", "stable").is_ok());
+        let other = fits(&release("noble-proposed", "noble", ""), "noble-updates").unwrap_err();
+        assert!(
+            other
+                .to_string()
+                .contains("`noble-proposed` and `noble`, not of `noble-updates`"),
+            "{other}"
+        );
+        let valid = "Valid-Until: Mon, 23 Nov 2026 11:43:19 UTC\n";
+        assert!(fits(
+            &release("stable-security", "trixie-security", valid),
+            "trixie-security"
+        )
+        .is_ok());
+        let old = "Valid-Until: Sun, 15 Nov 2026 11:43:19 UTC\n";
+        let expired = fits(
+            &release("stable-security", "trixie-security", old),
+            "trixie-security",
+        );
+        assert!(expired.unwrap_err().to_string().contains("expired on"));
+        let numeric = "Valid-Until: Sun, 15 Nov 2026 11:43:19 +0000\n";
+        assert!(fits(&release("a", "a", numeric), "a").is_err());
+        assert!(fits(&release("a", "a", "Valid-Until: soon\n"), "a").is_err());
+        let same = fits(&release("b", "b", ""), "a").unwrap_err().to_string();
+        assert!(
+            same.ends_with("is the Release of `b`, not of `a`"),
+            "{same}"
         );
     }
 
