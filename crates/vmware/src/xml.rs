@@ -16,6 +16,10 @@ pub struct Element {
 
 /// Deepest nesting read; vim25 answers stay far below it.
 const MAX_DEPTH: usize = 64;
+/// Most elements read from the answers of one collection: a vCenter of
+/// ten thousand machines stays well below. Each costs about 100 bytes of
+/// memory, whatever few bytes it took in the answer.
+pub const MAX_ELEMENTS: usize = 2_000_000;
 
 fn local(name: &str) -> String {
     name.rsplit(':').next().unwrap_or(name).to_owned()
@@ -39,6 +43,19 @@ fn element(start: &quick_xml::events::BytesStart<'_>) -> Result<Element, String>
 
 /// Parses a whole document into its root element.
 pub fn parse(text: &str) -> Result<Element, String> {
+    let mut budget = MAX_ELEMENTS;
+    parse_within(text, &mut budget)
+}
+
+fn take_one(budget: &mut usize) -> Result<(), String> {
+    *budget = budget
+        .checked_sub(1)
+        .ok_or("the answer holds too many elements")?;
+    Ok(())
+}
+
+/// [`parse`] of at most `budget` elements, taking those read from it.
+pub fn parse_within(text: &str, budget: &mut usize) -> Result<Element, String> {
     let mut reader = Reader::from_str(text);
     let mut stack: Vec<Element> = Vec::new();
     loop {
@@ -47,9 +64,11 @@ pub fn parse(text: &str) -> Result<Element, String> {
                 if stack.len() >= MAX_DEPTH {
                     return Err("the answer is nested too deeply".into());
                 }
+                take_one(budget)?;
                 stack.push(element(&start)?);
             }
             Event::Empty(start) => {
+                take_one(budget)?;
                 let done = element(&start)?;
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(done),
@@ -152,6 +171,18 @@ mod tests {
         assert!(parse("<a><b></a>").is_err());
         assert!(parse("<a>").is_err());
         assert_eq!(escape("<&>"), "&lt;&amp;&gt;");
+    }
+
+    #[test]
+    fn elements_are_counted_against_a_budget() {
+        let mut budget = 3;
+        assert!(parse_within("<a><b/><c></c></a>", &mut budget).is_ok());
+        assert_eq!(budget, 0);
+        let mut budget = 2;
+        let error = parse_within("<a><b/><c/></a>", &mut budget).unwrap_err();
+        assert!(error.contains("too many elements"), "{error}");
+        let flat = format!("<a>{}</a>", "<b/>".repeat(MAX_ELEMENTS));
+        assert!(parse(&flat).is_err());
     }
 
     #[test]
