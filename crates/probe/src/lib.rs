@@ -9,8 +9,9 @@
 //! kinds that live outside `monitorflow-sensors` (website checks, ADR-0150)
 //! by wrapping [`Builtin`].
 //!
-//! [`discover`] is the one-off test a network scan is made of (ADR-0154):
-//! it is never a check that repeats.
+//! [`discover`] is the one-off test a network scan is made of (ADR-0154),
+//! and `snmp_read` the one of "Test" and "Browse" (ADR-0157): neither is
+//! ever a check that repeats.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -45,7 +46,7 @@ pub trait ProbeFactory: Send + Sync + 'static {
 
 /// The kinds of `monitorflow-sensors`, without an agent's local limits:
 /// `ping` and `port` over TCP or UDP, `snmp` of `monitorflow-snmp`,
-/// `snmp_custom` (ADR-0157),
+/// `snmp_custom` and the `snmp_read` tests of Test and Browse (ADR-0157),
 /// `vmware` of `monitorflow-vmware`, and the scans' `discover` tests.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Builtin;
@@ -61,6 +62,9 @@ impl ProbeFactory for Builtin {
         }
         if kind == monitorflow_snmp::CUSTOM_KIND {
             return monitorflow_snmp::custom::build(params);
+        }
+        if kind == monitorflow_snmp::READ_KIND {
+            return monitorflow_snmp::build_read(params);
         }
         if kind == discover::KIND {
             return discover::build(params);
