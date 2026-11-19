@@ -9,7 +9,7 @@
           <data><name>Local Probe</name><active>1</active></data>
           <nodes>
             <group id="50">
-              <data><name>Servers &amp; storage</name><active>1</active><maintenable>1</maintenable><maintstart>2026-11-18-20-00-00</maintstart><maintend>2026-11-18-21-00-00</maintend></data>
+              <data><name>Servers &amp; storage</name><active>1</active><discoverytype>2</discoverytype><ipselectmethod>2</ipselectmethod><ipcidr>192.0.2.0/28</ipcidr><discoveryschedule>4</discoveryschedule><maintenable>1</maintenable><maintstart>2026-11-18-20-00-00</maintstart><maintend>2026-11-18-21-00-00</maintend></data>
               <nodes>
                 <device id="2001">
                   <data><name>fs01</name><host>192.0.2.30</host><active>1</active></data>
@@ -25,10 +25,10 @@
                       </channels>
                     </sensor>
                     <sensor id="2103">
-                      <data><name>Print Spooler</name><sensortype>wmiservice</sensortype><service>Spooler</service><password>not-read</password></data>
+                      <data><name>Print Spooler</name><sensortype>wmiservice</sensortype><service>Spooler</service><password>not-read</password><dependencytype>1</dependencytype><dependency>2101</dependency></data>
                     </sensor>
                     <sensor id="2104">
-                      <data><name>Application errors</name><sensortype>wineventlog</sensortype><logfile>Application</logfile><eventsource>MSSQLSERVER</eventsource><eventid>17,18</eventid></data>
+                      <data><name>Application errors</name><dependencytype>1</dependencytype><dependency>9999</dependency><sensortype>wineventlog</sensortype><logfile>Application</logfile><eventsource>MSSQLSERVER</eventsource><eventid>17,18</eventid></data>
                     </sensor>
                   </nodes>
                 </device>

@@ -14,8 +14,15 @@ pub struct Config {
     /// Exports have none.
     pub maintenances: Vec<Maintenance>,
     pub media_types: Vec<MediaType>,
+    /// Services and SLAs (Zabbix 6.0 and later), from the API only.
+    pub services: Vec<Service>,
+    pub slas: Vec<Sla>,
     /// Users' media, `None` when the source cannot say (exports).
     pub user_media: Option<Vec<UserMedia>>,
+    /// Network discovery rules; exports have none.
+    pub discovery: Vec<DiscoveryRule>,
+    /// Discovery and auto-registration actions; exports have none.
+    pub actions: Vec<Action>,
     /// Whether hosts' items, triggers and web scenarios include what their
     /// templates give them, as the API returns them. Exports list only a
     /// host's own and name its templates.
@@ -169,6 +176,20 @@ pub struct Trigger {
     pub template: Option<String>,
     /// Its tags, name and value, which maintenances may select.
     pub tags: Vec<(String, String)>,
+    /// Its ID, from the API only.
+    pub id: Option<String>,
+    /// The triggers it depends on (ADR-0152): while one is in problem,
+    /// Zabbix does not raise this one.
+    pub dependencies: Vec<TriggerRef>,
+}
+
+/// A trigger another depends on, as Zabbix names it: by ID from the API,
+/// by name and expression in exports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerRef {
+    pub id: Option<String>,
+    pub name: String,
+    pub expression: String,
 }
 
 /// One HTTP request, as a web scenario's step or an HTTP agent item
@@ -281,6 +302,48 @@ pub struct Maintenance {
     pub collect_data: bool,
 }
 
+/// A Zabbix service (6.0 and later), as `service.get` gives it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Service {
+    pub id: String,
+    pub name: String,
+    /// 0: set the status to OK, 1: most critical if all children have
+    /// problems, 2: most critical of child services.
+    pub algorithm: u8,
+    /// The problems it watches: all of these tags must match.
+    pub problem_tags: Vec<TagFilter>,
+    /// IDs of its child services.
+    pub children: Vec<String>,
+    pub status_rules: Vec<StatusRule>,
+    /// Its own tags, which SLAs select it by.
+    pub tags: Vec<(String, String)>,
+    /// Whether its children have weights other than 0.
+    pub weighted: bool,
+}
+
+/// An additional rule of a service: `kind` is Zabbix's type (0: at least
+/// N children have a problem, 2: fewer than N children are OK, others by
+/// percentage or weight), `limit` its N.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatusRule {
+    pub kind: u8,
+    pub limit: f64,
+}
+
+/// A Zabbix SLA: a target over the services its tags select.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Sla {
+    pub name: String,
+    pub enabled: bool,
+    /// The target in percent.
+    pub slo: f64,
+    /// Whether it counts only some hours (a schedule other than 24x7).
+    pub scheduled: bool,
+    /// How many excluded downtimes it has.
+    pub excluded: usize,
+    pub service_tags: Vec<TagFilter>,
+}
+
 /// One tag condition of a maintenance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagFilter {
@@ -331,4 +394,65 @@ pub struct UserMedia {
     pub media_type: String,
     pub sendto: Vec<String>,
     pub enabled: bool,
+}
+
+/// A network discovery rule.
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveryRule {
+    pub id: String,
+    pub name: String,
+    /// Comma-separated addresses, blocks and ranges like `192.168.1.1-254`.
+    pub iprange: String,
+    /// Like `1h`, `3600` or a user macro.
+    pub delay: String,
+    pub enabled: bool,
+    /// The proxy that runs it, by name.
+    pub proxy: Option<String>,
+    pub checks: Vec<DiscoveryCheck>,
+}
+
+/// One check of a discovery rule. SNMP secrets are only ever kept to be
+/// sealed with the import's other secrets.
+#[derive(Clone, Default)]
+pub struct DiscoveryCheck {
+    /// Zabbix's number: 0 SSH, 8 TCP, 10 SNMPv1, 12 ICMP ping, and so on.
+    pub kind: u8,
+    /// Like `22` or `8000-8010,80`; empty for the check's own.
+    pub ports: String,
+    pub community: String,
+    pub security_name: String,
+    /// 0 without authentication, 1 without privacy, 2 with both.
+    pub security_level: u8,
+    pub auth_protocol: u8,
+    pub auth_passphrase: String,
+    pub priv_protocol: u8,
+    pub priv_passphrase: String,
+}
+
+impl std::fmt::Debug for DiscoveryCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiscoveryCheck")
+            .field("kind", &self.kind)
+            .field("ports", &self.ports)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Where an action's events come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionSource {
+    Discovery,
+    Registration,
+}
+
+/// A discovery or auto-registration action.
+#[derive(Debug, Clone)]
+pub struct Action {
+    pub name: String,
+    pub source: ActionSource,
+    pub enabled: bool,
+    /// The discovery rules it is limited to, by ID; empty for every one.
+    pub rules: Vec<String>,
+    /// Whether it adds hosts, puts them in groups or links templates.
+    pub adds_hosts: bool,
 }

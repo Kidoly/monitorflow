@@ -125,6 +125,26 @@ describe("IncidentPage", () => {
     await vi.waitFor(() => expect(document.title).toBe("Disk used /var on web-1 · MonitorFlow"));
   });
 
+  it("shows a forecast's time left and expected date, without limits in seconds on the chart", async () => {
+    const forecast: IncidentDetail = {
+      ...incident({ state: "open", severity: "warning", last_value: 172_800, peak_value: 172_800 }),
+      kind: "forecast",
+      expected_at: "2026-10-21T12:00:00Z",
+      threshold: {
+        metric: "monitorflow_disk_used_ratio", instance: null, comparison: ">=", warning: 259_200, critical: 86_400,
+        duration_s: 0, hysteresis: 3600, kind: "forecast", window_s: 86_400, target: 1,
+      },
+      events: [{ id: 1, kind: "opened", severity: "warning", value: 172_800, occurred_at: "2026-10-19T11:00:00Z", recorded_at: "2026-10-19T11:00:01Z", details: {} }],
+    };
+    stubIncident(forecast);
+    render(<IncidentPage id={ID} />);
+    const tiles = await screen.findByRole("group", { name: "Summary" });
+    expect(within(tiles).getAllByText("2 d left").length).toBeGreaterThan(0);
+    expect(tiles).toHaveTextContent(/Expected.*2026-10-21/);
+    expect(screen.getByText(/Warn 3 d before .* reaches 100%/)).toBeInTheDocument();
+    expect(screen.getByText(/Expected around 2026-10-21/)).toBeInTheDocument();
+  });
+
   it("speaks French", async () => {
     setActiveLocale("fr");
     stubIncident(resolved);

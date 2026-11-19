@@ -26,6 +26,7 @@ monitorflow-server-ee = { workspace = true, optional = true }
 monitorflow-common = { workspace = true, features = ["mirror", "server-update", "openapi"] }
 monitorflow-probe.workspace = true
 monitorflow-snmp.workspace = true
+monitorflow-vmware.workspace = true
 # Website checks among the probe kinds (ADR-0150).
 monitorflow-webcheck.workspace = true
 monitorflow-sensors.workspace = true
@@ -72,6 +73,7 @@ prost.workspace = true
 reqwest.workspace = true
 snap.workspace = true
 lettre.workspace = true
+pdf-writer.workspace = true
 async-trait.workspace = true
 # Secret redaction of AI context (ADR-0040).
 regex.workspace = true

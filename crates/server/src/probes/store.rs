@@ -54,23 +54,27 @@ impl ProbeStore {
         .fetch_all(&self.pool)
         .await?;
         let mut sets = group(lines);
-        let wanted: Vec<&str> = sets
-            .values()
-            .flat_map(|set| &set.checks)
-            .filter(|c| c.kind == monitorflow_snmp::KIND)
-            .map(|c| c.device.as_str())
-            .collect();
-        if !wanted.is_empty() {
-            let credentials = self.credentials(&wanted).await?;
-            add_credentials(&mut sets, &credentials);
+        for kind in [monitorflow_snmp::KIND, monitorflow_vmware::KIND] {
+            let wanted: Vec<&str> = sets
+                .values()
+                .flat_map(|set| &set.checks)
+                .filter(|c| c.kind == kind)
+                .map(|c| c.device.as_str())
+                .collect();
+            if !wanted.is_empty() {
+                let credentials = self.credentials(kind, &wanted).await?;
+                add_credentials(&mut sets, kind, &credentials);
+            }
         }
         Ok(sets)
     }
 
-    /// The opened SNMP credentials of `devices`, as check parameters, by
-    /// device ID (ADR-0149). Those that do not open are left out, logged.
+    /// The opened SNMP (ADR-0149) or vCenter (ADR-0156) credentials of
+    /// `devices`, as check parameters, by device ID. Those that do not
+    /// open are left out, logged.
     async fn credentials(
         &self,
+        kind: &str,
         devices: &[&str],
     ) -> Result<HashMap<String, BTreeMap<String, String>>, sqlx::Error> {
         let ids: Vec<String> = devices.iter().map(|d| (*d).to_owned()).collect();
@@ -82,12 +86,21 @@ impl ProbeStore {
         let mut out = HashMap::new();
         let mut conn = self.pool.acquire().await?;
         for (peer, id) in rows {
-            match crate::snmp::load(&mut conn, id).await? {
-                Some(Ok(credentials)) => {
-                    out.insert(peer, credentials.params());
+            let opened = if kind == monitorflow_vmware::KIND {
+                crate::vmware::load(&mut conn, id)
+                    .await?
+                    .map(|c| c.map(|c| c.params()))
+            } else {
+                crate::snmp::load(&mut conn, id)
+                    .await?
+                    .map(|c| c.map(|c| c.params()))
+            };
+            match opened {
+                Some(Ok(params)) => {
+                    out.insert(peer, params);
                 }
                 Some(Err(error)) => {
-                    tracing::warn!(device = %peer, %error, "cannot open the SNMP credentials of a device; its SNMP checks do not run")
+                    tracing::warn!(device = %peer, kind, %error, "cannot open the credentials of a device; its checks of that kind do not run")
                 }
                 None => {}
             }
@@ -96,19 +109,20 @@ impl ProbeStore {
     }
 }
 
-/// Adds to each SNMP check its device's credentials; checks of a device
-/// without any are left out, as they could not run.
+/// Adds to each check of `kind` its device's credentials; checks of a
+/// device without any are left out, as they could not run.
 fn add_credentials(
     sets: &mut HashMap<String, ProbeSet>,
+    kind: &str,
     credentials: &HashMap<String, BTreeMap<String, String>>,
 ) {
     for set in sets.values_mut() {
         set.checks.retain_mut(|check| {
-            if check.kind != monitorflow_snmp::KIND {
+            if check.kind != kind {
                 return true;
             }
             let Some(found) = credentials.get(&check.device) else {
-                tracing::debug!(device = %check.device, "an SNMP check of a device without credentials; not sent");
+                tracing::debug!(device = %check.device, kind, "a check of a device without credentials; not sent");
                 return false;
             };
             for (key, value) in found {
@@ -249,7 +263,7 @@ mod tests {
                 ("port".to_string(), "1161".to_string()),
             ]),
         )]);
-        add_credentials(&mut sets, &credentials);
+        add_credentials(&mut sets, "snmp", &credentials);
         let checks = &sets[CENTRAL].checks;
         assert_eq!(checks.len(), 2, "the printer has no credentials");
         let switch = checks.iter().find(|c| c.device == "switch").unwrap();

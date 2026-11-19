@@ -25,6 +25,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor log files for errors on Linux and Windows](monitor-log-files.md): Get alerted when an error, a failed login or any pattern you choose appears in a log file, and read your servers' system logs in one place.
 - [How to monitor anything with your own script (Bash or PowerShell)](monitor-with-your-own-script.md): Turn any shell or PowerShell script into a check with an alert: exit codes for OK, warning and critical, and name=value lines as metrics.
 - [How to monitor switches, printers, UPSs and other network devices](monitor-network-devices.md): Watch what cannot run the agent: ping, TCP and UDP ports, and SNMP v2c or v3 for interfaces, traffic, UPS battery, temperatures and printer supplies, checked from a relay of the site or the central server.
+- [How to find what is on your network](scan-the-network.md): Scan a range of addresses from the central server or a relay, see which machines can take the agent and which devices to watch, and add them in one click. Scans can run every day and say what is new.
 
 ## Databases
 
@@ -41,6 +42,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor a website over HTTPS](monitor-website-https.md): Know when your website stops answering as it should: its status code, the text on the page, how long it takes, its redirects and when its certificate expires.
 - [How to monitor Docker](monitor-docker.md): Get alerted when the Docker engine or containerd stops on a Linux server, and when a published container port stops answering.
 - [How to monitor Proxmox VE](monitor-proxmox-ve.md): Watch your Proxmox VE hosts: the web interface on port 8006, the cluster service, and the disk space, CPU and memory every VM depends on.
+- [How to monitor VMware vSphere and Hyper-V](monitor-vmware-hyper-v.md): Watch the hosts, clusters, virtual machines and datastores of a vCenter, an ESXi host or a Hyper-V host, get alerted on disconnected hosts, full datastores and old snapshots, and tie each virtual machine to its server.
 
 ## Linux services
 
