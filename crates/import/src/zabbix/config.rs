@@ -124,6 +124,40 @@ pub struct Item {
     pub snmp_oid: Option<String>,
     /// The template it comes from, when the API says.
     pub template: Option<String>,
+    /// What an SNMP item adds (ADR-0157): its units, whether it holds
+    /// text, its preprocessing steps by name (`CHANGE_PER_SECOND`,
+    /// `MULTIPLIER`) with their parameters, and its value map.
+    pub snmp: SnmpItem,
+}
+
+/// The SNMP side of an item.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SnmpItem {
+    pub units: Option<String>,
+    pub text: bool,
+    pub preprocessing: Vec<(String, Vec<String>)>,
+    /// Value and name pairs of its value map.
+    pub valuemap: Vec<(String, String)>,
+}
+
+/// A preprocessing type's name from the API's number, as exports write it.
+pub fn preprocessing_name(number: &str) -> String {
+    match number.trim() {
+        "1" => "MULTIPLIER",
+        "5" => "REGEX",
+        "9" => "SIMPLE_CHANGE",
+        "10" => "CHANGE_PER_SECOND",
+        "11" => "XMLPATH",
+        "12" => "JSONPATH",
+        "13" => "IN_RANGE",
+        "19" => "DISCARD_UNCHANGED",
+        "20" => "DISCARD_UNCHANGED_HEARTBEAT",
+        "21" => "JAVASCRIPT",
+        "25" => "STR_REPLACE",
+        "26" => "CHECK_NOT_SUPPORTED",
+        other => return format!("TYPE_{other}"),
+    }
+    .to_owned()
 }
 
 /// Trigger severity, from Not classified (0) to Disaster (5).

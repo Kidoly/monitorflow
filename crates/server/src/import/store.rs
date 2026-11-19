@@ -440,6 +440,50 @@ fn db_error(error: sqlx::Error) -> String {
     }
 }
 
+/// The lookup `lookup` stands for: the site's customer's lookup of that
+/// name, or a new one (ADR-0157). Lookups stay after an undo: other checks
+/// may use them.
+async fn imported_lookup(
+    tx: &mut Transaction<'_, Postgres>,
+    site_id: Uuid,
+    lookup: &super::ImportedLookup,
+    user: Uuid,
+) -> Result<Uuid, String> {
+    let definition: monitorflow_snmp::custom::Lookup =
+        serde_json::from_value(lookup.definition.clone())
+            .map_err(|e| format!("its lookup {} does not read: {e}", lookup.name))?;
+    definition
+        .validate()
+        .map_err(|e| format!("its lookup {}: {e}", lookup.name))?;
+    let customer: Uuid = sqlx::query_scalar("SELECT customer_id FROM sites WHERE id = $1")
+        .bind(site_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    let found: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM snmp_lookups WHERE customer_id = $1 AND name = $2")
+            .bind(customer)
+            .bind(&lookup.name)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db_error)?;
+    if let Some(id) = found {
+        return Ok(id);
+    }
+    let value = serde_json::to_value(&definition).map_err(|e| e.to_string())?;
+    sqlx::query_scalar(
+        "INSERT INTO snmp_lookups (customer_id, name, definition, created_by) VALUES ($1, $2, $3, $4)
+         RETURNING id",
+    )
+    .bind(customer)
+    .bind(&lookup.name)
+    .bind(value)
+    .bind(user)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(db_error)
+}
+
 /// Creates one object; `None` when it exists already.
 async fn create_one(
     tx: &mut Transaction<'_, Postgres>,
@@ -521,6 +565,7 @@ async fn create_one(
             timeout_ms,
             params,
             probe,
+            lookups,
         } => {
             let id = match server(peer_id, servers) {
                 Some(id) => id,
@@ -545,6 +590,16 @@ async fn create_one(
                     .fetch_one(&mut **tx)
                     .await
                     .map_err(db_error)?;
+            // A custom SNMP check's lookups: the customer's of the same
+            // name, or new ones (ADR-0157).
+            let mut params = params.clone();
+            for lookup in lookups {
+                let id = imported_lookup(tx, site_id, lookup, user).await?;
+                params.insert(
+                    format!("lookup{}", lookup.channel),
+                    Value::String(id.to_string()),
+                );
+            }
             let valid = crate::api::sensors::validate_with_host(
                 crate::api::sensors::EntryRequest {
                     kind: kind.clone(),
@@ -552,7 +607,7 @@ async fn create_one(
                     instance: String::new(),
                     interval_ms: *interval_ms,
                     timeout_ms: *timeout_ms,
-                    params: params.clone(),
+                    params,
                     enabled: true,
                     probe: None,
                 },

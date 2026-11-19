@@ -239,6 +239,9 @@ pub enum Watch {
     /// The traffic of the host's network interfaces: the built-in `net`
     /// check of a server, the SNMP interfaces of a device (ADR-0149).
     Traffic,
+    /// Objects a person picked on a device, by OID (ADR-0157): up to ten
+    /// channels, or the columns of a table.
+    SnmpCustom(Box<SnmpCustom>),
     /// A vCenter or ESXi host read through its API from a probe: its hosts,
     /// virtual machines and datastores (ADR-0156). The host is a device.
     Vmware,
@@ -252,6 +255,107 @@ impl Watch {
     pub fn web(site: Website) -> Self {
         Self::Web(Box::new(site))
     }
+}
+
+/// A number that compares by its bits, so a [`Watch`] stays `Eq`.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(transparent)]
+pub struct Num(pub f64);
+
+impl PartialEq for Num {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+
+impl Eq for Num {}
+
+/// A custom SNMP check (ADR-0157), as the source has it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SnmpCustom {
+    /// For a table: its OID, and the column naming its rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_column: Option<String>,
+    /// 1 to 10.
+    pub channels: Vec<SnmpChannel>,
+}
+
+/// How a channel reads its object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SnmpValue {
+    Gauge,
+    Counter,
+    Text,
+}
+
+/// One channel of a custom SNMP check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SnmpChannel {
+    /// A numeric OID; for a table, a column of it.
+    pub oid: String,
+    pub name: String,
+    pub value: SnmpValue,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multiply: Option<Num>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub divide: Option<Num>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lookup: Option<SnmpLookup>,
+    /// For a text: `contains`, `not_contains`, `equals`, `not_equals`,
+    /// `matches` or `not_matches`, the text, and the state when not met.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expect: Option<(String, String, Severity)>,
+    /// Limits on the value: above (or below), warning and critical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<SnmpLimits>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SnmpLimits {
+    pub above: bool,
+    pub warning: Option<Num>,
+    pub critical: Option<Num>,
+}
+
+/// The state a lookup entry gives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SnmpState {
+    Ok,
+    Warning,
+    Critical,
+}
+
+/// One entry of a lookup: an integer, a range, or a text; written as
+/// `monitorflow_snmp::custom::LookupEntry` reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SnmpLookupEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    pub name: String,
+    pub state: SnmpState,
+}
+
+/// Names and states of an enumerated object's values, by the source's
+/// name. `entries` empty: the source names it but its definition was not
+/// read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SnmpLookup {
+    pub name: String,
+    /// A built-in lookup of the same values (`builtin:truth_value`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<String>,
+    pub entries: Vec<SnmpLookupEntry>,
+    pub otherwise: SnmpState,
 }
 
 /// GET reads the page; HEAD only its status and headers.

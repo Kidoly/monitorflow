@@ -24,6 +24,7 @@ pub mod files;
 pub mod hosts;
 pub mod promql;
 pub mod rules;
+pub mod snmp;
 pub mod targets;
 
 /// Prometheus's scrape interval when the configuration sets none.
@@ -40,6 +41,8 @@ pub struct Collected {
     pub silences: Vec<alertmanager::SilenceIn>,
     /// Blackbox modules by name, from `blackbox.yml`.
     pub modules: BTreeMap<String, config::BlackboxModule>,
+    /// snmp_exporter's modules by name, from `snmp.yml` (ADR-0157).
+    pub snmp_modules: BTreeMap<String, snmp::SnmpModule>,
     /// What could not be read at all: missing files, other discoveries.
     pub unmovable: Vec<Unmovable>,
 }

@@ -791,6 +791,7 @@ mod tests {
                 min_error: Some(7.0),
                 ..Default::default()
             }),
+            ..Default::default()
         });
         Tree {
             objects: vec![
@@ -826,6 +827,7 @@ mod tests {
                 name: name.into(),
                 unit: "%".into(),
                 limits: None,
+                ..Default::default()
             });
         }
         tree.objects.push(process);

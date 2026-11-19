@@ -398,7 +398,18 @@ function TestedTable({ tested, types }: { tested: SnmpTested; types: ChannelForm
 }
 
 /** Browse: what the device answers under an OID, each to watch with one click. */
-export function SnmpBrowse({ server, onPick, onClose }: { server: ServerDetail; onPick: (channel: ChannelForm) => void; onClose: () => void }) {
+export function SnmpBrowse({
+  server,
+  probe,
+  onPick,
+  onClose,
+}: {
+  server: ServerDetail;
+  /** Where to read from: the form's probe; the device's own when empty. */
+  probe?: string;
+  onPick: (channel: ChannelForm) => void;
+  onClose: () => void;
+}) {
   const [root, setRoot] = useState("1.3.6.1.4.1");
   const [read, setRead] = useState<SnmpRead | null>(null);
   const [busy, setBusy] = useState(false);
@@ -407,7 +418,7 @@ export function SnmpBrowse({ server, onPick, onClose }: { server: ServerDetail; 
     setBusy(true);
     setProblem(null);
     try {
-      setRead(await api.readSnmp(server.id, { walk: root.trim(), max: 500 }));
+      setRead(await api.readSnmp(server.id, { walk: root.trim(), max: 500, ...(probe && { probe }) }));
     } catch (e) {
       setProblem(t("snmp.browse.failed", { error: describeError(e) }));
     } finally {
@@ -672,6 +683,7 @@ export function SnmpCheckForm({
       {aside === "browse" && (
         <SnmpBrowse
           server={server}
+          probe={form.probe}
           onPick={(c) => {
             add(c);
             setAside(null);
