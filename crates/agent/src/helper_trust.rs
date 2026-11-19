@@ -472,7 +472,21 @@ fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = fs::File::create(&tmp)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    fs::rename(&tmp, path)
+    fs::rename(&tmp, path)?;
+    sync_parent(path)
+}
+
+/// Makes a file created or renamed in `path`'s directory survive a power
+/// cut. Windows has no directory sync through std; NTFS journals the
+/// metadata change itself.
+fn sync_parent(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        fs::File::open(dir)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 /// `dir` exists, belongs to the helper's user and nobody else can write
@@ -543,8 +557,11 @@ fn mark_used(
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Err(TrustError::Replayed),
         Err(e) => return Err(io_error(&path)(e)),
     };
+    // Synced with its directory: a record lost to a power cut would let
+    // the command run once more before it expires.
     file.write_all(command.expires_at_unix_ms.to_string().as_bytes())
         .and_then(|()| file.sync_all())
+        .and_then(|()| sync_parent(&path))
         .map_err(io_error(&path))
 }
 
