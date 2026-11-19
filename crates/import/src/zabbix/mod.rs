@@ -22,6 +22,7 @@ pub mod macros;
 pub mod maintenance;
 pub mod map;
 pub mod media;
+pub mod services;
 pub mod stock;
 pub mod triggers;
 pub mod web;

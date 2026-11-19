@@ -102,7 +102,7 @@ db_tests! {
             AgentStreamService::new(registry, Arc::new(DbRelayPolicy::new(pool.clone())), server_settings())
                 .with_inventory(Arc::new(DbInventory::new(pool.clone())))
                 .with_sensor_configs(configs)
-                .with_ingest(Ingest { metrics: Some(metrics.queue()), events: None })
+                .with_ingest(Ingest { metrics: Some(metrics.queue()), events: None, virt: None })
         }, Some(renewer)).await;
 
         // b fetches its CRL from a, then opens its own stream through a.

@@ -555,6 +555,152 @@
       }
     }
   ],
+  "services": [],
+  "dependencies": [
+    {
+      "child": {
+        "host": "device:2002"
+      },
+      "parent": {
+        "host": "device:2003"
+      },
+      "origin": {
+        "kind": "group",
+        "name": "Servers"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "dependency_group",
+        "args": {
+          "group": "Servers"
+        }
+      }
+    },
+    {
+      "child": {
+        "host": "device:2001"
+      },
+      "parent": {
+        "host": "device:2003"
+      },
+      "origin": {
+        "kind": "group",
+        "name": "Servers"
+      },
+      "fidelity": "approximated",
+      "note": {
+        "code": "dependency_group",
+        "args": {
+          "group": "Servers"
+        }
+      }
+    },
+    {
+      "child": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "web",
+          "url": "https://web01.example.net/health"
+        }
+      },
+      "parent": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "ping"
+        }
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "child": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "web",
+          "url": "https://web01.example.net/",
+          "status": "100-599"
+        }
+      },
+      "parent": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "ping"
+        }
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "child": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "port",
+          "address": "web01.example.net",
+          "port": 22
+        }
+      },
+      "parent": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "ping"
+        }
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "child": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "traffic"
+        }
+      },
+      "parent": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "ping"
+        }
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "exact"
+    },
+    {
+      "child": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "disk"
+        }
+      },
+      "parent": {
+        "host": "device:2002",
+        "watch": {
+          "kind": "ping"
+        }
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Ping",
+        "detail": "ping"
+      },
+      "fidelity": "exact"
+    }
+  ],
   "unmovable": [
     {
       "hosts": [
@@ -645,6 +791,21 @@
       },
       "why": {
         "code": "disabled"
+      }
+    },
+    {
+      "hosts": [
+        "device:2004"
+      ],
+      "origin": {
+        "kind": "device",
+        "name": "branch-fs"
+      },
+      "why": {
+        "code": "dependency_unmapped",
+        "args": {
+          "parent": "#9999"
+        }
       }
     }
   ]

@@ -30,6 +30,15 @@ use support::{build_binaries, free_addr, http, unique, wait_for, Database, Logs,
 
 /// Short enough to keep the test fast; the agent heartbeats every second.
 const HEARTBEAT_TIMEOUT_SECS: u64 = 3;
+/// The server's default `ingest.shutdown_timeout`, written in its config so
+/// the wait below follows it. The test runs no VictoriaMetrics nor
+/// VictoriaLogs (CI has none), so at SIGTERM the writers retry the
+/// agents' last items until this deadline, as ADR-0013 says.
+const INGEST_SHUTDOWN_SECS: u64 = 10;
+/// How long the server may take to stop: the flush deadline above, of
+/// which it uses 7.5 to 10 s, and room for a loaded machine. Waiting only
+/// 10 s failed under load with "server still running 10s after SIGTERM".
+const SERVER_STOP: Duration = Duration::from_secs(INGEST_SHUTDOWN_SECS + 10);
 const AGENT_ID: &str = "e2e-01";
 const RELAYED_ID: &str = "e2e-02";
 const RELAY_ID: &str = "e2e-relay";
@@ -102,6 +111,9 @@ database_require_restricted_role = true
 data_dir = "{data}"
 heartbeat_timeout = {HEARTBEAT_TIMEOUT_SECS}
 server_names = ["127.0.0.1"]
+
+[ingest]
+shutdown_timeout = {INGEST_SHUTDOWN_SECS}
 
 [tls]
 ca_cert = "{data}/tls/ca.pem"
@@ -418,7 +430,7 @@ key = "{data}/tls/key.pem"
     added.assert_running();
     assert!(added.terminate(Duration::from_secs(10)).success());
 
-    assert!(server.terminate(Duration::from_secs(10)).success());
+    assert!(server.terminate(SERVER_STOP).success());
     assert!(agent.terminate(Duration::from_secs(10)).success());
     assert!(relayed.terminate(Duration::from_secs(10)).success());
 
