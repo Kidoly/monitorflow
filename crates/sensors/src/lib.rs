@@ -132,6 +132,11 @@ pub fn metric_name(sensor: &str, metric: &str) -> String {
     }
 }
 
+/// Milliseconds since the Unix epoch now, 0 before it.
+pub fn now_unix_ms() -> i64 {
+    unix_ms(SystemTime::now())
+}
+
 fn unix_ms(time: SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))

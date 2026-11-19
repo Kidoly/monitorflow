@@ -387,3 +387,10 @@ async fn udp_silence_and_refusals() {
     let v = values(&samples);
     assert_eq!(v["up"], 0.0);
 }
+
+#[test]
+fn udp_query_ids_cannot_be_guessed() {
+    // The process ID alone, as before, gave the same ID every time.
+    let ids: std::collections::HashSet<u16> = (0..16).map(|_| query_id()).collect();
+    assert!(ids.len() > 8, "{ids:?}");
+}

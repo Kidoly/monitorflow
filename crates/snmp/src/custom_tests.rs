@@ -466,3 +466,19 @@ fn channel_parameters_are_numbered() {
     assert_eq!(channel_number("oid1x"), None);
     assert_eq!(channel_number("what1"), None);
 }
+
+#[test]
+fn row_names_fit_the_server_in_bytes() {
+    // 128 characters of two bytes, twice, so the index is added too.
+    let long = "é".repeat(200);
+    let indexes: BTreeSet<Vec<u32>> = [vec![1; 40], vec![2; 40]].into();
+    let names: BTreeMap<Vec<u32>, String> =
+        indexes.iter().map(|i| (i.clone(), long.clone())).collect();
+    let rows = row_names(&indexes, &names);
+    let distinct: BTreeSet<&String> = rows.values().collect();
+    assert_eq!(distinct.len(), 2, "{rows:?}");
+    for name in rows.values() {
+        assert!(name.len() <= 256, "{} bytes", name.len());
+        assert!(monitorflow_sensors::validate::instance(name).is_ok());
+    }
+}
