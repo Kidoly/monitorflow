@@ -320,6 +320,20 @@ db_tests! {
         let (status, _) = call(&pool, &operator, "POST", &format!("/api/servers/{id}/sensor_configs"),
             Some(json!({"kind": "snmp", "name": "snmp_if", "interval_ms": 60000, "params": {"what": "interfaces"}}))).await;
         assert_eq!(status, StatusCode::CREATED);
+        // Nor a host of their own: the credentials go to the device only.
+        for kind in ["snmp", "snmp_custom"] {
+            let (status, error) = call(&pool, &operator, "POST", &format!("/api/servers/{id}/sensor_configs"),
+                Some(json!({"kind": kind, "name": "snmp_elsewhere", "interval_ms": 60000,
+                            "params": {"what": "interfaces", "oid1": "1.3.6.1.2.1.1.3.0", "host": "198.51.100.7"}}))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{kind}: {error}");
+            assert!(error["error"].as_str().unwrap().contains("host"), "{error}");
+        }
+        // One stored before is sent to the device's address all the same.
+        sqlx::query("UPDATE sensor_configs SET params = params || '{\"host\": \"198.51.100.7\"}' WHERE name = 'snmp_if'")
+            .execute(&pool).await.unwrap();
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let snmp_if = sets["central"].checks.iter().find(|c| c.config.name == "snmp_if").unwrap();
+        assert_eq!(snmp_if.config.params["host"], "192.0.2.30");
         for bad in [
             json!({"site_id": paris, "name": "x", "address": "192.0.2.31", "template": "toaster", "snmp": {"version": "v2c", "community": "c"}}),
             json!({"site_id": paris, "name": "x", "address": "192.0.2.31", "template": "ups"}),
