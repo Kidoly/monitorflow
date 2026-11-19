@@ -27,14 +27,20 @@
 //! and adds them to the check it sends a probe; [`SECRET_PARAMS`] are
 //! never stored with the check nor shown.
 
+pub mod custom;
+pub mod library;
+pub mod mib;
 mod mibs;
+pub mod read;
 mod sensor;
 mod session;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub use mibs::{Group, GROUPS};
+pub use custom::CUSTOM_KIND;
+pub use mibs::{Group, Val, GROUPS};
+pub use read::{build_read, parse_read, Read, READ_KIND};
 pub use sensor::SnmpSensor;
 
 use monitorflow_sensors::Sensor;

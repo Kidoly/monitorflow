@@ -394,6 +394,7 @@ fn watch_spec(watch: &Watch, os: Os) -> Spec {
         Watch::Ping { .. }
         | Watch::UdpPort { .. }
         | Watch::Snmp { .. }
+        | Watch::SnmpCustom(_)
         | Watch::Traffic
         | Watch::Vmware
         | Watch::HyperV => return Spec::NoPort,
@@ -602,6 +603,9 @@ impl Planner<'_> {
         };
         let (mut list, mut why) = list_of(&check.fidelity);
         let mut probe = false;
+        // A custom SNMP check's lookups to make, and its channels' rules.
+        let mut lookups = Vec::new();
+        let mut snmp_custom = None;
         // What a device's SNMP says stands for what an agent measures
         // (ADR-0149).
         let snmp_group = |group: &str| Watch::Snmp {
@@ -707,6 +711,28 @@ impl Planner<'_> {
                     _ => "snmp",
                 };
                 ("snmp", params, (name.into(), String::new()))
+            }
+            // Objects picked by OID (ADR-0157): the device's custom check.
+            Watch::SnmpCustom(custom) => {
+                if server.device.is_none() {
+                    self.not_movable(
+                        "check",
+                        origin,
+                        vec![server.name.clone()],
+                        note("snmp_of_agent", args! {}),
+                    );
+                    return;
+                }
+                probe = true;
+                if list == List::Exact {
+                    list = List::Approximated;
+                    why = note("snmp_credentials", args! {});
+                }
+                let (params, made) = snmp::params(custom);
+                lookups = made;
+                snmp_custom = Some(custom.as_ref());
+                let text: String = check.origin.name.chars().take(snmp::MAX_NAME).collect();
+                ("snmp_custom", params, ("snmp".into(), text))
             }
             Watch::Traffic => {
                 self.builtin(origin, &server, &check.fidelity, "builtin_net", args! {});
@@ -916,6 +942,14 @@ impl Planner<'_> {
             return;
         }
         let mut name = check_name(&prefix_text.0, &prefix_text.1);
+        if snmp_custom.is_some() {
+            name = name
+                .chars()
+                .take(snmp::MAX_NAME)
+                .collect::<String>()
+                .trim_end_matches('_')
+                .to_owned();
+        }
         let base = name.clone();
         let mut n = 2;
         while !self.check_names.insert((lower.clone(), name.clone())) {
@@ -964,10 +998,14 @@ impl Planner<'_> {
                 name: name.clone(),
                 interval_ms,
                 timeout_ms,
-                params,
+                params: params.clone(),
                 probe,
+                lookups,
             }),
         });
+        if let Some(custom) = snmp_custom {
+            self.snmp_rules(&server, &name, &params, custom, &id, origin.clone());
+        }
         self.checks.insert(same, name.clone());
         self.watch_names
             .insert((lower.clone(), format!("{:?}", check.watch)), name.clone());
@@ -991,6 +1029,58 @@ impl Planner<'_> {
         }
         if let Some(alert) = &alert {
             self.alert(&server, kind, &name, alert, origin);
+        }
+    }
+
+    /// The rules of a custom SNMP check's channels (ADR-0157): their
+    /// limits, and their states' warning and critical.
+    fn snmp_rules(
+        &mut self,
+        server: &Server,
+        name: &str,
+        params: &Map<String, Value>,
+        custom: &monitorflow_import::model::SnmpCustom,
+        check: &str,
+        origin: OriginView,
+    ) {
+        let flat = crate::sensor_config::params(Value::Object(params.clone()));
+        let Ok(parsed) = crate::snmp_custom::check_row(&flat, server.device.as_deref()) else {
+            return;
+        };
+        let keys: Vec<String> = parsed.channels.iter().map(|c| c.key.clone()).collect();
+        let lower = server.peer_id.to_ascii_lowercase();
+        for (suffix, comparison, warning, critical) in snmp::rules(custom, &keys) {
+            let metric = format!("monitorflow_{name}_{suffix}");
+            let id = self.unique_id(format!("threshold:{lower}:{metric}"));
+            let present = self.existing.thresholds.contains(&(
+                lower.clone(),
+                metric.clone(),
+                None,
+                "value".to_owned(),
+            ));
+            let mut needs = vec![check.to_owned()];
+            needs.extend(Self::needs(server));
+            self.push(Item {
+                id,
+                kind: "threshold".into(),
+                list: List::Exact,
+                note: None,
+                origin: origin.clone(),
+                hosts: vec![server.name.clone()],
+                present,
+                needs,
+                create: Some(Create::Threshold {
+                    server: server.peer_id.clone(),
+                    metric,
+                    instance: None,
+                    comparison: comparison.into(),
+                    warning,
+                    critical,
+                    duration_s: 0,
+                    hysteresis: 0.0,
+                    richer: Richer::default(),
+                }),
+            });
         }
     }
 
@@ -1992,6 +2082,7 @@ impl Planner<'_> {
     }
 }
 
+mod snmp;
 mod website;
 
 /// The metric and instance of a measure every server has, or the website

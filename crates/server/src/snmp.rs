@@ -19,12 +19,12 @@ use crate::secrets::{self, Column};
 #[schema(as = SnmpCredentialsRequest)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialsRequest {
-    /// `v2c` or `v3`.
+    /// `v1`, `v2c` or `v3`.
     #[schema(example = "v3")]
     pub version: String,
     /// 161 by default.
     pub port: Option<u16>,
-    /// v2c: the community. Secret.
+    /// v1 and v2c: the community. Secret.
     pub community: Option<String>,
     /// v3: the user.
     pub user: Option<String>,
@@ -97,10 +97,11 @@ pub fn check(
     before: Option<&Credentials>,
 ) -> Result<Credentials, String> {
     let version = request.version.trim().to_owned();
-    if version != "v2c" && version != "v3" {
-        return Err("`version` must be `v2c` or `v3`".into());
+    if !["v1", "v2c", "v3"].contains(&version.as_str()) {
+        return Err("`version` must be `v1`, `v2c` or `v3`".into());
     }
-    let kept = before.filter(|b| b.version == version);
+    // v1 and v2c share a community.
+    let kept = before.filter(|b| b.version == version || (b.version != "v3" && version != "v3"));
     let secret = |given: &Option<String>, stored: Option<&Option<String>>| {
         given
             .clone()
@@ -131,7 +132,7 @@ pub fn check(
             None
         },
         secrets: Secrets {
-            community: if version == "v2c" {
+            community: if version != "v3" {
                 secret(&request.community, kept.map(|b| &b.secrets.community))
             } else {
                 None
@@ -173,7 +174,7 @@ pub struct View {
     pub user: Option<String>,
     pub auth_protocol: Option<String>,
     pub priv_protocol: Option<String>,
-    /// Whether a community is stored, for v2c.
+    /// Whether a community is stored, for v1 and v2c.
     pub community_set: bool,
     pub auth_password_set: bool,
     pub priv_password_set: bool,
@@ -544,6 +545,17 @@ mod tests {
         .unwrap();
         assert_eq!(v2c.params()["community"], "public");
         assert_eq!(v2c.params()["port"], "161");
+        // v1 keeps the community of v2c (ADR-0157).
+        let v1 = check(
+            &CredentialsRequest {
+                version: "v1".into(),
+                ..Default::default()
+            },
+            Some(&v2c),
+        )
+        .unwrap();
+        assert_eq!(v1.params()["version"], "v1");
+        assert_eq!(v1.params()["community"], "public");
         let first = check(&v3(), None).unwrap();
         assert_eq!(first.user.as_deref(), Some("monitor"));
         // A change without the passwords keeps them.
