@@ -165,6 +165,8 @@ struct Tenant {
     customer_silence: Uuid,
     /// A weekly maintenance window of the site (ADR-0151).
     window: Uuid,
+    /// The server set behind the relay (ADR-0152).
+    dependency: Uuid,
     /// A viewer of the customer with a contact, on its on-call schedule
     /// (ADR-0081), which has an override.
     member: Uuid,
@@ -352,6 +354,13 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let dependency =
+        one("INSERT INTO dependencies (server_id, parent_relay_id) VALUES ($1, $2) RETURNING id")
+            .bind(server)
+            .bind(relay)
+            .fetch_one(pool)
+            .await
+            .unwrap();
     let member = one(
         "WITH u AS (INSERT INTO users (username) VALUES ($1) RETURNING id),
               r AS (INSERT INTO user_roles (user_id, role, customer_id)
@@ -428,6 +437,7 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         silence,
         customer_silence,
         window,
+        dependency,
         remediation,
         pending,
         campaign,
@@ -2019,6 +2029,51 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = path.replace("{id}", &b.window.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
+        ("GET", "/api/dependencies") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.dependency), "{body}");
+            assert!(!Ctx::mentions(&body, b.dependency), "{body}");
+            assert!(!Ctx::mentions(&body, b.server), "{body}");
+            for query in [
+                format!("server_id={}", b.server),
+                format!("relay_id={}", b.relay),
+            ] {
+                let uri = format!("{path}?{query}");
+                assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            }
+        }
+        ("POST", "/api/dependencies") => {
+            // B's parent, or B's child, as if they did not exist.
+            let body =
+                json!({"parent": {"server_id": b.server}, "children": [{"server_id": a.server}]});
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            let body =
+                json!({"parent": {"relay_id": a.relay}, "children": [{"server_id": b.server}]});
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            let body =
+                json!({"parent": {"relay_id": b.relay}, "children": [{"server_id": a.server}]});
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("DELETE", "/api/dependencies/{id}") => {
+            let uri = path.replace("{id}", &b.dependency.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("GET", "/api/servers/{id}/dependencies") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let uri = path.replace("{id}", &a.server.to_string());
+            let body = ctx.call(method, &uri, None).await.1;
+            assert!(Ctx::mentions(&body, a.dependency), "{body}");
+            assert!(!Ctx::mentions(&body, b.server), "{body}");
+        }
+        ("GET", "/api/relays/{id}/dependencies") => {
+            let uri = path.replace("{id}", &b.relay.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let uri = path.replace("{id}", &a.relay.to_string());
+            let body = ctx.call(method, &uri, None).await.1;
+            assert!(Ctx::mentions(&body, a.server), "{body}");
+            assert!(!Ctx::mentions(&body, b.server), "{body}");
+        }
         ("POST", "/api/silences/{id}/end") => {
             for id in [b.silence, b.customer_silence] {
                 let uri = path.replace("{id}", &id.to_string());
@@ -2075,6 +2130,57 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "version": "v2c", "community": "c" }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        // VMware and Hyper-V (ADR-0156): another customer's device, server,
+        // site and virtual machines are not found, and a virtual machine is
+        // never tied to another customer's server.
+        ("GET", "/api/devices/{id}/vmware")
+        | ("PUT", "/api/devices/{id}/vmware")
+        | ("DELETE", "/api/devices/{id}/vmware")
+        | ("GET", "/api/servers/{id}/virtualization")
+        | ("POST", "/api/servers/{id}/hyperv") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "user": "u", "password": "p" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
+        ("POST", "/api/devices/vmware/test") => {
+            let body = json!({ "site_id": b.site, "address": "192.0.2.9", "vmware": {} });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("PUT", "/api/virtual-objects/{id}/server")
+        | ("POST", "/api/virtual-objects/{id}/install-agent") => {
+            let theirs: uuid::Uuid = sqlx::query_scalar(
+                "INSERT INTO virtual_objects (source_id, kind, instance) VALUES ($1, 'vm', 'theirs')
+                 ON CONFLICT (source_id, kind, instance) DO UPDATE SET key = '' RETURNING id",
+            )
+            .bind(b.server)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            let uri = path.replace("{id}", &theirs.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, Some(json!({ "server_id": null })))
+                    .await,
+                not_found,
+                "{uri}"
+            );
+            if method == "PUT" {
+                let ours: uuid::Uuid = sqlx::query_scalar(
+                    "INSERT INTO virtual_objects (source_id, kind, instance) VALUES ($1, 'vm', 'ours')
+                     ON CONFLICT (source_id, kind, instance) DO UPDATE SET key = '' RETURNING id",
+                )
+                .bind(a.server)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+                let uri = path.replace("{id}", &ours.to_string());
+                let body = Some(json!({ "server_id": b.server }));
+                assert_eq!(
+                    ctx.status(method, &uri, body).await,
+                    StatusCode::BAD_REQUEST,
+                    "{uri}"
+                );
+            }
+        }
         ("PUT", "/api/devices/{id}") => {
             let uri = path.replace("{id}", &b.server.to_string());
             let body = Some(json!({ "address": "192.0.2.9" }));
@@ -2097,6 +2203,35 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     "{uri}"
                 );
             }
+        }
+        // Previews (ADR-0153): B is 404 and never queried; A only with A's
+        // matchers and filters.
+        ("POST", "/api/servers/{id}/thresholds/preview")
+        | ("POST", "/api/sites/{id}/thresholds/preview") => {
+            let body = || Some(json!({ "rule": threshold_body(), "days": 1 }));
+            let server = path.starts_with("/api/servers");
+            let (theirs, ours) = if server {
+                (b.server, a.server)
+            } else {
+                (b.site, a.site)
+            };
+            let before = ctx.vm.seen().len();
+            let uri = path.replace("{id}", &theirs.to_string());
+            assert_eq!(ctx.status(method, &uri, body()).await, not_found, "{uri}");
+            assert_eq!(ctx.vm.seen().len(), before, "{uri} queried the store");
+            let uri = path.replace("{id}", &ours.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, body()).await,
+                StatusCode::OK,
+                "{uri}"
+            );
+            let last = ctx.vm_seen_last();
+            assert!(
+                !server
+                    || (last.contains("site=\"site-a\"")
+                        && last.contains("extra_label=site=site-a")),
+                "{last}"
+            );
         }
         ("POST", "/api/servers/{id}/thresholds") | ("POST", "/api/sites/{id}/thresholds") => {
             for id in [b.server, b.site] {

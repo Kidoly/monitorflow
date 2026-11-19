@@ -618,6 +618,7 @@ impl Storage {
         Ingest {
             metrics: Some(self.metrics.queue()),
             events: Some(self.events.queue()),
+            virt: None,
         }
     }
 
