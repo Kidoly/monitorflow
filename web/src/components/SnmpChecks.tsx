@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useId, useState } from "react";
 
 import { t } from "@/i18n";
@@ -16,6 +17,7 @@ import {
 import { formatSeconds } from "@/lib/format";
 import { every } from "@/lib/intervals";
 import { modifiesSite, useMe } from "@/lib/me";
+import { SNMP_LIBRARY_PATH } from "@/lib/routes";
 import {
   type ChannelForm,
   type CheckForm,
@@ -396,7 +398,18 @@ function TestedTable({ tested, types }: { tested: SnmpTested; types: ChannelForm
 }
 
 /** Browse: what the device answers under an OID, each to watch with one click. */
-export function SnmpBrowse({ server, onPick, onClose }: { server: ServerDetail; onPick: (channel: ChannelForm) => void; onClose: () => void }) {
+export function SnmpBrowse({
+  server,
+  probe,
+  onPick,
+  onClose,
+}: {
+  server: ServerDetail;
+  /** Where to read from: the form's probe; the device's own when empty. */
+  probe?: string;
+  onPick: (channel: ChannelForm) => void;
+  onClose: () => void;
+}) {
   const [root, setRoot] = useState("1.3.6.1.4.1");
   const [read, setRead] = useState<SnmpRead | null>(null);
   const [busy, setBusy] = useState(false);
@@ -405,7 +418,7 @@ export function SnmpBrowse({ server, onPick, onClose }: { server: ServerDetail; 
     setBusy(true);
     setProblem(null);
     try {
-      setRead(await api.readSnmp(server.id, { walk: root.trim(), max: 500 }));
+      setRead(await api.readSnmp(server.id, { walk: root.trim(), max: 500, ...(probe && { probe }) }));
     } catch (e) {
       setProblem(t("snmp.browse.failed", { error: describeError(e) }));
     } finally {
@@ -665,10 +678,12 @@ export function SnmpCheckForm({
         {form.channels.length < MAX_CHANNELS && <Button onClick={() => add(NEW_CHANNEL)}>{t("snmp.addChannel")}</Button>}
         <Button onClick={() => setAside("browse")}>{t("snmp.browse")}</Button>
         <Button onClick={() => setAside("pick")}>{t("snmp.pick")}</Button>
+        <Link href={SNMP_LIBRARY_PATH}>{t("snmp.manageLibrary")}</Link>
       </div>
       {aside === "browse" && (
         <SnmpBrowse
           server={server}
+          probe={form.probe}
           onPick={(c) => {
             add(c);
             setAside(null);

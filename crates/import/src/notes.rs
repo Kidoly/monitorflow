@@ -235,6 +235,38 @@ pub const NOTES: &[(&str, &str)] = &[
         "An SNMP object outside the common MIBs MonitorFlow reads: interfaces, host resources, UPS, temperature sensors and printer supplies.",
     ),
     (
+        "snmp_no_oid",
+        "No OID could be read from this custom SNMP sensor.",
+    ),
+    (
+        "snmp_lookup_missing",
+        "The lookup {name} was not among the files read: import its .ovl file with the configuration, or pick the channel's names of values after the import.",
+    ),
+    (
+        "snmp_custom_more",
+        "{count} more channels are left out: a custom SNMP check has at most 10.",
+    ),
+    (
+        "snmp_string_one",
+        "Only the first text condition is kept: a channel expects one text.",
+    ),
+    (
+        "snmp_string_length",
+        "A check of the text's length or of a number in it becomes a check of the text.",
+    ),
+    (
+        "snmp_preprocessing",
+        "The preprocessing step {step} is left out.",
+    ),
+    (
+        "snmp_walk_table",
+        "One table check, with a row per entry, stands for an item per row.",
+    ),
+    (
+        "snmp_exporter_override",
+        "Overrides and regular expressions of the module are left out.",
+    ),
+    (
         "dns_as_udp",
         "MonitorFlow checks that the DNS server answers a query; it does not compare the record.",
     ),

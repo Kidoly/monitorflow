@@ -48440,6 +48440,13 @@
               "kind": {
                 "type": "string"
               },
+              "lookups": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ImportLookup"
+                },
+                "description": "For a custom SNMP check (ADR-0157): lookups to make, or to take\nof the same name, for its channels."
+              },
               "name": {
                 "type": "string"
               },
@@ -49022,6 +49029,30 @@
           "approximated",
           "not_movable"
         ]
+      },
+      "ImportLookup": {
+        "type": "object",
+        "description": "A lookup an imported custom SNMP check comes with (ADR-0157).",
+        "required": [
+          "channel",
+          "name",
+          "definition"
+        ],
+        "properties": {
+          "channel": {
+            "type": "integer",
+            "description": "The channel it names the values of, from 1.",
+            "minimum": 0
+          },
+          "definition": {
+            "type": "object",
+            "description": "`{\"entries\": [...], \"otherwise\": \"warning\"}`, as lookups have it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name; one of the customer's of that name is taken as it is."
+          }
+        }
       },
       "ImportNote": {
         "type": "object",
