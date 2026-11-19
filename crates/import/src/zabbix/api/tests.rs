@@ -111,8 +111,9 @@ fn context() -> Context {
 
 /// A small Zabbix: web-01 linked to the Linux template, a discovered file
 /// system and an undiscovered disk prototype, a web scenario, a weekly
-/// maintenance of its group, an email and a Teams media type; as 7.0
-/// answers.
+/// maintenance of its group, an email and a Teams media type, two
+/// discovery rules (one by a proxy), a discovery action and an
+/// auto-registration one; as 7.0 answers.
 fn zabbix_7(method: &str, params: &Value) -> Value {
     answer("7.0.5", "hostgroups", method, params)
 }
@@ -253,6 +254,50 @@ fn answer(version: &str, groups: &str, method: &str, params: &Value) -> Value {
                 {"mediatypeid": "2", "sendto": "https://example.webhook.office.com/webhookb2/1", "active": "0"},
             ],
         }]),
+        "drule.get" => {
+            let proxy = if version.starts_with('7') {
+                "proxyid"
+            } else {
+                "proxy_hostid"
+            };
+            json!([{
+                "druleid": "5", "name": "Office network", "iprange": "192.0.2.1-254,198.51.100.0/30",
+                "delay": "1h", "status": "0", (proxy): "0",
+                "dchecks": [
+                    {"type": "0", "ports": "22"},
+                    {"type": "11", "ports": "161", "snmp_community": "recorded-community"},
+                    {"type": "12", "ports": "0"},
+                ],
+            }, {
+                "druleid": "6", "name": "Branch", "iprange": "203.0.113.1-10",
+                "delay": "2h", "status": "1", (proxy): "20",
+                "dchecks": [{"type": "8", "ports": "8000-8001"}],
+            }])
+        }
+        "proxy.get" => json!([{"proxyid": "20", "name": "branch-proxy", "host": "branch-proxy"}]),
+        "action.get" => json!([{
+            "actionid": "7", "name": "Add discovered Linux servers", "eventsource": "1", "status": "0",
+            "filter": {"conditions": [{"conditiontype": "18", "operator": "0", "value": "5"}]},
+            "operations": [{"operationtype": "2"}, {"operationtype": "6"}],
+        }, {
+            "actionid": "8", "name": "Register agents", "eventsource": "2", "status": "0",
+            "filter": {"conditions": []}, "operations": [{"operationtype": "2"}],
+        }]),
+        // A service of the PostgreSQL problems, with a gold SLA (ADR-0155),
+        // and one of problems no host has.
+        "service.get" => json!([
+            {"serviceid": "1", "name": "Database", "algorithm": "2",
+             "problem_tags": [{"tag": "service", "operator": "2", "value": "postgres"}],
+             "children": [], "status_rules": [], "tags": [{"tag": "sla", "value": "gold"}]},
+            {"serviceid": "2", "name": "Printing", "algorithm": "2",
+             "problem_tags": [{"tag": "service", "operator": "0", "value": "cups"}],
+             "children": [], "status_rules": [], "tags": []},
+        ]),
+        "sla.get" => json!([
+            {"slaid": "1", "name": "Gold", "slo": "99.9", "status": "1", "period": "2",
+             "service_tags": [{"tag": "sla", "operator": "0", "value": "gold"}],
+             "schedule": [], "excluded_downtimes": []},
+        ]),
         other => panic!("unexpected call {other}"),
     }
 }
@@ -282,6 +327,24 @@ async fn zabbix_7_with_a_bearer_token() {
     assert!(host_get.params.get("selectHostGroups").is_some());
 
     assert!(config.inherited);
+    // Services and SLAs (ADR-0155): the PostgreSQL problems' check, with
+    // the gold target; the service of problems no host has is listed.
+    assert_eq!(config.services.len(), 2);
+    assert_eq!(config.slas[0].slo, 99.9);
+    let inventory = crate::zabbix::map::inventory(&config, chrono::Utc::now());
+    let database = inventory
+        .services
+        .iter()
+        .find(|s| s.name == "Database")
+        .unwrap();
+    assert_eq!(database.target, Some(99.9));
+    assert_eq!(database.members.len(), 1);
+    assert_eq!(database.members[0].host, "web-01");
+    assert!(database.members[0].check.is_some());
+    assert!(inventory
+        .unmovable
+        .iter()
+        .any(|u| u.origin.name == "Printing" && u.why.code == "service_no_members"));
     let host = &config.hosts[0];
     assert_eq!(host.host, "web-01");
     assert_eq!(host.groups, ["Linux servers"]);
@@ -381,9 +444,18 @@ async fn zabbix_7_with_a_bearer_token() {
         .iter()
         .find(|t| t.measure == Measure::CpuUsage)
         .unwrap();
+    // `min(..., 5m)` reads a window of 5 minutes (ADR-0153).
     assert_eq!(
-        (cpu.critical, cpu.for_s, cpu.recovery),
-        (Some(0.8), 300, Some(0.7))
+        (cpu.critical, cpu.for_s, cpu.recovery, &cpu.judged),
+        (
+            Some(0.8),
+            0,
+            Some(0.7),
+            &crate::model::Judged::Window {
+                function: crate::model::WindowFunction::Min,
+                window_s: 300
+            }
+        )
     );
     assert!(inventory.thresholds.iter().any(|t| t.measure
         == Measure::DiskUsed {
@@ -488,6 +560,34 @@ async fn zabbix_7_with_a_bearer_token() {
     );
     // Jira is not used by anyone: left out.
     assert!(!inventory.unmovable.iter().any(|u| u.origin.name == "Jira"));
+
+    // Discovery rules become scans, the action that added hosts said on
+    // the one it acted on.
+    let office = &inventory.scans[0];
+    assert_eq!(office.name, "Office network");
+    assert_eq!(office.targets, ["192.0.2.1-254", "198.51.100.0/30"]);
+    assert_eq!(office.ports.as_deref(), Some(&[22][..]));
+    assert_eq!(office.every, Some(crate::model::Every::Hour));
+    let snmp = office.snmp.as_ref().unwrap();
+    assert_eq!(snmp.version, "v2c");
+    assert_eq!(
+        snmp.community.as_ref().unwrap().expose(),
+        "recorded-community"
+    );
+    assert!(matches!(&office.fidelity, Fidelity::Approximated(n)
+        if n.code == "scan_proposes" && n.args["action"] == "Add discovered Linux servers"));
+    let branch = &inventory.scans[1];
+    assert_eq!(branch.group.as_deref(), Some("branch-proxy"));
+    assert_eq!(branch.ports.as_deref(), Some(&[8000, 8001][..]));
+    assert_eq!(branch.every, None);
+    assert!(matches!(&branch.fidelity, Fidelity::Approximated(n) if n.code == "scan_disabled"));
+    let registration = inventory
+        .unmovable
+        .iter()
+        .find(|u| u.origin.kind == "action")
+        .unwrap();
+    assert_eq!(registration.origin.name, "Register agents");
+    assert_eq!(registration.why.code, "zabbix_autoregistration");
 }
 
 #[tokio::test]
@@ -508,6 +608,23 @@ async fn zabbix_6_0_with_the_token_in_the_request() {
     assert!(maintenance_get.params.get("selectGroups").is_some());
     assert_eq!(config.hosts[0].groups, ["Linux servers"]);
     assert_eq!(config.maintenances[0].groups, ["Linux servers"]);
+    // Proxies are `proxy_hostid` before 7.0.
+    assert_eq!(config.discovery[1].proxy.as_deref(), Some("branch-proxy"));
+}
+
+#[tokio::test]
+async fn a_token_that_may_not_read_discovery_reads_the_rest() {
+    let (url, _) = serve(|method, params| match method {
+        "drule.get" | "action.get" => {
+            json!({"error": {"code": -32500, "message": "Application error.", "data": "No permissions to call drule.get."}})
+        }
+        _ => zabbix_7(method, params),
+    })
+    .await;
+    let mut api = Api::connect(&connection(&url), &context()).await.unwrap();
+    let config = api.read().await.unwrap();
+    assert!(config.discovery.is_empty() && config.actions.is_empty());
+    assert_eq!(config.hosts.len(), 2);
 }
 
 #[tokio::test]

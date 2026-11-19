@@ -8,6 +8,9 @@
 //! Sensors are built by kind through a [`ProbeFactory`], so a probe can run
 //! kinds that live outside `monitorflow-sensors` (website checks, ADR-0150)
 //! by wrapping [`Builtin`].
+//!
+//! [`discover`] is the one-off test a network scan is made of (ADR-0154):
+//! it is never a check that repeats.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -19,6 +22,9 @@ use monitorflow_sensors::{
 };
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+
+pub mod discover;
+mod rdns;
 
 /// The probe's name of the central server, in the `probe` label of the
 /// series it writes and in the API.
@@ -38,7 +44,8 @@ pub trait ProbeFactory: Send + Sync + 'static {
 }
 
 /// The kinds of `monitorflow-sensors`, without an agent's local limits:
-/// `ping` and `port` over TCP or UDP, and `snmp` of `monitorflow-snmp`.
+/// `ping` and `port` over TCP or UDP, `snmp` of `monitorflow-snmp`,
+/// `vmware` of `monitorflow-vmware`, and the scans' `discover` tests.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Builtin;
 
@@ -51,6 +58,12 @@ impl ProbeFactory for Builtin {
         if kind == monitorflow_snmp::KIND {
             return monitorflow_snmp::build(params);
         }
+        if kind == discover::KIND {
+            return discover::build(params);
+        }
+        if kind == monitorflow_vmware::KIND {
+            return monitorflow_vmware::build(params);
+        }
         if !PROBE_RUNS.contains(&kind) {
             return Err(format!("a probe does not run `{kind}` checks"));
         }
@@ -59,9 +72,14 @@ impl ProbeFactory for Builtin {
 }
 
 /// Built-in kinds a probe runs: what it measures over the network, SNMP
-/// included (ADR-0149). Machine kinds (processor, disks, services) only
+/// and the vSphere API included (ADR-0149, ADR-0156). Machine kinds (processor, disks, services) only
 /// make sense on an agent.
-pub const PROBE_RUNS: &[&str] = &["ping", "port", monitorflow_snmp::KIND];
+pub const PROBE_RUNS: &[&str] = &[
+    "ping",
+    "port",
+    monitorflow_snmp::KIND,
+    monitorflow_vmware::KIND,
+];
 
 /// One check of a probe.
 #[derive(Debug, Clone, PartialEq, Eq)]

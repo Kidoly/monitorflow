@@ -51,6 +51,9 @@ minutes, a warning above 20% packet loss for 5 minutes. Add more checks with \
 With `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind \
 of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are \
 stored sealed and never returned.\n\n\
+With `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes \
+from the same probe, and its alerts; test the connection and confirm its certificate first with \
+`POST /api/v1/devices/vmware/test`.\n\n\
 **Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
     request_body(content = devices::DeviceRequest, examples(
         ("ping" = (summary = "A switch pinged from the site's relay",
@@ -58,6 +61,9 @@ stored sealed and never returned.\n\n\
         ("central" = (summary = "A website's server pinged from the central server",
             value = json!({"site_id": ex::SITE, "name": "Shop front", "address": "shop.example.com",
                            "probe": "central"}))),
+        ("vmware" = (summary = "A vCenter, read every 5 minutes with a Read-only account (ADR-0156)",
+            value = json!({"site_id": ex::SITE, "name": "vcenter-1", "address": "vcenter.example.test",
+                           "vmware": {"user": "monitor@vsphere.local", "password": "a password"}}))),
         ("snmp" = (summary = "A switch over SNMP v3, with the checks and alerts of its kind",
             value = json!({"site_id": ex::SITE, "name": "Core switch", "address": "192.0.2.10",
                            "template": "switch", "snmp": {"version": "v3", "user": "monitor",

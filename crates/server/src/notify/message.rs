@@ -23,7 +23,7 @@ pub struct Event {
     /// `incident.opened`, `incident.escalated`, `incident.resolved`,
     /// `approval.waiting`, `update.failed`, `backup.failed`,
     /// `update.available`, `ai_commands.changed`, `integration.disabled`
-    /// (ADR-0102), or `test`.
+    /// (ADR-0102), `network_scan.changed` (ADR-0154), or `test`.
     pub event: String,
     pub customer_id: Option<Uuid>,
     /// The site named in `details`, `None` when it names none.
@@ -162,19 +162,60 @@ fn incident_text(event: &str, details: &Value) -> String {
                     "{}: {place} is offline; the {n} servers behind it cannot report",
                     capitalized(severity)
                 ),
-                None => format!("{}: {place} is offline", capitalized(severity)),
+                None => format!(
+                    "{}: {place} is offline{}",
+                    capitalized(severity),
+                    behind(incident)
+                ),
             },
         };
     }
     let sensor = sensor(incident);
+    // Richer rules (ADR-0153) say what they judged in the incident's words:
+    // a time left, a silence, an average.
+    let kind = str_at(incident, &["kind"]).unwrap_or("value");
+    if let (true, Some(v)) = (
+        kind != "value",
+        incident.get("value").and_then(Value::as_f64),
+    ) {
+        if event != "incident.resolved" {
+            let metric = str_at(incident, &["metric"]).unwrap_or_default();
+            let threshold = incident.get("threshold").unwrap_or(&Value::Null);
+            let sentence = crate::alerting::reason::incident(metric, severity, true, v, threshold);
+            return match event {
+                "incident.escalated" => {
+                    format!("Escalated to {severity}: {sensor} on {place}: {sentence}")
+                }
+                _ => format!("{}: {sensor} on {place}: {sentence}", capitalized(severity)),
+            };
+        }
+    }
     match (event, value) {
         ("incident.resolved", _) => format!("Resolved: {sensor} on {place}"),
         ("incident.escalated", Some(v)) => {
             format!("Escalated to {severity}: {sensor} is {v} on {place}")
         }
         ("incident.escalated", None) => format!("Escalated to {severity}: {sensor} on {place}"),
-        (_, Some(v)) => format!("{}: {sensor} is {v} on {place}", capitalized(severity)),
-        (_, None) => format!("{}: {sensor} on {place}", capitalized(severity)),
+        (_, Some(v)) => format!(
+            "{}: {sensor} is {v} on {place}{}",
+            capitalized(severity),
+            behind(incident)
+        ),
+        (_, None) => format!(
+            "{}: {sensor} on {place}{}",
+            capitalized(severity),
+            behind(incident)
+        ),
+    }
+}
+
+/// What the dispatcher counted behind a parent that is down (ADR-0152):
+/// "; 14 behind it are unreachable", or nothing.
+fn behind(incident: &Value) -> String {
+    match incident.get("behind").and_then(Value::as_u64) {
+        Some(1) => "; 1 behind it is unreachable".into(),
+        Some(n) if n > 1 => format!("; {n} behind it are unreachable"),
+        _ => String::new(),
     }
 }
 
@@ -240,6 +281,7 @@ fn path(event: &Event) -> String {
         "backup.failed" => "/settings/backups/".into(),
         "update.available" => "/settings/server-update/".into(),
         "integration.disabled" => crate::integrations::PAGE.into(),
+        "network_scan.changed" => format!("/discovery/view/?id={}", id(&["network_scan", "id"])),
         "update.failed" => match str_at(d, &["update", "kind"]) {
             Some("campaign") => format!("/campaigns/view/?id={}", id(&["update", "campaign_id"])),
             Some("automatic_rollout") => "/admin/updates/".into(),
@@ -299,7 +341,51 @@ fn raw_event_text(event: &Event) -> String {
             str_at(d, &["integration", "host"]).unwrap_or("its address"),
             str_at(d, &["integration", "error"]).unwrap_or("none recorded")
         ),
+        "network_scan.changed" => network_scan_text(d),
         e => incident_text(e, d),
+    }
+}
+
+/// "Network scan Office network (paris): 2 new addresses (192.0.2.5,
+/// 192.0.2.9), 1 gone (192.0.2.40)".
+fn network_scan_text(d: &Value) -> String {
+    let list = |key: &str| -> Vec<String> {
+        d["network_scan"][key]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let shown = |addresses: &[String]| {
+        let mut text = addresses
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if addresses.len() > 5 {
+            text.push_str(&format!(" and {} more", addresses.len() - 5));
+        }
+        text
+    };
+    let (new, gone) = (list("new"), list("gone"));
+    let mut parts = Vec::new();
+    match new.len() {
+        0 => {}
+        1 => parts.push(format!("1 new address ({})", shown(&new))),
+        n => parts.push(format!("{n} new addresses ({})", shown(&new))),
+    }
+    if !gone.is_empty() {
+        parts.push(format!("{} gone ({})", gone.len(), shown(&gone)));
+    }
+    let name = str_at(d, &["network_scan", "name"]).unwrap_or("a network scan");
+    match site_place(d) {
+        Some(place) => format!("Network scan {name} ({place}): {}", parts.join(", ")),
+        None => format!("Network scan {name}: {}", parts.join(", ")),
     }
 }
 
@@ -457,6 +543,29 @@ mod tests {
     }
 
     #[test]
+    fn a_parent_says_what_is_behind_it() {
+        let mut details = incident("monitorflow_ping_up", "critical", Some(0.0));
+        details["incident"]["instance"] = "".into();
+        details["server"]["name"] = "sw-core".into();
+        details["incident"]["behind"] = 14.into();
+        let down = render(&event("incident.opened", details.clone()), WEB);
+        assert_eq!(
+            down.text,
+            "Critical: ping_up is 0 on sw-core (paris); 14 behind it are unreachable"
+        );
+        let mut offline = incident("offline", "critical", None);
+        offline["incident"]["behind"] = 1.into();
+        let down = render(&event("incident.opened", offline), WEB);
+        assert_eq!(
+            down.text,
+            "Critical: web-1 (paris) is offline; 1 behind it is unreachable"
+        );
+        // Its resolution says nothing of it.
+        let up = render(&event("incident.resolved", details), WEB);
+        assert_eq!(up.text, "Resolved: ping_up on sw-core (paris)");
+    }
+
+    #[test]
     fn offline_incidents_read_as_a_state() {
         let mut details = incident("offline", "critical", None);
         details["server"] = Value::Null;
@@ -563,6 +672,36 @@ mod tests {
         );
         assert_eq!(available.url, "https://mf.example/settings/server-update/");
         assert_eq!(available.payload["release"]["version"], "0.3.0");
+    }
+
+    #[test]
+    fn a_network_scan_says_what_is_new_and_gone() {
+        let scan = Uuid::new_v4();
+        let new: Vec<String> = (1..=7).map(|i| format!("192.0.2.{i}")).collect();
+        let changed = render(
+            &event(
+                "network_scan.changed",
+                json!({"site": {"id": Uuid::nil(), "name": "paris"},
+                       "network_scan": {"id": scan, "name": "Office", "new": new, "gone": ["192.0.2.40"]}}),
+            ),
+            WEB,
+        );
+        assert_eq!(
+            changed.text,
+            "Network scan Office (paris): 7 new addresses (192.0.2.1, 192.0.2.2, 192.0.2.3, 192.0.2.4, 192.0.2.5 and 2 more), 1 gone (192.0.2.40)"
+        );
+        assert_eq!(
+            changed.url,
+            format!("https://mf.example/discovery/view/?id={scan}")
+        );
+        let one = render(
+            &event(
+                "network_scan.changed",
+                json!({"network_scan": {"id": scan, "name": "Lab\nx", "new": ["192.0.2.9"], "gone": []}}),
+            ),
+            WEB,
+        );
+        assert_eq!(one.text, "Network scan Lab\\nx: 1 new address (192.0.2.9)");
     }
 
     #[test]
@@ -751,6 +890,33 @@ mod tests {
         assert!(
             body.starts_with("a\\nb\n\nhttps://mf.example/x\\n\n\n- one\\ntwo\n"),
             "{body}"
+        );
+    }
+
+    #[test]
+    fn richer_rules_say_what_they_judged() {
+        let details = |event_kind: &str, value: f64| {
+            json!({
+                "server": {"name": "web-1"},
+                "incident": {
+                    "metric": "monitorflow_disk_used_ratio", "instance": "/", "severity": "warning",
+                    "value": value, "kind": event_kind,
+                    "threshold": {"kind": event_kind, "comparison": ">=", "target": 1.0,
+                                  "warning": 259200.0},
+                },
+            })
+        };
+        assert_eq!(
+            incident_text("incident.opened", &details("forecast", 2.0 * 86_400.0)),
+            "Warning: disk_used_ratio / on web-1: Expected to reach 100% in about 2 days"
+        );
+        assert_eq!(
+            incident_text("incident.opened", &details("nodata", 600.0)),
+            "Warning: disk_used_ratio / on web-1: No data for 10 minutes"
+        );
+        assert_eq!(
+            incident_text("incident.resolved", &details("forecast", 0.5)),
+            "Resolved: disk_used_ratio / on web-1"
         );
     }
 }

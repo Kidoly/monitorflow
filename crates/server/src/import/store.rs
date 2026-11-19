@@ -13,7 +13,8 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use super::plan::{channel_key, Existing, ExistingServer};
-use super::{ChannelSecret, Create, Item, PREVIEW_HOURS};
+use super::{ChannelSecret, CheckRef, Create, Item, PREVIEW_HOURS};
+use crate::dependencies::{self, Node};
 use crate::enroll::identity::{self, Pending};
 use crate::enroll::install_key::peer_id_from_hostname;
 use crate::notify::maintenance::write;
@@ -36,7 +37,7 @@ pub enum StoreError {
 #[schema(as = ImportResult)]
 pub struct Outcome {
     /// Created, by object: `server`, `check`, `threshold`, `silence`,
-    /// `channel`.
+    /// `window`, `network_scan`, `channel`.
     #[serde(default)]
     pub created: BTreeMap<String, u32>,
     /// Items unticked, or that need an unticked one.
@@ -104,8 +105,8 @@ pub async fn existing(
         .iter()
         .map(|h| h.name.trim().to_ascii_lowercase())
         .collect();
-    let rows: Vec<(Uuid, String, String, Uuid)> = sqlx::query_as(
-        "SELECT id, peer_id, hostname, site_id FROM servers
+    let rows: Vec<(Uuid, String, String, Uuid, bool)> = sqlx::query_as(
+        "SELECT id, peer_id, hostname, site_id, kind = 'device' FROM servers
          WHERE revoked_at IS NULL
            AND (lower(peer_id) = ANY($1) OR lower(hostname) = ANY($2))",
     )
@@ -116,17 +117,20 @@ pub async fn existing(
     let mut existing = Existing::default();
     let server_ids: Vec<Uuid> = rows.iter().map(|r| r.0).collect();
     let mut peer_of: HashMap<Uuid, String> = HashMap::new();
-    for (id, peer_id, hostname, site) in rows {
+    for (id, peer_id, hostname, site, device) in rows {
         peer_of.insert(id, peer_id.to_ascii_lowercase());
         existing.servers.push(ExistingServer {
             peer_id,
             hostname,
             site_id: site,
             may_change: may_change(site),
+            device,
         });
     }
     let checks: Vec<(Uuid, String)> = sqlx::query_as(
-        "SELECT server_id, name FROM sensor_configs WHERE server_id = ANY($1) AND instance = ''",
+        // Any instance: a check run by a probe has the probe as its
+        // instance (ADR-0148), and is the same check.
+        "SELECT DISTINCT server_id, name FROM sensor_configs WHERE server_id = ANY($1)",
     )
     .bind(&server_ids)
     .fetch_all(pool)
@@ -135,15 +139,17 @@ pub async fn existing(
         .into_iter()
         .filter_map(|(id, name)| Some((peer_of.get(&id)?.clone(), name)))
         .collect();
-    let thresholds: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
-        "SELECT server_id, metric, instance FROM thresholds WHERE server_id = ANY($1)",
+    let thresholds: Vec<(Uuid, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT server_id, metric, instance, kind FROM thresholds WHERE server_id = ANY($1)",
     )
     .bind(&server_ids)
     .fetch_all(pool)
     .await?;
     existing.thresholds = thresholds
         .into_iter()
-        .filter_map(|(id, metric, instance)| Some((peer_of.get(&id)?.clone(), metric, instance)))
+        .filter_map(|(id, metric, instance, kind)| {
+            Some((peer_of.get(&id)?.clone(), metric, instance, kind))
+        })
         .collect();
     let silences: Vec<(Option<Uuid>, DateTime<Utc>, String)> = sqlx::query_as(
         "SELECT server_id, ends_at, reason FROM silences
@@ -160,6 +166,19 @@ pub async fn existing(
         .collect();
     let mut conn = pool.acquire().await?;
     existing.windows = existing_windows(&mut conn, site_id).await?;
+    existing.scans = existing_scans(&mut conn, site_id).await?;
+    existing.probe = crate::api::sensors::default_probe(&mut *conn, site_id)
+        .await?
+        .key;
+    existing.services = sqlx::query_scalar::<_, String>(
+        "SELECT lower(b.name) FROM business_services b JOIN sites s ON s.customer_id = b.customer_id
+         WHERE s.id = $1",
+    )
+    .bind(site_id)
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
     drop(conn);
     let channels: Vec<(String, Value, Option<String>)> =
         sqlx::query_as("SELECT kind, settings, secret FROM notification_channels")
@@ -558,6 +577,49 @@ async fn create_one(
             .await
             .map_err(db_error)
         }
+        Create::Dependency {
+            server: peer_id,
+            check,
+            parent,
+            parent_check,
+        } => {
+            let mut id_of = async |peer_id: &str| -> Result<Uuid, String> {
+                match server(peer_id, servers) {
+                    Some(id) => Ok(id),
+                    None => server_id(tx, peer_id)
+                        .await
+                        .map_err(db_error)?
+                        .ok_or_else(|| "its server is not there".to_owned()),
+                }
+            };
+            let child_id = id_of(peer_id).await?;
+            let parent_id = id_of(parent).await?;
+            let node = |id: Uuid, check: &Option<CheckRef>| match check {
+                Some(c) => Node::Check(id, c.name.clone(), c.instance.clone()),
+                None => Node::Server(id),
+            };
+            let (child, parent) = (node(child_id, check), node(parent_id, parent_check));
+            let edges = dependencies::store::edges(tx).await.map_err(db_error)?;
+            if dependencies::graph::cycle(&edges, &[(child.clone(), parent.clone())]).is_some() {
+                return Err("it would put something behind itself".into());
+            }
+            sqlx::query_scalar(
+                "INSERT INTO dependencies (server_id, check_name, check_instance, parent_server_id,
+                                           parent_check_name, parent_check_instance, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 ON CONFLICT ON CONSTRAINT dependencies_key DO NOTHING RETURNING id",
+            )
+            .bind(child_id)
+            .bind(check.as_ref().map(|c| c.name.as_str()))
+            .bind(check.as_ref().map_or("", |c| c.instance.as_str()))
+            .bind(parent_id)
+            .bind(parent_check.as_ref().map(|c| c.name.as_str()))
+            .bind(parent_check.as_ref().map_or("", |c| c.instance.as_str()))
+            .bind(user)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db_error)
+        }
         Create::Threshold {
             server: peer_id,
             metric,
@@ -567,6 +629,7 @@ async fn create_one(
             critical,
             duration_s,
             hysteresis,
+            richer,
         } => {
             let id = match server(peer_id, servers) {
                 Some(id) => id,
@@ -579,17 +642,18 @@ async fn create_one(
                 crate::api::thresholds::validate_entry(crate::api::thresholds::EntryRequest {
                     metric: metric.clone(),
                     instance: instance.clone(),
-                    comparison: comparison.clone(),
+                    comparison: Some(comparison.clone()),
                     warning: *warning,
                     critical: *critical,
                     duration_s: *duration_s,
                     hysteresis: *hysteresis,
-                    enabled: true,
+                    ..super::plan::entry_fields(richer)
                 })?;
             sqlx::query_scalar(
                 "INSERT INTO thresholds (server_id, metric, instance, comparison, warning,
-                                         critical, duration_s, hysteresis)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                         critical, duration_s, hysteresis, kind, function,
+                                         window_s, offset_s, target, conditions)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                  ON CONFLICT ON CONSTRAINT thresholds_key DO NOTHING RETURNING id",
             )
             .bind(id)
@@ -600,6 +664,12 @@ async fn create_one(
             .bind(valid.critical)
             .bind(valid.duration_s)
             .bind(valid.hysteresis)
+            .bind(valid.kind.as_str())
+            .bind(valid.function.map(|f| f.as_str()))
+            .bind(valid.window_s)
+            .bind(valid.offset_s)
+            .bind(valid.target)
+            .bind(serde_json::json!(valid.conditions))
             .fetch_optional(&mut **tx)
             .await
             .map_err(db_error)
@@ -675,6 +745,25 @@ async fn create_one(
             }
             create_window(tx, site_id, create, &ids, user).await
         }
+        Create::NetworkScan { .. } => create_scan(tx, site_id, create, secret, user).await,
+        Create::Service {
+            name,
+            at_least,
+            target,
+            members,
+        } => {
+            let mut ids = Vec::new();
+            for member in members {
+                ids.push(match server(&member.server, servers) {
+                    Some(id) => id,
+                    None => server_id(tx, &member.server)
+                        .await
+                        .map_err(db_error)?
+                        .ok_or("its server is not there")?,
+                });
+            }
+            create_service(tx, site_id, name, *at_least, *target, members, &ids, user).await
+        }
         Create::Channel {
             kind,
             settings,
@@ -709,6 +798,59 @@ async fn create_one(
             .map_err(db_error)
         }
     }
+}
+
+/// A business service of the site's customer, with `members` as the
+/// servers `ids`; `None` when the customer has one of that name.
+#[allow(clippy::too_many_arguments)]
+async fn create_service(
+    tx: &mut Transaction<'_, Postgres>,
+    site_id: Uuid,
+    name: &str,
+    at_least: Option<u32>,
+    target: Option<f64>,
+    members: &[super::ServiceMember],
+    ids: &[Uuid],
+    user: Uuid,
+) -> Result<Option<Uuid>, String> {
+    let id: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO business_services (customer_id, name, rule, at_least, target, created_by)
+         SELECT customer_id, $2, $3, $4, $5, $6 FROM sites WHERE id = $1
+         ON CONFLICT ON CONSTRAINT business_services_name_key DO NOTHING
+         RETURNING id",
+    )
+    .bind(site_id)
+    .bind(name)
+    .bind(if at_least.is_some() {
+        "at_least"
+    } else {
+        "all"
+    })
+    .bind(at_least.and_then(|n| i32::try_from(n).ok()))
+    .bind(target)
+    .bind(user)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db_error)?;
+    let Some(id) = id else {
+        return Ok(None);
+    };
+    for (position, (member, server)) in members.iter().zip(ids).enumerate() {
+        sqlx::query(
+            "INSERT INTO business_service_members
+                 (service_id, server_id, check_name, check_instance, position)
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .bind(server)
+        .bind(member.check.as_ref().map(|c| &c.name))
+        .bind(member.check.as_ref().map_or("", |c| c.instance.as_str()))
+        .bind(i32::try_from(position).unwrap_or(0))
+        .execute(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    }
+    Ok(Some(id))
 }
 
 /// A maintenance window of the site with the servers `ids`, and its
@@ -802,6 +944,101 @@ async fn create_window(
         .await
         .map_err(db_error)?;
     Ok(Some(id))
+}
+
+/// The lowercase names of the site's network scans.
+async fn existing_scans(
+    db: &mut PgConnection,
+    site_id: Uuid,
+) -> Result<HashSet<String>, sqlx::Error> {
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT lower(name) FROM network_scans WHERE site_id = $1")
+            .bind(site_id)
+            .fetch_all(db)
+            .await?;
+    Ok(names.into_iter().collect())
+}
+
+/// A network scan of the site from its default probe, notifications off
+/// (ADR-0154); `None` when one of that name is there. Checked as the
+/// network scans API checks one; it runs on its schedule, not now.
+async fn create_scan(
+    tx: &mut Transaction<'_, Postgres>,
+    site_id: Uuid,
+    create: &Create,
+    secret: Option<&ChannelSecret>,
+    user: Uuid,
+) -> Result<Option<Uuid>, String> {
+    use crate::api::network_scans::MAX_PER_SITE;
+    use crate::netscan::targets;
+    let Create::NetworkScan {
+        name,
+        targets: entries,
+        ports,
+        every,
+        ..
+    } = create
+    else {
+        return Err("not a network scan".into());
+    };
+    sqlx::query("SELECT 1 FROM sites WHERE id = $1 FOR UPDATE")
+        .bind(site_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    if existing_scans(tx, site_id)
+        .await
+        .map_err(db_error)?
+        .contains(&name.to_lowercase())
+    {
+        return Ok(None);
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM network_scans WHERE site_id = $1")
+        .bind(site_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    if count >= MAX_PER_SITE {
+        return Err(format!("a site has at most {MAX_PER_SITE} scans"));
+    }
+    let (entries, _) = targets::expand(entries)?;
+    let ports = targets::ports(Some(ports))?;
+    if every
+        .as_deref()
+        .is_some_and(|e| !matches!(e, "hour" | "day" | "week"))
+    {
+        return Err("its schedule is not hour, day or week".into());
+    }
+    let sealed = match secret.and_then(|s| s.secret.as_deref()) {
+        Some(json) => {
+            let request: crate::snmp::CredentialsRequest =
+                serde_json::from_str(json).map_err(|_| "its SNMP credentials do not read")?;
+            let credentials = crate::snmp::check(&request, None)?;
+            Some(crate::netscan::seal(&credentials)?)
+        }
+        None => None,
+    };
+    let by = crate::api::sensors::default_probe(&mut **tx, site_id)
+        .await
+        .map_err(db_error)?;
+    sqlx::query_scalar(
+        "INSERT INTO network_scans (site_id, name, targets, ports, probe, probe_relay_id, every,
+                                    notify, snmp_secret, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9) RETURNING id",
+    )
+    .bind(site_id)
+    .bind(name)
+    .bind(&entries)
+    .bind(ports.iter().map(|p| i32::from(*p)).collect::<Vec<_>>())
+    .bind(by.probe)
+    .bind(by.relay)
+    .bind(every)
+    .bind(&sealed)
+    .bind(user)
+    .fetch_one(&mut **tx)
+    .await
+    .map(Some)
+    .map_err(db_error)
 }
 
 const WEEKDAYS: [&str; 7] = [
@@ -933,6 +1170,11 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
     let mut removed = BTreeMap::new();
     for (object, sql) in [
         (
+            "dependency",
+            "DELETE FROM dependencies WHERE id IN
+                 (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'dependency')",
+        ),
+        (
             "check",
             "DELETE FROM sensor_configs WHERE id IN
                  (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'check')
@@ -954,6 +1196,16 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
             "window",
             "DELETE FROM maintenance_windows WHERE id IN
                  (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'window')",
+        ),
+        (
+            "network_scan",
+            "DELETE FROM network_scans WHERE id IN
+                 (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'network_scan')",
+        ),
+        (
+            "service",
+            "DELETE FROM business_services WHERE id IN
+                 (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'service')",
         ),
         (
             "channel",

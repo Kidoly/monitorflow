@@ -15,7 +15,9 @@ use crate::source::ReadError;
 
 use super::api::{deliveries, number, setting_date, unescape};
 use super::sensors::wanted;
-use super::tree::{Channel, Kind, Limits, Maintenance, Notification, Object, Paused, Tree};
+use super::tree::{
+    Channel, Depends, Kind, Limits, Maintenance, Notification, Object, Paused, Tree,
+};
 
 /// Deepest nesting read, far beyond any real tree.
 const MAX_DEPTH: usize = 256;
@@ -186,8 +188,16 @@ fn object(element: &Element, kind: Kind, parent: Option<i64>, offset: Duration) 
         }
     }
     object.schedule = settings.get("schedule").and_then(|v| schedule_name(v));
+    object.depends = Depends::parse(
+        settings.get("dependencytype").map(String::as_str),
+        settings.get("dependency").map(String::as_str),
+    );
     match kind {
         Kind::Device => object.host = settings.get("host").filter(|h| !h.is_empty()).cloned(),
+        Kind::Probe | Kind::Group => {
+            settings.retain(|k, _| super::discovery::SETTINGS.contains(&k.as_str()));
+            object.settings = settings;
+        }
         Kind::Sensor => {
             object.sensor_type = ["sensortype", "sensorkind", "typename"]
                 .iter()
@@ -204,7 +214,6 @@ fn object(element: &Element, kind: Kind, parent: Option<i64>, offset: Duration) 
                 channels(element, &mut object.channels);
             }
         }
-        _ => {}
     }
     Some(object)
 }
