@@ -755,6 +755,10 @@ function ownTitle(sensor: EffectiveSensor): string {
       return t("checks.title.script", { name: params.script ?? sensor.name });
     case "http":
       return t("checks.title.website", { host: websiteLabel(params.url) || sensor.name });
+    case "vmware":
+      return t("virtualization.check.vmware");
+    case "hyperv":
+      return t("virtualization.check.hyperv");
     default:
       return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }
