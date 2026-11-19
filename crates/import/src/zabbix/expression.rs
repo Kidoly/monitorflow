@@ -145,6 +145,13 @@ fn precedence(op: Op) -> u8 {
     }
 }
 
+/// Most tokens in an expression. Zabbix keeps at most 2048 characters;
+/// the cap bounds the depth of the syntax tree, which is walked
+/// recursively, so a hostile export cannot exhaust the stack.
+const MAX_TOKENS: usize = 2048;
+/// Deepest nesting of parentheses, `not` and minus signs.
+const MAX_NESTING: usize = 128;
+
 /// Parses an expression of either syntax. `Err` says what was not
 /// understood.
 pub fn parse(text: &str) -> Result<Expr, String> {
@@ -153,7 +160,14 @@ pub fn parse(text: &str) -> Result<Expr, String> {
 
 fn parse_new(text: &str) -> Result<Expr, String> {
     let tokens = tokenize(text)?;
-    let mut parser = Parser { tokens, at: 0 };
+    if tokens.len() > MAX_TOKENS {
+        return Err("the expression is too long".into());
+    }
+    let mut parser = Parser {
+        tokens,
+        at: 0,
+        depth: 0,
+    };
     let expr = parser.or()?;
     if parser.at != parser.tokens.len() {
         return Err(format!("unexpected {:?}", parser.tokens[parser.at]));
@@ -435,6 +449,8 @@ fn item_ref(text: &str) -> Result<ItemRef, String> {
 struct Parser {
     tokens: Vec<Token>,
     at: usize,
+    /// How deeply [`Parser::not`] and [`Parser::unary`] are nested.
+    depth: usize,
 }
 
 impl Parser {
@@ -468,7 +484,22 @@ impl Parser {
         self.binary(&[Op::And], Self::not)
     }
 
+    /// Runs `parse` one level deeper; refuses beyond [`MAX_NESTING`].
+    fn nested(&mut self, parse: fn(&mut Self) -> Result<Expr, String>) -> Result<Expr, String> {
+        if self.depth >= MAX_NESTING {
+            return Err("the expression is nested too deeply".into());
+        }
+        self.depth += 1;
+        let result = parse(self);
+        self.depth -= 1;
+        result
+    }
+
     fn not(&mut self) -> Result<Expr, String> {
+        self.nested(Self::negation)
+    }
+
+    fn negation(&mut self) -> Result<Expr, String> {
         if self.peek() == Some(&Token::Not) {
             self.at += 1;
             return Ok(Expr::Not(Box::new(self.not()?)));
@@ -493,6 +524,10 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expr, String> {
+        self.nested(Self::operand)
+    }
+
+    fn operand(&mut self) -> Result<Expr, String> {
         let token = self.peek().cloned().ok_or("expression ends too early")?;
         self.at += 1;
         match token {
@@ -781,5 +816,30 @@ mod tests {
         assert!(parse("foo > 1").is_err());
         assert!(parse("(1").is_err());
         assert!(parse("\"x").is_err());
+    }
+
+    /// A hostile export cannot exhaust the stack: nesting and length are
+    /// bounded, and what fits within the bounds is parsed and dropped on
+    /// a stack as small as a runtime worker's.
+    #[test]
+    fn hostile_expressions_are_refused_without_exhausting_the_stack() {
+        let deep = format!("{}1{}", "(".repeat(100_000), ")".repeat(100_000));
+        assert!(parse(&deep).is_err());
+        assert!(parse(&format!("{}1", "-".repeat(100_000))).is_err());
+        assert!(parse(&format!("{}1", "not ".repeat(100_000))).is_err());
+        assert!(parse(&format!("1{}", "+1".repeat(100_000))).is_err());
+
+        let within = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let nested = format!("{}last(/h/k){}>1", "(".repeat(60), ")".repeat(60));
+                assert!(parse(&nested).is_ok());
+                let chain = format!("last(/h/k){}>1", "+1".repeat(1000));
+                let expr = parse(&chain).unwrap();
+                assert!(!expr.to_string().is_empty());
+            })
+            .unwrap()
+            .join();
+        assert!(within.is_ok());
     }
 }
