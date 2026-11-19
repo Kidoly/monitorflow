@@ -9,6 +9,7 @@ import {
   DASHBOARDS_PATH,
   MIRRORS_PATH,
   ON_CALL_PATH,
+  REPORTS_PATH,
   SETTINGS_PATH,
   SILENCES_PATH,
 } from "@/lib/routes";
@@ -51,6 +52,7 @@ export const NAVIGATION: NavSection[] = [
       { id: "incidents", label: "shell.nav.incidents", href: "/incidents/", icon: "incidents", incidentCount: true },
       { id: "silences", label: "shell.nav.silences", href: SILENCES_PATH, icon: "bell" },
       { id: "onCall", label: "shell.nav.onCall", href: ON_CALL_PATH, icon: "users" },
+      { id: "reports", label: "shell.nav.reports", href: REPORTS_PATH, icon: "reports" },
     ],
   },
   {

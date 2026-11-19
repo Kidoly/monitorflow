@@ -10,7 +10,7 @@ import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffl
 import { administersEverything, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref, incidentsHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
-import { formatSensorValue } from "@/lib/sensors";
+import { incidentValue } from "@/lib/rules";
 import { usePolledData } from "@/lib/usePolledData";
 import { replaceParams } from "@/lib/urlState";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
@@ -25,7 +25,7 @@ import { AcknowledgeButton } from "./AcknowledgeButton";
 import styles from "./IncidentList.module.css";
 
 /** A threshold incident's value; offline ones have none. */
-const value = (i: Incident, v: number) => (isOffline(i) ? "" : formatSensorValue(i.metric, v));
+const value = (i: Incident, v: number) => (isOffline(i) ? "" : incidentValue(i, v));
 
 /** Whether a silence keeps this incident quiet now, or did. */
 function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {

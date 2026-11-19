@@ -5,6 +5,7 @@ members = [
     "crates/sensors",
     "crates/probe",
     "crates/snmp",
+    "crates/vmware",
     "crates/webcheck",
     "crates/import",
     "crates/ai",
@@ -34,6 +35,7 @@ monitorflow-common = { path = "crates/common" }
 monitorflow-sensors = { path = "crates/sensors" }
 monitorflow-probe = { path = "crates/probe" }
 monitorflow-snmp = { path = "crates/snmp" }
+monitorflow-vmware = { path = "crates/vmware" }
 monitorflow-ai = { path = "crates/ai" }
 monitorflow-server-ee = { path = "ee/crates/server-ee" }
 monitorflow-plugin = { path = "crates/plugin" }
