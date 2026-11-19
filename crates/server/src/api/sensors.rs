@@ -259,6 +259,22 @@ pub fn validate_full(
             .or_insert_with(|| address.unwrap_or("192.0.2.1").to_owned());
         checked.insert("community".into(), "checked".into());
         monitorflow_snmp::parse(&checked)?;
+    } else if request.kind == monitorflow_vmware::KIND {
+        // Credentials belong to the device, not to a row (ADR-0156).
+        if let Some(key) = config.params.keys().find(|k| {
+            monitorflow_vmware::CREDENTIAL_PARAMS.contains(&k.as_str()) || k.as_str() == "port"
+        }) {
+            return Err(format!(
+                "param `{key}` is not for a check: set a device's vCenter credentials with PUT /api/devices/{{id}}/vmware"
+            ));
+        }
+        let mut checked = config.params.clone();
+        checked
+            .entry("host".into())
+            .or_insert_with(|| address.unwrap_or("192.0.2.1").to_owned());
+        checked.insert("user".into(), "checked".into());
+        checked.insert("password".into(), "checked".into());
+        monitorflow_vmware::parse(&checked)?;
     } else {
         let mut checked = config.params.clone();
         if let Some(address) = address {
@@ -712,6 +728,7 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
     let udp = valid.params.get("protocol").and_then(Value::as_str) == Some("udp");
     let probe_only = registry::PROBE_KINDS.contains(&valid.kind.as_str())
         || valid.kind == monitorflow_snmp::KIND
+        || valid.kind == monitorflow_vmware::KIND
         || udp;
     if by.probe.is_none() {
         if probe_only {
@@ -727,6 +744,11 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
             "the central server and relays run {} checks, not `{}`",
             PROBE_KINDS_TEXT, valid.kind
         )));
+    }
+    if valid.kind == monitorflow_vmware::KIND && by.address.is_none() {
+        return Err(ApiError::Invalid(
+            "vCenter checks are for devices: add the vCenter or ESXi host as a device (POST /api/devices)".into(),
+        ));
     }
     if valid.kind == monitorflow_snmp::KIND && by.address.is_none() {
         return Err(ApiError::Invalid(
@@ -750,7 +772,7 @@ pub fn probe_kind(kind: &str) -> bool {
     monitorflow_probe::PROBE_RUNS.contains(&kind) || kind == monitorflow_webcheck::KIND
 }
 
-const PROBE_KINDS_TEXT: &str = "`ping`, `port`, `snmp` and `http`";
+const PROBE_KINDS_TEXT: &str = "`ping`, `port`, `snmp`, `vmware` and `http`";
 
 async fn create(
     state: &ApiState,
