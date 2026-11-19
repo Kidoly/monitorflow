@@ -134,6 +134,16 @@ impl ReadError {
     }
 }
 
+/// Runs `work`, a reading or a mapping that may take seconds for a large
+/// file, on the blocking pool rather than on the server's runtime.
+pub async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, ReadError> + Send + 'static,
+) -> Result<T, ReadError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| ReadError::Input("The import stopped unexpectedly: try again.".into()))?
+}
+
 /// A reader of one tool's configuration.
 #[async_trait]
 pub trait Source: Send + Sync {

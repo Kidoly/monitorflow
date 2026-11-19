@@ -25,7 +25,9 @@ use reqwest::{Client, Method, Url};
 
 use crate::http;
 use crate::model::Inventory;
-use crate::source::{Connection, Context, Field, Input, ReadError, Source, SourceInfo};
+use crate::source::{
+    blocking, Connection, Context, Field, File, Input, ReadError, Source, SourceInfo,
+};
 
 /// The PRTG reader.
 pub struct Prtg;
@@ -128,41 +130,7 @@ impl Source for Prtg {
 
     async fn read(&self, input: Input, context: &Context) -> Result<Inventory, ReadError> {
         let tree = match input {
-            Input::Files(files) => {
-                // The configuration file, and lookup files (`.ovl`) beside
-                // it for custom SNMP sensors (ADR-0157).
-                let is_lookup = |name: &str| name.to_ascii_lowercase().ends_with(".ovl");
-                let file = files.iter().find(|f| !is_lookup(&f.name)).ok_or_else(|| {
-                    ReadError::Input("Choose PRTG's configuration file to read.".into())
-                })?;
-                if files.iter().filter(|f| !is_lookup(&f.name)).count() > 1 {
-                    return Err(ReadError::Input(
-                        "Choose one configuration file, with lookup files (.ovl) if you have some."
-                            .into(),
-                    ));
-                }
-                let text = String::from_utf8_lossy(&file.content);
-                // The file does not say PRTG's time zone: read as UTC, and
-                // the windows say so.
-                let mut tree = export::read(&file.name, &text, Duration::zero())?;
-                tree.local_times = true;
-                let ovl: Vec<(String, String)> = files
-                    .iter()
-                    .filter(|f| is_lookup(&f.name))
-                    .map(|f| {
-                        (
-                            f.name.clone(),
-                            String::from_utf8_lossy(&f.content).into_owned(),
-                        )
-                    })
-                    .collect();
-                let (lookups, failed) = lookups::read_all(&ovl);
-                for (name, why) in failed {
-                    tracing::debug!(file = %name, %why, "a PRTG lookup file does not read");
-                }
-                attach_lookups(&mut tree, &lookups);
-                tree
-            }
+            Input::Files(files) => blocking(move || read_files(&files)).await?,
             Input::Connect(connection) => {
                 let base = http::base_url(connection.get("url").unwrap_or_default(), "url")?;
                 let fetch = HttpFetch {
@@ -176,6 +144,43 @@ impl Source for Prtg {
                 tree
             }
         };
-        Ok(mapping::inventory(&tree, context.now))
+        let now = context.now;
+        blocking(move || Ok(mapping::inventory(&tree, now))).await
     }
+}
+
+/// The tree of an upload: the configuration file, and lookup files
+/// (`.ovl`) beside it for custom SNMP sensors (ADR-0157).
+fn read_files(files: &[File]) -> Result<tree::Tree, ReadError> {
+    let is_lookup = |name: &str| name.to_ascii_lowercase().ends_with(".ovl");
+    let file = files
+        .iter()
+        .find(|f| !is_lookup(&f.name))
+        .ok_or_else(|| ReadError::Input("Choose PRTG's configuration file to read.".into()))?;
+    if files.iter().filter(|f| !is_lookup(&f.name)).count() > 1 {
+        return Err(ReadError::Input(
+            "Choose one configuration file, with lookup files (.ovl) if you have some.".into(),
+        ));
+    }
+    let text = String::from_utf8_lossy(&file.content);
+    // The file does not say PRTG's time zone: read as UTC, and
+    // the windows say so.
+    let mut tree = export::read(&file.name, &text, Duration::zero())?;
+    tree.local_times = true;
+    let ovl: Vec<(String, String)> = files
+        .iter()
+        .filter(|f| is_lookup(&f.name))
+        .map(|f| {
+            (
+                f.name.clone(),
+                String::from_utf8_lossy(&f.content).into_owned(),
+            )
+        })
+        .collect();
+    let (lookups, failed) = lookups::read_all(&ovl);
+    for (name, why) in failed {
+        tracing::debug!(file = %name, %why, "a PRTG lookup file does not read");
+    }
+    attach_lookups(&mut tree, &lookups);
+    Ok(tree)
 }
