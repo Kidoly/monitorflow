@@ -128,16 +128,7 @@ impl Runner {
                 tracing::warn!(%error, "cannot record the snapshots campaigns pin; will retry");
             }
         }
-        let ids: Vec<Uuid> = match sqlx::query_scalar(
-            "SELECT id FROM campaigns
-             WHERE state IN ('scheduled', 'running')
-                OR id IN (SELECT campaign_id FROM campaign_targets
-                          WHERE sources_command_id IS NOT NULL AND restore_command_id IS NULL)
-             ORDER BY created_at",
-        )
-        .fetch_all(&self.pool)
-        .await
-        {
+        let ids = match self.due().await {
             Ok(ids) => ids,
             Err(error) => {
                 tracing::warn!(%error, "cannot list active campaigns; will retry");
@@ -149,6 +140,25 @@ impl Runner {
                 tracing::warn!(campaign = %id, %error, "cannot advance a campaign; will retry");
             }
         }
+    }
+
+    /// The campaigns [`Self::tick`] steps: the active ones, and those with
+    /// sources to restore. A configuration that ended without being sent,
+    /// as when a campaign stops, or of a removed server, is never restored
+    /// ([`pin::restore`]), so it does not keep its campaign in the list.
+    pub async fn due(&self) -> Result<Vec<Uuid>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT id FROM campaigns
+             WHERE state IN ('scheduled', 'running')
+                OR id IN (SELECT t.campaign_id FROM campaign_targets t
+                          JOIN commands cfg ON cfg.id = t.sources_command_id
+                          JOIN servers s ON s.id = t.server_id
+                          WHERE t.restore_command_id IS NULL AND s.revoked_at IS NULL
+                            AND (cfg.sent_at IS NOT NULL OR cfg.state = 'queued'))
+             ORDER BY created_at",
+        )
+        .fetch_all(&self.pool)
+        .await
     }
 
     /// One step of the campaign `id` at `now`. Restores of pinned sources
