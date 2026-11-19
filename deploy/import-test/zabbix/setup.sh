@@ -223,6 +223,16 @@ trigger "$db01" "Database CPU is high" 'min(/db-01/system.cpu.util,10m)>{$DB.CPU
 trigger "$db01" "Backup is old" 'last(/db-01/backup.age[pg])>1d' 2
 trigger "$web01" "Root file system is filling up" 'last(/web-01/vfs.fs.size[/,pused])>85' 2
 trigger "$web01" "SSH is down" 'last(/web-01/net.tcp.service[ssh])=0' 4
+# Richer triggers (ADR-0153): forecasts, windows, no data, a change, an
+# hourly trend and comparisons joined with and.
+trigger "$web01" "Root file system full in 3 days" 'timeleft(/web-01/vfs.fs.size[/,pused],1d,100)<3d' 4
+trigger "$web01" "Root file system above 95% within a day" 'forecast(/web-01/vfs.fs.size[/,pused],6h,1d)>95' 2
+trigger "$web01" "Load high for 15 minutes" 'avg(/web-01/system.cpu.load[all,avg1],15m)>4' 2
+trigger "$web01" "No processor data" 'nodata(/web-01/system.cpu.util,10m)=1' 4
+trigger "$db01" "Busy and loaded" 'last(/db-01/system.cpu.load[all,avg5])>8 and min(/db-01/system.cpu.util,10m)>90' 4
+trigger "$db01" "Load jumped" 'change(/db-01/system.cpu.load[all,avg1])>5' 2
+trigger "$db01" "Processor this hour" 'trendavg(/db-01/system.cpu.util,1h:now/h)>80' 2
+trigger "$db01" "PostgreSQL port check silent" 'nodata(/db-01/net.tcp.port[,5432],5m)=1' 4
 
 say "Web scenario"
 scenario_id="$(api httptest.get "{\"hostids\": \"$web01\", \"filter\": {\"name\": \"Shop home\"}, \"output\": [\"httptestid\"]}" | jq -r '.[0].httptestid // empty')"

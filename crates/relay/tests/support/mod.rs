@@ -607,6 +607,7 @@ impl Captured {
         Ingest {
             metrics: Some(queue),
             events: None,
+            virt: None,
         }
     }
 }

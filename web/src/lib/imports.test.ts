@@ -71,6 +71,12 @@ describe("imports", () => {
       },
     });
     expect(itemTitle(service, [])).toBe("Shop: up while at least 1 of web-01, db-01 port_5432 is, target 99.9 %");
+    const dependency = item("dependency:app-01/port_443:sw-core", [], {
+      kind: "dependency",
+      hosts: ["app-01", "sw-core"],
+      create: { object: "dependency", server: "app-01", check: { name: "port_443", instance: "" }, parent: "sw-core" },
+    });
+    expect(itemTitle(dependency, [])).toBe("port_443 on app-01 depends on sw-core");
     const window = item("window:Patch", [], {
       kind: "window",
       create: {

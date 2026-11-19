@@ -13,7 +13,8 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use super::plan::{channel_key, Existing, ExistingServer};
-use super::{ChannelSecret, Create, Item, PREVIEW_HOURS};
+use super::{ChannelSecret, CheckRef, Create, Item, PREVIEW_HOURS};
+use crate::dependencies::{self, Node};
 use crate::enroll::identity::{self, Pending};
 use crate::enroll::install_key::peer_id_from_hostname;
 use crate::notify::maintenance::write;
@@ -104,8 +105,8 @@ pub async fn existing(
         .iter()
         .map(|h| h.name.trim().to_ascii_lowercase())
         .collect();
-    let rows: Vec<(Uuid, String, String, Uuid)> = sqlx::query_as(
-        "SELECT id, peer_id, hostname, site_id FROM servers
+    let rows: Vec<(Uuid, String, String, Uuid, bool)> = sqlx::query_as(
+        "SELECT id, peer_id, hostname, site_id, kind = 'device' FROM servers
          WHERE revoked_at IS NULL
            AND (lower(peer_id) = ANY($1) OR lower(hostname) = ANY($2))",
     )
@@ -116,17 +117,20 @@ pub async fn existing(
     let mut existing = Existing::default();
     let server_ids: Vec<Uuid> = rows.iter().map(|r| r.0).collect();
     let mut peer_of: HashMap<Uuid, String> = HashMap::new();
-    for (id, peer_id, hostname, site) in rows {
+    for (id, peer_id, hostname, site, device) in rows {
         peer_of.insert(id, peer_id.to_ascii_lowercase());
         existing.servers.push(ExistingServer {
             peer_id,
             hostname,
             site_id: site,
             may_change: may_change(site),
+            device,
         });
     }
     let checks: Vec<(Uuid, String)> = sqlx::query_as(
-        "SELECT server_id, name FROM sensor_configs WHERE server_id = ANY($1) AND instance = ''",
+        // Any instance: a check run by a probe has the probe as its
+        // instance (ADR-0148), and is the same check.
+        "SELECT DISTINCT server_id, name FROM sensor_configs WHERE server_id = ANY($1)",
     )
     .bind(&server_ids)
     .fetch_all(pool)
@@ -135,15 +139,17 @@ pub async fn existing(
         .into_iter()
         .filter_map(|(id, name)| Some((peer_of.get(&id)?.clone(), name)))
         .collect();
-    let thresholds: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
-        "SELECT server_id, metric, instance FROM thresholds WHERE server_id = ANY($1)",
+    let thresholds: Vec<(Uuid, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT server_id, metric, instance, kind FROM thresholds WHERE server_id = ANY($1)",
     )
     .bind(&server_ids)
     .fetch_all(pool)
     .await?;
     existing.thresholds = thresholds
         .into_iter()
-        .filter_map(|(id, metric, instance)| Some((peer_of.get(&id)?.clone(), metric, instance)))
+        .filter_map(|(id, metric, instance, kind)| {
+            Some((peer_of.get(&id)?.clone(), metric, instance, kind))
+        })
         .collect();
     let silences: Vec<(Option<Uuid>, DateTime<Utc>, String)> = sqlx::query_as(
         "SELECT server_id, ends_at, reason FROM silences
@@ -567,6 +573,49 @@ async fn create_one(
             .await
             .map_err(db_error)
         }
+        Create::Dependency {
+            server: peer_id,
+            check,
+            parent,
+            parent_check,
+        } => {
+            let mut id_of = async |peer_id: &str| -> Result<Uuid, String> {
+                match server(peer_id, servers) {
+                    Some(id) => Ok(id),
+                    None => server_id(tx, peer_id)
+                        .await
+                        .map_err(db_error)?
+                        .ok_or_else(|| "its server is not there".to_owned()),
+                }
+            };
+            let child_id = id_of(peer_id).await?;
+            let parent_id = id_of(parent).await?;
+            let node = |id: Uuid, check: &Option<CheckRef>| match check {
+                Some(c) => Node::Check(id, c.name.clone(), c.instance.clone()),
+                None => Node::Server(id),
+            };
+            let (child, parent) = (node(child_id, check), node(parent_id, parent_check));
+            let edges = dependencies::store::edges(tx).await.map_err(db_error)?;
+            if dependencies::graph::cycle(&edges, &[(child.clone(), parent.clone())]).is_some() {
+                return Err("it would put something behind itself".into());
+            }
+            sqlx::query_scalar(
+                "INSERT INTO dependencies (server_id, check_name, check_instance, parent_server_id,
+                                           parent_check_name, parent_check_instance, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 ON CONFLICT ON CONSTRAINT dependencies_key DO NOTHING RETURNING id",
+            )
+            .bind(child_id)
+            .bind(check.as_ref().map(|c| c.name.as_str()))
+            .bind(check.as_ref().map_or("", |c| c.instance.as_str()))
+            .bind(parent_id)
+            .bind(parent_check.as_ref().map(|c| c.name.as_str()))
+            .bind(parent_check.as_ref().map_or("", |c| c.instance.as_str()))
+            .bind(user)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db_error)
+        }
         Create::Threshold {
             server: peer_id,
             metric,
@@ -576,6 +625,7 @@ async fn create_one(
             critical,
             duration_s,
             hysteresis,
+            richer,
         } => {
             let id = match server(peer_id, servers) {
                 Some(id) => id,
@@ -588,17 +638,18 @@ async fn create_one(
                 crate::api::thresholds::validate_entry(crate::api::thresholds::EntryRequest {
                     metric: metric.clone(),
                     instance: instance.clone(),
-                    comparison: comparison.clone(),
+                    comparison: Some(comparison.clone()),
                     warning: *warning,
                     critical: *critical,
                     duration_s: *duration_s,
                     hysteresis: *hysteresis,
-                    enabled: true,
+                    ..super::plan::entry_fields(richer)
                 })?;
             sqlx::query_scalar(
                 "INSERT INTO thresholds (server_id, metric, instance, comparison, warning,
-                                         critical, duration_s, hysteresis)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                         critical, duration_s, hysteresis, kind, function,
+                                         window_s, offset_s, target, conditions)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                  ON CONFLICT ON CONSTRAINT thresholds_key DO NOTHING RETURNING id",
             )
             .bind(id)
@@ -609,6 +660,12 @@ async fn create_one(
             .bind(valid.critical)
             .bind(valid.duration_s)
             .bind(valid.hysteresis)
+            .bind(valid.kind.as_str())
+            .bind(valid.function.map(|f| f.as_str()))
+            .bind(valid.window_s)
+            .bind(valid.offset_s)
+            .bind(valid.target)
+            .bind(serde_json::json!(valid.conditions))
             .fetch_optional(&mut **tx)
             .await
             .map_err(db_error)
@@ -1012,6 +1069,11 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
     outcome.kept_servers = kept.into_iter().map(|k| k.1).collect();
     let mut removed = BTreeMap::new();
     for (object, sql) in [
+        (
+            "dependency",
+            "DELETE FROM dependencies WHERE id IN
+                 (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'dependency')",
+        ),
         (
             "check",
             "DELETE FROM sensor_configs WHERE id IN

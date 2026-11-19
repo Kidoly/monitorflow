@@ -40,6 +40,7 @@ fn incident(server: Option<Uuid>, relay: Option<Uuid>, metric: &str, a: i64, b: 
             String::new()
         },
         critical: Spans::one(t(a), t(b)),
+        hidden: false,
     }
 }
 
@@ -99,6 +100,7 @@ fn data() -> Data {
         }],
         dependencies: vec![],
         parents: vec![],
+        pings: HashMap::new(),
         names: vec!["cpu".into(), "disk".into(), "memory".into()],
     }
 }
@@ -261,6 +263,15 @@ fn what_depends_on_a_parent_is_unreachable_while_it_is_down() {
         },
     ];
     data.names.push("ping".into());
+    for id in [switch, router] {
+        data.pings.insert(
+            id,
+            vec![CheckRef {
+                name: "ping".into(),
+                instance: String::new(),
+            }],
+        );
+    }
     data.incidents = vec![
         // The switch's ping fails 100-110; its cpu check does not count.
         incident(Some(switch), None, "monitorflow_ping_loss_ratio", 100, 110),
@@ -312,6 +323,13 @@ fn planned_work_on_a_parent_is_planned_for_what_is_behind_it() {
         parent: Parent::Server(switch),
     }];
     data.names.push("ping".into());
+    data.pings.insert(
+        switch,
+        vec![CheckRef {
+            name: "ping".into(),
+            instance: String::new(),
+        }],
+    );
     data.incidents = vec![incident(
         Some(switch),
         None,
@@ -342,4 +360,44 @@ fn a_cycle_written_past_the_api_ends() {
     ];
     let report = build(&data, day(), t(2000));
     assert_eq!(report.machines.len(), 2);
+}
+
+#[test]
+fn a_parent_is_down_by_the_rule_of_its_dependencies() {
+    let switch = Uuid::from_u128(30);
+    let mut data = data();
+    data.silences.clear();
+    data.machines[0].relays.clear();
+    data.machines.push(Machine {
+        device: true,
+        ..machine(switch, "sw-core", vec![])
+    });
+    data.dependencies = vec![Dependency {
+        server_id: WEB1,
+        check: None,
+        parent: Parent::Server(switch),
+    }];
+    data.names.push("ping".into());
+    data.incidents = vec![
+        // A ping incident without a ping check is not the switch being
+        // down, nor one hidden behind the switch's own parent.
+        incident(Some(switch), None, "monitorflow_ping_loss_ratio", 100, 110),
+        Incident {
+            hidden: true,
+            ..incident(Some(switch), None, "offline", 200, 210)
+        },
+    ];
+    let report = build(&data, day(), t(2000));
+    let web1 = report.machines.iter().find(|m| m.id == WEB1).unwrap();
+    assert_eq!(web1.numbers.down_seconds, 0.0);
+    data.pings.insert(
+        switch,
+        vec![CheckRef {
+            name: "ping".into(),
+            instance: String::new(),
+        }],
+    );
+    let report = build(&data, day(), t(2000));
+    let web1 = report.machines.iter().find(|m| m.id == WEB1).unwrap();
+    assert_eq!(web1.numbers.down_seconds, 10.0 * 60.0);
 }
