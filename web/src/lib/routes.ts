@@ -67,6 +67,8 @@ export function readyMadeHref(id: string): string {
 
 /** Active and upcoming silences (ADR-0079). */
 export const SILENCES_PATH = "/silences/";
+/** Availability reports (ADR-0155). */
+export const REPORTS_PATH = "/reports/";
 
 /** Who is on call, and one's own contact (ADR-0081). */
 export const ON_CALL_PATH = "/on-call/";

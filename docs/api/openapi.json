@@ -890,6 +890,427 @@
         }
       }
     },
+    "/api/v1/availability": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Availability over a period",
+        "description": "How available the business services, servers, devices and checks the key reads were over a period, from one hour to 13 months: this month so far when `from` and `to` are absent.\n\n**What counts as down**: any time a critical incident was open: a check failing at its critical threshold, a server offline, or a server unreachable because what it is reached through was down (an offline relay). Warnings never count. **Planned maintenance**, time under a silence or a maintenance window, is given apart (`maintenance_seconds`) and left out of `counted_seconds`; a silence counts from when it started or was made, whichever is later. `availability` is the share of `counted_seconds` that was up, in percent, or `null` when nothing was counted. An outage is one unbroken stretch of down time, with its causes.\n\nServices give their SLA `target`, whether it was `met`, and `budget_seconds`: the down time the target allowed minus the down time there was, negative once exceeded. `checks` lists only checks that had outages. Computed from the incident history on each request, so a past period gives the same numbers later, unless something was removed since.\n\n**Who**: any role. With `customer_id`, only that customer's sites the key reads; business services only of customers the key is granted as a whole. **Area**: `alerts`.",
+        "operationId": "availability_report",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Start of the period, RFC 3339; the start of this month (UTC) when\nabsent.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "End of the period, excluded; now when absent. A period still going\non counts until now.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only this customer's sites and services.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailabilityReport"
+                },
+                "example": {
+                  "checks": [
+                    {
+                      "instance": "",
+                      "name": "service_postfix",
+                      "numbers": {
+                        "availability": 99.9059,
+                        "counted_seconds": 2678400.0,
+                        "down_seconds": 2520.0,
+                        "longest_seconds": 2520.0,
+                        "maintenance_seconds": 7200.0,
+                        "outages": 1
+                      },
+                      "outage_list": [
+                        {
+                          "causes": [
+                            {
+                              "check": "service_postfix",
+                              "instance": "",
+                              "kind": "check",
+                              "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                              "server_name": "mail-1",
+                              "via": null
+                            }
+                          ],
+                          "end": "2026-10-14T03:52:00Z",
+                          "ongoing": false,
+                          "seconds": 2520.0,
+                          "start": "2026-10-14T03:10:00Z"
+                        }
+                      ],
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    }
+                  ],
+                  "customer_id": null,
+                  "customer_name": null,
+                  "from": "2026-10-01T00:00:00Z",
+                  "generated_at": "2026-11-01T06:00:00Z",
+                  "machines": [
+                    {
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "device": false,
+                      "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "name": "mail-1",
+                      "numbers": {
+                        "availability": 99.9059,
+                        "counted_seconds": 2678400.0,
+                        "down_seconds": 2520.0,
+                        "longest_seconds": 2520.0,
+                        "maintenance_seconds": 7200.0,
+                        "outages": 1
+                      },
+                      "outage_list": [
+                        {
+                          "causes": [
+                            {
+                              "check": "service_postfix",
+                              "instance": "",
+                              "kind": "check",
+                              "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                              "server_name": "mail-1",
+                              "via": null
+                            }
+                          ],
+                          "end": "2026-10-14T03:52:00Z",
+                          "ongoing": false,
+                          "seconds": 2520.0,
+                          "start": "2026-10-14T03:10:00Z"
+                        }
+                      ],
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "site_name": "paris"
+                    }
+                  ],
+                  "maintenance": [
+                    {
+                      "checks": [],
+                      "end": "2026-10-05T03:00:00Z",
+                      "reason": "Patches",
+                      "servers": [
+                        "mail-1"
+                      ],
+                      "start": "2026-10-05T01:00:00Z",
+                      "window": true
+                    }
+                  ],
+                  "services": [
+                    {
+                      "at_least": null,
+                      "budget_seconds": 158.4,
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                      "members": [
+                        {
+                          "check": null,
+                          "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                          "server_name": "mail-1"
+                        }
+                      ],
+                      "met": true,
+                      "name": "Email",
+                      "numbers": {
+                        "availability": 99.9059,
+                        "counted_seconds": 2678400.0,
+                        "down_seconds": 2520.0,
+                        "longest_seconds": 2520.0,
+                        "maintenance_seconds": 7200.0,
+                        "outages": 1
+                      },
+                      "outage_list": [
+                        {
+                          "causes": [
+                            {
+                              "check": "service_postfix",
+                              "instance": "",
+                              "kind": "check",
+                              "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                              "server_name": "mail-1",
+                              "via": null
+                            }
+                          ],
+                          "end": "2026-10-14T03:52:00Z",
+                          "ongoing": false,
+                          "seconds": 2520.0,
+                          "start": "2026-10-14T03:10:00Z"
+                        }
+                      ],
+                      "rule": "all",
+                      "target": 99.9
+                    }
+                  ],
+                  "summary": {
+                    "down_seconds": 2520.0,
+                    "machines": 1,
+                    "maintenance_seconds": 7200.0,
+                    "outages": 1,
+                    "services": 1,
+                    "services_met": 1,
+                    "services_missed": 0
+                  },
+                  "to": "2026-11-01T00:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A period shorter than an hour, longer than 13 months or starting in the future, or an unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/availability/report": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Download an availability report",
+        "description": "The same report as a file to keep or send: `pdf`, a document to send to a customer as it is (a summary in plain words, then the details), or `csv`, one row per service, server, device and check with its numbers, then one row per outage and per planned maintenance, with a `kind` column. CSV numbers are plain (seconds, dot decimals); words are in `language`; times are in `time_zone`.\n\n**Who**: any role, as above. **Area**: `alerts`.",
+        "operationId": "availability_file",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "`csv` or `pdf`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "`en` (the default) or `fr`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_zone",
+            "in": "query",
+            "description": "IANA time zone the times are written in, like `Europe/Paris`; UTC\nwhen absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file, as an attachment",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/pdf": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown format, language or time zone, or a period as above: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backups": {
       "get": {
         "tags": [
@@ -1216,6 +1637,636 @@
           },
           "409": {
             "description": "Backups cannot be read by the server: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/business-services": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "List business services",
+        "description": "The business services of the customers the key is granted as a whole, by name. A key granted only some sites sees none: services belong to a customer.\n\n**Who**: any role on the whole customer. **Area**: `alerts`. Unknown parameters are 400.",
+        "operationId": "list_services",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only the services of this customer.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The services",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessServiceList"
+                },
+                "example": {
+                  "services": [
+                    {
+                      "at_least": null,
+                      "can_change": true,
+                      "created_at": "2026-11-18T09:30:00Z",
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "customer_name": "default",
+                      "description": "Mail for the whole office",
+                      "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                      "members": [
+                        {
+                          "check": null,
+                          "device": false,
+                          "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                          "server_name": "mail-1"
+                        },
+                        {
+                          "check": {
+                            "instance": "",
+                            "name": "service_postfix"
+                          },
+                          "device": false,
+                          "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                          "server_name": "mail-1"
+                        }
+                      ],
+                      "name": "Email",
+                      "rule": "all",
+                      "target": 99.9,
+                      "updated_at": "2026-11-18T09:30:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer of the filter does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Create a business service",
+        "description": "A business service is a named group with one availability, like \"Email\" or \"Website\": servers, devices, or chosen checks of them (`{name, instance}`, as silences name them), all of one customer. Its `rule` is `all` (down while any member is down) or `at_least` (down while fewer than `at_least` members are up, for members that back each other up). A member under planned maintenance counts as up; the time the service would be down only because of such members is its planned maintenance. `target` is an SLA target in percent, which reports say was met or missed, with the error budget left.\n\n`customer_id` may be left out when there is only one customer. Members are 1 to 200 servers or devices of that customer, not removed, each whole or one of its checks.\n\n**Who**: operator or above on the whole customer. **Area**: `alerts`. Audited as `business_service.create`. **Not safe to repeat**: send `Idempotency-Key` to retry.",
+        "operationId": "create_service",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessServiceRequest"
+              },
+              "example": {
+                "description": "Mail for the whole office",
+                "members": [
+                  {
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  },
+                  {
+                    "check": {
+                      "instance": "",
+                      "name": "service_postfix"
+                    },
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  }
+                ],
+                "name": "Email",
+                "rule": "all",
+                "target": 99.9
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new service",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessService"
+                },
+                "example": {
+                  "at_least": null,
+                  "can_change": true,
+                  "created_at": "2026-11-18T09:30:00Z",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "default",
+                  "description": "Mail for the whole office",
+                  "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                  "members": [
+                    {
+                      "check": null,
+                      "device": false,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    },
+                    {
+                      "check": {
+                        "instance": "",
+                        "name": "service_postfix"
+                      },
+                      "device": false,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    }
+                  ],
+                  "name": "Email",
+                  "rule": "all",
+                  "target": 99.9,
+                  "updated_at": "2026-11-18T09:30:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A name missing or over 80 characters, a description over 500, no member or over 200, a member twice, a server of another customer, an unknown check, a rule other than `all` or `at_least`, `at_least` missing, with `all`, or over the number of members, a target outside 50 to 100 or with more than three decimals, or no customer named when there are several: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer, or has only some of its sites: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The customer has a service of that name: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/business-services/{id}": {
+      "put": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Change a business service",
+        "description": "Replaces every field, as when creating one; without `customer_id`, it stays with its customer. Reports of past periods use the new members and rule.\n\n**Who**: operator or above on the whole customer. **Area**: `alerts`. Audited as `business_service.update`. Safe to repeat.",
+        "operationId": "update_service",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The service",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessServiceRequest"
+              },
+              "example": {
+                "description": "Mail for the whole office",
+                "members": [
+                  {
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  },
+                  {
+                    "check": {
+                      "instance": "",
+                      "name": "service_postfix"
+                    },
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  }
+                ],
+                "name": "Email",
+                "rule": "all",
+                "target": 99.9
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessService"
+                },
+                "example": {
+                  "at_least": null,
+                  "can_change": true,
+                  "created_at": "2026-11-18T09:30:00Z",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "default",
+                  "description": "Mail for the whole office",
+                  "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                  "members": [
+                    {
+                      "check": null,
+                      "device": false,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    },
+                    {
+                      "check": {
+                        "instance": "",
+                        "name": "service_postfix"
+                      },
+                      "device": false,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "server_name": "mail-1"
+                    }
+                  ],
+                  "name": "Email",
+                  "rule": "all",
+                  "target": 99.9,
+                  "updated_at": "2026-11-18T09:30:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As when creating one: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such service, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The customer has another service of that name: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Remove a business service",
+        "description": "Removes the service; reports no longer show it, for past periods too. Its members are not touched.\n\n**Who**: operator or above on the whole customer. **Area**: `alerts`. Audited as `business_service.remove`.",
+        "operationId": "remove_service",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The service",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such service, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
             "content": {
               "application/json": {
                 "schema": {
@@ -23089,6 +24140,745 @@
         }
       }
     },
+    "/api/v1/report-schedules": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "List report schedules",
+        "description": "The availability reports sent by email on a schedule that the key manages: those of customers it administers as a whole, and with a global administrator's key those of everything. Each says its next period and when it goes out, and how the last sending went.\n\n**Who**: administrators. **Area**: `alerts`.",
+        "operationId": "list_schedules",
+        "responses": {
+          "200": {
+            "description": "The schedules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportScheduleList"
+                },
+                "example": {
+                  "schedules": [
+                    {
+                      "channel_host": "smtp.example.com",
+                      "channel_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "channel_recipients": [
+                        "ops@example.com"
+                      ],
+                      "created_at": "2026-10-20T09:30:00Z",
+                      "csv": true,
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "customer_name": "acme",
+                      "enabled": true,
+                      "frequency": "monthly",
+                      "id": "8e9f0a1b-2c3d-4e5f-8a6b-7c8d9e0f1a2b",
+                      "language": "fr",
+                      "last_error": null,
+                      "last_error_at": null,
+                      "last_period_end": "2026-10-31T23:00:00Z",
+                      "last_sent_at": "2026-11-01T05:00:12Z",
+                      "next_from": "2026-10-31T23:00:00Z",
+                      "next_send_at": "2026-12-01T05:00:00Z",
+                      "next_to": "2026-11-30T23:00:00Z",
+                      "pdf": true,
+                      "recipients": [
+                        "it@example.com"
+                      ],
+                      "time_zone": "Europe/Paris"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Create a report schedule",
+        "description": "Sends the availability report (see `GET /api/v1/availability`) by email: `monthly` on the first day of each month for the month before, or `weekly` on Monday for the week before, at 06:00 in `time_zone`, in `language`, with the PDF, the CSV or both attached. One customer's report with `customer_id`, built from that customer's sites and services only; everything without it. A report due while the server was down is sent when it is back, once: only the latest period is ever sent. A new schedule starts with the next period; use `send` for the one that ended.\n\nIt goes through `channel_id`, an email channel of the notifications covering that customer as a whole, or everything, to the channel's own recipients unless `recipients` names up to 20 others.\n\n**Who**: administrator of the whole customer; global administrator for everything. **Area**: `alerts`. Audited as `report_schedule.create`. **Not safe to repeat**: send `Idempotency-Key` to retry.",
+        "operationId": "create_schedule",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportScheduleRequest"
+              },
+              "example": {
+                "channel_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                "csv": true,
+                "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                "frequency": "monthly",
+                "language": "fr",
+                "pdf": true,
+                "recipients": [
+                  "it@example.com"
+                ],
+                "time_zone": "Europe/Paris"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSchedule"
+                },
+                "example": {
+                  "channel_host": "smtp.example.com",
+                  "channel_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "channel_recipients": [
+                    "ops@example.com"
+                  ],
+                  "created_at": "2026-10-20T09:30:00Z",
+                  "csv": true,
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "acme",
+                  "enabled": true,
+                  "frequency": "monthly",
+                  "id": "8e9f0a1b-2c3d-4e5f-8a6b-7c8d9e0f1a2b",
+                  "language": "fr",
+                  "last_error": null,
+                  "last_error_at": null,
+                  "last_period_end": "2026-10-31T23:00:00Z",
+                  "last_sent_at": "2026-11-01T05:00:12Z",
+                  "next_from": "2026-10-31T23:00:00Z",
+                  "next_send_at": "2026-12-01T05:00:00Z",
+                  "next_to": "2026-11-30T23:00:00Z",
+                  "pdf": true,
+                  "recipients": [
+                    "it@example.com"
+                  ],
+                  "time_zone": "Europe/Paris"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown frequency, time zone or language, no file attached, a recipient that is not an address or over 20, or a channel that is not email, not managed by the key or not covering the customer: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key does not administer the customer, or everything: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/report-schedules/{id}": {
+      "put": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Change a report schedule",
+        "description": "Replaces every field, as when creating one. A failure waiting to be tried again is tried at the next look.\n\n**Who**: as when creating one, for its customer now and the one it will have. **Area**: `alerts`. Audited as `report_schedule.update`. Safe to repeat.",
+        "operationId": "update_schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The schedule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportScheduleRequest"
+              },
+              "example": {
+                "channel_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                "csv": true,
+                "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                "frequency": "monthly",
+                "language": "fr",
+                "pdf": true,
+                "recipients": [
+                  "it@example.com"
+                ],
+                "time_zone": "Europe/Paris"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSchedule"
+                },
+                "example": {
+                  "channel_host": "smtp.example.com",
+                  "channel_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "channel_recipients": [
+                    "ops@example.com"
+                  ],
+                  "created_at": "2026-10-20T09:30:00Z",
+                  "csv": true,
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "acme",
+                  "enabled": true,
+                  "frequency": "monthly",
+                  "id": "8e9f0a1b-2c3d-4e5f-8a6b-7c8d9e0f1a2b",
+                  "language": "fr",
+                  "last_error": null,
+                  "last_error_at": null,
+                  "last_period_end": "2026-10-31T23:00:00Z",
+                  "last_sent_at": "2026-11-01T05:00:12Z",
+                  "next_from": "2026-10-31T23:00:00Z",
+                  "next_send_at": "2026-12-01T05:00:00Z",
+                  "next_to": "2026-11-30T23:00:00Z",
+                  "pdf": true,
+                  "recipients": [
+                    "it@example.com"
+                  ],
+                  "time_zone": "Europe/Paris"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As when creating one: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the new customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such schedule, or one the key does not manage: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Remove a report schedule",
+        "description": "No more reports from it. What it sent stays in the audit log (`report.sent`).\n\n**Who**: as when creating one. **Area**: `alerts`. Audited as `report_schedule.remove`.",
+        "operationId": "remove_schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The schedule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such schedule, or one the key does not manage: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/report-schedules/{id}/send": {
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Send a scheduled report now",
+        "description": "Sends the latest period that ended now, to check the setup or to send it again. The schedule still sends its next period as planned. A failure is `ok: false` with the reason in plain words, also kept on the schedule.\n\n**Who**: as when creating one. **Area**: `alerts`. Audited as `report.sent` with `manual: true` when it went through. **Not safe to repeat**: each request sends an email.",
+        "operationId": "send_schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The schedule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sent, or why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSent"
+                },
+                "example": {
+                  "error": null,
+                  "from": "2026-09-30T22:00:00Z",
+                  "ok": true,
+                  "recipients": [
+                    "it@example.com"
+                  ],
+                  "to": "2026-10-31T23:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such schedule, or one the key does not manage: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sensor_configs/{id}": {
       "put": {
         "tags": [
@@ -37286,6 +39076,471 @@
           }
         }
       },
+      "AvailabilityCause": {
+        "type": "object",
+        "description": "What made something down for a while.",
+        "required": [
+          "kind",
+          "server_id",
+          "server_name",
+          "instance"
+        ],
+        "properties": {
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The check, for `check` and for a `member` that is a check."
+          },
+          "instance": {
+            "type": "string",
+            "description": "What the check watched, like a mount point; `\"\"` when nothing."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`check`: an incident of a check; `offline`: the server stopped\nreporting; `unreachable`: what it is reached through was down\n(`via`); `member`: a member of a business service was down."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The server or device."
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "via": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What it depends on, for `unreachable`: a relay's name."
+          }
+        }
+      },
+      "AvailabilityCheck": {
+        "type": "object",
+        "description": "A check that had outages.",
+        "required": [
+          "server_id",
+          "server_name",
+          "name",
+          "instance",
+          "numbers",
+          "outage_list"
+        ],
+        "properties": {
+          "instance": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "numbers": {
+            "$ref": "#/components/schemas/AvailabilityNumbers"
+          },
+          "outage_list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityOutage"
+            }
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "server_name": {
+            "type": "string"
+          }
+        }
+      },
+      "AvailabilityMachine": {
+        "type": "object",
+        "description": "A server or device.",
+        "required": [
+          "id",
+          "name",
+          "device",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "numbers",
+          "outage_list"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "device": {
+            "type": "boolean",
+            "description": "A device, watched from a probe, rather than a server with an agent."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "numbers": {
+            "$ref": "#/components/schemas/AvailabilityNumbers"
+          },
+          "outage_list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityOutage"
+            }
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          }
+        }
+      },
+      "AvailabilityMaintenance": {
+        "type": "object",
+        "description": "Planned maintenance during the period.",
+        "required": [
+          "start",
+          "end",
+          "reason",
+          "servers",
+          "checks",
+          "window"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SilencedCheck"
+            },
+            "description": "Only these checks of them; empty for all of them."
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What it covered: servers and devices of the report, by name."
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "window": {
+            "type": "boolean",
+            "description": "An occurrence of a maintenance window."
+          }
+        }
+      },
+      "AvailabilityMember": {
+        "type": "object",
+        "description": "A member of a business service, by name.",
+        "required": [
+          "server_id",
+          "server_name"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SilencedCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "server_name": {
+            "type": "string"
+          }
+        }
+      },
+      "AvailabilityNumbers": {
+        "type": "object",
+        "description": "The numbers of one thing over the period.",
+        "required": [
+          "counted_seconds",
+          "down_seconds",
+          "maintenance_seconds",
+          "outages",
+          "longest_seconds"
+        ],
+        "properties": {
+          "availability": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Percentage of the counted time that was up, 0 to 100; `null` when\nnothing was counted (all of it planned maintenance)."
+          },
+          "counted_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "The period without planned maintenance, seconds."
+          },
+          "down_seconds": {
+            "type": "number",
+            "format": "double"
+          },
+          "longest_seconds": {
+            "type": "number",
+            "format": "double"
+          },
+          "maintenance_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Planned maintenance, left out of the count, seconds."
+          },
+          "outages": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "AvailabilityOutage": {
+        "type": "object",
+        "description": "One outage.",
+        "required": [
+          "start",
+          "end",
+          "seconds",
+          "ongoing",
+          "causes"
+        ],
+        "properties": {
+          "causes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityCause"
+            },
+            "description": "What was down, the earliest first."
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ongoing": {
+            "type": "boolean",
+            "description": "Whether it was still going on when the report was made."
+          },
+          "seconds": {
+            "type": "number",
+            "format": "double"
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AvailabilityReport": {
+        "type": "object",
+        "description": "A whole report.",
+        "required": [
+          "from",
+          "to",
+          "generated_at",
+          "summary",
+          "services",
+          "machines",
+          "checks",
+          "maintenance"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityCheck"
+            },
+            "description": "Only checks that had outages; the others were up all along."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it is for; `null` for everything the reader sees."
+          },
+          "customer_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "machines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityMachine"
+            }
+          },
+          "maintenance": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityMaintenance"
+            }
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityService"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/AvailabilitySummary"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AvailabilityService": {
+        "type": "object",
+        "description": "A business service.",
+        "required": [
+          "id",
+          "name",
+          "customer_id",
+          "rule",
+          "members",
+          "numbers",
+          "outage_list"
+        ],
+        "properties": {
+          "at_least": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "budget_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The down time the target allowed, minus the down time there was,\nseconds; negative when it was exceeded."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityMember"
+            }
+          },
+          "met": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the target was met; `null` without a target or when\nnothing was counted."
+          },
+          "name": {
+            "type": "string"
+          },
+          "numbers": {
+            "$ref": "#/components/schemas/AvailabilityNumbers"
+          },
+          "outage_list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityOutage"
+            }
+          },
+          "rule": {
+            "type": "string",
+            "description": "`all` or `at_least`."
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The SLA target, a percentage; `null` without one."
+          }
+        }
+      },
+      "AvailabilitySummary": {
+        "type": "object",
+        "description": "The overall line of a report.",
+        "required": [
+          "services",
+          "services_met",
+          "services_missed",
+          "machines",
+          "outages",
+          "down_seconds",
+          "maintenance_seconds"
+        ],
+        "properties": {
+          "down_seconds": {
+            "type": "number",
+            "format": "double"
+          },
+          "machines": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maintenance_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Planned maintenance of the period, its own time once."
+          },
+          "outages": {
+            "type": "integer",
+            "description": "Outages of servers and devices, and their down time in all.",
+            "minimum": 0
+          },
+          "services": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "services_met": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "services_missed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "AvailableRelease": {
         "type": "object",
         "description": "A release newer than the running server, as `GET /api/server-update`\nshows it.",
@@ -37523,6 +39778,205 @@
           }
         ],
         "description": "Body of `GET /api/backups`."
+      },
+      "BusinessService": {
+        "type": "object",
+        "description": "One business service.",
+        "required": [
+          "id",
+          "customer_id",
+          "customer_name",
+          "name",
+          "description",
+          "rule",
+          "members",
+          "created_at",
+          "updated_at",
+          "can_change"
+        ],
+        "properties": {
+          "at_least": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "can_change": {
+            "type": "boolean",
+            "description": "Whether this user may change or remove it."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessServiceMember"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BusinessServiceList": {
+        "type": "object",
+        "description": "Body of `GET /api/business-services`.",
+        "required": [
+          "services"
+        ],
+        "properties": {
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessService"
+            },
+            "description": "By name."
+          }
+        }
+      },
+      "BusinessServiceMember": {
+        "type": "object",
+        "description": "A member, by name.",
+        "required": [
+          "server_id",
+          "server_name",
+          "device"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SilencedCheck",
+                "description": "The check; `null` for the whole server or device."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device": {
+            "type": "boolean"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "server_name": {
+            "type": "string"
+          }
+        }
+      },
+      "BusinessServiceMemberRequest": {
+        "type": "object",
+        "description": "A member in a request: a whole server or device, or one check of it.",
+        "required": [
+          "server_id"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SilencedCheck",
+                "description": "Only this check of it; absent or `null` for the whole server."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BusinessServiceRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/business-services` and `PUT\n/api/business-services/{id}`; a change replaces every field.",
+        "required": [
+          "name",
+          "members"
+        ],
+        "properties": {
+          "at_least": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "For `at_least`: 1 to the number of members.",
+            "minimum": 0
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it belongs to; may be left out when there is only one."
+          },
+          "description": {
+            "type": "string",
+            "description": "At most 500 characters."
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessServiceMemberRequest"
+            },
+            "description": "1 to 200 members."
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 80 characters, unique per customer, like `Email`."
+          },
+          "rule": {
+            "type": "string",
+            "description": "`all` (the default): down while any member is down; `at_least`: down\nwhile fewer than `at_least` members are up."
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The SLA target, a percentage from 50 to 100 with up to three\ndecimals, like 99.9; absent or `null` for none."
+          }
+        },
+        "additionalProperties": false
       },
       "CaPeer": {
         "type": "object",
@@ -41978,6 +44432,49 @@
                 "description": "The site it covers; `null` for everything."
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A business service of the site's customer (ADR-0155).",
+            "required": [
+              "name",
+              "members",
+              "object"
+            ],
+            "properties": {
+              "at_least": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "Down while fewer than this many are up; `null` for all of them.",
+                "minimum": 0
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ImportServiceMember"
+                }
+              },
+              "name": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "service"
+                ]
+              },
+              "target": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double",
+                "description": "The SLA target in percent."
+              }
+            }
           }
         ],
         "description": "What an item creates."
@@ -42275,6 +44772,28 @@
             "format": "int32",
             "description": "Items unticked, or that need an unticked one.",
             "minimum": 0
+          }
+        }
+      },
+      "ImportServiceMember": {
+        "type": "object",
+        "description": "A member of an imported business service: a server by ID, whole or\none of its checks.",
+        "required": [
+          "server"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SilencedCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server": {
+            "type": "string"
           }
         }
       },
@@ -48159,6 +50678,241 @@
           }
         },
         "additionalProperties": false
+      },
+      "ReportSchedule": {
+        "type": "object",
+        "description": "One schedule.",
+        "required": [
+          "id",
+          "frequency",
+          "time_zone",
+          "language",
+          "pdf",
+          "csv",
+          "channel_id",
+          "channel_host",
+          "recipients",
+          "channel_recipients",
+          "enabled",
+          "next_from",
+          "next_to",
+          "next_send_at",
+          "created_at"
+        ],
+        "properties": {
+          "channel_host": {
+            "type": "string",
+            "description": "Where the channel sends, like `smtp.example.com`."
+          },
+          "channel_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "channel_recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The channel's own, used when `recipients` is empty."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "csv": {
+            "type": "boolean"
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` for everything."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "language": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last sending failed, in plain words; `null` once one works."
+          },
+          "last_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_period_end": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last period sent, and when."
+          },
+          "last_sent_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "next_from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The next report's period and when it goes out."
+          },
+          "next_send_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "next_to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pdf": {
+            "type": "boolean"
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "time_zone": {
+            "type": "string"
+          }
+        }
+      },
+      "ReportScheduleList": {
+        "type": "object",
+        "description": "Body of `GET /api/report-schedules`.",
+        "required": [
+          "schedules"
+        ],
+        "properties": {
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportSchedule"
+            }
+          }
+        }
+      },
+      "ReportScheduleRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/report-schedules` and `PUT\n/api/report-schedules/{id}`; a change replaces every field.",
+        "required": [
+          "time_zone",
+          "channel_id"
+        ],
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "An email channel covering the customer, or everything."
+          },
+          "csv": {
+            "type": "boolean",
+            "description": "Attach the CSV; true by default."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One customer's report; absent or `null` for everything."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "True by default; false keeps it without sending."
+          },
+          "frequency": {
+            "type": "string",
+            "description": "`monthly` (the default) or `weekly`."
+          },
+          "language": {
+            "type": "string",
+            "description": "`en` (the default) or `fr`."
+          },
+          "pdf": {
+            "type": "boolean",
+            "description": "Attach the PDF; true by default."
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Who gets it, at most 20 addresses; empty or absent for the channel's\nown recipients."
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "IANA time zone of the periods and of the times in the report, like\n`Europe/Paris`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportSent": {
+        "type": "object",
+        "description": "Body of `POST /api/report-schedules/{id}/send`.",
+        "required": [
+          "ok",
+          "from",
+          "to",
+          "recipients"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, in plain words; `null` when it went through."
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The period of the report."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Whether the email went through."
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Who it was sent to; empty when it failed."
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "Retention": {
         "type": "object",

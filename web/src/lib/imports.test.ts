@@ -60,6 +60,17 @@ describe("imports", () => {
       create: { object: "channel", kind: "email", settings: { to: ["ops@example.com"] }, has_secret: true, site_id: null },
     });
     expect(itemTitle(channel, [])).toBe("Email to ops@example.com");
+    const service = item("sv", [], {
+      kind: "service",
+      create: {
+        object: "service",
+        name: "Shop",
+        at_least: 1,
+        target: 99.9,
+        members: [{ server: "web-01" }, { server: "db-01", check: { name: "port_5432", instance: "" } }],
+      },
+    });
+    expect(itemTitle(service, [])).toBe("Shop: up while at least 1 of web-01, db-01 port_5432 is, target 99.9 %");
     const dependency = item("dependency:app-01/port_443:sw-core", [], {
       kind: "dependency",
       hosts: ["app-01", "sw-core"],

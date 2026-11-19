@@ -230,6 +230,25 @@ pub enum Create {
         /// The site it covers; `null` for everything.
         site_id: Option<Uuid>,
     },
+    /// A business service of the site's customer (ADR-0155).
+    Service {
+        name: String,
+        /// Down while fewer than this many are up; `null` for all of them.
+        at_least: Option<u32>,
+        /// The SLA target in percent.
+        target: Option<f64>,
+        members: Vec<ServiceMember>,
+    },
+}
+
+/// A member of an imported business service: a server by ID, whole or
+/// one of its checks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = ImportServiceMember)]
+pub struct ServiceMember {
+    pub server: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<CheckRef>,
 }
 
 impl Create {
@@ -243,6 +262,7 @@ impl Create {
             Self::Silence { .. } => "silence",
             Self::Window { .. } => "window",
             Self::Channel { .. } => "channel",
+            Self::Service { .. } => "service",
             Self::Dependency { .. } => "dependency",
         }
     }

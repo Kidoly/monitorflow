@@ -1475,6 +1475,91 @@ fn devices_and_probe_checks() {
 }
 
 #[test]
+fn services_take_the_servers_and_checks_the_import_makes() {
+    use monitorflow_import::model::{Member, Service};
+    let postgres = Watch::Port {
+        address: None,
+        port: 5432,
+    };
+    let inventory = Inventory {
+        hosts: vec![
+            host("db-01", "db-01", Os::Debian),
+            host("db-02", "db-02", Os::Debian),
+        ],
+        checks: vec![
+            check("db-01", postgres.clone(), Some(Severity::Critical)),
+            check("db-02", postgres.clone(), Some(Severity::Critical)),
+        ],
+        services: vec![
+            Service {
+                name: "Database".into(),
+                members: vec![
+                    Member {
+                        host: "db-01".into(),
+                        check: Some(postgres.clone()),
+                    },
+                    Member {
+                        host: "db-02".into(),
+                        check: None,
+                    },
+                    // A host the import does not have.
+                    Member {
+                        host: "gone".into(),
+                        check: None,
+                    },
+                ],
+                at_least: Some(1),
+                target: Some(99.9),
+                origin: Origin::new("service", "Database"),
+                fidelity: Fidelity::Exact,
+            },
+            Service {
+                name: "Nothing".into(),
+                members: vec![Member {
+                    host: "gone".into(),
+                    check: None,
+                }],
+                at_least: None,
+                target: None,
+                origin: Origin::new("service", "Nothing"),
+                fidelity: Fidelity::Exact,
+            },
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let item = by_id(&planned, "service:Database");
+    assert_eq!(item.list, List::Exact);
+    assert_eq!(item.needs, ["server:db-01", "server:db-02"]);
+    let Create::Service {
+        at_least,
+        target,
+        members,
+        ..
+    } = create_of(item)
+    else {
+        panic!("a service");
+    };
+    assert_eq!((*at_least, *target), (Some(1), Some(99.9)));
+    assert_eq!(members.len(), 2);
+    assert_eq!(members[0].server, "db-01");
+    assert_eq!(members[0].check.as_ref().unwrap().name, "port_5432");
+    assert_eq!(members[1].check, None);
+    let nothing = planned
+        .items
+        .iter()
+        .find(|i| i.origin.name == "Nothing")
+        .unwrap();
+    assert_eq!(nothing.list, List::NotMovable);
+    // A service of that name is there already.
+    let existing = Existing {
+        services: HashSet::from(["database".to_owned()]),
+        ..Existing::default()
+    };
+    assert!(by_id(&run(&inventory, &existing), "service:Database").present);
+}
+
+#[test]
 fn richer_thresholds_keep_what_they_judge() {
     let mut forecast = threshold(
         &["1"],

@@ -319,7 +319,34 @@ fn site_target(url: &str) -> (String, Option<u16>) {
     )
 }
 
+/// Whether `sensor` is a business process sensor (ADR-0155).
+fn business_process(sensor: &Object) -> bool {
+    sensor
+        .sensor_type
+        .as_deref()
+        .is_some_and(|t| t.replace([' ', '_', '-'], "").contains("businessprocess"))
+}
+
 fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory) {
+    if business_process(sensor) {
+        // Its channels' objects are not in the API nor the file: the
+        // service is made by hand, from what the note lists.
+        let channels: Vec<&str> = sensor
+            .channels
+            .iter()
+            .map(|c| c.name.as_str())
+            .filter(|n| !n.eq_ignore_ascii_case("downtime"))
+            .collect();
+        out.unmovable.push(Unmovable {
+            hosts: vec![],
+            origin: origin(sensor),
+            why: Note::new(
+                "prtg_business_process",
+                args! {"channels" => if channels.is_empty() { sensor.name.clone() } else { channels.join(", ") }},
+            ),
+        });
+        return;
+    }
     let Some(device) = tree.ancestor(sensor.id, Kind::Device) else {
         // Sensors of a probe or a group watch PRTG itself or the network.
         out.unmovable.push(Unmovable {
@@ -785,6 +812,31 @@ mod tests {
             local_times: false,
             schedules: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_business_process_says_what_to_make_by_hand() {
+        let mut tree = tree();
+        let mut process = sensor(40, 10, "businessprocess");
+        process.name = "Email".into();
+        for name in ["Mail servers", "Downtime"] {
+            process.channels.push(super::super::tree::Channel {
+                id: 0,
+                name: name.into(),
+                unit: "%".into(),
+                limits: None,
+            });
+        }
+        tree.objects.push(process);
+        let inv = inventory(&tree, now());
+        let note = inv
+            .unmovable
+            .iter()
+            .find(|u| u.origin.name == "Email")
+            .map(|u| &u.why)
+            .unwrap();
+        assert_eq!(note.code, "prtg_business_process");
+        assert_eq!(note.args["channels"], "Mail servers");
     }
 
     #[test]

@@ -8,6 +8,7 @@ import { type MessageKey, t } from "@/i18n";
 
 import { checkTitle, shapeOf } from "./alerts";
 import { checkName, describeRule } from "./maintenance";
+import { formatTarget } from "./reports";
 import { describeRule as describeAlertRule } from "./rules";
 import type {
   EffectiveSensor,
@@ -34,6 +35,7 @@ export const KINDS = [
   "silence",
   "window",
   "channel",
+  "service",
   "dependency",
   "builtin",
   "other",
@@ -138,6 +140,13 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
       return create.checks?.length
         ? t("imports.item.windowChecks", { rule, checks: create.checks.map(checkName).join(", "), reason: create.reason })
         : t("imports.item.window", { rule, reason: create.reason });
+    }
+    case "service": {
+      const members = create.members.map((m) => (m.check ? `${m.server} ${checkName(m.check)}` : m.server)).join(", ");
+      const rule = create.at_least
+        ? t("imports.item.serviceAtLeast", { count: create.at_least, members })
+        : t("imports.item.serviceAll", { members });
+      return create.target === null ? t("imports.item.service", { name: create.name, rule }) : t("imports.item.serviceTarget", { name: create.name, rule, target: formatTarget(create.target) });
     }
     case "dependency": {
       const end = (name: string, check?: SilencedCheck) =>

@@ -13,7 +13,9 @@ use monitorflow_import::Note;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use super::{ChannelSecret, CheckRef, Create, Item, List, NoteView, OriginView, Richer};
+use super::{
+    ChannelSecret, CheckRef, Create, Item, List, NoteView, OriginView, Richer, ServiceMember,
+};
 use crate::api::{sensors, thresholds};
 use crate::enroll::install_key::peer_id_from_hostname;
 use crate::notify::maintenance::{self, Schedule};
@@ -57,6 +59,8 @@ pub struct Existing {
     pub channels: HashSet<String>,
     /// Maintenance windows of the site not removed, by [`window_key`].
     pub windows: HashSet<String>,
+    /// Business services of the site's customer, by lowercase name.
+    pub services: HashSet<String>,
 }
 
 /// What identifies a maintenance window of the import's site: its
@@ -182,6 +186,7 @@ pub fn plan_in(
     planner.silences();
     planner.windows();
     planner.channels();
+    planner.services();
     planner.dependencies();
     planner.unmovable();
     planner.out
@@ -1600,6 +1605,66 @@ impl Planner<'_> {
                 present,
                 needs,
                 create: Some(create),
+            });
+        }
+    }
+
+    /// Business services (ADR-0155), of the servers the import has or
+    /// makes; a member whose check has no equivalent counts as its server.
+    fn services(&mut self) {
+        for service in &self.inventory.services {
+            let origin: OriginView = (&service.origin).into();
+            let (list, why) = list_of(&service.fidelity);
+            let mut members: Vec<ServiceMember> = Vec::new();
+            let mut servers: Vec<Server> = Vec::new();
+            for member in &service.members {
+                let Some(server) = self.server_of(&member.host) else {
+                    continue;
+                };
+                let check = member.check.as_ref().and_then(|watch| {
+                    self.check_refs(Some(&server), std::slice::from_ref(watch))
+                        .pop()
+                });
+                let member = ServiceMember {
+                    server: server.peer_id.clone(),
+                    check,
+                };
+                if !members.contains(&member) {
+                    members.push(member);
+                }
+                if !servers.iter().any(|s| s.peer_id == server.peer_id) {
+                    servers.push(server);
+                }
+            }
+            if members.is_empty() {
+                self.not_movable("service", origin, vec![], note("no_hosts", args! {}));
+                continue;
+            }
+            let count = u32::try_from(members.len()).unwrap_or(u32::MAX);
+            let name: String = service.name.trim().chars().take(80).collect();
+            let present = self.existing.services.contains(&name.to_lowercase());
+            let id = self.unique_id(format!("service:{name}"));
+            let mut needs: Vec<String> = servers.iter().flat_map(Self::needs).collect();
+            needs.sort();
+            needs.dedup();
+            self.push(Item {
+                id,
+                kind: "service".into(),
+                list,
+                note: why,
+                origin,
+                hosts: servers.iter().map(|s| s.name.clone()).collect(),
+                present,
+                needs,
+                create: Some(Create::Service {
+                    name,
+                    at_least: service
+                        .at_least
+                        .map(|n| n.clamp(1, count))
+                        .filter(|&n| n < count),
+                    target: service.target.filter(|t| (50.0..=100.0).contains(t)),
+                    members,
+                }),
             });
         }
     }

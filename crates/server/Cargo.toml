@@ -73,6 +73,7 @@ prost.workspace = true
 reqwest.workspace = true
 snap.workspace = true
 lettre.workspace = true
+pdf-writer.workspace = true
 async-trait.workspace = true
 # Secret redaction of AI context (ADR-0040).
 regex.workspace = true

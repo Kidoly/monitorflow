@@ -597,6 +597,34 @@ async fn a_live_zabbix() {
     );
     assert_eq!(nginx.origin.kind, "item");
 
+    // Services and their SLA (ADR-0155): the database is its PostgreSQL
+    // port check, exactly; the shop flattens its two children.
+    let database = inventory
+        .services
+        .iter()
+        .find(|s| s.name == "Database")
+        .expect("the Database service");
+    assert_eq!(database.target, Some(99.9));
+    assert_eq!(database.fidelity, Fidelity::Exact);
+    assert_eq!(database.members.len(), 1);
+    assert_eq!(database.members[0].host, "db-01");
+    assert_eq!(
+        database.members[0].check,
+        Some(Watch::Port {
+            address: None,
+            port: 5432
+        })
+    );
+    let shop = inventory
+        .services
+        .iter()
+        .find(|s| s.name == "Shop")
+        .unwrap();
+    let hosts: Vec<_> = shop.members.iter().map(|m| m.host.as_str()).collect();
+    assert_eq!(hosts, ["db-01", "web-01"], "{shop:?}");
+    assert_eq!((shop.at_least, shop.target), (None, Some(99.9)));
+    assert!(matches!(&shop.fidelity, Fidelity::Approximated(n) if n.code == "service_children"));
+
     // Maintenances: the one-time window as a silence, and the weekly one
     // as a maintenance window on Sundays at 02:00, on both hosts of
     // "Linux servers" (ADR-0151).

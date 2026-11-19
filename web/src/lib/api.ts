@@ -1749,6 +1749,13 @@ export type ImportCreate =
   | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
   | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
   | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null }
+  | {
+      object: "service";
+      name: string;
+      at_least: number | null;
+      target: number | null;
+      members: { server: string; check?: SilencedCheck }[];
+    }
   /** A dependency (ADR-0152): the server, or one of its checks, behind the parent or one of its checks. */
   | { object: "dependency"; server: string; check?: SilencedCheck; parent: string; parent_check?: SilencedCheck };
 
@@ -3394,6 +3401,190 @@ export interface AiForm {
  */
 export const DEMO_REFUSAL = "This is a demo: changes are not saved.";
 
+/** What made something down for a while in an availability report (ADR-0155). */
+export interface AvailabilityCause {
+  kind: "check" | "offline" | "unreachable" | "member";
+  server_id: string;
+  server_name: string;
+  check: string | null;
+  instance: string;
+  /** For `unreachable`: what it is reached through, like a relay. */
+  via: string | null;
+}
+
+export interface AvailabilityOutage {
+  start: string;
+  end: string;
+  seconds: number;
+  ongoing: boolean;
+  causes: AvailabilityCause[];
+}
+
+export interface AvailabilityNumbers {
+  /** Percent of the counted time that was up; null when nothing was counted. */
+  availability: number | null;
+  counted_seconds: number;
+  down_seconds: number;
+  maintenance_seconds: number;
+  outages: number;
+  longest_seconds: number;
+}
+
+export interface AvailabilityService {
+  id: string;
+  name: string;
+  customer_id: string;
+  rule: "all" | "at_least";
+  at_least: number | null;
+  target: number | null;
+  met: boolean | null;
+  budget_seconds: number | null;
+  members: { server_id: string; server_name: string; check: SilencedCheck | null }[];
+  numbers: AvailabilityNumbers;
+  outage_list: AvailabilityOutage[];
+}
+
+export interface AvailabilityMachine {
+  id: string;
+  name: string;
+  device: boolean;
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  numbers: AvailabilityNumbers;
+  outage_list: AvailabilityOutage[];
+}
+
+export interface AvailabilityCheck {
+  server_id: string;
+  server_name: string;
+  name: string;
+  instance: string;
+  numbers: AvailabilityNumbers;
+  outage_list: AvailabilityOutage[];
+}
+
+export interface AvailabilityMaintenance {
+  start: string;
+  end: string;
+  reason: string;
+  servers: string[];
+  checks: SilencedCheck[];
+  window: boolean;
+}
+
+/** `GET /api/availability`: availability over a period (ADR-0155). */
+export interface AvailabilityReport {
+  customer_id: string | null;
+  customer_name: string | null;
+  from: string;
+  to: string;
+  generated_at: string;
+  summary: {
+    services: number;
+    services_met: number;
+    services_missed: number;
+    machines: number;
+    outages: number;
+    down_seconds: number;
+    maintenance_seconds: number;
+  };
+  services: AvailabilityService[];
+  machines: AvailabilityMachine[];
+  checks: AvailabilityCheck[];
+  maintenance: AvailabilityMaintenance[];
+}
+
+/** A business service: a group with one availability (ADR-0155). */
+export interface BusinessService {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  name: string;
+  description: string;
+  rule: "all" | "at_least";
+  at_least: number | null;
+  target: number | null;
+  members: { server_id: string; server_name: string; device: boolean; check: SilencedCheck | null }[];
+  created_at: string;
+  updated_at: string;
+  can_change: boolean;
+}
+
+export interface BusinessServiceRequest {
+  customer_id?: string | null;
+  name: string;
+  description: string;
+  rule: "all" | "at_least";
+  at_least: number | null;
+  target: number | null;
+  members: { server_id: string; check: SilencedCheck | null }[];
+}
+
+/** An availability report sent by email on a schedule (ADR-0155). */
+export interface ReportSchedule {
+  id: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  frequency: "monthly" | "weekly";
+  time_zone: string;
+  language: "en" | "fr";
+  pdf: boolean;
+  csv: boolean;
+  channel_id: string;
+  channel_host: string;
+  recipients: string[];
+  channel_recipients: string[];
+  enabled: boolean;
+  last_period_end: string | null;
+  last_sent_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  next_from: string;
+  next_to: string;
+  next_send_at: string;
+  created_at: string;
+}
+
+export interface ReportScheduleRequest {
+  customer_id: string | null;
+  frequency: "monthly" | "weekly";
+  time_zone: string;
+  language: "en" | "fr";
+  pdf: boolean;
+  csv: boolean;
+  channel_id: string;
+  recipients: string[];
+  enabled: boolean;
+}
+
+/** Answer of sending a scheduled report now. */
+export interface ReportSent {
+  ok: boolean;
+  error: string | null;
+  from: string;
+  to: string;
+  recipients: string[];
+}
+
+/** The query of an availability report: a period and, for an MSP, a customer. */
+export interface AvailabilityQuery {
+  from: string;
+  to: string;
+  customer_id?: string | null;
+}
+
+function availabilityQuery(query: AvailabilityQuery, extra: Record<string, string> = {}): string {
+  const params = new URLSearchParams({ from: query.from, to: query.to, ...extra });
+  if (query.customer_id) params.set("customer_id", query.customer_id);
+  return params.toString();
+}
+
+/** Where the report's file is downloaded from, in `language` and `zone`. */
+export function availabilityFileHref(query: AvailabilityQuery, format: "pdf" | "csv", language: string, zone: string): string {
+  return `/api/availability/report?${availabilityQuery(query, { format, language, time_zone: zone })}`;
+}
+
 async function request<T>(
   path: string,
   options: RequestOptions = {},
@@ -3797,6 +3988,38 @@ export const api = {
   /** Removes a maintenance window; the running one ends now. */
   removeMaintenanceWindow: (id: string) =>
     request<void>(`/api/maintenance-windows/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Availability over a period of what the user reads (ADR-0155). */
+  availability: (query: AvailabilityQuery, signal?: AbortSignal) =>
+    request<AvailabilityReport>(`/api/availability?${availabilityQuery(query)}`, { signal }),
+
+  /** Business services of the customers the user is granted as a whole. */
+  businessServices: (signal?: AbortSignal) => request<{ services: BusinessService[] }>("/api/business-services", { signal }),
+
+  createBusinessService: (body: BusinessServiceRequest) =>
+    request<BusinessService>("/api/business-services", { method: "POST", body }),
+
+  updateBusinessService: (id: string, body: BusinessServiceRequest) =>
+    request<BusinessService>(`/api/business-services/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  removeBusinessService: (id: string) =>
+    request<void>(`/api/business-services/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Report schedules the user manages: administrators only. */
+  reportSchedules: (signal?: AbortSignal) => request<{ schedules: ReportSchedule[] }>("/api/report-schedules", { signal }),
+
+  createReportSchedule: (body: ReportScheduleRequest) =>
+    request<ReportSchedule>("/api/report-schedules", { method: "POST", body }),
+
+  updateReportSchedule: (id: string, body: ReportScheduleRequest) =>
+    request<ReportSchedule>(`/api/report-schedules/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  removeReportSchedule: (id: string) =>
+    request<void>(`/api/report-schedules/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Sends the latest period of a schedule now. */
+  sendReportNow: (id: string) =>
+    request<ReportSent>(`/api/report-schedules/${encodeURIComponent(id)}/send`, { method: "POST" }),
 
   /** What a server or device depends on, what is behind it, and why it is unreachable (ADR-0152). */
   serverDependencies: (id: string, signal?: AbortSignal) =>

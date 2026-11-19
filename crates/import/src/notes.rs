@@ -77,6 +77,8 @@ pub const ORIGIN_KINDS: &[&str] = &[
     "probe",
     "time_interval",
     "schedule",
+    "service",
+    "sla",
 ];
 
 /// Every note, in English. Shared notes first, then one block per reader.
@@ -524,6 +526,43 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "prtg_triggers",
         "MonitorFlow sends it every incident; PRTG used it only where a notification trigger named it.",
+    ),
+    // Business services (ADR-0155).
+    (
+        "service_hosts",
+        "MonitorFlow counts each host whose problems the service's tags select as a whole member: {hosts}.",
+    ),
+    (
+        "service_children",
+        "Child services are flattened: their hosts are members of this service, under its rule.",
+    ),
+    (
+        "service_rule",
+        "The rule {rule} has no equivalent: the service is down while any member is down.",
+    ),
+    (
+        "service_weights",
+        "Weights are not moved: every member counts the same.",
+    ),
+    (
+        "service_no_members",
+        "No host of the import has a problem these tags select.",
+    ),
+    (
+        "sla_schedule",
+        "The SLA counts only the hours of its schedule; MonitorFlow counts every hour, without planned maintenance.",
+    ),
+    (
+        "sla_downtimes",
+        "The SLA's excluded downtimes are not moved; maintenances moved as maintenance windows are left out instead.",
+    ),
+    (
+        "sla_several",
+        "{count} SLAs select this service: the strictest target, {target} %, is kept.",
+    ),
+    (
+        "prtg_business_process",
+        "PRTG does not give which objects a business process channel watches: make it a business service under Reports. Its channels: {channels}.",
     ),
 ];
 

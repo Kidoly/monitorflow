@@ -99,6 +99,15 @@
 //! | POST | `/api/maintenance-windows` | modify the site | body [`maintenance_windows::WindowRequest`]; 201 [`maintenance_windows::WindowView`]; audited |
 //! | PUT | `/api/maintenance-windows/{id}` | modify the sites | the same body; [`maintenance_windows::WindowView`]; audited |
 //! | DELETE | `/api/maintenance-windows/{id}` | modify the site | 204; the running window ends; audited |
+//! | GET | `/api/business-services` | customer-wide grant | `customer_id`; [`business_services::ServiceList`] (ADR-0155) |
+//! | POST | `/api/business-services` | modify the whole customer | body [`business_services::ServiceRequest`]; 201 [`business_services::ServiceView`]; 409 for a name in use; audited |
+//! | PUT | `/api/business-services/{id}` | modify the whole customer | the same body; [`business_services::ServiceView`]; audited |
+//! | DELETE | `/api/business-services/{id}` | modify the whole customer | 204; audited |
+//! | GET | `/api/availability` | any role | `from`, `to`, `customer_id`; [`crate::availability::report::Report`] of what the user reads (ADR-0155) |
+//! | GET, POST | `/api/report-schedules` | administrator of the whole customer, global for everything | body [`report_schedules::ScheduleRequest`]; [`report_schedules::ScheduleList`], 201 [`report_schedules::ScheduleView`]; audited (ADR-0155) |
+//! | PUT, DELETE | `/api/report-schedules/{id}` | the same | the same body; [`report_schedules::ScheduleView`], 204; audited |
+//! | POST | `/api/report-schedules/{id}/send` | the same | [`report_schedules::SentView`]: the latest period sent now; audited as `report.sent` |
+//! | GET | `/api/availability/report` | any role | the same and `format` (`csv` or `pdf`), `language`, `time_zone`; the report as a file |
 //! | GET | `/api/dependencies` | any role | `server_id` or `relay_id`; [`dependencies::DependencyList`]: what is behind what (ADR-0152) |
 //! | POST | `/api/dependencies` | modify every end's site | body [`dependencies::DependencyRequest`]: children behind one parent, all or none; 201 [`dependencies::DependencyList`]; 409 on a loop or a duplicate; audited |
 //! | DELETE | `/api/dependencies/{id}` | modify both ends' sites | 204; audited |
@@ -694,7 +703,9 @@ pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
 pub mod auto_update;
+pub mod availability;
 pub mod backups;
+pub mod business_services;
 pub mod campaigns;
 pub mod certificate_authority;
 pub mod check_interval;
@@ -738,6 +749,7 @@ mod openapi_imports;
 mod openapi_maintenance;
 mod openapi_plugins;
 pub mod openapi_remediation;
+mod openapi_reports;
 mod openapi_settings;
 mod openapi_sso;
 mod openapi_system;
@@ -757,6 +769,7 @@ pub mod release_import;
 pub mod remediation;
 pub mod remediation_events;
 pub mod remediation_incidents;
+pub mod report_schedules;
 pub mod revoke;
 pub mod roles;
 pub mod rollback;
@@ -1123,6 +1136,28 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/maintenance-windows/{id}",
             put(maintenance_windows::update).delete(maintenance_windows::remove),
+        )
+        .route("/api/availability", get(availability::get))
+        .route("/api/availability/report", get(availability::file))
+        .route(
+            "/api/report-schedules",
+            get(report_schedules::list).post(report_schedules::create),
+        )
+        .route(
+            "/api/report-schedules/{id}",
+            put(report_schedules::update).delete(report_schedules::remove),
+        )
+        .route(
+            "/api/report-schedules/{id}/send",
+            post(report_schedules::send_now),
+        )
+        .route(
+            "/api/business-services",
+            get(business_services::list).post(business_services::create),
+        )
+        .route(
+            "/api/business-services/{id}",
+            put(business_services::update).delete(business_services::remove),
         )
         .route(
             "/api/dependencies",

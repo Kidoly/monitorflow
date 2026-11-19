@@ -42,6 +42,7 @@ pub fn inventory(config: &Config, now: DateTime<Utc>) -> Inventory {
         map_host(config, host, &mut out, &mut tagged, &mut triggers);
     }
     silences(config, now, &tagged, &mut out);
+    super::services::services(config, &tagged, &mut out);
     dependencies(config, &triggers, &mut out);
     let globals = Macros::new(vec![config.global_macros.clone()], HostValues::default());
     media::channels(config, &globals, &mut out);
@@ -270,7 +271,7 @@ type Groups = BTreeMap<(String, String, String), (Watch, Owner, Vec<String>)>;
 
 /// What each host's triggers watch, with their tags, by host key: the
 /// checks a maintenance limited to tags silences.
-type Tagged = BTreeMap<String, Vec<(Vec<(String, String)>, Watch)>>;
+pub(super) type Tagged = BTreeMap<String, Vec<(Vec<(String, String)>, Watch)>>;
 
 /// A check being built, with the item keys whose triggers are its alert.
 struct Pending {

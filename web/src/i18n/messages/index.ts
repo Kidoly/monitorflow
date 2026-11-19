@@ -29,6 +29,7 @@ import * as onCall from "./onCall";
 import * as plugins from "./plugins";
 import * as relays from "./relays";
 import * as remediation from "./remediation";
+import * as reports from "./reports";
 import * as rollback from "./rollback";
 import * as rules from "./rules";
 import * as sensors from "./sensors";
@@ -75,6 +76,7 @@ export const en = {
   plugins: plugins.en,
   relays: relays.en,
   remediation: remediation.en,
+  reports: reports.en,
   rollback: rollback.en,
   rules: rules.en,
   sensors: sensors.en,
@@ -120,6 +122,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   plugins: plugins.fr,
   relays: relays.fr,
   remediation: remediation.fr,
+  reports: reports.fr,
   rollback: rollback.fr,
   rules: rules.fr,
   sensors: sensors.fr,
