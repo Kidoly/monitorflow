@@ -161,6 +161,23 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn changing_ends_a_reset_link_made_before(pool: PgPool) {
+        let app = app(&pool);
+        let (id, here) = person(&app, &pool, "ana", Role::Viewer).await;
+        let (bob, _) = person(&app, &pool, "bob", Role::Viewer).await;
+        for (user, hash) in [(id, 1u8), (bob, 2u8)] {
+            sqlx::query("INSERT INTO password_links (user_id, token_hash, expires_at)
+                         VALUES ($1, $2, now() + interval '7 days')")
+                .bind(user).bind(vec![hash; 32]).execute(&pool).await.unwrap();
+        }
+        let (status, body) = change(&app, &here, PASSWORD, NEW).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        let links: Vec<Uuid> = sqlx::query_scalar("SELECT user_id FROM password_links")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(links, [bob], "only the changer's link ends");
+    }
+
+    #[sqlx::test]
     async fn a_wrong_current_password_changes_nothing_and_is_audited(pool: PgPool) {
         let app = app(&pool);
         let (id, here) = person(&app, &pool, "ana", Role::Administrator).await;

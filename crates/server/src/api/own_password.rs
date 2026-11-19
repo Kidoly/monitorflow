@@ -120,6 +120,11 @@ pub async fn change(
         .execute(&mut *tx)
         .await?;
     let ended = session::revoke_others(&mut *tx, user.id, &current_session).await?;
+    // A reset link made before would set another password over this one.
+    sqlx::query("DELETE FROM password_links WHERE user_id = $1")
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await?;
     audit::record(
         &mut *tx,
         Event {
