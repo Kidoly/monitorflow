@@ -33,7 +33,7 @@ export function fromStored(stored: SnmpCredentials): SnmpCredentialsRequest {
  */
 export function snmpProblem(value: SnmpCredentialsRequest, keep: boolean): string | null {
   const short = (p?: string) => p !== undefined && p !== "" && p.length < 8;
-  if (value.version === "v2c") return !value.community && !keep ? t("devices.snmp.needCommunity") : null;
+  if (value.version !== "v3") return !value.community && !keep ? t("devices.snmp.needCommunity") : null;
   if (!value.user?.trim()) return t("devices.snmp.needUser");
   if (value.auth_protocol && (short(value.auth_password) || (!value.auth_password && !keep))) return t("devices.snmp.shortPassword");
   if (value.priv_protocol && (short(value.priv_password) || (!value.priv_password && !keep))) return t("devices.snmp.shortPassword");
@@ -44,7 +44,7 @@ export function snmpProblem(value: SnmpCredentialsRequest, keep: boolean): strin
 export function snmpRequest(value: SnmpCredentialsRequest): SnmpCredentialsRequest {
   const keep = (v?: string) => (v ? v : undefined);
   const base = { version: value.version, port: value.port ?? 161 };
-  if (value.version === "v2c") return { ...base, ...(value.community && { community: value.community }) };
+  if (value.version !== "v3") return { ...base, ...(value.community && { community: value.community }) };
   return Object.fromEntries(
     Object.entries({
       ...base,
@@ -74,12 +74,13 @@ export function SnmpFields({
     <>
       <label className={styles.field}>
         {t("devices.snmp.version")}
-        <select className={fieldClass} value={value.version} onChange={(e) => set({ version: e.target.value as "v2c" | "v3" })}>
+        <select className={fieldClass} value={value.version} onChange={(e) => set({ version: e.target.value as "v1" | "v2c" | "v3" })}>
           <option value="v2c">{t("devices.snmp.v2c")}</option>
           <option value="v3">{t("devices.snmp.v3")}</option>
+          <option value="v1">{t("devices.snmp.v1")}</option>
         </select>
       </label>
-      {value.version === "v2c" ? (
+      {value.version !== "v3" ? (
         <label className={styles.field}>
           {t("devices.snmp.community")}
           <input
@@ -165,6 +166,7 @@ export function SnmpFields({
 /** "v3, user monitor, port 161", or "Not set". */
 export function snmpSummary(stored: SnmpCredentials | null): string {
   if (!stored) return t("devices.snmp.factNone");
+  if (stored.version === "v1") return t("devices.snmp.factV1", { port: String(stored.port) });
   return stored.version === "v2c"
     ? t("devices.snmp.factV2c", { port: String(stored.port) })
     : t("devices.snmp.factV3", { user: stored.user ?? "", port: String(stored.port) });
@@ -185,7 +187,9 @@ export function EditSnmp({
   const [value, setValue] = useState<SnmpCredentialsRequest>(stored ? fromStored(stored) : NEW_CREDENTIALS);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const keep = stored !== null && stored.version === value.version;
+  // v1 and v2c share the stored community (ADR-0157).
+  const community = (v: string) => v !== "v3";
+  const keep = stored !== null && (stored.version === value.version || (community(stored.version) && community(value.version)));
 
   async function submit(event: FormEvent) {
     event.preventDefault();

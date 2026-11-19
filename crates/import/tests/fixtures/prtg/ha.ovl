@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValueLookup id="oid.test.hastate" desiredValue="1" undefinedState="Error">
+  <Lookups>
+    <SingleInt state="Ok" value="1">Master</SingleInt>
+    <SingleInt state="Ok" value="2">Backup</SingleInt>
+    <SingleInt state="Error" value="3">Failed</SingleInt>
+  </Lookups>
+</ValueLookup>

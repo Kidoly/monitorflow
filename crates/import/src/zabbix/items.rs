@@ -139,6 +139,114 @@ const AGENT_NAMESPACES: &[&str] = &[
     "icmppingloss",
 ];
 
+/// An SNMP item of an object outside the common MIBs (ADR-0157): a custom
+/// check of one channel; an item prototype or a walk, a table.
+fn snmp_custom(item: &Item) -> Mapped {
+    use crate::model::{
+        Num, SnmpChannel, SnmpCustom, SnmpLookup, SnmpLookupEntry, SnmpState, SnmpValue,
+    };
+    let written = item.snmp_oid.as_deref().unwrap_or("").trim();
+    let numeric = |o: &str| {
+        let o = o.trim().trim_start_matches('.');
+        (o.split('.').count() >= 2
+            && o.split('.')
+                .all(|a| !a.is_empty() && a.bytes().all(|b| b.is_ascii_digit())))
+        .then(|| o.to_owned())
+    };
+    let (inner, walk) = match (written.strip_prefix("get["), written.strip_prefix("walk[")) {
+        (Some(rest), _) => (rest.trim_end_matches(']'), false),
+        (_, Some(rest)) => (
+            rest.trim_end_matches(']').split(',').next().unwrap_or(""),
+            true,
+        ),
+        _ => (written, false),
+    };
+    let mut notes = Vec::new();
+    // `.1.3.6.1.4.1.9.9.13.1.3.1.3.{#SNMPINDEX}`: a column of a table.
+    let (oid, table) = if let Some(column) = inner.split_once(".{#").map(|(c, _)| c) {
+        let Some(column) = numeric(column) else {
+            return unmovable("snmp_no_oid");
+        };
+        notes.push(Note::plain("snmp_walk_table"));
+        let table = column.rsplit_once('.').map(|(t, _)| t.to_owned());
+        (column, table)
+    } else if walk {
+        let Some(column) = numeric(inner) else {
+            return unmovable("snmp_no_oid");
+        };
+        notes.push(Note::plain("snmp_walk_table"));
+        let table = column.rsplit_once('.').map(|(t, _)| t.to_owned());
+        (column, table)
+    } else {
+        match numeric(inner) {
+            Some(oid) => (oid, None),
+            None => return unmovable("snmp_no_oid"),
+        }
+    };
+    let snmp = &item.snmp;
+    let mut value = if snmp.text {
+        SnmpValue::Text
+    } else {
+        SnmpValue::Gauge
+    };
+    let mut multiply = None;
+    for (step, params) in &snmp.preprocessing {
+        match step.as_str() {
+            "CHANGE_PER_SECOND" if !snmp.text => value = SnmpValue::Counter,
+            "MULTIPLIER" if !snmp.text => {
+                multiply = params
+                    .first()
+                    .and_then(|p| p.trim().parse::<f64>().ok())
+                    .filter(|f| f.is_finite() && *f > 0.0)
+                    .map(Num);
+            }
+            // Storage choices of Zabbix: nothing to watch differently.
+            "DISCARD_UNCHANGED" | "DISCARD_UNCHANGED_HEARTBEAT" | "CHECK_NOT_SUPPORTED" => {}
+            other => notes.push(Note::new("snmp_preprocessing", args! {"step" => other})),
+        }
+    }
+    let lookup = (!snmp.valuemap.is_empty() && value != SnmpValue::Counter).then(|| SnmpLookup {
+        name: format!("{} values", item.name).chars().take(64).collect(),
+        builtin: None,
+        entries: snmp
+            .valuemap
+            .iter()
+            .take(100)
+            .map(|(v, name)| {
+                let number = v.trim().parse::<i64>().ok();
+                SnmpLookupEntry {
+                    value: number,
+                    max: None,
+                    text: number.is_none().then(|| v.clone()),
+                    name: name.chars().take(64).collect(),
+                    // A value map names values; triggers judge them.
+                    state: SnmpState::Ok,
+                }
+            })
+            .collect(),
+        otherwise: SnmpState::Ok,
+    });
+    let channel = SnmpChannel {
+        oid,
+        name: item.name.chars().take(64).collect(),
+        value,
+        unit: snmp.units.as_ref().map(|u| u.chars().take(16).collect()),
+        multiply,
+        divide: None,
+        lookup,
+        expect: None,
+        limits: None,
+    };
+    Mapped::Check(
+        Watch::SnmpCustom(Box::new(SnmpCustom {
+            table,
+            name_column: None,
+            channels: vec![channel],
+        })),
+        notes.into_iter().next(),
+    )
+}
+
 fn unmovable(code: &str) -> Mapped {
     Mapped::Unmovable(Note::plain(code))
 }
@@ -176,7 +284,7 @@ pub fn map(item: &Item, macros: &Macros) -> Mapped {
                     },
                     None,
                 ),
-                None => unmovable("snmp_object"),
+                None => snmp_custom(item),
             };
         }
         ItemKind::Ipmi | ItemKind::Jmx | ItemKind::Other => return unmovable("no_equivalent"),
@@ -468,6 +576,7 @@ mod tests {
             prototype: false,
             http: None,
             snmp_oid: None,
+            snmp: Default::default(),
             template: None,
         }
     }
@@ -624,10 +733,12 @@ mod tests {
                 None
             )
         );
-        assert_eq!(
-            code(snmp("cisco.temp", Some("1.3.6.1.4.1.9.9.13.1.3.1.3"))),
-            "snmp_object"
-        );
+        // An object outside the common MIBs is a custom check (ADR-0157).
+        assert!(matches!(
+            snmp("cisco.temp", Some("1.3.6.1.4.1.9.9.13.1.3.1.3.1")),
+            Mapped::Check(Watch::SnmpCustom(_), None)
+        ));
+        assert_eq!(code(snmp("vendor.x", Some("{$OID}"))), "snmp_no_oid");
     }
 
     #[test]
@@ -797,5 +908,90 @@ mod tests {
         assert_eq!(interval(Some("1m;50s/1-5,09:00-18:00"), &macros), Some(60));
         assert_eq!(interval(Some("0;wd1-5h9"), &macros), None);
         assert_eq!(interval(None, &macros), None);
+    }
+
+    /// SNMP items of vendor objects (ADR-0157): their kind, scaling,
+    /// value map, and prototypes and walks as tables.
+    #[test]
+    fn vendor_snmp_items() {
+        use crate::model::{Num, SnmpCustom, SnmpValue};
+        use crate::zabbix::config::SnmpItem;
+        let custom = |oid: &str, snmp: SnmpItem| {
+            let mut item = item("vendor.x", ItemKind::Snmp);
+            item.name = "Inbound".into();
+            item.snmp_oid = Some(oid.into());
+            item.snmp = snmp;
+            match map(&item, &macros()) {
+                Mapped::Check(Watch::SnmpCustom(c), note) => (*c, note.map(|n| n.code)),
+                other => panic!("{other:?}"),
+            }
+        };
+        let step = |name: &str, params: &[&str]| {
+            (
+                name.to_owned(),
+                params.iter().map(|p| p.to_string()).collect(),
+            )
+        };
+        let (c, note): (SnmpCustom, _) = custom(
+            "get[1.3.6.1.4.1.12356.101.7.2.1.1.5.1]",
+            SnmpItem {
+                units: Some("bps".into()),
+                preprocessing: vec![
+                    step("CHANGE_PER_SECOND", &[]),
+                    step("MULTIPLIER", &["8"]),
+                    step("DISCARD_UNCHANGED_HEARTBEAT", &["1h"]),
+                ],
+                ..SnmpItem::default()
+            },
+        );
+        assert_eq!(note, None);
+        assert_eq!(c.table, None);
+        let ch = &c.channels[0];
+        assert_eq!(
+            (ch.oid.as_str(), ch.value, ch.multiply),
+            (
+                "1.3.6.1.4.1.12356.101.7.2.1.1.5.1",
+                SnmpValue::Counter,
+                Some(Num(8.0))
+            )
+        );
+        assert_eq!(ch.unit.as_deref(), Some("bps"));
+        let (c, note) = custom(
+            ".1.3.6.1.4.1.6574.3.1.1.3.{#SNMPINDEX}",
+            SnmpItem {
+                valuemap: vec![("1".into(), "Normal".into()), ("on".into(), "On".into())],
+                preprocessing: vec![step("JAVASCRIPT", &["return value"])],
+                ..SnmpItem::default()
+            },
+        );
+        assert_eq!(c.table.as_deref(), Some("1.3.6.1.4.1.6574.3.1.1"));
+        assert_eq!(c.channels[0].oid, "1.3.6.1.4.1.6574.3.1.1.3");
+        let lookup = c.channels[0].lookup.as_ref().unwrap();
+        assert_eq!(
+            (lookup.entries[0].value, lookup.entries[1].text.as_deref()),
+            (Some(1), Some("on"))
+        );
+        assert_eq!(note.as_deref(), Some("snmp_walk_table"));
+        let (c, _) = custom(
+            "walk[1.3.6.1.4.1.9.9.13.1.3.1.3,1.3.6.1.4.1.9.9.13.1.3.1.2]",
+            SnmpItem::default(),
+        );
+        assert_eq!(c.table.as_deref(), Some("1.3.6.1.4.1.9.9.13.1.3.1"));
+        let (c, note) = custom(
+            "1.3.6.1.4.1.12356.101.4.1.1.0",
+            SnmpItem {
+                text: true,
+                ..SnmpItem::default()
+            },
+        );
+        assert_eq!((c.channels[0].value, note), (SnmpValue::Text, None));
+        let (_, note) = custom(
+            "1.3.6.1.4.1.1.0",
+            SnmpItem {
+                preprocessing: vec![step("REGEX", &["(\\d+)", "\\1"])],
+                ..SnmpItem::default()
+            },
+        );
+        assert_eq!(note.as_deref(), Some("snmp_preprocessing"));
     }
 }
