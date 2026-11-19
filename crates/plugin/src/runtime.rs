@@ -277,6 +277,23 @@ fn memory(caller: &Caller<'_, State>) -> Result<wasmi::Memory, wasmi::Error> {
         .ok_or_else(|| wasmi::Error::new("no memory"))
 }
 
+/// Fuel every host call costs, on top of one unit per byte it copies:
+/// wasmi charges the `call` instruction only, so without this a loop of
+/// host calls would copy gigabytes within one run's fuel.
+const HOST_CALL_FUEL: u64 = 1_000;
+
+/// Takes the fuel of a host call copying `bytes`, ending the run when
+/// none is left.
+fn charge(caller: &mut Caller<'_, State>, bytes: usize) -> Result<(), wasmi::Error> {
+    let cost = HOST_CALL_FUEL.saturating_add(bytes as u64);
+    let left = caller.get_fuel()?;
+    if left < cost {
+        caller.set_fuel(0)?;
+        return Err(TrapCode::OutOfFuel.into());
+    }
+    caller.set_fuel(left - cost)
+}
+
 fn read(
     caller: &Caller<'_, State>,
     ptr: i32,
@@ -315,14 +332,17 @@ fn linker() -> Linker<State> {
     let mut linker = Linker::new(engine());
     let m = IMPORT_MODULE;
     linker
-        .func_wrap(m, "input_len", |caller: Caller<'_, State>| {
-            length(&caller.data().input)
+        .func_wrap(m, "input_len", |mut caller: Caller<'_, State>| {
+            charge(&mut caller, 0)?;
+            Ok(length(&caller.data().input))
         })
         .and_then(|l| {
             l.func_wrap(
                 m,
                 "input_read",
                 |mut caller: Caller<'_, State>, ptr: i32| {
+                    let len = caller.data().input.len();
+                    charge(&mut caller, len)?;
                     let input = caller.data().input.clone();
                     write(&mut caller, ptr, input)
                 },
@@ -333,6 +353,7 @@ fn linker() -> Linker<State> {
                 m,
                 "output",
                 |mut caller: Caller<'_, State>, ptr: i32, len: i32| {
+                    charge(&mut caller, len as u32 as usize)?;
                     let bytes = read(&caller, ptr, len, limits::OUTPUT_BYTES)?;
                     caller.data_mut().output = Some(bytes);
                     Ok(())
@@ -344,6 +365,7 @@ fn linker() -> Linker<State> {
                 m,
                 "log",
                 |mut caller: Caller<'_, State>, level: i32, ptr: i32, len: i32| {
+                    charge(&mut caller, 0)?;
                     let left = limits::LOG_BYTES.saturating_sub(caller.data().log_bytes);
                     let len = (len as u32 as usize).min(left);
                     if len == 0 {
@@ -363,9 +385,18 @@ fn linker() -> Linker<State> {
                 m,
                 "http",
                 |mut caller: Caller<'_, State>, ptr: i32, len: i32| {
-                    let request = read(&caller, ptr, len, limits::HTTP_REQUEST_BYTES + 16 * 1024)?;
+                    charge(&mut caller, len as u32 as usize)?;
+                    let answer = if caller.data().requests >= limits::HTTP_REQUESTS {
+                        // Refused before reading: a run past its share
+                        // copies nothing more.
+                        caller.data_mut().requests += 1;
+                        serde_json::json!({"error": format!("at most {} requests per run", limits::HTTP_REQUESTS)})
+                    } else {
+                        let request =
+                            read(&caller, ptr, len, limits::HTTP_REQUEST_BYTES + 16 * 1024)?;
+                        caller.data_mut().http(&request)
+                    };
                     let state = caller.data_mut();
-                    let answer = state.http(&request);
                     state.answer = serde_json::to_vec(&answer).unwrap_or_default();
                     Ok(length(&state.answer))
                 },
@@ -373,6 +404,8 @@ fn linker() -> Linker<State> {
         })
         .and_then(|l| {
             l.func_wrap(m, "http_read", |mut caller: Caller<'_, State>, ptr: i32| {
+                let len = caller.data().answer.len();
+                charge(&mut caller, len)?;
                 let answer = std::mem::take(&mut caller.data_mut().answer);
                 write(&mut caller, ptr, answer)
             })

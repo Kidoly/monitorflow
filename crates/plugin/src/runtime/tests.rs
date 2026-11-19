@@ -294,3 +294,18 @@ async fn the_runner_runs_on_a_blocking_thread_and_times_out() {
     // The request was cut to the run's deadline.
     assert_eq!(out["error"], "timed out");
 }
+
+#[test]
+fn host_calls_cost_fuel_for_what_they_copy() {
+    // A thousand calls copying 64 KiB each: a handful of instructions,
+    // but 64 MiB copied, past the 10 million units the test runs get.
+    let body = r#"
+        (func (export "mf_run") (result i32) (local $i i32)
+            (loop $again
+                (call $out (i32.const 0) (i32.const 65536))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br_if $again (i32.lt_u (local.get $i) (i32.const 1000))))
+            (i32.const 0))"#;
+    let error = run(&plugin(body), json!({})).unwrap_err();
+    assert!(matches!(error, RunError::OutOfFuel), "{error:?}");
+}
