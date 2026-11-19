@@ -10,8 +10,6 @@
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::Json;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -22,6 +20,7 @@ use super::audit;
 use super::auth::CurrentUser;
 use super::follow_up::{follow_up_view, FollowUpView};
 use super::sensors::{body, parse_id};
+use super::servers::{decode_cursor, encode_cursor, page_limit};
 use super::{ApiError, ApiState};
 use crate::alerting::reason;
 use crate::alerting::rules::FOREVER_S;
@@ -244,18 +243,6 @@ pub struct IncidentDetail {
 /// The sort key `(open, opened_at, id)` of a page's last incident.
 type Cursor = (bool, DateTime<Utc>, Uuid);
 
-fn encode_cursor(key: Cursor) -> String {
-    URL_SAFE_NO_PAD.encode(serde_json::to_vec(&key).unwrap_or_default())
-}
-
-fn decode_cursor(cursor: &str) -> Result<Cursor, ApiError> {
-    URL_SAFE_NO_PAD
-        .decode(cursor)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .ok_or_else(|| ApiError::Invalid("invalid cursor".into()))
-}
-
 const SELECT: &str = "SELECT i.id, i.server_id, i.relay_id,
                              COALESCE(s.hostname, r.name) AS hostname, si.id AS site_id,
                              si.name AS site_name, si.customer_id, i.metric, i.instance, i.severity, i.state, i.opened_at,
@@ -294,18 +281,13 @@ pub async fn list(
         return Err(ApiError::Forbidden);
     }
     let (all_sites, sites) = user.readable_sites().bind();
-    let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
-    if !(1..=MAX_LIMIT).contains(&limit) {
-        return Err(ApiError::Invalid(format!(
-            "limit must be between 1 and {MAX_LIMIT}"
-        )));
-    }
+    let limit = page_limit(params.limit, DEFAULT_LIMIT, MAX_LIMIT)?;
     if let (Some(from), Some(to)) = (params.from, params.to) {
         if from > to {
             return Err(ApiError::Invalid("from must not be after to".into()));
         }
     }
-    let after = params.cursor.as_deref().map(decode_cursor).transpose()?;
+    let after: Option<Cursor> = params.cursor.as_deref().map(decode_cursor).transpose()?;
     let state_filter = params.state.map(|s| match s {
         StateFilter::Open => "open",
         StateFilter::Resolved => "resolved",
@@ -354,7 +336,7 @@ pub async fn list(
     let next_cursor = if rows.len() > limit as usize {
         rows.truncate(limit as usize);
         rows.last()
-            .map(|r| encode_cursor((r.state == "open", r.opened_at, r.id)))
+            .map(|r| encode_cursor(&(r.state == "open", r.opened_at, r.id)))
     } else {
         None
     };
@@ -560,21 +542,24 @@ pub async fn acknowledge(
 
 #[cfg(test)]
 mod tests {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+
     use super::*;
 
     #[test]
     fn cursors_round_trip_and_refuse_garbage() {
         let at = DateTime::from_timestamp_micros(1_800_000_000_123_456).unwrap();
         let key = (true, at, Uuid::from_u128(7));
-        let cursor = encode_cursor(key);
+        let cursor = encode_cursor(&key);
         assert!(cursor
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
         // Microseconds survive, as PostgreSQL stores them.
-        assert_eq!(decode_cursor(&cursor).unwrap(), key);
+        assert_eq!(decode_cursor::<Cursor>(&cursor).unwrap(), key);
         for bad in ["", "!!", &URL_SAFE_NO_PAD.encode(b"[true,1,2]")] {
             assert!(
-                matches!(decode_cursor(bad), Err(ApiError::Invalid(_))),
+                matches!(decode_cursor::<Cursor>(bad), Err(ApiError::Invalid(_))),
                 "{bad}"
             );
         }

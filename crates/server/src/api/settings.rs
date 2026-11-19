@@ -17,6 +17,7 @@ use super::access::Scope;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::sensors::body;
+use super::server_update::require_global_admin;
 use super::{ApiError, ApiState};
 use crate::agent_releases::{CentralRelease, Sources};
 
@@ -169,9 +170,7 @@ pub async fn set_agent_install(
     user: CurrentUser,
     request: Result<Json<AgentInstallRequest>, JsonRejection>,
 ) -> Result<Json<AgentInstall>, ApiError> {
-    if user.administered_customers() != Scope::All {
-        return Err(ApiError::Forbidden);
-    }
+    require_global_admin(&user)?;
     let request = body(request)?;
     let config = &state.settings.agent_install;
     let custom_url = request
