@@ -8,13 +8,14 @@ use monitorflow_common::redact::Secret;
 
 use crate::args;
 use crate::model::{
-    Channel, Check, Fidelity, Host, Inventory, Measure, Origin, Os, Repeat, Rule, Silence,
-    SilenceScope, Target, Threshold, Unmovable, Watch, Window, EVERY_MONTH, MAX_WINDOW_MINUTES,
+    Channel, Check, Dependency, DependencyEnd, Fidelity, Host, Inventory, Measure, Origin, Os,
+    Repeat, Rule, Silence, SilenceScope, Target, Threshold, Unmovable, Watch, Window, EVERY_MONTH,
+    MAX_WINDOW_MINUTES,
 };
 use crate::notes::Note;
 
 use super::sensors::{self, Family, Mapped};
-use super::tree::{Delivery, Kind, Object, Paused, Tree};
+use super::tree::{Delivery, Depends, Kind, Object, Paused, Tree};
 
 /// Longest silence MonitorFlow keeps (ADR-0079).
 const MAX_SILENCE_DAYS: i64 = 30;
@@ -67,7 +68,7 @@ fn network_device(tree: &Tree, device: &Object) -> bool {
             .unwrap_or("")
             .to_ascii_lowercase();
         match sensors::family(&t) {
-            Family::Service | Family::EventLog => false,
+            Family::Service | Family::EventLog | Family::HyperV => false,
             Family::Cpu | Family::Memory | Family::Disk | Family::Traffic => t.starts_with("snmp"),
             Family::Other => {
                 !(t.starts_with("wmi") || t.starts_with("ssh") || t.starts_with("exe"))
@@ -140,7 +141,160 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
         silences(tree, object, &hosts, now, &mut out);
     }
     channels(tree, &mut out);
+    dependencies(tree, &hosts, &mut out);
     out
+}
+
+/// The device and watch a sensor became, when it is moved.
+fn sensor_end(tree: &Tree, sensor: &Object, hosts: &[i64]) -> Option<(i64, Watch)> {
+    let device = tree.ancestor(sensor.id, Kind::Device)?;
+    if !hosts.contains(&device.id) {
+        return None;
+    }
+    match sensors::map(sensor, device.host.as_deref()) {
+        Mapped::Watch { watch, .. } => Some((device.id, watch)),
+        Mapped::Not(_) => None,
+    }
+}
+
+/// The devices below a group or probe, at any depth.
+fn devices_below(tree: &Tree, id: i64, hosts: &[i64], out: &mut Vec<i64>) {
+    for child in tree.children(id) {
+        match child.kind {
+            Kind::Device if hosts.contains(&child.id) => out.push(child.id),
+            Kind::Group | Kind::Probe => devices_below(tree, child.id, hosts, out),
+            _ => {}
+        }
+    }
+}
+
+/// PRTG's dependency settings (ADR-0152): an object paused while the one
+/// it selects is down depends on it; the other sensors of a device depend
+/// on its master sensor. A group's setting goes to each of its devices.
+/// "Use parent", the default, needs nothing: what a remote probe watches
+/// is checked from its relay, which is behind it already.
+fn dependencies(tree: &Tree, hosts: &[i64], out: &mut Inventory) {
+    let add = |out: &mut Inventory,
+               child: DependencyEnd,
+               parent: (DependencyEnd, Watch),
+               origin: Origin,
+               fidelity: Fidelity| {
+        let Some(parent) = DependencyEnd::parent_for(parent.0, &parent.1, &child) else {
+            return;
+        };
+        if !out
+            .dependencies
+            .iter()
+            .any(|d| d.child == child && d.parent == parent)
+        {
+            out.dependencies.push(Dependency {
+                child,
+                parent,
+                origin,
+                fidelity,
+            });
+        }
+    };
+    for object in &tree.objects {
+        match object.depends {
+            Some(Depends::Master) if object.kind == Kind::Sensor => {
+                let Some((device, master)) = sensor_end(tree, object, hosts) else {
+                    continue;
+                };
+                let key = host_key(device);
+                for sibling in tree.children(device).filter(|s| s.id != object.id) {
+                    let Some((_, watch)) = sensor_end(tree, sibling, hosts) else {
+                        continue;
+                    };
+                    if watch == master || watch == Watch::Agent {
+                        continue;
+                    }
+                    add(
+                        out,
+                        DependencyEnd::check(key.clone(), watch),
+                        (
+                            DependencyEnd::check(key.clone(), master.clone()),
+                            master.clone(),
+                        ),
+                        origin(object),
+                        Fidelity::Exact,
+                    );
+                }
+            }
+            Some(Depends::Object(target)) => {
+                // The parent, and the check it is when a sensor.
+                let parent = tree.get(target).and_then(|t| match t.kind {
+                    Kind::Device if hosts.contains(&t.id) => {
+                        Some((DependencyEnd::host(host_key(t.id)), Watch::Agent))
+                    }
+                    Kind::Sensor => sensor_end(tree, t, hosts).map(|(device, watch)| {
+                        let end = match &watch {
+                            Watch::Ping { address: None } => DependencyEnd::host(host_key(device)),
+                            other => DependencyEnd::check(host_key(device), other.clone()),
+                        };
+                        (end, watch)
+                    }),
+                    _ => None,
+                });
+                let Some(parent) = parent else {
+                    let name = tree
+                        .get(target)
+                        .map_or_else(|| format!("#{target}"), |t| t.name.clone());
+                    let hosts = match object.kind {
+                        Kind::Device => vec![host_key(object.id)],
+                        _ => tree
+                            .ancestor(object.id, Kind::Device)
+                            .map(|d| vec![host_key(d.id)])
+                            .unwrap_or_default(),
+                    };
+                    out.unmovable.push(Unmovable {
+                        hosts,
+                        origin: origin(object),
+                        why: Note::new("dependency_unmapped", args! {"parent" => name}),
+                    });
+                    continue;
+                };
+                match object.kind {
+                    Kind::Device if hosts.contains(&object.id) => add(
+                        out,
+                        DependencyEnd::host(host_key(object.id)),
+                        parent,
+                        origin(object),
+                        Fidelity::Exact,
+                    ),
+                    Kind::Sensor => {
+                        if let Some((device, watch)) = sensor_end(tree, object, hosts) {
+                            add(
+                                out,
+                                DependencyEnd::check(host_key(device), watch),
+                                parent,
+                                origin(object),
+                                Fidelity::Exact,
+                            );
+                        }
+                    }
+                    Kind::Group | Kind::Probe => {
+                        let mut devices = Vec::new();
+                        devices_below(tree, object.id, hosts, &mut devices);
+                        for device in devices {
+                            add(
+                                out,
+                                DependencyEnd::host(host_key(device)),
+                                parent.clone(),
+                                origin(object),
+                                Fidelity::Approximated(Note::new(
+                                    "dependency_group",
+                                    args! {"group" => object.name},
+                                )),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Where a port check connects, as the planner makes it.

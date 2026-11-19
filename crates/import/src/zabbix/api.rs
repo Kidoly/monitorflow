@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 
 use super::config::{
     Config, Host, HttpAgent, Interface, InterfaceKind, Item, ItemKind, Macro, Maintenance,
-    MediaKind, MediaType, Period, PeriodKind, Priority, TagFilter, Template, Trigger, UserMedia,
-    WebAuth, WebRequest, WebScenario,
+    MediaKind, MediaType, Period, PeriodKind, Priority, TagFilter, Template, Trigger, TriggerRef,
+    UserMedia, WebAuth, WebRequest, WebScenario,
 };
 use super::export::{list, text};
 use crate::http;
@@ -494,6 +494,7 @@ impl Api {
                     "selectHosts": ["hostid"],
                     "selectTags": "extend",
                     "selectTriggerDiscovery": ["parent_triggerid"],
+                    "selectDependencies": ["triggerid", "description"],
                 }),
             )
             .await?;
@@ -764,6 +765,16 @@ fn trigger_of(raw: &Value, prototype: bool) -> Trigger {
         tags: list(raw, "tags")
             .into_iter()
             .map(|t| (text(t, "tag"), text(t, "value")))
+            .collect(),
+        id: Some(text(raw, "triggerid")).filter(|id| !id.is_empty()),
+        dependencies: list(raw, "dependencies")
+            .into_iter()
+            .map(|d| TriggerRef {
+                id: Some(text(d, "triggerid")),
+                name: text(d, "description"),
+                expression: String::new(),
+            })
+            .filter(|d| d.id.as_deref().is_some_and(|id| !id.is_empty()))
             .collect(),
     }
 }

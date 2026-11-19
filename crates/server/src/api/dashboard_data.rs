@@ -167,6 +167,15 @@ pub struct AlertRow {
     pub in_maintenance: bool,
 }
 
+/// A server of an alerts panel that is unreachable now.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct UnreachableServer {
+    pub server_id: Uuid,
+    pub hostname: String,
+    #[serde(flatten)]
+    pub note: super::dependencies::UnreachableNote,
+}
+
 /// What a panel shows, by its `kind`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -182,6 +191,9 @@ pub enum PanelResult {
     },
     Alerts {
         alerts: Vec<AlertRow>,
+        /// Its servers behind a parent that is down (ADR-0152): they open
+        /// no incident of their own meanwhile.
+        unreachable: Vec<UnreachableServer>,
     },
     /// A sentence for the panel; other panels still show.
     Error {
@@ -553,7 +565,10 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
             rows.truncate(panel.count.unwrap_or(5) as usize);
             PanelResult::Top { rows }
         }
-        PanelKind::Alerts => PanelResult::Alerts { alerts: Vec::new() },
+        PanelKind::Alerts => PanelResult::Alerts {
+            alerts: Vec::new(),
+            unreachable: Vec::new(),
+        },
     })
 }
 
@@ -620,6 +635,20 @@ pub(super) async fn compute(
         .await?
     };
 
+    let unreachable = super::dependencies::unreachable_notes(
+        state,
+        &request
+            .panels
+            .iter()
+            .zip(&resolved)
+            .filter(|(p, _)| p.kind == PanelKind::Alerts)
+            .flat_map(|(_, (servers, _))| servers.iter().map(|s| s.id))
+            .collect::<BTreeSet<Uuid>>()
+            .into_iter()
+            .collect::<Vec<_>>(),
+    )
+    .await?;
+
     // Metric queries, at most PARALLEL at a time.
     let semaphore = Arc::new(Semaphore::new(PARALLEL));
     let mut tasks = JoinSet::new();
@@ -639,7 +668,10 @@ pub(super) async fn compute(
             PanelKind::Chart => PanelResult::Chart { series: Vec::new() },
             PanelKind::Figure => PanelResult::Figure { value: None },
             PanelKind::Top => PanelResult::Top { rows: Vec::new() },
-            PanelKind::Alerts => PanelResult::Alerts { alerts: Vec::new() },
+            PanelKind::Alerts => PanelResult::Alerts {
+                alerts: Vec::new(),
+                unreachable: Vec::new(),
+            },
         };
         let (Some(call), false) = (call, servers.is_empty()) else {
             results.push(Some(empty()));
@@ -721,6 +753,16 @@ pub(super) async fn compute(
                                 opened_at: a.opened_at,
                                 silenced_until: a.silenced_until,
                                 in_maintenance: a.in_maintenance,
+                            })
+                            .collect(),
+                        unreachable: servers
+                            .iter()
+                            .filter_map(|s| {
+                                Some(UnreachableServer {
+                                    server_id: s.id,
+                                    hostname: s.hostname.clone(),
+                                    note: unreachable.get(&s.id)?.clone(),
+                                })
                             })
                             .collect(),
                     }
