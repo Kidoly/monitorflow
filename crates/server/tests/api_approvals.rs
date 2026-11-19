@@ -441,6 +441,22 @@ db_tests! {
         assert_eq!(body["edited"], false);
     }
 
+    #[sqlx::test]
+    async fn an_unedited_command_is_classified_again(pool: PgPool) {
+        let acme = tenant(&pool, "acme").await;
+        let approver = session(&pool, "approver", Role::Approver, Some(acme.customer), None).await;
+        // Parked as low impact under an allow rule removed since.
+        let (incident, pending) = park(&pool, acme.servers[0], HIGH, HOUR).await;
+        sqlx::query("UPDATE remediation_pending_commands SET tier = 'low_impact' WHERE id = $1")
+            .bind(pending).execute(&pool).await.unwrap();
+        let (status, body) = post(&pool, &approver, &approve_uri(pending), json!({})).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(states(&pool, incident).await, ("awaiting_approval".into(), "pending".into()));
+        let admin = session(&pool, "admin", Role::Administrator, Some(acme.customer), None).await;
+        let (status, body) = post(&pool, &admin, &approve_uri(pending), json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
     /// ADR-0084: on a Windows server, edits are classified by the
     /// PowerShell rules, the list says so, and a refusal says how to turn
     /// AI commands on there.

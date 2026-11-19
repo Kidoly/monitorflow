@@ -510,9 +510,26 @@ fn generic_read(name: &str) -> Option<&'static str> {
         .map(|(_, parameters)| *parameters)
 }
 
+/// WMI classes of the Windows Installer provider. Listing them runs a
+/// consistency check of every installed MSI product, which may repair or
+/// reconfigure them: not a read. Class names take no wildcards.
+const MSI_CLASSES: &[&str] = &["win32_product", "win32_software", "win32_installedsoftware"];
+
+/// Whether `args` of a WMI cmdlet name a Windows Installer class.
+fn names_msi_class(name: &str, args: &[Word]) -> bool {
+    matches!(name, "get-ciminstance" | "get-wmiobject")
+        && args.iter().any(|a| {
+            let text = a.text.to_ascii_lowercase();
+            MSI_CLASSES.iter().any(|class| text.contains(class))
+        })
+}
+
 /// A cmdlet's verdict, or `None` when no rule decides it.
 fn cmdlet(name: &str, args: &[Word]) -> Option<Verdict> {
     if let Some(accepted) = generic_read(name) {
+        if names_msi_class(name, args) {
+            return None;
+        }
         let ok = args.iter().all(|a| match a.parameter() {
             Some((p, _)) => {
                 accepted.split(' ').any(|known| known == p)

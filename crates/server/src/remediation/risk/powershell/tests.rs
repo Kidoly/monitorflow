@@ -238,6 +238,24 @@ fn readers_stay_in_their_bounds() {
         ("Get-HotFix -IPA 10.0.0.5", H, "default.unknown"),
         ("Get-HotFix -__Server db1", H, "default.unknown"),
         ("Get-WmiObject Win32_Process -Cn db1", H, "default.unknown"),
+        // Listing Windows Installer products reconfigures them.
+        ("Get-CimInstance Win32_Product", H, "default.unknown"),
+        ("gwmi win32_product", H, "default.unknown"),
+        (
+            "gcim -Query \"select * from Win32_Product\"",
+            H,
+            "default.unknown",
+        ),
+        (
+            "Get-WmiObject -Class 'WIN32_PRODUCT' | Select-Object Name",
+            H,
+            "default.unknown",
+        ),
+        (
+            "Get-CimInstance Win32_SoftwareFeature",
+            H,
+            "default.unknown",
+        ),
         (
             "Get-NetIPConfiguration -ComputerName db1",
             H,

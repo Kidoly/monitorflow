@@ -16,7 +16,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::{self, SELF_UPDATE};
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Command, CommandResult, CommandStatus};
+use monitorflow_common::proto::v1::{Command, CommandResult};
 use monitorflow_common::tls::PeerRole;
 use serde::Serialize;
 use sqlx::{PgConnection, PgPool};
@@ -25,14 +25,15 @@ use tokio::time::{interval, timeout, MissedTickBehavior};
 use uuid::Uuid;
 
 use crate::ca::CertificateAuthority;
+use crate::commands::Outcome;
+#[cfg(test)]
+use crate::commands::{MAX_ERROR, MAX_OUTPUT};
 use crate::grpc::Registry;
 
 pub const POLL: Duration = Duration::from_secs(10);
 /// A command that started and sent no result this long is failed: longer
 /// than any health timeout plus the restart.
 const RUN_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
-/// Longest output kept.
-const MAX_OUTPUT: usize = 64 * 1024;
 const WAKE_QUEUE: usize = 256;
 const SEND_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -122,25 +123,86 @@ pub async fn latest(pool: &PgPool, relay_ids: &[Uuid]) -> Result<Vec<RelayComman
     .await
 }
 
-/// The state a result moves its command to.
-fn state_of(result: &CommandResult) -> &'static str {
-    match result.status() {
-        CommandStatus::Running => "running",
-        CommandStatus::Succeeded => "succeeded",
-        CommandStatus::Failed | CommandStatus::Rejected => "failed",
-        CommandStatus::Expired => "expired",
-        CommandStatus::Unspecified if result.exit_code == 0 => "succeeded",
-        CommandStatus::Unspecified => "failed",
+/// What a result stores: its state, then, once final, its exit code,
+/// output and error, cut and cleaned as agents' results are, NUL and
+/// invalid UTF-8 included, which PostgreSQL text refuses.
+struct Stored {
+    state: &'static str,
+    final_state: bool,
+    exit_code: i32,
+    stdout: Option<String>,
+    stderr: Option<String>,
+    error: Option<String>,
+}
+
+impl Stored {
+    fn of(result: &CommandResult) -> Self {
+        let some = |text: String| Some(text).filter(|t| !t.is_empty());
+        match Outcome::of(result) {
+            Outcome::Running => Self {
+                state: "running",
+                final_state: false,
+                exit_code: result.exit_code,
+                stdout: None,
+                stderr: None,
+                error: None,
+            },
+            Outcome::Final {
+                state,
+                exit_code,
+                stdout,
+                stderr,
+                error,
+                ..
+            } => Self {
+                state: state.as_str(),
+                final_state: true,
+                exit_code,
+                stdout: some(stdout),
+                stderr: some(stderr),
+                error,
+            },
+        }
     }
 }
 
-/// The end of `bytes` as text, at most [`MAX_OUTPUT`] bytes.
-fn text(bytes: &[u8]) -> Option<String> {
-    if bytes.is_empty() {
-        return None;
-    }
-    let start = bytes.len().saturating_sub(MAX_OUTPUT);
-    Some(String::from_utf8_lossy(&bytes[start..]).into_owned())
+/// Records `result`, sent by the relay `peer_id`, on its own command in
+/// flight only. Returns the command's version and new state, or `None`
+/// when nothing changed.
+pub async fn record_result(
+    pool: &PgPool,
+    peer_id: &str,
+    result: &CommandResult,
+) -> Result<Option<(String, &'static str)>, sqlx::Error> {
+    let Ok(id) = Uuid::parse_str(&result.command_id) else {
+        return Ok(None);
+    };
+    let stored = Stored::of(result);
+    let version = sqlx::query_scalar::<_, String>(
+        "UPDATE relay_commands c
+         SET state = $3,
+             started_at = coalesce(c.started_at, now()),
+             finished_at = CASE WHEN $4 THEN now() END,
+             exit_code = CASE WHEN $4 THEN $5 END,
+             stdout = CASE WHEN $4 THEN $6 END,
+             stderr = CASE WHEN $4 THEN $7 END,
+             error = CASE WHEN $4 THEN $8 END
+         FROM relays r
+         WHERE c.id = $1 AND r.id = c.relay_id AND r.peer_id = $2
+           AND c.state IN ('sent', 'running')
+         RETURNING c.version",
+    )
+    .bind(id)
+    .bind(peer_id)
+    .bind(stored.state)
+    .bind(stored.final_state)
+    .bind(stored.exit_code)
+    .bind(stored.stdout)
+    .bind(stored.stderr)
+    .bind(stored.error)
+    .fetch_optional(pool)
+    .await?;
+    Ok(version.map(|v| (v, stored.state)))
 }
 
 /// Handle shared by relay streams, the API and automatic updates.
@@ -179,50 +241,21 @@ impl RelayCommands {
     /// Records a result from the relay `peer_id`. Failures are logged:
     /// the command stays in flight, is sent again and answered again.
     pub async fn record(&self, peer_id: &str, result: CommandResult) {
-        let Ok(id) = Uuid::parse_str(&result.command_id) else {
-            tracing::debug!(relay_id = peer_id, "ignoring a result for no relay command");
-            return;
-        };
-        let state = state_of(&result);
-        let final_state = state != "running";
-        let updated = sqlx::query_scalar::<_, String>(
-            "UPDATE relay_commands c
-             SET state = $3,
-                 started_at = coalesce(c.started_at, now()),
-                 finished_at = CASE WHEN $4 THEN now() END,
-                 exit_code = CASE WHEN $4 THEN $5 END,
-                 stdout = CASE WHEN $4 THEN $6 END,
-                 stderr = CASE WHEN $4 THEN $7 END,
-                 error = CASE WHEN $4 THEN $8 END
-             FROM relays r
-             WHERE c.id = $1 AND r.id = c.relay_id AND r.peer_id = $2
-               AND c.state IN ('sent', 'running')
-             RETURNING c.version",
-        )
-        .bind(id)
-        .bind(peer_id)
-        .bind(state)
-        .bind(final_state)
-        .bind(result.exit_code)
-        .bind(text(&result.stdout))
-        .bind(text(&result.stderr))
-        .bind(Some(result.error.clone()).filter(|e| !e.is_empty()))
-        .fetch_optional(&self.pool)
-        .await;
-        match updated {
-            Ok(Some(version)) => {
-                tracing::info!(relay_id = peer_id, command_id = %id, %version, state, "relay command result");
-                if final_state {
+        let command_id = result.command_id.as_str();
+        match record_result(&self.pool, peer_id, &result).await {
+            Ok(Some((version, state))) => {
+                tracing::info!(relay_id = peer_id, command_id, %version, state, "relay command result");
+                if state != "running" {
                     self.dispatch(peer_id);
                 }
             }
             Ok(None) => tracing::debug!(
                 relay_id = peer_id,
-                command_id = %id,
+                command_id,
                 "ignoring a result for no relay command in flight"
             ),
             Err(error) => {
-                tracing::warn!(relay_id = peer_id, command_id = %id, %error, "could not record a relay command result")
+                tracing::warn!(relay_id = peer_id, command_id, %error, "could not record a relay command result")
             }
         }
     }
@@ -372,6 +405,8 @@ impl Sender {
 
 #[cfg(test)]
 mod tests {
+    use monitorflow_common::proto::v1::CommandStatus;
+
     use super::*;
 
     fn result(status: CommandStatus, exit_code: i32) -> CommandResult {
@@ -384,23 +419,31 @@ mod tests {
 
     #[test]
     fn results_map_to_states() {
-        assert_eq!(state_of(&result(CommandStatus::Running, 0)), "running");
-        assert_eq!(state_of(&result(CommandStatus::Succeeded, 0)), "succeeded");
-        assert_eq!(state_of(&result(CommandStatus::Failed, 1)), "failed");
-        assert_eq!(state_of(&result(CommandStatus::Rejected, -1)), "failed");
-        assert_eq!(state_of(&result(CommandStatus::Expired, 0)), "expired");
-        assert_eq!(
-            state_of(&result(CommandStatus::Unspecified, 0)),
-            "succeeded"
-        );
-        assert_eq!(state_of(&result(CommandStatus::Unspecified, 3)), "failed");
+        let state = |status, code| Stored::of(&result(status, code)).state;
+        assert_eq!(state(CommandStatus::Running, 0), "running");
+        assert_eq!(state(CommandStatus::Succeeded, 0), "succeeded");
+        assert_eq!(state(CommandStatus::Failed, 1), "failed");
+        assert_eq!(state(CommandStatus::Rejected, -1), "failed");
+        assert_eq!(state(CommandStatus::Expired, 0), "expired");
+        assert_eq!(state(CommandStatus::Unspecified, 0), "succeeded");
+        assert_eq!(state(CommandStatus::Unspecified, 3), "failed");
     }
 
     #[test]
-    fn output_keeps_the_end() {
-        assert_eq!(text(b""), None);
-        assert_eq!(text(b"ok").as_deref(), Some("ok"));
-        let long = vec![b'x'; MAX_OUTPUT + 10];
-        assert_eq!(text(&long).unwrap().len(), MAX_OUTPUT);
+    fn output_keeps_the_end_without_nul() {
+        let mut done = result(CommandStatus::Failed, 1);
+        assert_eq!(Stored::of(&done).stdout, None);
+        done.stdout = vec![b'x'; MAX_OUTPUT + 10];
+        done.stderr = b"bad\0byte".to_vec();
+        done.error = "e".repeat(MAX_ERROR + 10);
+        let stored = Stored::of(&done);
+        assert_eq!(stored.stdout.unwrap().len(), MAX_OUTPUT);
+        assert_eq!(stored.stderr.as_deref(), Some("bad\u{FFFD}byte"));
+        assert_eq!(stored.error.unwrap().len(), MAX_ERROR);
+        let running = Stored::of(&CommandResult {
+            stdout: b"partial".to_vec(),
+            ..result(CommandStatus::Running, 0)
+        });
+        assert_eq!((running.final_state, running.stdout), (false, None));
     }
 }

@@ -20,7 +20,7 @@ use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::campaign::{
     write_pins, Action, CampaignState, CampaignStore, FailureThreshold, NewCampaign, PinnedMirror,
-    Runner, SourcesMode, SourcesPin, Step, UpdateSpec, WaveSpec,
+    Runner, SourcesMode, SourcesPin, Step, UpdateSpec, WaveSpec, MAX_PINNED_SNAPSHOTS,
 };
 use monitorflow_server::commands::{CommandStore, NewCommand, State};
 use monitorflow_server::grpc::Registry;
@@ -362,6 +362,41 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_customer_s_unfinished_campaigns_pin_a_bounded_number_of_snapshots(pool: PgPool) {
+        let f = Fleet::new(&pool).await;
+        // s1 and these: one more than the limit.
+        sqlx::query(
+            "INSERT INTO mirror_snapshots (mirror_id, name, state, published_at)
+             SELECT m.id, 'old-' || n, 'published', now() - make_interval(days => n)
+             FROM mirrors m, generate_series(1, $1) n WHERE m.name = 'debian-12'",
+        )
+        .bind(MAX_PINNED_SNAPSHOTS as i32)
+        .execute(&pool).await.unwrap();
+        let pin = |snapshot: &str| {
+            let mut new = f.campaign(vec![]);
+            new.sources.as_mut().unwrap().mirrors[0].snapshot = snapshot.into();
+            new
+        };
+        let mut drafts = Vec::new();
+        for n in 1..=MAX_PINNED_SNAPSHOTS {
+            drafts.push(f.store.create(&pin(&format!("old-{n}")), USER).await.unwrap().id);
+        }
+        // A snapshot pinned already counts once.
+        f.store.create(&pin("old-1"), USER).await.unwrap();
+        let body = json!({
+            "customer_id": f.customer, "name": "one more", "site_id": f.site,
+            "sources": {"mode": "replace", "mirrors": [{"name": "debian-12", "snapshot": "s1"}]}
+        });
+        let (status, answer) = f.send("/api/campaigns", Some(URL), body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+        assert!(answer["error"].as_str().unwrap().contains("stop or finish some first"), "{answer}");
+
+        // A stopped campaign pins nothing any more.
+        f.store.act(drafts[1], Action::Stop, USER).await.unwrap();
+        f.store.create(&pin("s1"), USER).await.unwrap();
+    }
+
+    #[sqlx::test]
     async fn servers_are_pinned_updated_then_restored(pool: PgPool) {
         let f = Fleet::new(&pool).await;
         // web-2 was configured by hand before: that is what it gets back.
@@ -507,6 +542,31 @@ db_tests! {
         runner.tick(now).await;
         assert_eq!(f.history(id, 0).await.len(), 5);
         assert!(f.history(id, 1).await.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn a_stopped_campaign_with_nothing_to_restore_is_left_alone(pool: PgPool) {
+        let f = Fleet::new(&pool).await;
+        let runner = f.runner();
+        let now = Utc::now();
+        let id = f.start(&f.campaign(vec![WaveSpec::Size(1)])).await;
+        queued(runner.advance(id, now).await.unwrap());
+        assert_eq!(runner.due().await.unwrap(), [id]);
+        // Stopped before its configuration was sent: cancelled, and
+        // nothing to restore.
+        f.store.act(id, Action::Stop, USER).await.unwrap();
+        assert_eq!(kinds(&f.history(id, 0).await), [(CONFIGURE_SOURCES, State::Cancelled)]);
+        assert!(runner.due().await.unwrap().is_empty());
+
+        // Sent, then stopped: due until its restore is queued.
+        let id = f.start(&f.campaign(vec![WaveSpec::Size(1)])).await;
+        queued(runner.advance(id, now).await.unwrap());
+        f.finish_last(id, 0, CommandStatus::Succeeded).await;
+        f.store.act(id, Action::Stop, USER).await.unwrap();
+        assert_eq!(runner.due().await.unwrap(), [id]);
+        runner.tick(now).await;
+        assert_eq!(f.last(id, 0).await.1, REVERT_SOURCES);
+        assert!(runner.due().await.unwrap().is_empty());
     }
 
     #[sqlx::test]
