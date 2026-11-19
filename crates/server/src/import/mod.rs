@@ -206,6 +206,17 @@ pub enum Create {
         ends_on: Option<NaiveDate>,
         reason: String,
     },
+    /// A dependency (ADR-0152): the server, or one of its checks, is behind
+    /// the parent server or one of its checks.
+    Dependency {
+        server: String,
+        /// One check of it; `null` for all of it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check: Option<CheckRef>,
+        parent: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_check: Option<CheckRef>,
+    },
     /// A notification channel.
     Channel {
         /// `email`, `webhook`, `slack`, `teams` or `discord`.
@@ -222,7 +233,8 @@ pub enum Create {
 }
 
 impl Create {
-    /// `server`, `check`, `threshold`, `silence`, `window` or `channel`.
+    /// `server`, `check`, `threshold`, `silence`, `window`, `channel` or
+    /// `dependency`.
     pub fn object(&self) -> &'static str {
         match self {
             Self::Server { .. } | Self::Device { .. } => "server",
@@ -231,6 +243,7 @@ impl Create {
             Self::Silence { .. } => "silence",
             Self::Window { .. } => "window",
             Self::Channel { .. } => "channel",
+            Self::Dependency { .. } => "dependency",
         }
     }
 }

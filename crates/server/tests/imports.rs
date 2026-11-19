@@ -199,6 +199,7 @@ fn inventory() -> Inventory {
             },
         ],
         windows: vec![],
+        dependencies: vec![],
         unmovable: vec![],
     }
 }
@@ -447,6 +448,61 @@ db_tests! {
         assert_eq!(status, StatusCode::OK, "{run}");
         assert_eq!(run["result"]["kept_servers"], json!([]));
         assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 0);
+    }
+
+    #[sqlx::test]
+    async fn zabbix_trigger_dependencies_are_imported_and_undone(pool: PgPool) {
+        use monitorflow_import::source::File;
+        use monitorflow_import::zabbix::Zabbix;
+        use monitorflow_import::{Context, Input, Source};
+
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let export = File {
+            name: "dependencies.yaml".into(),
+            content: include_bytes!("../../import/tests/fixtures/zabbix/7.0/dependencies.yaml").to_vec(),
+        };
+        let inventory = Zabbix
+            .read(Input::Files(vec![export]), &Context::new(Utc::now()))
+            .await
+            .unwrap();
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (_, run) = call(&pool, "GET", &format!("/api/imports/{id}"), &cookie, None).await;
+        let kinds: Vec<(&str, &str)> = run["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["kind"] == "dependency")
+            .map(|i| (i["id"].as_str().unwrap(), i["list"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [("dependency:app-01:sw-core", "exact"), ("dependency:app-01/port_443:sw-core", "approximated")],
+            "{run}"
+        );
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["failed"], json!([]), "{run}");
+        assert_eq!(run["result"]["created"]["dependency"], 2, "{run}");
+        let rows: Vec<(String, Option<String>, String, Option<String>)> = sqlx::query_as(
+            "SELECT c.hostname, d.check_name, p.hostname, d.parent_check_name
+             FROM dependencies d JOIN servers c ON c.id = d.server_id
+             JOIN servers p ON p.id = d.parent_server_id ORDER BY d.check_name NULLS FIRST",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            [
+                ("app-01".into(), None, "sw-core".into(), None),
+                ("app-01".into(), Some("port_443".into()), "sw-core".into(), None),
+            ]
+        );
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(count(&pool, "SELECT count(*) FROM dependencies").await, 0);
     }
 
     #[sqlx::test]
