@@ -194,6 +194,10 @@ fn object(element: &Element, kind: Kind, parent: Option<i64>, offset: Duration) 
     );
     match kind {
         Kind::Device => object.host = settings.get("host").filter(|h| !h.is_empty()).cloned(),
+        Kind::Probe | Kind::Group => {
+            settings.retain(|k, _| super::discovery::SETTINGS.contains(&k.as_str()));
+            object.settings = settings;
+        }
         Kind::Sensor => {
             object.sensor_type = ["sensortype", "sensorkind", "typename"]
                 .iter()
@@ -210,7 +214,6 @@ fn object(element: &Element, kind: Kind, parent: Option<i64>, offset: Duration) 
                 channels(element, &mut object.channels);
             }
         }
-        _ => {}
     }
     Some(object)
 }

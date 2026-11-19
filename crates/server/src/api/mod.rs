@@ -55,6 +55,13 @@
 //! | POST | `/api/devices/vmware/test` | modify | body [`devices::VmwareTestRequest`]; 200 [`devices::VmwareTested`]: what a vCenter or ESXi host answers, its certificate, and the login when it is trusted |
 //! | GET, PUT, DELETE | `/api/devices/{id}/vmware` | read, modify | [`crate::vmware::View`] without the password; body [`crate::vmware::CredentialsRequest`]; audited |
 //! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
+//! | GET, POST | `/api/network-scans` | read, modify | [`network_scans::ScanList`] (`?site_id=`); body [`network_scans::ScanRequest`], 201 [`network_scans::ScanView`], queued at once; audited (ADR-0154) |
+//! | GET, PUT, DELETE | `/api/network-scans/{id}` | read, modify | [`network_scans::ScanView`]; body [`network_scans::ScanUpdate`]; 204; audited |
+//! | POST | `/api/network-scans/{id}/run` | modify | 202 [`network_scans::RunView`]; 409 when one waits or runs; audited |
+//! | GET | `/api/network-scans/{id}/runs` | read | [`network_scans::RunList`]: the latest 10 |
+//! | GET | `/api/network-scans/{id}/results` | read | [`network_scans::Results`]: the latest finished run's addresses with their proposals |
+//! | POST | `/api/network-scans/{id}/add` | modify | body [`network_scans::AddRequest`]; [`network_scans::AddResult`]: devices added from the proposals; audited |
+//! | POST | `/api/network-scans/{id}/dismiss`, `/restore` | modify | body [`network_scans::AddressRequest`]; 204; audited |
 //! | GET | `/api/servers/{id}/recommendations` | read | [`recommendations::RecommendationList`]: checks recommended from what the agent saw (ADR-0134) |
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
 //! | POST | `/api/servers/{id}/recommendations/restore` | modify | body [`recommendations::KeyRequest`], a dismissed one; 204 |
@@ -733,6 +740,7 @@ pub mod logs;
 pub mod maintenance_windows;
 pub mod metrics;
 pub mod mirrors;
+pub mod network_scans;
 pub mod notifications;
 pub mod offline_alerts;
 pub mod on_call;
@@ -747,6 +755,7 @@ mod openapi_dependencies;
 mod openapi_devices;
 mod openapi_imports;
 mod openapi_maintenance;
+mod openapi_network_scans;
 mod openapi_plugins;
 pub mod openapi_remediation;
 mod openapi_reports;
@@ -1285,6 +1294,34 @@ pub fn router(state: ApiState) -> Router {
                 .delete(devices::delete_snmp),
         )
         .route("/api/sites/{id}/probes", get(devices::probes))
+        .route(
+            "/api/network-scans",
+            get(network_scans::list).post(network_scans::create),
+        )
+        .route(
+            "/api/network-scans/{id}",
+            get(network_scans::get)
+                .put(network_scans::update)
+                .delete(network_scans::delete),
+        )
+        .route("/api/network-scans/{id}/run", post(network_scans::run))
+        .route(
+            "/api/network-scans/{id}/runs",
+            get(network_scans::list_runs),
+        )
+        .route(
+            "/api/network-scans/{id}/results",
+            get(network_scans::results),
+        )
+        .route("/api/network-scans/{id}/add", post(network_scans::add))
+        .route(
+            "/api/network-scans/{id}/dismiss",
+            post(network_scans::dismiss),
+        )
+        .route(
+            "/api/network-scans/{id}/restore",
+            post(network_scans::restore),
+        )
         .route("/api/servers/{id}/virtualization", get(virtualization::get))
         .route(
             "/api/servers/{id}/hyperv",

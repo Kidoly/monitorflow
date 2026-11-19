@@ -46,6 +46,7 @@ pub fn inventory(config: &Config, now: DateTime<Utc>) -> Inventory {
     dependencies(config, &triggers, &mut out);
     let globals = Macros::new(vec![config.global_macros.clone()], HostValues::default());
     media::channels(config, &globals, &mut out);
+    super::discovery::scans(config, &mut out);
     merge(&mut out);
     out
 }

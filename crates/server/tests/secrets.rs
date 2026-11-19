@@ -152,6 +152,7 @@ db_tests! {
                 Column::ImportRuns,
                 Column::SnmpCredentials,
                 Column::SensorConfigs,
+                Column::NetworkScans,
                 Column::VmwareCredentials,
             ]
         );
@@ -177,6 +178,7 @@ db_tests! {
                 "identity_providers.secret",
                 "import_runs.secrets",
                 "integration_endpoints.secret",
+                "network_scans.snmp_secret",
                 "notification_channels.secret",
                 "sensor_configs.secret",
                 "server_settings.ai_api_key",

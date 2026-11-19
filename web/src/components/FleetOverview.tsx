@@ -10,7 +10,7 @@ import { endWords } from "@/lib/dependencies";
 import { formatOs } from "@/lib/format";
 import { incidentTitle, isOffline } from "@/lib/incidents";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
-import { ADD_DEVICE_PATH, incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
+import { ADD_DEVICE_PATH, DISCOVERY_PATH, incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { incidentValue } from "@/lib/rules";
 import { isServerState, SERVER_STATES, STATE_TONES, serverState, stateWord, stateHref } from "@/lib/serverState";
@@ -154,6 +154,7 @@ export function FleetOverview() {
   const canAddDevice = me?.roles.some((grant) => grant.role !== "viewer") ?? false;
   const enroll = (canEnroll || canAddDevice) && (
     <>
+      {canAddDevice && <ButtonLink href={scopedHref(DISCOVERY_PATH, scope)}>{t("discovery.scanNetwork")}</ButtonLink>}
       {canAddDevice && <ButtonLink href={scopedHref(ADD_DEVICE_PATH, scope)}>{t("devices.add")}</ButtonLink>}
       {canEnroll && (
         <ButtonLink variant="k" href={scopedHref(TOKENS_PATH, scope)}>

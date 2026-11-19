@@ -68,7 +68,8 @@ pub struct OriginView {
     /// What it is there: `host`, `item`, `trigger`, `template`,
     /// `web_scenario`, `maintenance`, `media_type`, `user_media`,
     /// `scrape_target`, `alerting_rule`, `receiver`, `silence`, `sensor`,
-    /// `notification`, `device` or `group`.
+    /// `notification`, `device`, `group`, `probe`, `time_interval`,
+    /// `schedule`, `discovery_rule` or `action`.
     pub kind: String,
     /// Its name there.
     pub name: String,
@@ -206,6 +207,24 @@ pub enum Create {
         ends_on: Option<NaiveDate>,
         reason: String,
     },
+    /// A network scan of the import's site (ADR-0154), notifications
+    /// off, run from the site's default probe.
+    NetworkScan {
+        name: String,
+        /// Addresses, blocks and ranges, as `POST /api/network-scans`
+        /// takes them.
+        targets: Vec<String>,
+        /// How many addresses they stand for.
+        addresses: u32,
+        ports: Vec<u16>,
+        /// `hour`, `day` or `week`; `null`: only when asked.
+        every: Option<String>,
+        /// Where it runs from when the preview was made: `central`, or the
+        /// name of the relay of the site added first.
+        probe: String,
+        /// Whether its own SNMP credentials come with it, kept sealed.
+        has_snmp: bool,
+    },
     /// A dependency (ADR-0152): the server, or one of its checks, is behind
     /// the parent server or one of its checks.
     Dependency {
@@ -252,8 +271,8 @@ pub struct ServiceMember {
 }
 
 impl Create {
-    /// `server`, `check`, `threshold`, `silence`, `window`, `channel` or
-    /// `dependency`.
+    /// `server`, `check`, `threshold`, `silence`, `window`, `network_scan`,
+    /// `channel` or `dependency`.
     pub fn object(&self) -> &'static str {
         match self {
             Self::Server { .. } | Self::Device { .. } => "server",
@@ -261,6 +280,7 @@ impl Create {
             Self::Threshold { .. } => "threshold",
             Self::Silence { .. } => "silence",
             Self::Window { .. } => "window",
+            Self::NetworkScan { .. } => "network_scan",
             Self::Channel { .. } => "channel",
             Self::Service { .. } => "service",
             Self::Dependency { .. } => "dependency",
@@ -274,9 +294,10 @@ impl Create {
 pub struct Item {
     /// Unique in the run; what `skip` names.
     pub id: String,
-    /// `server`, `check`, `threshold`, `silence`, `channel`, or what the
-    /// source item was when nothing is created (`builtin` for what every
-    /// server measures already, `other`).
+    /// `server`, `check`, `threshold`, `silence`, `window`,
+    /// `network_scan`, `channel`, or what the source item was when
+    /// nothing is created (`builtin` for what every server measures
+    /// already, `other`).
     pub kind: String,
     pub list: List,
     /// How it is approximated, or why it cannot be moved.
@@ -304,13 +325,15 @@ impl Item {
     }
 }
 
-/// The secret of a channel item, kept sealed until the confirmation.
+/// The secret of a channel or network scan item, kept sealed until the
+/// confirmation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChannelSecret {
     /// The full webhook URL, whose path may hold a token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// The SMTP password or the chat webhook URL.
+    /// The SMTP password or the chat webhook URL; a scan's SNMP
+    /// credentials, as JSON the network scans API takes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
 }

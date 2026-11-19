@@ -12,6 +12,7 @@ import * as common from "./common";
 import * as dashboards from "./dashboards";
 import * as dependencies from "./dependencies";
 import * as devices from "./devices";
+import * as discovery from "./discovery";
 import * as display from "./display";
 import * as fleet from "./fleet";
 import * as followUp from "./followUp";
@@ -59,6 +60,7 @@ export const en = {
   dashboards: dashboards.en,
   dependencies: dependencies.en,
   devices: devices.en,
+  discovery: discovery.en,
   display: display.en,
   fleet: fleet.en,
   followUp: followUp.en,
@@ -105,6 +107,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   dashboards: dashboards.fr,
   dependencies: dependencies.fr,
   devices: devices.fr,
+  discovery: discovery.fr,
   display: display.fr,
   fleet: fleet.fr,
   followUp: followUp.fr,

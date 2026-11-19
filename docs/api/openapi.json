@@ -17359,6 +17359,1823 @@
         }
       }
     },
+    "/api/v1/network-scans": {
+      "get": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "List network scans",
+        "description": "The scans of the sites the caller reads, by site and name, each with its latest run.\n\n**Who**: any role on the site. **Area**: `servers`.",
+        "operationId": "list_scans",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the scans of this site.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The scans",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkScanList"
+                },
+                "example": {
+                  "scans": [
+                    {
+                      "addresses": 254,
+                      "created_at": "2026-11-18T09:58:00Z",
+                      "every": "day",
+                      "id": "6a7c1e4e-3c0e-4f9a-9b3e-2f6d8c1a5b70",
+                      "last_run": {
+                        "addresses": 254,
+                        "answered": 3,
+                        "compared": true,
+                        "dropped": 0,
+                        "error": null,
+                        "finished_at": "2026-11-18T10:02:10Z",
+                        "gone": [
+                          "192.0.2.40"
+                        ],
+                        "id": "0b9e2c55-7d41-4a8e-8f61-3d2a9c7e1f04",
+                        "new": 1,
+                        "ping_error": null,
+                        "queued_at": "2026-11-18T10:00:00Z",
+                        "scanned": 254,
+                        "started_at": "2026-11-18T10:00:02Z",
+                        "state": "done",
+                        "trigger": "person"
+                      },
+                      "name": "Office network",
+                      "notify": false,
+                      "ports": [
+                        22,
+                        23,
+                        80,
+                        135,
+                        139,
+                        443,
+                        445,
+                        3389,
+                        5985,
+                        8080,
+                        8443
+                      ],
+                      "probe": "relay",
+                      "probe_key": "relay-paris",
+                      "probe_relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "site_name": "paris",
+                      "snmp": null,
+                      "targets": [
+                        "192.0.2.0/24"
+                      ],
+                      "updated_at": "2026-11-18T09:58:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "Create a network scan",
+        "description": "Creates a scan of a site's addresses and queues its first run, unless `run` is false. It runs from the relay of its site, or the central server when the site has none, unless `probe` says otherwise. A /24 takes about two minutes. Read what it found with `GET /api/v1/network-scans/{id}/results`.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `network_scan.create`, and `network_scan.run` when it is queued.",
+        "operationId": "create_scan",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkScanRequest"
+              },
+              "examples": {
+                "office": {
+                  "summary": "An office network, scanned every day",
+                  "value": {
+                    "every": "day",
+                    "name": "Office network",
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                    "targets": [
+                      "192.0.2.0/24"
+                    ]
+                  }
+                },
+                "snmp": {
+                  "summary": "A few ranges from the central server, with SNMP v2c",
+                  "value": {
+                    "name": "Server room",
+                    "ports": [
+                      22,
+                      443,
+                      3389
+                    ],
+                    "probe": "central",
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                    "snmp": {
+                      "community": "a community",
+                      "version": "v2c"
+                    },
+                    "targets": [
+                      "198.51.100.10-40",
+                      "198.51.100.200"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The scan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkScan"
+                },
+                "example": {
+                  "addresses": 254,
+                  "created_at": "2026-11-18T09:58:00Z",
+                  "every": "day",
+                  "id": "6a7c1e4e-3c0e-4f9a-9b3e-2f6d8c1a5b70",
+                  "last_run": {
+                    "addresses": 254,
+                    "answered": 0,
+                    "compared": false,
+                    "dropped": 0,
+                    "error": null,
+                    "finished_at": null,
+                    "gone": [],
+                    "id": "0b9e2c55-7d41-4a8e-8f61-3d2a9c7e1f04",
+                    "new": 0,
+                    "ping_error": null,
+                    "queued_at": "2026-11-18T10:00:00Z",
+                    "scanned": 0,
+                    "started_at": null,
+                    "state": "queued",
+                    "trigger": "person"
+                  },
+                  "name": "Office network",
+                  "notify": false,
+                  "ports": [
+                    22,
+                    23,
+                    80,
+                    135,
+                    139,
+                    443,
+                    445,
+                    3389,
+                    5985,
+                    8080,
+                    8443
+                  ],
+                  "probe": "relay",
+                  "probe_key": "relay-paris",
+                  "probe_relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "snmp": null,
+                  "targets": [
+                    "192.0.2.0/24"
+                  ],
+                  "updated_at": "2026-11-18T09:58:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Targets that are not IP addresses, blocks or ranges, more than 1,024 addresses, a refused address (loopback, multicast, link-local), ports, `every`, credentials or a `probe` that are not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The site has 50 scans already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network-scans/{id}": {
+      "get": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "Read a network scan",
+        "description": "The scan, its own SNMP credentials without secrets, and its latest run.\n\n**Who**: any role on the site. **Area**: `servers`.",
+        "operationId": "get_scan",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The scan",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The scan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkScan"
+                },
+                "example": {
+                  "addresses": 254,
+                  "created_at": "2026-11-18T09:58:00Z",
+                  "every": "day",
+                  "id": "6a7c1e4e-3c0e-4f9a-9b3e-2f6d8c1a5b70",
+                  "last_run": {
+                    "addresses": 254,
+                    "answered": 3,
+                    "compared": true,
+                    "dropped": 0,
+                    "error": null,
+                    "finished_at": "2026-11-18T10:02:10Z",
+                    "gone": [
+                      "192.0.2.40"
+                    ],
+                    "id": "0b9e2c55-7d41-4a8e-8f61-3d2a9c7e1f04",
+                    "new": 1,
+                    "ping_error": null,
+                    "queued_at": "2026-11-18T10:00:00Z",
+                    "scanned": 254,
+                    "started_at": "2026-11-18T10:00:02Z",
+                    "state": "done",
+                    "trigger": "person"
+                  },
+                  "name": "Office network",
+                  "notify": false,
+                  "ports": [
+                    22,
+                    23,
+                    80,
+                    135,
+                    139,
+                    443,
+                    445,
+                    3389,
+                    5985,
+                    8080,
+                    8443
+                  ],
+                  "probe": "relay",
+                  "probe_key": "relay-paris",
+                  "probe_relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "snmp": null,
+                  "targets": [
+                    "192.0.2.0/24"
+                  ],
+                  "updated_at": "2026-11-18T09:58:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "Change a network scan",
+        "description": "Replaces everything but its site and runs: send the whole scan. `every` null scans only when asked. The scan's SNMP credentials stay unless `snmp` or `remove_snmp` is given, and a secret left out keeps the stored one while the version stays.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `network_scan.update`.",
+        "operationId": "update_scan",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The scan",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkScanUpdate"
+              },
+              "example": {
+                "every": "week",
+                "name": "Office network",
+                "notify": true,
+                "targets": [
+                  "192.0.2.0/24",
+                  "198.51.100.0/25"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The scan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkScan"
+                },
+                "example": {
+                  "addresses": 254,
+                  "created_at": "2026-11-18T09:58:00Z",
+                  "every": "week",
+                  "id": "6a7c1e4e-3c0e-4f9a-9b3e-2f6d8c1a5b70",
+                  "last_run": {
+                    "addresses": 254,
+                    "answered": 3,
+                    "compared": true,
+                    "dropped": 0,
+                    "error": null,
+                    "finished_at": "2026-11-18T10:02:10Z",
+                    "gone": [
+                      "192.0.2.40"
+                    ],
+                    "id": "0b9e2c55-7d41-4a8e-8f61-3d2a9c7e1f04",
+                    "new": 1,
+                    "ping_error": null,
+                    "queued_at": "2026-11-18T10:00:00Z",
+                    "scanned": 254,
+                    "started_at": "2026-11-18T10:00:02Z",
+                    "state": "done",
+                    "trigger": "person"
+                  },
+                  "name": "Office network",
+                  "notify": true,
+                  "ports": [
+                    22,
+                    23,
+                    80,
+                    135,
+                    139,
+                    443,
+                    445,
+                    3389,
+                    5985,
+                    8080,
+                    8443
+                  ],
+                  "probe": "relay",
+                  "probe_key": "relay-paris",
+                  "probe_relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "snmp": null,
+                  "targets": [
+                    "192.0.2.0/24"
+                  ],
+                  "updated_at": "2026-11-18T09:58:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As for creating one: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "Remove a network scan",
+        "description": "Removes it with its runs and dismissed addresses; a run in progress stops. Devices it added stay.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `network_scan.delete`.",
+        "operationId": "delete_scan",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The scan",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network-scans/{id}/add": {
+      "post": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "Add devices a network scan proposes",
+        "description": "Adds devices from the latest finished run, as `POST /api/v1/devices` would, checked from the scan's probe: `all` adds every address proposed as a device or an SNMP device; `devices` adds the ones listed, any that answered and is not monitored, with another name or template if given. A device gets a ping when the address answered ping; an SNMP device gets the credentials that answered and the checks and thresholds of its template; any other a port check per open port, critical when it stays closed for 2 minutes. Addresses proposed for the agent are added only when listed. What could not be added is in `skipped`, with why.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create` per device and `network_scan.add`.",
+        "operationId": "add_from_scan",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The scan",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkScanAddRequest"
+              },
+              "examples": {
+                "all": {
+                  "summary": "Everything proposed as a device",
+                  "value": {
+                    "all": true
+                  }
+                },
+                "some": {
+                  "summary": "Two addresses, one as a switch",
+                  "value": {
+                    "devices": [
+                      {
+                        "address": "192.0.2.20"
+                      },
+                      {
+                        "address": "192.0.2.21",
+                        "name": "Core switch",
+                        "template": "switch"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What was added and skipped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkScanAddResult"
+                },
+                "example": {
+                  "added": [
+                    {
+                      "address": "192.0.2.20",
+                      "name": "ups-1",
+                      "server_id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a",
+                      "template": "ups"
+                    }
+                  ],
+                  "skipped": [
+                    {
+                      "address": "192.0.2.30",
+                      "reason": "monitored"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Neither `all` nor `devices`, an address, name or template that is not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network-scans/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "Dismiss an address of a network scan",
+        "description": "The scan stops proposing it, for good; it is listed as `dismissed` until restored. Only an address the scan found can be dismissed.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `network_scan.dismiss`.",
+        "operationId": "dismiss_address",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The scan",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkScanAddress"
+              },
+              "example": {
+                "address": "192.0.2.30"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Dismissed"
+          },
+          "400": {
+            "description": "Not an IP address: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan, an address it never found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network-scans/{id}/restore": {
+      "post": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "Restore a dismissed address",
+        "description": "The scan proposes it again. Restoring an address that is not dismissed does nothing.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `network_scan.restore`.",
+        "operationId": "restore_address",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The scan",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkScanAddress"
+              },
+              "example": {
+                "address": "192.0.2.30"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Restored"
+          },
+          "400": {
+            "description": "Not an IP address: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network-scans/{id}/results": {
+      "get": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "Read what a network scan found and proposes",
+        "description": "The addresses that answered in the latest finished run, each with what it answered and the proposal, computed now from the site's inventory: `agent` (install the agent: SSH or RDP is open, unless SNMP says it is a switch, router, firewall, printer or UPS), `snmp_device` (with the template detection suggests), `device` (its ping and a check per open port), `monitored` (a device at that address, or a server whose agent reports the MAC address the probe saw or has the host name it answered with) or `dismissed`. Text from the network (names, descriptions) is shown as text. `current` is a run queued or running now.\n\n**Who**: any role on the site. **Area**: `servers`.",
+        "operationId": "scan_results",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The scan",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What it found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkScanResults"
+                },
+                "example": {
+                  "current": null,
+                  "hosts": [
+                    {
+                      "address": "192.0.2.10",
+                      "mac": "02:00:5e:00:53:10",
+                      "name": "web-1.lan",
+                      "new": true,
+                      "ping": true,
+                      "ports": [
+                        22,
+                        80
+                      ],
+                      "proposal": {
+                        "action": "agent",
+                        "checks": [
+                          {
+                            "kind": "ping",
+                            "name": "ping",
+                            "port": null
+                          },
+                          {
+                            "kind": "port",
+                            "name": "port_22",
+                            "port": 22
+                          },
+                          {
+                            "kind": "port",
+                            "name": "port_80",
+                            "port": 80
+                          }
+                        ],
+                        "monitored_by": null,
+                        "name": "web-1.lan",
+                        "os": "linux",
+                        "template": null
+                      },
+                      "rtt_seconds": 0.0004,
+                      "snmp": false,
+                      "snmp_description": null,
+                      "snmp_groups": [],
+                      "snmp_name": null,
+                      "snmp_object_id": null
+                    },
+                    {
+                      "address": "192.0.2.20",
+                      "mac": null,
+                      "name": null,
+                      "new": false,
+                      "ping": true,
+                      "ports": [
+                        80
+                      ],
+                      "proposal": {
+                        "action": "snmp_device",
+                        "checks": [
+                          {
+                            "kind": "ping",
+                            "name": "ping",
+                            "port": null
+                          },
+                          {
+                            "kind": "snmp",
+                            "name": "snmp",
+                            "port": null
+                          },
+                          {
+                            "kind": "snmp",
+                            "name": "snmp_ups",
+                            "port": null
+                          }
+                        ],
+                        "monitored_by": null,
+                        "name": "ups-1",
+                        "os": null,
+                        "template": "ups"
+                      },
+                      "rtt_seconds": 0.0011,
+                      "snmp": true,
+                      "snmp_description": "UPS network card",
+                      "snmp_groups": [
+                        "ups"
+                      ],
+                      "snmp_name": "ups-1",
+                      "snmp_object_id": "1.3.6.1.4.1.8072.3.2.10"
+                    },
+                    {
+                      "address": "192.0.2.30",
+                      "mac": null,
+                      "name": "files.lan",
+                      "new": false,
+                      "ping": true,
+                      "ports": [
+                        445
+                      ],
+                      "proposal": {
+                        "action": "monitored",
+                        "checks": [],
+                        "monitored_by": {
+                          "matched_by": "name",
+                          "name": "files",
+                          "server_id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a"
+                        },
+                        "name": "files.lan",
+                        "os": null,
+                        "template": null
+                      },
+                      "rtt_seconds": 0.0007,
+                      "snmp": false,
+                      "snmp_description": null,
+                      "snmp_groups": [],
+                      "snmp_name": null,
+                      "snmp_object_id": null
+                    }
+                  ],
+                  "run": {
+                    "addresses": 254,
+                    "answered": 3,
+                    "compared": true,
+                    "dropped": 0,
+                    "error": null,
+                    "finished_at": "2026-11-18T10:02:10Z",
+                    "gone": [
+                      "192.0.2.40"
+                    ],
+                    "id": "0b9e2c55-7d41-4a8e-8f61-3d2a9c7e1f04",
+                    "new": 1,
+                    "ping_error": null,
+                    "queued_at": "2026-11-18T10:00:00Z",
+                    "scanned": 254,
+                    "started_at": "2026-11-18T10:00:02Z",
+                    "state": "done",
+                    "trigger": "person"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network-scans/{id}/run": {
+      "post": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "Scan now",
+        "description": "Queues a run. The central server instance that reaches the scan's probe takes it within seconds; a relay that is not connected keeps it queued until it is. Follow it with `GET /api/v1/network-scans/{id}/results` (`current`).\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `network_scan.run`.",
+        "operationId": "run_scan",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The scan",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The queued run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkScanRun"
+                },
+                "example": {
+                  "addresses": 254,
+                  "answered": 0,
+                  "compared": false,
+                  "dropped": 0,
+                  "error": null,
+                  "finished_at": null,
+                  "gone": [],
+                  "id": "0b9e2c55-7d41-4a8e-8f61-3d2a9c7e1f04",
+                  "new": 0,
+                  "ping_error": null,
+                  "queued_at": "2026-11-18T10:00:00Z",
+                  "scanned": 0,
+                  "started_at": null,
+                  "state": "queued",
+                  "trigger": "person"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run waits or runs already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network-scans/{id}/runs": {
+      "get": {
+        "tags": [
+          "network-scans"
+        ],
+        "summary": "List the runs of a network scan",
+        "description": "The latest 10, the most recent first, with what each found new or gone and why one failed: `interrupted`, `relay_disconnected`, `relay_outdated` (update the relay), `relay_removed`, or the probe's own words.\n\n**Who**: any role on the site. **Area**: `servers`.",
+        "operationId": "scan_runs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The scan",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkScanRuns"
+                },
+                "example": {
+                  "runs": [
+                    {
+                      "addresses": 254,
+                      "answered": 3,
+                      "compared": true,
+                      "dropped": 0,
+                      "error": null,
+                      "finished_at": "2026-11-18T10:02:10Z",
+                      "gone": [
+                        "192.0.2.40"
+                      ],
+                      "id": "0b9e2c55-7d41-4a8e-8f61-3d2a9c7e1f04",
+                      "new": 1,
+                      "ping_error": null,
+                      "queued_at": "2026-11-18T10:00:00Z",
+                      "scanned": 254,
+                      "started_at": "2026-11-18T10:00:02Z",
+                      "state": "done",
+                      "trigger": "person"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/notifications/channels": {
       "get": {
         "tags": [
@@ -44353,6 +46170,66 @@
           },
           {
             "type": "object",
+            "description": "A network scan of the import's site (ADR-0154), notifications\noff, run from the site's default probe.",
+            "required": [
+              "name",
+              "targets",
+              "addresses",
+              "ports",
+              "probe",
+              "has_snmp",
+              "object"
+            ],
+            "properties": {
+              "addresses": {
+                "type": "integer",
+                "format": "int32",
+                "description": "How many addresses they stand for.",
+                "minimum": 0
+              },
+              "every": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "`hour`, `day` or `week`; `null`: only when asked."
+              },
+              "has_snmp": {
+                "type": "boolean",
+                "description": "Whether its own SNMP credentials come with it, kept sealed."
+              },
+              "name": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "network_scan"
+                ]
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              },
+              "probe": {
+                "type": "string",
+                "description": "Where it runs from when the preview was made: `central`, or the\nname of the relay of the site added first."
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Addresses, blocks and ranges, as `POST /api/network-scans`\ntakes them."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A dependency (ADR-0152): the server, or one of its checks, is behind\nthe parent server or one of its checks.",
             "required": [
               "server",
@@ -44577,7 +46454,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`server`, `check`, `threshold`, `silence`, `channel`, or what the\nsource item was when nothing is created (`builtin` for what every\nserver measures already, `other`)."
+            "description": "`server`, `check`, `threshold`, `silence`, `window`,\n`network_scan`, `channel`, or what the source item was when\nnothing is created (`builtin` for what every server measures\nalready, `other`)."
           },
           "list": {
             "$ref": "#/components/schemas/ImportList"
@@ -44662,7 +46539,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "What it is there: `host`, `item`, `trigger`, `template`,\n`web_scenario`, `maintenance`, `media_type`, `user_media`,\n`scrape_target`, `alerting_rule`, `receiver`, `silence`, `sensor`,\n`notification`, `device` or `group`."
+            "description": "What it is there: `host`, `item`, `trigger`, `template`,\n`web_scenario`, `maintenance`, `media_type`, `user_media`,\n`scrape_target`, `alerting_rule`, `receiver`, `silence`, `sensor`,\n`notification`, `device`, `group`, `probe`, `time_interval`,\n`schedule`, `discovery_rule` or `action`."
           },
           "name": {
             "type": "string",
@@ -44725,7 +46602,7 @@
         "properties": {
           "created": {
             "type": "object",
-            "description": "Created, by object: `server`, `check`, `threshold`, `silence`,\n`channel`.",
+            "description": "Created, by object: `server`, `check`, `threshold`, `silence`,\n`window`, `network_scan`, `channel`.",
             "additionalProperties": {
               "type": "integer",
               "format": "int32",
@@ -47135,6 +49012,29 @@
         ],
         "description": "One mirror with the name of its `current` snapshot and its last run."
       },
+      "MonitoredBy": {
+        "type": "object",
+        "description": "Which server or device already watches an address, and how it was\nrecognised.",
+        "required": [
+          "server_id",
+          "name",
+          "matched_by"
+        ],
+        "properties": {
+          "matched_by": {
+            "type": "string",
+            "description": "`address` (a device at it), `mac` (a server whose agent reports\nthe MAC address the probe saw) or `name` (a server of that host\nname).",
+            "example": "mac"
+          },
+          "name": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "NameRequest": {
         "type": "object",
         "description": "Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.",
@@ -47145,6 +49045,743 @@
           "name": {
             "type": "string",
             "description": "1 to 64 characters, without control characters or spaces at either\nend."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkScan": {
+        "type": "object",
+        "description": "A scan.",
+        "required": [
+          "id",
+          "site_id",
+          "site_name",
+          "name",
+          "targets",
+          "addresses",
+          "ports",
+          "probe",
+          "probe_key",
+          "notify",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "integer",
+            "description": "How many addresses `targets` stand for.",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "every": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`hour`, `day`, `week`, or `null` for only when asked."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_run": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetworkScanRun",
+                "description": "The latest run, whatever its state."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "notify": {
+            "type": "boolean"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          "probe": {
+            "type": "string",
+            "description": "`central` or `relay`."
+          },
+          "probe_key": {
+            "type": "string",
+            "description": "`central` or the relay's ID: where it runs from, in words."
+          },
+          "probe_relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "snmp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetworkScanSnmp",
+                "description": "Its own SNMP credentials, without secrets; `null` when it tries\nonly those of the site's devices."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NetworkScanAddDevice": {
+        "type": "object",
+        "description": "One address to add as a device.",
+        "required": [
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its name; absent: the proposal's."
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For an address that answered SNMP, the template instead of the\nproposed one."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkScanAddRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/network-scans/{id}/add`.",
+        "properties": {
+          "all": {
+            "type": "boolean",
+            "description": "Every address proposed as a device or an SNMP device, with what\nthe proposal says."
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkScanAddDevice"
+            },
+            "description": "These addresses, any that answered and is not monitored yet; one\nproposed for the agent is added as a device."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkScanAddResult": {
+        "type": "object",
+        "description": "Body of the answer of `POST /api/network-scans/{id}/add`.",
+        "required": [
+          "added",
+          "skipped"
+        ],
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkScanAdded"
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkScanSkipped"
+            }
+          }
+        }
+      },
+      "NetworkScanAdded": {
+        "type": "object",
+        "description": "A device added from a scan.",
+        "required": [
+          "address",
+          "server_id",
+          "name"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "NetworkScanAddress": {
+        "type": "object",
+        "description": "Body of dismiss and restore.",
+        "required": [
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkScanHost": {
+        "type": "object",
+        "description": "One address that answered, and what the scan proposes for it.",
+        "required": [
+          "address",
+          "ping",
+          "ports",
+          "snmp",
+          "snmp_groups",
+          "new",
+          "proposal"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "mac": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its MAC address, when it is on the probe's own link."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its name from reverse DNS."
+          },
+          "new": {
+            "type": "boolean",
+            "description": "Whether it did not answer in the previous finished run."
+          },
+          "ping": {
+            "type": "boolean",
+            "description": "Whether it answered ping, and its round trip."
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "Open TCP ports, ascending."
+          },
+          "proposal": {
+            "$ref": "#/components/schemas/NetworkScanProposal"
+          },
+          "rtt_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "snmp": {
+            "type": "boolean",
+            "description": "Whether it answered SNMP, and what it said: shown as text."
+          },
+          "snmp_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snmp_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Groups that answer among `interfaces`, `host`, `ups`,\n`temperature`, `printer`."
+          },
+          "snmp_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snmp_object_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "NetworkScanList": {
+        "type": "object",
+        "description": "Body of `GET /api/network-scans`.",
+        "required": [
+          "scans"
+        ],
+        "properties": {
+          "scans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkScan"
+            }
+          }
+        }
+      },
+      "NetworkScanProposal": {
+        "type": "object",
+        "description": "What a scan proposes for one address.",
+        "required": [
+          "action",
+          "name",
+          "checks"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`agent` (install the agent: SSH or RDP is open), `snmp_device`\n(a device with the checks of its template), `device` (a device\nwith its ping and ports), `monitored` (the site watches it\nalready) or `dismissed`.",
+            "example": "snmp_device"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkScanProposedCheck"
+            },
+            "description": "What a device added from it is checked with."
+          },
+          "monitored_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MonitoredBy",
+                "description": "For `monitored`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The name a device added from it gets: the SNMP name, else the\nreverse DNS name, else the address."
+          },
+          "os": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `agent`: `linux` when SSH is open, `windows` when RDP or WinRM\nis."
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For an SNMP device: the template detection suggests."
+          }
+        }
+      },
+      "NetworkScanProposedCheck": {
+        "type": "object",
+        "description": "A check a device added from the proposal gets.",
+        "required": [
+          "kind",
+          "name"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`ping`, `port` or `snmp`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The check's name: `ping`, `port_443`, `snmp_if`..."
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The port of a `port` check.",
+            "minimum": 0
+          }
+        }
+      },
+      "NetworkScanRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/network-scans`.",
+        "required": [
+          "site_id",
+          "name",
+          "targets"
+        ],
+        "properties": {
+          "every": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`hour`, `day` or `week` to scan again on its own; absent or\n`null`: only when asked."
+          },
+          "name": {
+            "type": "string",
+            "description": "What people call it, like `Office network`."
+          },
+          "notify": {
+            "type": "boolean",
+            "description": "Whether a run that finds something new or gone sends a\nnotification to the site's channels. Off by default."
+          },
+          "ports": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "TCP ports to try, at most 32; absent: 22, 23, 80, 135, 139, 443,\n445, 3389, 5985, 8080 and 8443."
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where it runs from: `central`, or the ID of a relay of the site.\nAbsent: the relay of the site when there is one, else the central\nserver."
+          },
+          "run": {
+            "type": "boolean",
+            "description": "Whether to scan now. `true` by default."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The site whose addresses it scans."
+          },
+          "snmp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SnmpCredentialsRequest",
+                "description": "SNMP credentials to try besides those the site's devices have.\nStored sealed, never returned."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "IP addresses, blocks like `192.168.1.0/24` and ranges like\n`192.168.1.10-50` or `192.168.1.10-192.168.1.50`: at most 64\nentries and 1,024 addresses in all. Never names. Loopback,\nmulticast, link-local and unspecified addresses are refused;\nnetwork and broadcast addresses of IPv4 blocks are left out."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkScanResults": {
+        "type": "object",
+        "description": "Body of `GET /api/network-scans/{id}/results`.",
+        "required": [
+          "hosts"
+        ],
+        "properties": {
+          "current": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetworkScanRun",
+                "description": "A run queued or running now, if any."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkScanHost"
+            }
+          },
+          "run": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetworkScanRun",
+                "description": "The latest finished run, whose hosts these are; `null` before one."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "NetworkScanRun": {
+        "type": "object",
+        "description": "One run of a scan.",
+        "required": [
+          "id",
+          "state",
+          "trigger",
+          "queued_at",
+          "addresses",
+          "scanned",
+          "answered",
+          "compared",
+          "new",
+          "gone",
+          "dropped"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Addresses to try, and tried so far."
+          },
+          "answered": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Addresses that answered something."
+          },
+          "compared": {
+            "type": "boolean",
+            "description": "Whether a finished run came before it, so `new` and `gone` mean\nsomething."
+          },
+          "dropped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Answers of the probe that were not believed: an address or port it\nwas not asked about, a name that does not fit."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed: `interrupted` (the central server instance running\nit stopped), `relay_disconnected`, `relay_outdated` (the relay\ndoes not run scans yet: update it), `relay_removed`, or the\nprobe's own words."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "gone": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Addresses that answered in the previous finished run and not in\nthis one."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "new": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Addresses that answered and not in the previous finished run."
+          },
+          "ping_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the probe could not ping, when it could not; ports and SNMP\nwere still tried."
+          },
+          "queued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scanned": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "type": "string",
+            "description": "`queued`, `running`, `done` or `failed`.",
+            "example": "done"
+          },
+          "trigger": {
+            "type": "string",
+            "description": "`person` or `schedule`."
+          }
+        }
+      },
+      "NetworkScanRuns": {
+        "type": "object",
+        "description": "Body of `GET /api/network-scans/{id}/runs`.",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkScanRun"
+            },
+            "description": "The latest first, at most 10."
+          }
+        }
+      },
+      "NetworkScanSkipped": {
+        "type": "object",
+        "description": "An address that was not added, and why.",
+        "required": [
+          "address",
+          "reason"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "`not_found` (it did not answer in the latest finished run),\n`monitored` (the site watches it already), `no_credentials` (the\nSNMP credentials that answered are gone; add it by hand)."
+          }
+        }
+      },
+      "NetworkScanSnmp": {
+        "type": "object",
+        "description": "A scan's own SNMP credentials, without secrets.",
+        "required": [
+          "version",
+          "port"
+        ],
+        "properties": {
+          "auth_protocol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "priv_protocol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "NetworkScanUpdate": {
+        "type": "object",
+        "description": "Body of `PUT /api/network-scans/{id}`: the whole scan but its site.",
+        "required": [
+          "name",
+          "targets"
+        ],
+        "properties": {
+          "every": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` or absent: only when asked."
+          },
+          "name": {
+            "type": "string"
+          },
+          "notify": {
+            "type": "boolean"
+          },
+          "ports": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remove_snmp": {
+            "type": "boolean",
+            "description": "Removes the scan's own credentials."
+          },
+          "snmp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SnmpCredentialsRequest",
+                "description": "New credentials; absent keeps the stored ones, and a secret left\nout keeps the stored one while the version stays."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false
@@ -55075,6 +57712,10 @@
     {
       "name": "devices",
       "description": "Devices: switches, routers, printers, UPSs or any address watched without the agent, by network checks that run from the central server or from a relay of the device's site (a probe). A device is a server of kind `device`: it is listed, read, silenced, charted and removed with the server routes, its checks are `sensor_configs` rows with a `probe`, and its thresholds are a server's. It is never offline nor waiting for an agent: its checks say what is wrong. The same probe checks can watch a server that has the agent, from outside. Operators of the site add and change devices. Area `servers`."
+    },
+    {
+      "name": "network-scans",
+      "description": "Network scans: a range of a site's IP addresses tried from the central server or a relay of the site (ping, a few TCP ports, SNMP with the credentials the site's devices have and those given to the scan, the MAC address on the probe's own link, the name from reverse DNS), at most 50 probes a second and never outside the range. Each run keeps what answered; the results propose for each address: install the agent (SSH or RDP open), an SNMP device with its template, or a device with its ping and ports, and recognise what the site monitors already. Nothing is added until `POST /api/v1/network-scans/{id}/add`. A scan can run every hour, day or week and say what is new or gone, with an optional notification. Viewers of the site read scans; operators of the site change them. Area `servers`."
     },
     {
       "name": "virtualization",

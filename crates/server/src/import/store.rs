@@ -37,7 +37,7 @@ pub enum StoreError {
 #[schema(as = ImportResult)]
 pub struct Outcome {
     /// Created, by object: `server`, `check`, `threshold`, `silence`,
-    /// `channel`.
+    /// `window`, `network_scan`, `channel`.
     #[serde(default)]
     pub created: BTreeMap<String, u32>,
     /// Items unticked, or that need an unticked one.
@@ -166,6 +166,10 @@ pub async fn existing(
         .collect();
     let mut conn = pool.acquire().await?;
     existing.windows = existing_windows(&mut conn, site_id).await?;
+    existing.scans = existing_scans(&mut conn, site_id).await?;
+    existing.probe = crate::api::sensors::default_probe(&mut *conn, site_id)
+        .await?
+        .key;
     existing.services = sqlx::query_scalar::<_, String>(
         "SELECT lower(b.name) FROM business_services b JOIN sites s ON s.customer_id = b.customer_id
          WHERE s.id = $1",
@@ -741,6 +745,7 @@ async fn create_one(
             }
             create_window(tx, site_id, create, &ids, user).await
         }
+        Create::NetworkScan { .. } => create_scan(tx, site_id, create, secret, user).await,
         Create::Service {
             name,
             at_least,
@@ -941,6 +946,101 @@ async fn create_window(
     Ok(Some(id))
 }
 
+/// The lowercase names of the site's network scans.
+async fn existing_scans(
+    db: &mut PgConnection,
+    site_id: Uuid,
+) -> Result<HashSet<String>, sqlx::Error> {
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT lower(name) FROM network_scans WHERE site_id = $1")
+            .bind(site_id)
+            .fetch_all(db)
+            .await?;
+    Ok(names.into_iter().collect())
+}
+
+/// A network scan of the site from its default probe, notifications off
+/// (ADR-0154); `None` when one of that name is there. Checked as the
+/// network scans API checks one; it runs on its schedule, not now.
+async fn create_scan(
+    tx: &mut Transaction<'_, Postgres>,
+    site_id: Uuid,
+    create: &Create,
+    secret: Option<&ChannelSecret>,
+    user: Uuid,
+) -> Result<Option<Uuid>, String> {
+    use crate::api::network_scans::MAX_PER_SITE;
+    use crate::netscan::targets;
+    let Create::NetworkScan {
+        name,
+        targets: entries,
+        ports,
+        every,
+        ..
+    } = create
+    else {
+        return Err("not a network scan".into());
+    };
+    sqlx::query("SELECT 1 FROM sites WHERE id = $1 FOR UPDATE")
+        .bind(site_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    if existing_scans(tx, site_id)
+        .await
+        .map_err(db_error)?
+        .contains(&name.to_lowercase())
+    {
+        return Ok(None);
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM network_scans WHERE site_id = $1")
+        .bind(site_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    if count >= MAX_PER_SITE {
+        return Err(format!("a site has at most {MAX_PER_SITE} scans"));
+    }
+    let (entries, _) = targets::expand(entries)?;
+    let ports = targets::ports(Some(ports))?;
+    if every
+        .as_deref()
+        .is_some_and(|e| !matches!(e, "hour" | "day" | "week"))
+    {
+        return Err("its schedule is not hour, day or week".into());
+    }
+    let sealed = match secret.and_then(|s| s.secret.as_deref()) {
+        Some(json) => {
+            let request: crate::snmp::CredentialsRequest =
+                serde_json::from_str(json).map_err(|_| "its SNMP credentials do not read")?;
+            let credentials = crate::snmp::check(&request, None)?;
+            Some(crate::netscan::seal(&credentials)?)
+        }
+        None => None,
+    };
+    let by = crate::api::sensors::default_probe(&mut **tx, site_id)
+        .await
+        .map_err(db_error)?;
+    sqlx::query_scalar(
+        "INSERT INTO network_scans (site_id, name, targets, ports, probe, probe_relay_id, every,
+                                    notify, snmp_secret, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9) RETURNING id",
+    )
+    .bind(site_id)
+    .bind(name)
+    .bind(&entries)
+    .bind(ports.iter().map(|p| i32::from(*p)).collect::<Vec<_>>())
+    .bind(by.probe)
+    .bind(by.relay)
+    .bind(every)
+    .bind(&sealed)
+    .bind(user)
+    .fetch_one(&mut **tx)
+    .await
+    .map(Some)
+    .map_err(db_error)
+}
+
 const WEEKDAYS: [&str; 7] = [
     "monday",
     "tuesday",
@@ -1096,6 +1196,11 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
             "window",
             "DELETE FROM maintenance_windows WHERE id IN
                  (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'window')",
+        ),
+        (
+            "network_scan",
+            "DELETE FROM network_scans WHERE id IN
+                 (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'network_scan')",
         ),
         (
             "service",

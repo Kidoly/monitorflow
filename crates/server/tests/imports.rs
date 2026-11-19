@@ -10,8 +10,9 @@ use axum::http::{Request, StatusCode};
 use chrono::{TimeDelta, Utc};
 use monitorflow_common::redact::Secret;
 use monitorflow_import::model::{
-    Alert, Channel, Check, Direction, Fidelity, Host, Inventory, Measure, Origin, Os, Repeat, Rule,
-    Severity, Silence, SilenceScope, Smtp, Target, Threshold, Watch, Website, Window, EVERY_MONTH,
+    Alert, Channel, Check, Direction, Every, Fidelity, Host, Inventory, Measure, Origin, Os,
+    Repeat, Rule, Scan, ScanSnmp, Severity, Silence, SilenceScope, Smtp, Target, Threshold, Watch,
+    Website, Window, EVERY_MONTH,
 };
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
@@ -199,6 +200,7 @@ fn inventory() -> Inventory {
             },
         ],
         windows: vec![],
+        scans: vec![],
         services: vec![],
         dependencies: vec![],
         unmovable: vec![],
@@ -772,6 +774,84 @@ db_tests! {
         assert_eq!(run["result"]["removed"]["window"], 1);
         assert_eq!(count(&pool, "SELECT count(*) FROM maintenance_windows").await, 0);
         assert_eq!(count(&pool, "SELECT count(*) FROM silences").await, 0);
+    }
+
+    #[sqlx::test]
+    async fn network_scans_import_once_with_their_credentials_and_undo(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let inventory = Inventory {
+            scans: vec![Scan {
+                name: "Office network".into(),
+                targets: vec!["192.0.2.1-254".into()],
+                ports: Some(vec![22, 443]),
+                every: Some(Every::Day),
+                snmp: Some(ScanSnmp {
+                    version: "v2c".into(),
+                    port: 161,
+                    community: Some(Secret::new("recorded-community")),
+                    ..ScanSnmp::default()
+                }),
+                group: None,
+                origin: origin("discovery_rule", "Office network"),
+                fidelity: Fidelity::Exact,
+            }],
+            ..Inventory::default()
+        };
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (status, run) = call(&pool, "GET", &format!("/api/imports/{id}"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        let item = &run["items"][0];
+        assert_eq!(item["id"], "network_scan:Office network", "{run}");
+        assert_eq!(item["create"]["addresses"], 254);
+        assert_eq!(item["create"]["probe"], "central");
+        assert!(!run.to_string().contains("recorded-community"));
+
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["failed"], json!([]), "{run}");
+        assert_eq!(run["result"]["created"], json!({"network_scan": 1}), "{run}");
+        type Row = (Uuid, Vec<String>, Vec<i32>, String, Option<String>, bool, Option<String>, Option<Uuid>);
+        let (scan, targets, ports, probe, every, notify, sealed, by): Row = sqlx::query_as(
+            "SELECT id, targets, ports, probe, every, notify, snmp_secret, created_by FROM network_scans
+             WHERE site_id = $1",
+        )
+        .bind(paris)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (targets, ports, probe.as_str(), every.as_deref(), notify, by),
+            (vec!["192.0.2.1-254".to_owned()], vec![22, 443], "central", Some("day"), false, Some(admin))
+        );
+        let credentials = monitorflow_server::netscan::open(&sealed.unwrap()).unwrap();
+        assert_eq!(credentials.secrets.community.as_deref(), Some("recorded-community"));
+        // The confirmation is audited, the scan among what it created.
+        let details: Value = sqlx::query_scalar(
+            "SELECT details FROM audit_log WHERE action = 'import.confirm'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(details["created"]["network_scan"], 1);
+        // Its scans run on the schedule, none now.
+        assert_eq!(count(&pool, "SELECT count(*) FROM network_scan_runs").await, 0);
+
+        // A second import finds it there.
+        let second = preview(&pool, paris, admin, &inventory).await;
+        let (_, run) = call(&pool, "GET", &format!("/api/imports/{second}"), &cookie, None).await;
+        assert_eq!(run["counts"]["to_create"], 0, "{run}");
+
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["removed"]["network_scan"], 1, "{run}");
+        let left: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM network_scans WHERE id = $1)")
+            .bind(scan)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(!left);
     }
 
     #[sqlx::test]

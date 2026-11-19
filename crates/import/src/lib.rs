@@ -13,6 +13,7 @@ pub mod model;
 pub mod notes;
 pub mod prometheus;
 pub mod prtg;
+pub mod scan;
 pub mod source;
 pub mod text;
 pub mod web;

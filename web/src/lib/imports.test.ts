@@ -91,11 +91,33 @@ describe("imports", () => {
     );
   });
 
+  it("titles network scans, from the central server or a relay", () => {
+    const scan = (every: "day" | null, probe: string) =>
+      item("network_scan:Office", [], {
+        kind: "network_scan",
+        create: {
+          object: "network_scan", name: "Office", targets: ["192.0.2.0/24"], addresses: 254,
+          ports: [22], every, probe, has_snmp: true,
+        },
+      });
+    expect(itemTitle(scan("day", "central"), [])).toBe(
+      "Office: 254 addresses, every day, from the central server",
+    );
+    expect(itemTitle(scan(null, "relay-paris"), [])).toBe("Office: 254 addresses, when asked, from relay-paris");
+    setActiveLocale("fr");
+    expect(itemTitle(scan("day", "central"), [])).toBe(
+      "Office\u00a0: 254 adresses, tous les jours, depuis le serveur central",
+    );
+  });
+
   it("groups by list and kind, in order", () => {
     const items = [item("c"), item("s", [], { kind: "server" }), item("x", [], { list: "approximated" })];
     expect(grouped(items, "exact").map((g) => g.kind)).toEqual(["server", "check"]);
     expect(grouped(items, "not_movable")).toEqual([]);
     expect(countsText({ server: 1, check: 2 })).toBe("1 server, 2 checks");
+    expect(countsText({ server: 1, network_scan: 2 })).toBe("1 server, 2 network scans");
+    const scans = [item("n", [], { kind: "network_scan" }), item("w", [], { kind: "window" }), item("h", [], { kind: "channel" })];
+    expect(grouped(scans, "exact").map((g) => g.kind)).toEqual(["window", "network_scan", "channel"]);
     expect(countsText({})).toBe("nothing");
   });
 });

@@ -34,6 +34,7 @@ export const KINDS = [
   "threshold",
   "silence",
   "window",
+  "network_scan",
   "channel",
   "service",
   "dependency",
@@ -140,6 +141,15 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
       return create.checks?.length
         ? t("imports.item.windowChecks", { rule, checks: create.checks.map(checkName).join(", "), reason: create.reason })
         : t("imports.item.window", { rule, reason: create.reason });
+    }
+    case "network_scan": {
+      const every = t(`discovery.every.${create.every ?? "none"}`);
+      return t("imports.item.networkScan", {
+        name: create.name,
+        addresses: t("imports.item.addresses", { count: create.addresses }),
+        every: every.charAt(0).toLocaleLowerCase() + every.slice(1),
+        probe: create.probe === "central" ? t("discovery.view.central") : create.probe,
+      });
     }
     case "service": {
       const members = create.members.map((m) => (m.check ? `${m.server} ${checkName(m.check)}` : m.server)).join(", ");

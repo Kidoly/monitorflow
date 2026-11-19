@@ -638,6 +638,111 @@ export interface Probe {
   default: boolean;
 }
 
+/** A network scan's own SNMP credentials, without secrets (ADR-0154). */
+export interface NetworkScanSnmp {
+  version: string;
+  port: number;
+  user: string | null;
+  auth_protocol: string | null;
+  priv_protocol: string | null;
+}
+
+/** One run of a network scan. */
+export interface NetworkScanRun {
+  id: string;
+  state: "queued" | "running" | "done" | "failed";
+  trigger: "person" | "schedule";
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  addresses: number;
+  scanned: number;
+  answered: number;
+  compared: boolean;
+  new: number;
+  gone: string[];
+  dropped: number;
+  ping_error: string | null;
+  /** `interrupted`, `relay_disconnected`, `relay_outdated`, `relay_removed`, or the probe's words. */
+  error: string | null;
+}
+
+export type ScanEvery = "hour" | "day" | "week";
+
+/** A network scan of a site's addresses (ADR-0154). */
+export interface NetworkScan {
+  id: string;
+  site_id: string;
+  site_name: string;
+  name: string;
+  targets: string[];
+  addresses: number;
+  ports: number[];
+  probe: "central" | "relay";
+  probe_relay_id: string | null;
+  probe_key: string;
+  every: ScanEvery | null;
+  notify: boolean;
+  snmp: NetworkScanSnmp | null;
+  created_at: string;
+  updated_at: string;
+  last_run: NetworkScanRun | null;
+}
+
+/** Body of `POST /api/network-scans`; `PUT` takes the same without `site_id` and `run`. */
+export interface NetworkScanRequest {
+  site_id?: string;
+  name: string;
+  targets: string[];
+  ports?: number[];
+  probe?: string;
+  every?: ScanEvery | null;
+  notify?: boolean;
+  snmp?: SnmpCredentialsRequest;
+  remove_snmp?: boolean;
+  run?: boolean;
+}
+
+export type ProposalAction = "agent" | "snmp_device" | "device" | "monitored" | "dismissed";
+
+/** What a scan proposes for an address. */
+export interface NetworkScanProposal {
+  action: ProposalAction;
+  os: "linux" | "windows" | null;
+  monitored_by: { server_id: string; name: string; matched_by: "address" | "mac" | "name" } | null;
+  name: string;
+  template: string | null;
+  checks: { kind: "ping" | "port" | "snmp"; name: string; port: number | null }[];
+}
+
+/** An address that answered a scan. */
+export interface NetworkScanHost {
+  address: string;
+  ping: boolean;
+  rtt_seconds: number | null;
+  ports: number[];
+  name: string | null;
+  mac: string | null;
+  snmp: boolean;
+  snmp_description: string | null;
+  snmp_name: string | null;
+  snmp_object_id: string | null;
+  snmp_groups: string[];
+  new: boolean;
+  proposal: NetworkScanProposal;
+}
+
+export interface NetworkScanResults {
+  run: NetworkScanRun | null;
+  current: NetworkScanRun | null;
+  hosts: NetworkScanHost[];
+}
+
+export interface NetworkScanAddResult {
+  added: { address: string; server_id: string; name: string; template: string | null }[];
+  skipped: { address: string; reason: "not_found" | "monitored" | "no_credentials" }[];
+}
+
 /** Body of `POST /api/devices`. */
 export interface DeviceRequest {
   site_id: string;
@@ -1748,6 +1853,17 @@ export type ImportCreate =
     }
   | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
   | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
+  | {
+      object: "network_scan";
+      name: string;
+      targets: string[];
+      addresses: number;
+      ports: number[];
+      every: "hour" | "day" | "week" | null;
+      /** `central`, or the name of the relay it runs from. */
+      probe: string;
+      has_snmp: boolean;
+    }
   | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null }
   | {
       object: "service";
@@ -4473,6 +4589,37 @@ export const api = {
     request<{ added: boolean; check: string }>(`/api/servers/${encodeURIComponent(id)}/hyperv`, { method: "POST" }),
 
   /** Where the site's network checks can run from: the central server, then its relays. */
+  networkScans: (signal?: AbortSignal) => request<{ scans: NetworkScan[] }>("/api/network-scans", { signal }),
+
+  networkScan: (id: string, signal?: AbortSignal) =>
+    request<NetworkScan>(`/api/network-scans/${encodeURIComponent(id)}`, { signal }),
+
+  createNetworkScan: (body: NetworkScanRequest) =>
+    request<NetworkScan>("/api/network-scans", { method: "POST", body }),
+
+  updateNetworkScan: (id: string, body: NetworkScanRequest) =>
+    request<NetworkScan>(`/api/network-scans/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteNetworkScan: (id: string) =>
+    request<void>(`/api/network-scans/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  runNetworkScan: (id: string) =>
+    request<NetworkScanRun>(`/api/network-scans/${encodeURIComponent(id)}/run`, { method: "POST" }),
+
+  networkScanResults: (id: string, signal?: AbortSignal) =>
+    request<NetworkScanResults>(`/api/network-scans/${encodeURIComponent(id)}/results`, { signal }),
+
+  addFromNetworkScan: (
+    id: string,
+    body: { all?: boolean; devices?: { address: string; name?: string; template?: string }[] },
+  ) => request<NetworkScanAddResult>(`/api/network-scans/${encodeURIComponent(id)}/add`, { method: "POST", body }),
+
+  dismissScanAddress: (id: string, address: string) =>
+    request<void>(`/api/network-scans/${encodeURIComponent(id)}/dismiss`, { method: "POST", body: { address } }),
+
+  restoreScanAddress: (id: string, address: string) =>
+    request<void>(`/api/network-scans/${encodeURIComponent(id)}/restore`, { method: "POST", body: { address } }),
+
   siteProbes: (siteId: string, signal?: AbortSignal) =>
     request<{ probes: Probe[] }>(`/api/sites/${encodeURIComponent(siteId)}/probes`, { signal }),
 

@@ -27,6 +27,9 @@ pub struct Inventory {
     /// Maintenance windows that come back (ADR-0151).
     pub windows: Vec<Window>,
     pub channels: Vec<Channel>,
+    /// Network scans (ADR-0154): the source's network discovery.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scans: Vec<Scan>,
     /// Business services, with their rule and SLA target (ADR-0155).
     pub services: Vec<Service>,
     /// What is behind what (ADR-0152).
@@ -49,6 +52,7 @@ impl Inventory {
             && self.silences.is_empty()
             && self.windows.is_empty()
             && self.channels.is_empty()
+            && self.scans.is_empty()
             && self.services.is_empty()
             && self.dependencies.is_empty()
             && self.unmovable.is_empty()
@@ -62,7 +66,8 @@ pub struct Origin {
     /// [`crate::notes::ORIGIN_KINDS`]): `host`, `item`, `trigger`,
     /// `template`, `web_scenario`, `maintenance`, `media_type`,
     /// `user_media`, `scrape_target`, `alerting_rule`, `receiver`,
-    /// `silence`, `sensor`, `notification`, `device`, `group`, `probe`.
+    /// `silence`, `sensor`, `notification`, `device`, `group`, `probe`,
+    /// `time_interval`, `schedule`, `discovery_rule`, `action`.
     pub kind: String,
     /// Its name there.
     pub name: String,
@@ -692,6 +697,80 @@ pub struct Channel {
     /// Its name in the source, for the person who reads the preview.
     pub name: String,
     pub target: Target,
+    pub origin: Origin,
+    #[serde(flatten)]
+    pub fidelity: Fidelity,
+}
+
+/// How often a network scan comes back on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Every {
+    Hour,
+    Day,
+    Week,
+}
+
+impl Every {
+    /// `hour`, `day` or `week`, as a scan's `every` says it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Hour => "hour",
+            Self::Day => "day",
+            Self::Week => "week",
+        }
+    }
+}
+
+/// SNMP credentials a scan tries, as MonitorFlow names their settings
+/// (ADR-0149). Never shown, never logged.
+#[derive(Clone, Default, PartialEq)]
+pub struct ScanSnmp {
+    /// `v2c` or `v3`.
+    pub version: String,
+    pub port: u16,
+    pub community: Option<Secret>,
+    pub user: Option<String>,
+    /// `sha`, `sha256`, `sha384`, `sha512` or `md5`.
+    pub auth_protocol: Option<String>,
+    pub auth_password: Option<Secret>,
+    /// `aes128`, `aes256` or `aes256c`.
+    pub priv_protocol: Option<String>,
+    pub priv_password: Option<Secret>,
+}
+
+impl fmt::Debug for ScanSnmp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScanSnmp")
+            .field("version", &self.version)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A scan of addresses the source looks for hosts in (ADR-0154): a
+/// Zabbix network discovery rule, a PRTG group with auto-discovery.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Scan {
+    pub name: String,
+    /// IP addresses, blocks like `192.168.1.0/24` and ranges like
+    /// `192.168.1.10-50`, as MonitorFlow takes them: at most 64 entries
+    /// and 1,024 addresses.
+    pub targets: Vec<String>,
+    /// TCP ports to try; `None` for MonitorFlow's default ones.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ports: Option<Vec<u16>>,
+    /// `None`: only when asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub every: Option<Every>,
+    /// Its own SNMP credentials, when the source has some.
+    #[serde(skip)]
+    pub snmp: Option<ScanSnmp>,
+    /// Where in the source what it finds goes, a group or a proxy, which
+    /// the import's site stands for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     pub origin: Origin,
     #[serde(flatten)]
     pub fidelity: Fidelity,
