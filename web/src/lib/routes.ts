@@ -2,7 +2,7 @@ import { type IncidentFilters, NO_FILTERS, filtersToQuery } from "./incidents";
 import { shortMetric } from "./metrics";
 
 /** Link to the page of the server `id` (a query parameter, ADR-0020), on `tab` when given. */
-export function serverHref(id: string, tab?: "sensors" | "updates" | "commands" | "logs"): string {
+export function serverHref(id: string, tab?: "sensors" | "dependencies" | "updates" | "commands" | "logs"): string {
   return `/servers/view/?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ""}`;
 }
 
@@ -67,6 +67,8 @@ export function readyMadeHref(id: string): string {
 
 /** Active and upcoming silences (ADR-0079). */
 export const SILENCES_PATH = "/silences/";
+/** Availability reports (ADR-0155). */
+export const REPORTS_PATH = "/reports/";
 
 /** Who is on call, and one's own contact (ADR-0081). */
 export const ON_CALL_PATH = "/on-call/";

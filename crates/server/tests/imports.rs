@@ -130,6 +130,7 @@ fn inventory() -> Inventory {
                 alert: Some(Alert {
                     severity: Severity::Critical,
                     for_s: 60,
+                    no_data: false,
                 }),
                 origin: origin("item", "nginx running"),
                 fidelity: Fidelity::Exact,
@@ -144,12 +145,15 @@ fn inventory() -> Inventory {
                 alert: Some(Alert {
                     severity: Severity::Critical,
                     for_s: 0,
+                    no_data: false,
                 }),
                 origin: origin("item", "PostgreSQL port"),
                 fidelity: Fidelity::Exact,
             },
         ],
         thresholds: vec![Threshold {
+            judged: Default::default(),
+            conditions: Vec::new(),
             hosts: vec!["1".into(), "2".into()],
             measure: Measure::CpuUsage,
             direction: Direction::Above,
@@ -195,6 +199,8 @@ fn inventory() -> Inventory {
             },
         ],
         windows: vec![],
+        services: vec![],
+        dependencies: vec![],
         unmovable: vec![],
     }
 }
@@ -344,6 +350,39 @@ db_tests! {
         assert_eq!(count(&pool, tables).await, before);
     }
 
+    /// A check run from a probe is stored with the probe as its instance:
+    /// a second import still finds it (seen in the real Zabbix test).
+    #[sqlx::test]
+    async fn probe_checks_are_found_by_a_second_import(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let mut with_udp = inventory();
+        with_udp.checks.push(Check {
+            host: "2".into(),
+            watch: Watch::UdpPort {
+                address: None,
+                port: 123,
+                query: Some("ntp".into()),
+            },
+            interval_s: Some(300),
+            alert: None,
+            origin: origin("item", "NTP answers"),
+            fidelity: Fidelity::Exact,
+        });
+        let first = preview(&pool, paris, admin, &with_udp).await;
+        let (status, _) = call(&pool, "POST", &format!("/api/imports/{first}/confirm"), &cookie, Some(json!({}))).await;
+        assert_eq!(status, StatusCode::OK);
+        let probe: Option<String> = sqlx::query_scalar("SELECT probe FROM sensor_configs WHERE name = 'udp_123'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(probe.is_some(), "the UDP check runs from a probe");
+        let second = preview(&pool, paris, admin, &with_udp).await;
+        let (_, run) = call(&pool, "GET", &format!("/api/imports/{second}"), &cookie, None).await;
+        assert_eq!(run["counts"]["to_create"], 0, "{:#}", run["items"]);
+    }
+
     /// A host without an agent becomes a device with its probe checks,
     /// and the undo removes it (ADR-0148).
     #[sqlx::test]
@@ -370,7 +409,7 @@ db_tests! {
             host: "sw".into(),
             watch,
             interval_s: Some(60),
-            alert: Some(Alert { severity: Severity::Critical, for_s: 60 }),
+            alert: Some(Alert { severity: Severity::Critical, for_s: 60, no_data: false }),
             origin: origin("item", name),
             fidelity: Fidelity::Exact,
         };
@@ -410,6 +449,61 @@ db_tests! {
         assert_eq!(status, StatusCode::OK, "{run}");
         assert_eq!(run["result"]["kept_servers"], json!([]));
         assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 0);
+    }
+
+    #[sqlx::test]
+    async fn zabbix_trigger_dependencies_are_imported_and_undone(pool: PgPool) {
+        use monitorflow_import::source::File;
+        use monitorflow_import::zabbix::Zabbix;
+        use monitorflow_import::{Context, Input, Source};
+
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let export = File {
+            name: "dependencies.yaml".into(),
+            content: include_bytes!("../../import/tests/fixtures/zabbix/7.0/dependencies.yaml").to_vec(),
+        };
+        let inventory = Zabbix
+            .read(Input::Files(vec![export]), &Context::new(Utc::now()))
+            .await
+            .unwrap();
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (_, run) = call(&pool, "GET", &format!("/api/imports/{id}"), &cookie, None).await;
+        let kinds: Vec<(&str, &str)> = run["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["kind"] == "dependency")
+            .map(|i| (i["id"].as_str().unwrap(), i["list"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [("dependency:app-01:sw-core", "exact"), ("dependency:app-01/port_443:sw-core", "approximated")],
+            "{run}"
+        );
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["failed"], json!([]), "{run}");
+        assert_eq!(run["result"]["created"]["dependency"], 2, "{run}");
+        let rows: Vec<(String, Option<String>, String, Option<String>)> = sqlx::query_as(
+            "SELECT c.hostname, d.check_name, p.hostname, d.parent_check_name
+             FROM dependencies d JOIN servers c ON c.id = d.server_id
+             JOIN servers p ON p.id = d.parent_server_id ORDER BY d.check_name NULLS FIRST",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            [
+                ("app-01".into(), None, "sw-core".into(), None),
+                ("app-01".into(), Some("port_443".into()), "sw-core".into(), None),
+            ]
+        );
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(count(&pool, "SELECT count(*) FROM dependencies").await, 0);
     }
 
     #[sqlx::test]
@@ -529,6 +623,8 @@ db_tests! {
                 fidelity: Fidelity::Exact,
             }],
             thresholds: vec![Threshold {
+                judged: Default::default(),
+                conditions: Vec::new(),
                 hosts: vec!["1".into()],
                 measure: Measure::WebResponseTime { url: "https://shop.example.com/".into() },
                 direction: Direction::Above,
@@ -676,5 +772,56 @@ db_tests! {
         assert_eq!(run["result"]["removed"]["window"], 1);
         assert_eq!(count(&pool, "SELECT count(*) FROM maintenance_windows").await, 0);
         assert_eq!(count(&pool, "SELECT count(*) FROM silences").await, 0);
+    }
+
+    #[sqlx::test]
+    async fn business_services_import_once_and_undo(pool: PgPool) {
+        use monitorflow_import::model::{Member, Service};
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let mut inventory = inventory();
+        inventory.services.push(Service {
+            name: "Shop".into(),
+            members: vec![
+                Member { host: "1".into(), check: None },
+                Member {
+                    host: "2".into(),
+                    check: Some(Watch::Port { address: None, port: 5432 }),
+                },
+            ],
+            at_least: None,
+            target: Some(99.95),
+            origin: origin("service", "Shop"),
+            fidelity: Fidelity::Exact,
+        });
+        let id = preview(&pool, paris, admin, &inventory).await;
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["created"]["service"], 1, "{run}");
+        let (rule, target, members): (String, Option<f64>, Value) = sqlx::query_as(
+            "SELECT b.rule, b.target,
+                    (SELECT jsonb_agg(jsonb_build_array(s.hostname, m.check_name) ORDER BY m.position)
+                     FROM business_service_members m JOIN servers s ON s.id = m.server_id
+                     WHERE m.service_id = b.id)
+             FROM business_services b JOIN sites si ON si.customer_id = b.customer_id
+             WHERE si.id = $1",
+        )
+        .bind(paris)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((rule.as_str(), target), ("all", Some(99.95)));
+        assert_eq!(members, json!([["web-01", null], ["db-01", "port_5432"]]));
+
+        // A second import finds it there.
+        let second = preview(&pool, paris, admin, &inventory).await;
+        let (_, run) = call(&pool, "GET", &format!("/api/imports/{second}"), &cookie, None).await;
+        assert_eq!(run["counts"]["to_create"], 0, "{run}");
+
+        let (status, run) = call(&pool, "POST", &format!("/api/imports/{id}/undo"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["result"]["removed"]["service"], 1);
+        assert_eq!(count(&pool, "SELECT count(*) FROM business_services").await, 0);
     }
 }

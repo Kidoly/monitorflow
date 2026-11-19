@@ -29,6 +29,7 @@ import { DEFAULT_INTERVAL_S, METRIC_PREFIX } from "@/lib/metrics";
 import { incidentHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorStatus, formatSensorValue, primaryMetric, sensorOf, seriesTitle } from "@/lib/sensors";
+import { incidentValue } from "@/lib/rules";
 import { thresholdFor } from "@/lib/thresholds";
 import { usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
@@ -432,7 +433,8 @@ function SensorIncidents({ incidents, now, format }: { incidents: Incident[]; no
       header: t("sensors.page.duration"),
       cell: (i) => formatDuration(((i.resolved_at ? Date.parse(i.resolved_at) : now.getTime()) - Date.parse(i.opened_at)) / 1000),
     },
-    { key: "peak", header: t("sensors.page.peakColumn"), cell: (i) => format(i.peak_value) },
+    // A forecast's peak is a time left, a silence's a duration (ADR-0153).
+    { key: "peak", header: t("sensors.page.peakColumn"), cell: (i) => ((i.kind ?? "value") === "value" ? format(i.peak_value) : incidentValue(i, i.peak_value)) },
   ];
   return <DataTable bare dense label={t("sensors.page.incidents")} columns={columns} rows={incidents} rowKey={(i) => i.id} rowMuted={(i) => i.state === "resolved"} pageSize={10} />;
 }

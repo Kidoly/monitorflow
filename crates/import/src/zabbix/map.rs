@@ -12,8 +12,9 @@ use chrono::{DateTime, NaiveTime, TimeZone, Utc};
 
 use crate::args;
 use crate::model::{
-    Alert, Check, Fidelity, Host, Inventory, Origin, Os, Repeat, Rule, Severity, Silence,
-    SilenceScope, Threshold, Unmovable, Watch, Window, EVERY_MONTH, MAX_WINDOW_MINUTES,
+    Alert, Check, Dependency, DependencyEnd, Fidelity, Host, Inventory, Origin, Os, Repeat, Rule,
+    Severity, Silence, SilenceScope, Threshold, Unmovable, Watch, Window, EVERY_MONTH,
+    MAX_WINDOW_MINUTES,
 };
 use crate::notes::Note;
 
@@ -36,10 +37,13 @@ const SHORT_DESCRIPTION: usize = 120;
 pub fn inventory(config: &Config, now: DateTime<Utc>) -> Inventory {
     let mut out = Inventory::default();
     let mut tagged = Tagged::new();
+    let mut triggers = Triggers::default();
     for host in &config.hosts {
-        map_host(config, host, &mut out, &mut tagged);
+        map_host(config, host, &mut out, &mut tagged, &mut triggers);
     }
     silences(config, now, &tagged, &mut out);
+    super::services::services(config, &tagged, &mut out);
+    dependencies(config, &triggers, &mut out);
     let globals = Macros::new(vec![config.global_macros.clone()], HostValues::default());
     media::channels(config, &globals, &mut out);
     merge(&mut out);
@@ -267,7 +271,7 @@ type Groups = BTreeMap<(String, String, String), (Watch, Owner, Vec<String>)>;
 
 /// What each host's triggers watch, with their tags, by host key: the
 /// checks a maintenance limited to tags silences.
-type Tagged = BTreeMap<String, Vec<(Vec<(String, String)>, Watch)>>;
+pub(super) type Tagged = BTreeMap<String, Vec<(Vec<(String, String)>, Watch)>>;
 
 /// A check being built, with the item keys whose triggers are its alert.
 struct Pending {
@@ -275,7 +279,13 @@ struct Pending {
     keys: Vec<String>,
 }
 
-fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &mut Tagged) {
+fn map_host(
+    config: &Config,
+    host: &config::Host,
+    out: &mut Inventory,
+    tagged: &mut Tagged,
+    mapped: &mut Triggers,
+) {
     let key = host.host.clone();
     if !host.enabled {
         out.unmovable.push(Unmovable {
@@ -286,7 +296,39 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
         return;
     }
     let view = view(config, host);
+    // Hypervisors and virtual machines Zabbix's VMware discovery made are
+    // in their vCenter's inventory (ADR-0156).
+    let named = |names: &[&str]| {
+        view.template_names
+            .iter()
+            .chain(&view.missing)
+            .any(|n| names.contains(&n.as_str()))
+    };
+    if named(&["VMware Hypervisor", "VMware Guest"]) && !named(&["VMware", "VMware FQDN"]) {
+        out.unmovable.push(Unmovable {
+            hosts: vec![key],
+            origin: Origin::new("host", &host.host),
+            why: Note::plain("vmware_discovered"),
+        });
+        return;
+    }
     let mut addresses = Vec::new();
+    // A vCenter is reached at the host of `{$VMWARE.URL}`.
+    if view
+        .items
+        .iter()
+        .any(|(item, _)| item.key.starts_with("vmware."))
+    {
+        if let Some(address) = view
+            .macros
+            .expand("{$VMWARE.URL}")
+            .ok()
+            .as_deref()
+            .and_then(url_host)
+        {
+            addresses.push(address);
+        }
+    }
     for interface in &host.interfaces {
         for address in [&interface.ip, &interface.dns] {
             let address = address.trim();
@@ -331,6 +373,9 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
     // Items: built-in groups by owner and measure, checks one by one.
     let mut groups: Groups = BTreeMap::new();
     let mut pending: Vec<Pending> = Vec::new();
+    // No-data alerts (ADR-0153) come beside a check's own alert, as copies
+    // of the check that carry only them.
+    let mut silent: Vec<Check> = Vec::new();
     for (item, owner) in &view.items {
         let origin = Origin::new("item", &item.name).with_detail(&item.key);
         match items::map(item, &view.macros) {
@@ -428,21 +473,32 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
         .collect();
 
     // Triggers: thresholds, alerts of checks, or why not.
+    for (trigger, _) in view
+        .triggers
+        .iter()
+        .filter(|(t, _)| !t.dependencies.is_empty())
+    {
+        mapped.wanting.push((key.clone(), trigger.clone()));
+    }
     for (trigger, owner) in &view.triggers {
         let origin = Origin::new("trigger", &trigger.name).with_detail(&trigger.expression);
         let (severity, severity_note) = severity(trigger.priority);
         match triggers::map(trigger, &view) {
             Outcome::Thresholds(levels) => {
                 for level in levels {
+                    let watch = level.measure.watch(&out.checks);
+                    mapped.add(&key, trigger, &watch);
                     tagged
                         .entry(key.clone())
                         .or_default()
-                        .push((trigger.tags.clone(), level.measure.watch(&out.checks)));
+                        .push((trigger.tags.clone(), watch));
                     let (warning, critical) = match severity {
                         Severity::Warning => (Some(level.value), None),
                         Severity::Critical => (None, Some(level.value)),
                     };
                     out.thresholds.push(Threshold {
+                        judged: level.judged,
+                        conditions: level.conditions,
                         hosts: vec![key.clone()],
                         measure: level.measure,
                         direction: level.direction,
@@ -458,9 +514,14 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
             Outcome::Alert {
                 key: item_key,
                 for_s,
+                no_data,
                 note,
             } => {
-                let alert = Alert { severity, for_s };
+                let alert = Alert {
+                    severity,
+                    for_s,
+                    no_data,
+                };
                 let targets: Vec<&mut Pending> = pending
                     .iter_mut()
                     .chain(
@@ -479,10 +540,20 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
                     continue;
                 }
                 for target in targets {
+                    mapped.add(&key, trigger, &target.check.watch);
                     tagged
                         .entry(key.clone())
                         .or_default()
                         .push((trigger.tags.clone(), target.check.watch.clone()));
+                    if no_data {
+                        silent.push(Check {
+                            alert: Some(alert.clone()),
+                            origin: origin.clone(),
+                            fidelity: fidelity([note.clone(), severity_note.clone()]),
+                            ..target.check.clone()
+                        });
+                        continue;
+                    }
                     let stronger = match &target.check.alert {
                         None => true,
                         Some(a) => {
@@ -507,6 +578,152 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
     }
     out.checks
         .extend(builtins.into_iter().chain(pending).map(|p| p.check));
+    out.checks.extend(silent);
+}
+
+/// The host of `https://vcenter.example.com/sdk`, without its port.
+fn url_host(url: &str) -> Option<String> {
+    let rest = url.trim().split_once("://").map_or(url.trim(), |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let authority = authority.rsplit('@').next().unwrap_or_default();
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => authority.split(':').next().unwrap_or_default(),
+    };
+    (!host.is_empty() && !host.contains('{')).then(|| host.to_owned())
+}
+
+/// What the triggers of every host became, for their dependencies
+/// (ADR-0152).
+#[derive(Debug, Default)]
+struct Triggers {
+    /// The checks each trigger became, by (host key, trigger name).
+    watches: BTreeMap<(String, String), Vec<Watch>>,
+    /// (host key, trigger name) by trigger ID, from the API.
+    by_id: BTreeMap<String, (String, String)>,
+    /// How many triggers each check of a host has, by (host key, watch).
+    per_check: BTreeMap<(String, String), usize>,
+    /// Triggers that depend on others, with their host.
+    wanting: Vec<(String, Trigger)>,
+}
+
+impl Triggers {
+    fn add(&mut self, host: &str, trigger: &Trigger, watch: &Watch) {
+        let key = (host.to_owned(), trigger.name.clone());
+        if let Some(id) = &trigger.id {
+            self.by_id.insert(id.clone(), key.clone());
+        }
+        let watches = self.watches.entry(key).or_default();
+        if !watches.contains(watch) {
+            watches.push(watch.clone());
+            *self
+                .per_check
+                .entry((host.to_owned(), format!("{watch:?}")))
+                .or_default() += 1;
+        }
+    }
+
+    /// Whether `watch` of `host` came from one trigger only.
+    fn alone(&self, host: &str, watch: &Watch) -> bool {
+        self.per_check
+            .get(&(host.to_owned(), format!("{watch:?}")))
+            .is_none_or(|n| *n <= 1)
+    }
+}
+
+/// The host a trigger expression reads, `func(/host/key)` or, before
+/// Zabbix 5.4, `{host:key.func()}`.
+fn expression_host(expression: &str) -> Option<String> {
+    if let Some(start) = expression.find("(/") {
+        let rest = &expression[start + 2..];
+        return rest
+            .split('/')
+            .next()
+            .map(str::to_owned)
+            .filter(|h| !h.is_empty());
+    }
+    let start = expression.find('{')?;
+    let rest = &expression[start + 1..];
+    let host = rest.split(':').next()?;
+    (!host.is_empty() && !host.contains('}')).then(|| host.to_owned())
+}
+
+/// A check a dependency names: the host as a whole when it is its agent
+/// or its ping, which say whether it is down; one check otherwise.
+fn parent_end(host: &str, watch: &Watch) -> DependencyEnd {
+    match watch {
+        Watch::Agent | Watch::Ping { address: None } => DependencyEnd::host(host),
+        other => DependencyEnd::check(host, other.clone()),
+    }
+}
+
+/// Trigger dependencies (ADR-0152): the check a trigger became depends on
+/// the check the trigger it depends on became. A trigger of a template
+/// depends on its host's copy of the other; otherwise on the host its
+/// expression reads.
+fn dependencies(config: &Config, triggers: &Triggers, out: &mut Inventory) {
+    let mut seen: Vec<(DependencyEnd, DependencyEnd)> = Vec::new();
+    for (host, trigger) in &triggers.wanting {
+        let Some(children) = triggers.watches.get(&(host.clone(), trigger.name.clone())) else {
+            // Not moved itself: it is listed already.
+            continue;
+        };
+        let origin = Origin::new("trigger", &trigger.name).with_detail(&trigger.expression);
+        for wanted in &trigger.dependencies {
+            let parent = match &wanted.id {
+                Some(id) => triggers.by_id.get(id).cloned(),
+                None => {
+                    let named = expression_host(&wanted.expression)
+                        .filter(|h| !config.templates.contains_key(h))
+                        .unwrap_or_else(|| host.clone());
+                    Some((named, wanted.name.clone()))
+                }
+            };
+            let parents = parent
+                .as_ref()
+                .and_then(|key| Some((key.0.clone(), triggers.watches.get(key)?)));
+            let Some((parent_host, parents)) = parents else {
+                out.unmovable.push(Unmovable {
+                    hosts: vec![host.clone()],
+                    origin: origin.clone(),
+                    why: Note::new("dependency_unmapped", args! {"parent" => wanted.name}),
+                });
+                continue;
+            };
+            for child in children {
+                for parent in parents {
+                    let child_end = DependencyEnd::check(host.clone(), child.clone());
+                    let Some(parent_end) = DependencyEnd::parent_for(
+                        parent_end(&parent_host, parent),
+                        parent,
+                        &child_end,
+                    ) else {
+                        continue;
+                    };
+                    let pair = (child_end.clone(), parent_end.clone());
+                    if seen.contains(&pair) {
+                        continue;
+                    }
+                    seen.push(pair);
+                    let exact = (child_end.watch.is_none() || triggers.alone(host, child))
+                        && (parent_end.watch.is_none() || triggers.alone(&parent_host, parent));
+                    out.dependencies.push(Dependency {
+                        child: child_end,
+                        parent: parent_end,
+                        origin: origin.clone(),
+                        fidelity: if exact {
+                            Fidelity::Exact
+                        } else {
+                            Fidelity::Approximated(Note::new(
+                                "dependency_whole_check",
+                                args! {"trigger" => trigger.name},
+                            ))
+                        },
+                    });
+                }
+            }
+        }
+    }
 }
 
 /// An item's key as written and with its macros expanded, which is how

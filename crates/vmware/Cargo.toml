@@ -1,0 +1,27 @@
+[package]
+name = "monitorflow-vmware"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "vCenter and ESXi checks through the vSphere API, run from a probe (ADR-0156)"
+
+# A sensor of `monitorflow-sensors`, kept apart so agents do not carry a
+# SOAP client.
+
+[dependencies]
+monitorflow-sensors.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+quick-xml.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+webpki-roots.workspace = true
+x509-parser.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

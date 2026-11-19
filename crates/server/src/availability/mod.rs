@@ -7,12 +7,63 @@
 //! excuse it, and [`combine`] applies a business service's rule to its
 //! members. Loading incidents and silences is apart.
 
+pub mod csv;
+pub mod data;
+pub mod pdf;
+mod pdf_metrics;
+pub mod report;
+pub mod schedule;
+pub mod sender;
 pub mod spans;
+pub mod words;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub use spans::{Span, Spans};
+
+/// The whole report of `customer` (its sites and services), or of
+/// everything when `None`: what a schedule sends, with no user to narrow it.
+pub async fn for_customer(
+    db: &mut sqlx::PgConnection,
+    customer: Option<uuid::Uuid>,
+    period: Span,
+    now: DateTime<Utc>,
+) -> Result<report::Report, sqlx::Error> {
+    let (reach, name) = match customer {
+        None => (
+            data::Reach {
+                sites: None,
+                services_of: None,
+            },
+            None,
+        ),
+        Some(id) => {
+            let name: Option<String> =
+                sqlx::query_scalar("SELECT name FROM customers WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(&mut *db)
+                    .await?;
+            let sites: Vec<uuid::Uuid> =
+                sqlx::query_scalar("SELECT id FROM sites WHERE customer_id = $1")
+                    .bind(id)
+                    .fetch_all(&mut *db)
+                    .await?;
+            (
+                data::Reach {
+                    sites: Some(sites),
+                    services_of: Some(vec![id]),
+                },
+                name,
+            )
+        }
+    };
+    let data = data::load(db, &reach, period, now).await?;
+    let mut report = report::build(&data, period, now);
+    report.customer_id = customer;
+    report.customer_name = name;
+    Ok(report)
+}
 
 /// Something that made a thing down for a while: the critical time of an
 /// incident, or of what it depends on, with the planned maintenance that
