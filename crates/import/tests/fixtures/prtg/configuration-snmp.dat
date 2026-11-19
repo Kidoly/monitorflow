@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Made up for the custom SNMP import (ADR-0157): one device of each kind of custom SNMP sensor. -->
+<prtg>
+  <nodes>
+    <group id="0">
+      <data><name>Root</name><active>1</active></data>
+      <nodes>
+        <probenode id="1">
+          <data><name>Local Probe</name><active>1</active></data>
+          <nodes>
+            <device id="3001">
+              <data><name>fw-edge</name><host>192.0.2.40</host><active>1</active></data>
+              <nodes>
+                <sensor id="3101">
+                  <data><name>Sessions</name><sensortype>snmpcustom</sensortype><interval>60</interval><oid><cell col="0">1.3.6.1.4.1.12356.101.4.1.8.0</cell><cell col="1">fgSysSesCount</cell></oid><channel>Sessions</channel><unit>sessions</unit><snmptype>abs</snmptype></data>
+                  <channels>
+                    <channel id="2001"><data><name>Sessions</name><limitmode>1</limitmode><limitmaxwarning>5000</limitmaxwarning><limitmaxerror>8000</limitmaxerror></data></channel>
+                    <channel id="-4"><data><name>Downtime</name></data></channel>
+                  </channels>
+                </sensor>
+                <sensor id="3102">
+                  <data><name>Firewall health</name><sensortype>snmpcustomadvanced</sensortype><interval>60</interval>
+                    <channel1oid>1.3.6.1.4.1.12356.101.4.1.3.0</channel1oid><channel1name>CPU</channel1name><channel1unit>Percent</channel1unit><usechannel1>1</usechannel1>
+                    <channel2oid>1.3.6.1.2.1.2.2.1.10.1</channel2oid><channel2name>Inbound</channel2name><channel2snmptype>diff</channel2snmptype><channel2unit>Custom</channel2unit><channel2customunit>B/s</channel2customunit><usechannel2>1</usechannel2>
+                    <channel3oid>1.3.6.1.4.1.12356.101.13.2.1.1.15.1</channel3oid><channel3name>HA state</channel3name><channel3unit>ValueLookup</channel3unit><channel3valuelookup><cell col="0">oid.test.hastate</cell></channel3valuelookup><usechannel3>1</usechannel3>
+                    <channel4oid>1.3.6.1.4.1.12356.101.4.1.4.0</channel4oid><channel4name>Unused</channel4name><usechannel4>0</usechannel4>
+                  </data>
+                  <channels>
+                    <channel id="2001"><data><name>CPU</name><limitmode>1</limitmode><limitmaxwarning>80</limitmaxwarning></data></channel>
+                    <channel id="2002"><data><name>Inbound</name><factorm>8</factorm></data></channel>
+                  </channels>
+                </sensor>
+                <sensor id="3103">
+                  <data><name>Firmware</name><sensortype>snmpcustomstring</sensortype><interval>300</interval><oid>1.3.6.1.4.1.12356.101.4.1.1.0</oid><mustinclude>v7.</mustinclude></data>
+                </sensor>
+              </nodes>
+            </device>
+            <device id="3002">
+              <data><name>nas-files</name><host>192.0.2.41</host><active>1</active></data>
+              <nodes>
+                <sensor id="3201">
+                  <data><name>RAID volumes</name><sensortype>snmpcustomtable</sensortype><interval>120</interval><tableoid><cell col="0">1.3.6.1.4.1.6574.3.1.1</cell><cell col="1">raidTable</cell></tableoid><identcolumn><cell col="0">1.3.6.1.4.1.6574.3.1.1.2</cell><cell col="1">raidName</cell></identcolumn>
+                    <channel1column><cell col="0">1.3.6.1.4.1.6574.3.1.1.3</cell></channel1column><channel1name>Status</channel1name><channel1valuelookup><cell col="0">oid.test.raidstatus</cell></channel1valuelookup>
+                  </data>
+                </sensor>
+                <sensor id="3202">
+                  <data><name>Temperature</name><sensortype>snmpcustom</sensortype><interval>60</interval><oid>1.3.6.1.4.1.6574.1.2.0</oid><channel>Temperature</channel><unit>°C</unit><factord>10</factord></data>
+                </sensor>
+                <sensor id="3203">
+                  <data><name>Power source</name><sensortype>snmpcustomlookup</sensortype><interval>60</interval><oid>1.3.6.1.4.1.9999.1.1.0</oid><lookups>oid.test.missing</lookups></data>
+                </sensor>
+              </nodes>
+            </device>
+          </nodes>
+        </probenode>
+      </nodes>
+    </group>
+  </nodes>
+</prtg>

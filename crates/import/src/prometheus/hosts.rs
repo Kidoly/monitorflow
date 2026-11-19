@@ -430,8 +430,20 @@ impl Fleet {
                     },
                     Fidelity::Exact,
                 )];
-                if probe.module.to_ascii_lowercase().contains("if_mib") || probe.module.is_empty() {
+                let standard =
+                    probe.module.to_ascii_lowercase().contains("if_mib") || probe.module.is_empty();
+                if standard {
                     checks.push(make(Watch::Traffic, Fidelity::Exact));
+                } else if let Some(module) = collected.snmp_modules.get(&probe.module) {
+                    // A module of `snmp.yml`: its objects as custom checks
+                    // (ADR-0157), each named after the module and table.
+                    for (part, custom, fidelity) in super::snmp::checks(module) {
+                        let mut check = make(Watch::SnmpCustom(Box::new(custom)), fidelity);
+                        check.origin = Origin::new("scrape_target", &probe.module).with_detail(
+                            format!("job: {}, target: {}, {part}", target.job, probe.target),
+                        );
+                        checks.push(check);
+                    }
                 }
                 checks
             }

@@ -277,6 +277,8 @@ pub enum Kind {
     Rules(RuleFile),
     Alertmanager(Box<AmConfig>),
     Blackbox(BlackboxConfig),
+    /// snmp_exporter's modules (ADR-0157).
+    Snmp(BTreeMap<String, super::snmp::SnmpModule>),
     FileSd(Vec<TargetGroup>),
 }
 
@@ -309,6 +311,16 @@ pub fn classify(text: &str) -> Result<Kind, String> {
             if has("receivers") || has("route") {
                 let config: AmConfig = serde_json::from_value(value).map_err(|e| e.to_string())?;
                 return Ok(Kind::Alertmanager(Box::new(config)));
+            }
+            if map
+                .get("modules")
+                .and_then(Value::as_object)
+                .is_some_and(super::snmp::is_snmp)
+            {
+                let modules = map.get("modules").cloned().unwrap_or_default();
+                let modules: BTreeMap<String, super::snmp::SnmpModule> =
+                    serde_json::from_value(modules).map_err(|e| e.to_string())?;
+                return Ok(Kind::Snmp(modules));
             }
             if has("modules") {
                 let config: BlackboxConfig =
