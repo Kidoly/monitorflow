@@ -385,11 +385,7 @@ impl crate::Sensor for HyperVSensor {
         &self,
         deadline: tokio::time::Instant,
     ) -> Result<Vec<Sample>, crate::SensorError> {
-        let now = || {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as i64)
-        };
+        let now = crate::now_unix_ms;
         #[cfg(windows)]
         {
             let margin = deadline

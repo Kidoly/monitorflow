@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
 use async_snmp::Value;
+use monitorflow_sensors::validate;
 use monitorflow_sensors::{Sample, Sensor, SensorError};
 use serde::{Deserialize, Serialize};
 use tokio::time::{timeout_at, Instant};
@@ -800,12 +801,17 @@ pub fn row_names(
     named
         .into_iter()
         .map(|(index, name)| {
+            // The instance must fit the server's 256 bytes, or every
+            // sample of the row is dropped; the index added to a shared
+            // name is kept whole, so rows stay apart.
             let name = if shared.contains(&name) {
-                format!("{name} ({})", oid_text(&index))
+                let suffix = format!(" ({})", oid_text(&index));
+                let room = validate::MAX_VALUE_LEN.saturating_sub(suffix.len());
+                format!("{}{suffix}", validate::cut(&name, room))
             } else {
                 name
             };
-            (index, name)
+            (index, validate::label_value(&name))
         })
         .collect()
 }
@@ -825,12 +831,6 @@ impl std::fmt::Debug for CustomSensor {
             .field("custom", &self.custom)
             .finish_non_exhaustive()
     }
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 impl CustomSensor {
@@ -920,7 +920,7 @@ impl Sensor for CustomSensor {
                 ))
             }
         };
-        let now = now_ms();
+        let now = monitorflow_sensors::now_unix_ms();
         let mut samples = Vec::new();
         let mut kept = self.counters.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = BTreeMap::new();

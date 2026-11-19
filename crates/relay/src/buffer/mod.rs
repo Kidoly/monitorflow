@@ -276,7 +276,8 @@ fn decode_hello(bytes: &[u8]) -> Option<(Envelope, Via)> {
     Some((hello, via))
 }
 
-fn unix_ms() -> i64 {
+/// Milliseconds since the Unix epoch now.
+pub(crate) fn unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)

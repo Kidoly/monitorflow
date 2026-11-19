@@ -18,7 +18,7 @@
 //! self-update watchdog.
 
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use monitorflow_agent::commands::StreamEnd;
 use monitorflow_common::client::backoff::Backoff;
@@ -249,7 +249,7 @@ impl Control {
                 },
                 _ = heartbeat.tick() => {
                     let envelope = self.envelope(Payload::Heartbeat(Heartbeat {
-                        sent_at_unix_ms: unix_ms(),
+                        sent_at_unix_ms: crate::buffer::unix_ms(),
                     }));
                     if tx.try_send(envelope).is_err() {
                         tracing::debug!("upstream is not reading; heartbeat skipped");
@@ -356,12 +356,6 @@ async fn next_result(commands: &mut Option<StreamEnd>) -> CommandResult {
         },
         None => std::future::pending().await,
     }
-}
-
-fn unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
 }
 
 #[cfg(test)]
