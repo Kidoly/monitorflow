@@ -45,6 +45,7 @@ pub trait ProbeFactory: Send + Sync + 'static {
 
 /// The kinds of `monitorflow-sensors`, without an agent's local limits:
 /// `ping` and `port` over TCP or UDP, `snmp` of `monitorflow-snmp`,
+/// `snmp_custom` (ADR-0157),
 /// `vmware` of `monitorflow-vmware`, and the scans' `discover` tests.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Builtin;
@@ -57,6 +58,9 @@ impl ProbeFactory for Builtin {
     ) -> Result<Arc<dyn Sensor>, String> {
         if kind == monitorflow_snmp::KIND {
             return monitorflow_snmp::build(params);
+        }
+        if kind == monitorflow_snmp::CUSTOM_KIND {
+            return monitorflow_snmp::custom::build(params);
         }
         if kind == discover::KIND {
             return discover::build(params);
@@ -78,6 +82,7 @@ pub const PROBE_RUNS: &[&str] = &[
     "ping",
     "port",
     monitorflow_snmp::KIND,
+    monitorflow_snmp::CUSTOM_KIND,
     monitorflow_vmware::KIND,
 ];
 

@@ -160,6 +160,12 @@ fn builtin_runs_network_kinds_only() {
         .err()
         .unwrap()
         .contains("`host`"));
+    // Custom checks repeat like the groups (ADR-0157).
+    let mut custom = snmp.clone();
+    custom.remove("what");
+    custom.insert("oid1".into(), "1.3.6.1.2.1.1.3.0".into());
+    assert!(Builtin.build("snmp_custom", &custom).is_ok());
+    assert!(PROBE_RUNS.contains(&"snmp_custom"));
     let vmware = BTreeMap::from([
         ("host".to_string(), "192.0.2.9".to_string()),
         ("what".to_string(), "test".to_string()),

@@ -27,6 +27,7 @@
 //! and adds them to the check it sends a probe; [`SECRET_PARAMS`] are
 //! never stored with the check nor shown.
 
+pub mod custom;
 mod mibs;
 mod sensor;
 mod session;
@@ -34,7 +35,8 @@ mod session;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub use mibs::{Group, GROUPS};
+pub use custom::CUSTOM_KIND;
+pub use mibs::{Group, Val, GROUPS};
 pub use sensor::SnmpSensor;
 
 use monitorflow_sensors::Sensor;
