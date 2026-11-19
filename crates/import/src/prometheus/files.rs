@@ -43,6 +43,7 @@ pub fn collect(files: &[File]) -> Result<Collected, ReadError> {
                     .extend(config.mute_time_intervals);
             }
             Kind::Blackbox(config) => collected.modules.extend(config.modules),
+            Kind::Snmp(modules) => collected.snmp_modules.extend(modules),
             Kind::FileSd(groups) => discovery.push((file.name.clone(), groups)),
         }
     }
