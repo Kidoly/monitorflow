@@ -37,6 +37,15 @@ impl Kind {
             Self::Ldap => "ldap",
         }
     }
+
+    /// The kind of `identity_providers.kind`: `ldap`, else OpenID Connect.
+    pub fn of_column(kind: &str) -> Self {
+        if kind == "ldap" {
+            Self::Ldap
+        } else {
+            Self::Oidc
+        }
+    }
 }
 
 /// The settings of a provider, by kind.

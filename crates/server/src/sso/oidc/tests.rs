@@ -162,6 +162,19 @@ fn discovery_is_checked() {
         plain.check(&plain.issuer.clone()),
         Err(OidcError::NotHttps("token endpoint"))
     );
+    for odd in [
+        "https://id.example.com/auth\n",
+        "https://id.example.com/a\u{1}",
+        "https://id.example.com/é",
+    ] {
+        let mut odd_endpoint = discovery();
+        odd_endpoint.authorization_endpoint = odd.into();
+        assert_eq!(
+            odd_endpoint.check(&odd_endpoint.issuer.clone()),
+            Err(OidcError::NotHttps("authorization endpoint")),
+            "{odd:?}"
+        );
+    }
     let mut no_pkce = discovery();
     no_pkce.code_challenge_methods_supported = Some(vec!["plain".into()]);
     assert_eq!(
