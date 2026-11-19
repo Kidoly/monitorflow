@@ -33,6 +33,7 @@ ENROLL_PORT=${MF_E2E_ENROLL_PORT:-17445}
 MIRROR_PORT=${MF_E2E_MIRROR_PORT:-17480}
 API=http://127.0.0.1:$API_PORT
 PASSWORD=e2e-import-password-2026
+AGENT_NAME=${MF_E2E_AGENT_NAME:-mf-import-e2e-agent}
 DEFAULT_CUSTOMER=00000000-0000-0000-0000-000000000001
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -157,7 +158,7 @@ files_request() { # source, then files
 
 if [[ $WHICH == all || $WHICH == zabbix ]]; then
     step "zabbix"
-    ZBX_OUT=$HERE/zabbix/out
+    ZBX_OUT=${MF_E2E_ZBX_OUT:-$HERE/zabbix/out}
     [[ -f $ZBX_OUT/token ]] || fail "run deploy/import-test/zabbix/setup.sh first"
     for format in yaml xml json; do
         files=("$ZBX_OUT"/*."$format")
@@ -191,6 +192,41 @@ if [[ $WHICH == all || $WHICH == zabbix ]]; then
     get /api/notifications/channels | jq -e '[.channels[] | select(.kind == "email" or .kind == "webhook")] | length > 0' >/dev/null \
         || fail "zabbix: no channel"
     ok "zabbix: silences and channels"
+    # Richer triggers (ADR-0153): what each became, from the preview of the
+    # export and the rows created.
+    preview=$WORK/zabbix-files.preview.json
+    item_of() { jq -c --arg n "$1" '[.items[] | select(.kind == "threshold" and (.origin.name | contains($n)))][0]' "$preview"; }
+    for name in "Load high for 15 minutes" \
+        "No processor data" "Busy and loaded" "PostgreSQL port check silent"; do
+        [[ $(item_of "$name" | jq -r .list) == exact ]] || { item_of "$name"; fail "zabbix: $name is not exact"; }
+    done
+    [[ $(item_of "Load jumped" | jq -r .note.code) == zabbix_change ]] || { item_of "Load jumped"; fail "zabbix: Load jumped"; }
+    # Two forecasts of one disk: the first moves exactly, the other says
+    # which took the measure (one rule of each kind per measure).
+    disk=$(for n in "Root file system full in 3 days" "Root file system above 95% within a day"; do item_of "$n" | jq -r '.list + " " + (.note.code // "")'; done | sort | tr '\n' '|')
+    [[ $disk == "exact |not_movable kind_taken|" ]] || fail "zabbix: the two disk forecasts give $disk"
+    case $(item_of "Processor this hour" | jq -r '.list + " " + .note.code') in
+        "approximated zabbix_trend" | "not_movable kind_taken") ;;
+        *) item_of "Processor this hour"; fail "zabbix: Processor this hour" ;;
+    esac
+    ok "zabbix: richer triggers are exact, change approximated, a second window of a measure says why it stays"
+    kinds_of() {
+        local id; id=$(get "/api/servers?limit=500" | jq -r --arg h "$1" '.servers[] | select(.peer_id == $h) | .id' | head -1)
+        get "/api/servers/$id/thresholds" | jq -c '[.entries[] | {metric, instance, kind, function, window_s, target, n: (.conditions | length)}]'
+    }
+    web_kinds=$(kinds_of web-01); db_kinds=$(kinds_of db-01)
+    echo "$web_kinds" >"$WORK/zabbix-web-01-thresholds.json"; echo "$db_kinds" >"$WORK/zabbix-db-01-thresholds.json"
+    jq -e '.[] | select(.metric == "monitorflow_disk_used_ratio" and .instance == "/" and .kind == "forecast"
+        and (.target == 1 or .target == 0.95))' <<<"$web_kinds" >/dev/null || fail "zabbix: no disk forecast on web-01"
+    jq -e '.[] | select(.metric == "monitorflow_cpu_load1" and .kind == "window" and .function == "avg" and .window_s == 900)' \
+        <<<"$web_kinds" >/dev/null || fail "zabbix: no load window on web-01"
+    jq -e '.[] | select(.metric == "monitorflow_cpu_usage_ratio" and .kind == "nodata")' <<<"$web_kinds" >/dev/null \
+        || fail "zabbix: no no-data rule on web-01"
+    jq -e '.[] | select(.metric == "monitorflow_cpu_load5" and .kind == "value" and .n == 1)' \
+        <<<"$db_kinds" >/dev/null || fail "zabbix: Busy and loaded is not a rule with a condition"
+    jq -e '.[] | select(.metric == "monitorflow_port_5432_up" and .kind == "nodata")' <<<"$db_kinds" >/dev/null \
+        || fail "zabbix: no no-data rule on the PostgreSQL port check"
+    ok "zabbix: forecasts, windows, no data and conditions created as rules of their kind"
 fi
 
 if [[ $WHICH == all || $WHICH == prometheus ]]; then
@@ -198,6 +234,25 @@ if [[ $WHICH == all || $WHICH == prometheus ]]; then
     PROM_DIR=$HERE/prometheus/config
     mapfile -t prom_files < <(find "$PROM_DIR" -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.json' -o -name '*.rules' \) | sort)
     import_and_check prometheus-files "$(files_request prometheus "${prom_files[@]}")"
+    # Richer rules (ADR-0153), from richer-alerts.yml.
+    preview=$WORK/prometheus-files.preview.json
+    rule_item() { jq -c --arg n "$1" '[.items[] | select(.origin.name == $n)][0]' "$preview"; }
+    for name in LoadHighFor15Minutes MemoryLowAllWindow LoadJumped NodeLoadMissing BusyAndLoaded; do
+        [[ $(rule_item "$name" | jq -r .list) == exact ]] || { rule_item "$name"; fail "prometheus: $name is not exact"; }
+    done
+    [[ $(rule_item LoadTwiceLastWeek | jq -r .list) == exact ]] || { rule_item LoadTwiceLastWeek; fail "prometheus: LoadTwiceLastWeek"; }
+    # Its condition reads free space as space used, as every disk rule does.
+    [[ $(rule_item DiskFullIn4Hours | jq -r '.list + " " + .note.code') == "approximated disk_free_as_used" ]] \
+        || { rule_item DiskFullIn4Hours; fail "prometheus: DiskFullIn4Hours"; }
+    jq -e '.create.kind == "forecast" and .create.target == 1 and .create.critical == 14400 and (.create.conditions | length) == 1' \
+        <<<"$(rule_item DiskFullIn4Hours)" >/dev/null || { rule_item DiskFullIn4Hours; fail "prometheus: DiskFullIn4Hours is not a forecast with a condition"; }
+    jq -e '.create.kind == "compare" and .create.function == "ratio" and .create.offset_s == 604800 and .create.window_s == 3600' \
+        <<<"$(rule_item LoadTwiceLastWeek)" >/dev/null || fail "prometheus: LoadTwiceLastWeek is not a comparison with last week"
+    jq -e '.create.kind == "nodata" and .create.critical == 600' <<<"$(rule_item NodeLoadMissing)" >/dev/null \
+        || fail "prometheus: NodeLoadMissing is not no data after 10 minutes"
+    jq -e '.create.kind == "window" and .create.function == "max"' <<<"$(rule_item MemoryLowAllWindow)" >/dev/null \
+        || fail "prometheus: MemoryLowAllWindow is not the highest available over the window"
+    ok "prometheus: windows, a comparison with last week, a forecast, absent and and map to richer rules"
     import_and_check prometheus-api "$(jq -n --arg site "$SITE" '{source: "prometheus", site_id: $site,
         connection: {url: "http://127.0.0.1:19090", alertmanager_url: "http://127.0.0.1:19093"}}')"
     check_server web-01 "" monitorflow_cpu_usage_ratio
@@ -232,10 +287,10 @@ data_dir = "/agent/data"
 enrollment_token = "$KEY"
 heartbeat_interval = 10
 EOF
-docker rm -f mf-import-e2e-agent >/dev/null 2>&1 || true
+docker rm -f $AGENT_NAME >/dev/null 2>&1 || true
 # The agent of this checkout, run by the host's own loader and libraries:
 # the container gives it the host name web-01 and nothing else.
-docker run -d --name mf-import-e2e-agent --hostname web-01 --user "$(id -u):$(id -g)" \
+docker run -d --name $AGENT_NAME --hostname web-01 --user "$(id -u):$(id -g)" \
     -v "$AGENT_BIN:/agent/monitorflow-agent:ro" -v "$WORK/agent.toml:/agent/agent.toml:ro" \
     -v "$WORK/agent:/agent/data" -v /usr/lib:/hostlib:ro \
     debian:12 /hostlib/ld-linux-x86-64.so.2 --library-path /hostlib /agent/monitorflow-agent --config /agent/agent.toml >/dev/null
@@ -244,7 +299,7 @@ for _ in $(seq 60); do
     [[ $state == "false online " ]] && break
     sleep 2
 done
-[[ $state == "false online " ]] || { docker logs --tail 30 mf-import-e2e-agent; fail "web-01 was not taken over ($state)"; }
+[[ $state == "false online " ]] || { docker logs --tail 30 $AGENT_NAME; fail "web-01 was not taken over ($state)"; }
 N_AFTER=$(get "/api/servers/$WEB/sensor_configs" | jq '.entries | length')
 [[ $N_AFTER == "$N_BEFORE" ]] || fail "web-01 had $N_BEFORE checks, now $N_AFTER"
 [[ $(get "/api/servers?limit=500" | jq '[.servers[] | select(.hostname == "web-01")] | length') == 1 ]] || fail "a second web-01 appeared"
@@ -266,4 +321,4 @@ ok "undo removed what it made and kept web-01"
 
 echo
 echo "All passed. Server: $API (admin / $PASSWORD), log in $WORK/server.log."
-echo "Stop: kill \$(cat $WORK/server.pid); docker rm -f mf-import-e2e-agent"
+echo "Stop: kill \$(cat $WORK/server.pid); docker rm -f $AGENT_NAME"

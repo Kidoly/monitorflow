@@ -49,7 +49,8 @@ fn field(value: &str) -> String {
 }
 
 fn number(value: f64) -> String {
-    let rounded = (value * 1000.0).round() / 1000.0;
+    // Plus zero: -0.0 would be written "-0".
+    let rounded = (value * 1000.0).round() / 1000.0 + 0.0;
     format!("{rounded}")
 }
 
@@ -165,5 +166,6 @@ mod tests {
         assert_eq!(field("-12.5"), "-12.5");
         assert_eq!(number(99.12345), "99.123");
         assert_eq!(number(3600.0), "3600");
+        assert_eq!(number(-0.0), "0");
     }
 }

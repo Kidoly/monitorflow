@@ -526,11 +526,10 @@ pub fn render(report: &Report, zone: Tz, language: Language) -> Vec<u8> {
     write(pages, title, &period)
 }
 
-fn summary(doc: &mut Doc, report: &Report) {
-    let lang = doc.language;
+/// The summary of `report` in a few sentences, for the PDF and the email.
+pub fn summary_text(report: &Report, lang: Language) -> String {
     let d = |n: f64| words::duration(n, lang);
     let s = &report.summary;
-    doc.heading(doc.t("Summary", "Résumé"));
     let mut text = match lang {
         Language::En => format!(
             "{} watched over this period.",
@@ -607,6 +606,13 @@ fn summary(doc: &mut Doc, report: &Report) {
             ),
         });
     }
+    text
+}
+
+fn summary(doc: &mut Doc, report: &Report) {
+    let lang = doc.language;
+    doc.heading(doc.t("Summary", "Résumé"));
+    let text = summary_text(report, lang);
     doc.paragraph(&text, INK);
     if report.services.is_empty() {
         return;
