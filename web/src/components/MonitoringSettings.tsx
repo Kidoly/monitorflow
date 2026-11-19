@@ -9,6 +9,7 @@ import {
   type ConfigOwner,
   type EffectiveSensor,
   type EffectiveThreshold,
+  type RecommendedThreshold,
   type SensorConfigEntry,
   api,
   describeError,
@@ -18,21 +19,18 @@ import {
   type CheckField,
   type CheckType,
   DEVICE_CHECK_TYPES,
-  type FormErrors,
   type Shape,
-  type ThresholdForm,
   SEVERITIES,
   checkErrors,
   checkRequests,
   checkTitle,
-  describeThreshold,
   formOf,
   saveCheckInterval,
   saveThreshold,
   shapeFor,
-  thresholdRequest,
 } from "@/lib/alerts";
 import { type CatalogueEntry, CATALOGUE, entriesFor, mostUsed, pluginEntries } from "@/lib/catalogue";
+import { type RuleErrors, type RuleForm, describeRule, formOfRule, kindOf, requestOf, ruleRequest } from "@/lib/rules";
 import { every, slowAlertNote } from "@/lib/intervals";
 import { METRIC_PREFIX, sensorInterval } from "@/lib/metrics";
 import { siteHref } from "@/lib/routes";
@@ -46,6 +44,7 @@ import { Label } from "@/components/ui/StatusLabel";
 
 import { ProbeSelect, probeLabel, probeValue, useProbes } from "./AddDevice";
 import { CheckRecommendations } from "./CheckRecommendations";
+import { ConditionFields, KindFields, KindSelect, Recommendations, RulePreview } from "./RuleEditor";
 import { CheckCatalogue } from "./CheckCatalogue";
 import { type Inherit, IntervalControl, IntervalSelect } from "./IntervalSelect";
 
@@ -59,6 +58,8 @@ export type Target =
 
 interface Data {
   thresholds: EffectiveThreshold[];
+  /** Rules MonitorFlow suggests for the site (ADR-0153). */
+  recommended: RecommendedThreshold[];
   sensors: EffectiveSensor[];
   /** The target's own rows, for the checks it turned off. */
   rows: SensorConfigEntry[];
@@ -73,8 +74,8 @@ const siteOwner = (target: Target): ConfigOwner => ({ kind: "sites", id: target.
 
 async function load(target: Target, signal: AbortSignal): Promise<Data> {
   const server = target.kind === "server";
-  const [thresholds, effective, rows, site] = await Promise.all([
-    (server ? api.serverThresholds(target.id, signal) : api.siteThresholds(target.id, signal)).then((t) => t.thresholds),
+  const [{ thresholds, recommended }, effective, rows, site] = await Promise.all([
+    server ? api.serverThresholds(target.id, signal) : api.siteThresholds(target.id, signal),
     server ? api.serverSensors(target.id, signal) : api.siteSensors(target.id, signal),
     api.sensorRows(ownerOf(target), signal).then((r) => r.entries),
     server ? api.siteSensors(target.siteId, signal).then((s) => s.sensors) : null,
@@ -82,6 +83,7 @@ async function load(target: Target, signal: AbortSignal): Promise<Data> {
   const { check_interval_ms, check_interval_origin } = effective;
   return {
     thresholds,
+    recommended: recommended ?? [],
     sensors: effective.sensors,
     rows,
     interval: { check_interval_ms, check_interval_origin },
@@ -132,7 +134,8 @@ function Origin({ target, origin }: { target: Target; origin: EffectiveThreshold
 function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Data; canEdit: boolean; onChanged: () => void }) {
   const titleId = useId();
   const [editing, setEditing] = useState<string | null>(null);
-  const keyOf = (t: EffectiveThreshold) => `${t.metric}/${t.instance ?? "*"}`;
+  const keyOf = (t: EffectiveThreshold) => `${t.metric}/${t.instance ?? "*"}/${kindOf(t)}`;
+  const metrics = [...new Set(data.thresholds.map((t) => t.metric))].sort();
   return (
     <section className={admin.section} aria-labelledby={titleId}>
       <div className={admin.sectionHead}>
@@ -145,6 +148,13 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
             : t("monitoring.siteDefaults", { site: target.siteName })}
         </span>
       </div>
+      <Recommendations
+        recommended={data.recommended}
+        site={siteOwner(target)}
+        siteName={target.siteName}
+        canEdit={canEdit}
+        onChanged={onChanged}
+      />
       {data.thresholds.length === 0 ? (
         <p className={admin.sectionNote}>{t("monitoring.noAlerts")}</p>
       ) : (
@@ -156,7 +166,7 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
               <li key={key} className={styles.item}>
                 <div className={styles.row}>
                   <span className={cx(styles.text, !rule.enabled && admin.dim)}>
-                    {describeThreshold(shape, rule)}
+                    {describeRule(shape, rule)}
                     {rule.enabled && <SlowNote durationS={rule.duration_s} intervalS={sensorInterval(data.sensors, rule.metric)} />}
                   </span>
                   <Origin target={target} origin={rule.origin} />
@@ -175,6 +185,7 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
                     rule={rule}
                     shape={shape}
                     intervalS={sensorInterval(data.sensors, rule.metric)}
+                    metrics={metrics}
                     onDone={() => {
                       setEditing(null);
                       onChanged();
@@ -280,12 +291,17 @@ function AlertActions({
   );
 }
 
-/** The inline form under an alert: its levels or severity, its duration, and where it applies. */
+/**
+ * The inline form under an alert: what it judges (ADR-0153), its levels or
+ * severity, its duration, conditions joined with "and", where it applies,
+ * and a live preview of what it would have done.
+ */
 function ThresholdEditor({
   target,
   rule,
   shape,
   intervalS,
+  metrics,
   onDone,
   onCancel,
 }: {
@@ -294,15 +310,19 @@ function ThresholdEditor({
   shape: Shape;
   /** How often the check behind it runs, if known. */
   intervalS: number | undefined;
+  /** Metrics of the target, for conditions. */
+  metrics: string[];
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [form, setForm] = useState<ThresholdForm>(() => formOf(shape, rule));
+  const [form, setForm] = useState<RuleForm>(() => formOfRule(shape, rule, formOf(shape, rule)));
   const [scope, setScope] = useState<"own" | "site">("own");
-  const [errors, setErrors] = useState<FormErrors>({});
+  const [errors, setErrors] = useState<RuleErrors>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const owner = scope === "site" ? siteOwner(target) : ownerOf(target);
+  const result = useMemo(() => ruleRequest(shape, rule, form), [shape, rule, form]);
+  const another = form.kind !== kindOf(rule);
 
   async function write(request: Parameters<typeof saveThreshold>[1]) {
     setBusy(true);
@@ -319,7 +339,6 @@ function ThresholdEditor({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const result = thresholdRequest(shape, rule, form);
     if ("errors" in result) {
       setErrors(result.errors);
       return;
@@ -328,56 +347,85 @@ function ThresholdEditor({
     void write(result.request);
   }
 
-  const set = (key: keyof ThresholdForm) => (value: string) => setForm((f) => ({ ...f, [key]: value }));
+  const set = <K extends keyof RuleForm>(key: K, value: RuleForm[K]) => setForm((f) => ({ ...f, [key]: value }));
+  const field = (key: "warning" | "critical" | "minutes") => (value: string) => set(key, value);
   const unit = shape.type === "percent" ? "%" : shape.type === "number" ? shape.unit : undefined;
+  const simple = form.kind === "value" || form.kind === "window";
+  const preview = target.kind === "server" ? ({ kind: "server", id: target.id } as const) : ({ kind: "site", id: target.id } as const);
   return (
     <form className={styles.editor} onSubmit={submit} noValidate aria-label={t("monitoring.editAlert")}>
       <div className={styles.fields}>
-        {shape.type === "event" ? (
-          <label className={admin.field}>
-            {t("monitoring.raise")}
-            <select
-              className={fieldClass}
-              value={form.severity}
-              onChange={(e) => set("severity")(e.target.value as Severity)}
-            >
-              {SEVERITIES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          <>
-            <Field
-              label={t("monitoring.warningAt")}
-              unit={unit}
-              value={form.warning}
-              onChange={set("warning")}
-              error={errors.warning}
-              placeholder={t("monitoring.noWarning")}
-            />
-            <Field
-              label={t("monitoring.criticalAt")}
-              unit={unit}
-              value={form.critical}
-              onChange={set("critical")}
-              error={errors.critical}
-              placeholder={t("monitoring.noCritical")}
-            />
-          </>
-        )}
-        <Field
-          label={t("monitoring.forAtLeast")}
-          unit={t("format.unit.minute")}
-          value={form.minutes}
-          onChange={set("minutes")}
-          error={errors.minutes}
-          placeholder={t("monitoring.firstBadValue")}
+        <KindSelect
+          shape={shape}
+          value={form.kind}
+          onChange={(kind) => {
+            setErrors({});
+            setForm(formOfRule(shape, rule, formOf(shape, rule), kind));
+          }}
         />
+        <KindFields shape={shape} form={form} set={set} errors={errors} />
       </div>
-      <SlowNote durationS={Math.max(0, Number(form.minutes) || 0) * 60} intervalS={intervalS} />
+      {another && <p className={admin.dim}>{t("rules.editor.addsAnother")}</p>}
+      {simple && (
+        <div className={styles.fields}>
+          {shape.type === "event" && form.kind === "value" ? (
+            <label className={admin.field}>
+              {t("monitoring.raise")}
+              <select
+                className={fieldClass}
+                value={form.severity}
+                onChange={(e) => set("severity", e.target.value as Severity)}
+              >
+                {SEVERITIES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <>
+              <Field
+                label={t("monitoring.warningAt")}
+                unit={unit}
+                value={form.warning}
+                onChange={field("warning")}
+                error={errors.warning}
+                placeholder={t("monitoring.noWarning")}
+              />
+              <Field
+                label={t("monitoring.criticalAt")}
+                unit={unit}
+                value={form.critical}
+                onChange={field("critical")}
+                error={errors.critical}
+                placeholder={t("monitoring.noCritical")}
+              />
+            </>
+          )}
+        </div>
+      )}
+      {form.kind !== "nodata" && (
+        <>
+          <div className={styles.fields}>
+            <Field
+              label={t("monitoring.forAtLeast")}
+              unit={t("format.unit.minute")}
+              value={form.minutes}
+              onChange={field("minutes")}
+              error={errors.minutes}
+              placeholder={t("monitoring.firstBadValue")}
+            />
+          </div>
+          <SlowNote durationS={Math.max(0, Number(form.minutes) || 0) * 60} intervalS={intervalS} />
+          <ConditionFields
+            metrics={metrics}
+            conditions={form.conditions}
+            onChange={(conditions) => set("conditions", conditions)}
+            error={errors.conditions}
+          />
+        </>
+      )}
       {target.kind === "server" && (
         <fieldset className={styles.scope}>
           <legend>{t("monitoring.applyTo")}</legend>
@@ -392,6 +440,7 @@ function ThresholdEditor({
           </label>
         </fieldset>
       )}
+      <RulePreview target={preview} request={"request" in result ? result.request : null} metric={rule.metric} />
       <div className={styles.buttons}>
         <Button variant="k" type="submit" disabled={busy}>
           {busy ? t("monitoring.saving") : t("monitoring.save")}
@@ -404,21 +453,7 @@ function ThresholdEditor({
             {failure}
           </span>
         )}
-        <TurnAlertOff
-          disabled={busy}
-          onConfirm={() =>
-            write({
-              metric: rule.metric,
-              instance: rule.instance,
-              comparison: rule.comparison,
-              warning: rule.warning,
-              critical: rule.critical,
-              duration_s: rule.duration_s,
-              hysteresis: rule.hysteresis,
-              enabled: false,
-            })
-          }
-        />
+        {!another && <TurnAlertOff disabled={busy} onConfirm={() => write(requestOf(rule, false))} />}
       </div>
     </form>
   );

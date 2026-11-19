@@ -14,7 +14,7 @@ use super::openapi::ErrorBody;
 use super::{
     ai_commands, check_interval, commands, customers, logs, metrics, offline_alerts,
     package_sources, packages, proxmox, revoke, rollback, sensors, sites, sources, third_party,
-    thresholds,
+    threshold_preview, thresholds,
 };
 
 #[derive(OpenApi)]
@@ -27,7 +27,7 @@ use super::{
         site_check_interval, server_offline_alerts, site_offline_alerts, relay_offline_alerts,
         server_thresholds_effective, server_thresholds, create_server_threshold,
         site_thresholds_effective, site_thresholds, create_site_threshold,
-        update_threshold, delete_threshold,
+        update_threshold, delete_threshold, preview_server_threshold, preview_site_threshold,
         server_metrics, server_logs, revoke_server,
         server_proxmox, set_server_proxmox, clear_server_proxmox, server_proxmox_guests,
         server_packages, server_third_party, server_rollback, server_sources, configure_server_sources,
@@ -133,9 +133,19 @@ pub mod ex {
             "id": THRESHOLD, "site_id": SITE, "server_id": null,
             "metric": "monitorflow_memory_available_ratio", "instance": null,
             "comparison": "<", "warning": 0.15, "critical": 0.05,
-            "duration_s": 600, "hysteresis": 0.02, "enabled": true,
+            "duration_s": 600, "hysteresis": 0.02, "enabled": true, "kind": "value",
+            "function": null, "window_s": null, "offset_s": null, "target": null, "conditions": [],
             "created_at": "2026-11-02T10:20:00Z", "updated_at": "2026-11-02T10:20:00Z"
         })
+    }
+
+    /// The disk forecast MonitorFlow suggests (ADR-0153).
+    pub fn recommended() -> Value {
+        json!([{"key": "disk_forecast", "rule": {
+            "metric": "monitorflow_disk_used_ratio", "instance": null, "kind": "forecast",
+            "comparison": ">=", "warning": 259200.0, "critical": 86400.0, "duration_s": 0,
+            "hysteresis": 3600.0, "enabled": true, "window_s": 86400, "target": 1.0
+        }}])
     }
 
     /// Effective thresholds: the built-in ones, the memory one replaced by
@@ -147,8 +157,10 @@ pub mod ex {
                        critical: Value,
                        duration_s: u32| {
             json!({"origin": "default", "threshold_id": null, "metric": metric, "instance": instance,
-                   "enabled": true, "comparison": ">", "warning": warning, "critical": critical,
-                   "duration_s": duration_s, "hysteresis": 0.02})
+                   "enabled": true, "kind": "value", "comparison": ">", "warning": warning,
+                   "critical": critical, "duration_s": duration_s, "hysteresis": 0.02,
+                   "function": null, "window_s": null, "offset_s": null, "target": null,
+                   "conditions": []})
         };
         json!([
             builtin("monitorflow_cpu_usage_ratio", json!("total"), 0.9, Value::Null, 600),
@@ -156,8 +168,9 @@ pub mod ex {
             builtin("monitorflow_diskio_wait_seconds", Value::Null, 0.2, Value::Null, 600),
             {"origin": "site", "threshold_id": THRESHOLD,
              "metric": "monitorflow_memory_available_ratio", "instance": null, "enabled": true,
-             "comparison": "<", "warning": 0.15, "critical": 0.05, "duration_s": 600,
-             "hysteresis": 0.02}
+             "kind": "value", "comparison": "<", "warning": 0.15, "critical": 0.05,
+             "duration_s": 600, "hysteresis": 0.02, "function": null, "window_s": null,
+             "offset_s": null, "target": null, "conditions": []}
         ])
     }
 
@@ -185,6 +198,7 @@ pub mod ex {
                 "warning": 0.85, "critical": 0.95, "duration_s": 300, "hysteresis": 0.02
             },
             "silenced_until": null, "in_maintenance": false, "silenced": false,
+            "kind": "value", "expected_at": null,
             "acknowledged_by": null, "acknowledged_at": null,
             "can_acknowledge": true
         })
@@ -516,7 +530,16 @@ macro_rules! threshold_rules {
         "`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or \
 `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` \
 and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is \
-wrong; a second row with the same `metric` and `instance` for the same site or server is 409.\n\n\
+wrong; a second row with the same `metric`, `instance` and `kind` for the same site or server is 409.\n\n\
+`kind` says what is judged (ADR-0153), with only the fields it uses: `value` (the default) the sample; \
+`window` a `function` (`avg`, `min`, `max`, `change`, `rate` per second) over `window_s` (60 to 86400); \
+`compare` the average over `window_s` (300 to 86400) against `offset_s` earlier (86400 or 604800), as a \
+`ratio` or a `difference`; `forecast` the seconds left until the value reaches `target` on the side \
+`comparison` names, learned over `window_s` (3600 to 604800), with `warning` and `critical` in seconds left \
+(critical the shorter); `nodata` the seconds since the last sample arrived, with `warning` and `critical` \
+in seconds (60 to 604800), no `duration_s` and no `comparison` but `>`. Up to two `conditions` joined with \
+\"and\" read other metrics of the same server (not for `nodata`). Use `POST .../thresholds/preview` to see \
+what a rule would have done.\n\n\
 Audited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change \
 within seconds; an open incident's `threshold` still shows the values it opened with."
     };
@@ -526,14 +549,16 @@ within seconds; an open incident's `threshold` still shows the values it opened 
     summary = "Get a server's effective thresholds",
     description = "The thresholds MonitorFlow checks the server's metrics against: the built-in ones \
 overlaid with its site's rows, then its own, each with where it comes from. Muted ones are listed with \
-`enabled: false`.\n\n\
+`enabled: false`. One metric and instance can have one rule of each `kind`. `recommended` lists rules \
+MonitorFlow suggests for the site that nobody added or declined yet: post one to the site's thresholds to \
+add it, or the same with `enabled: false` to decline it.\n\n\
 **Who**: any role on the server's site. **Area**: `alerts`.",
     params(("id" = uuid::Uuid, Path, description = "The server")),
     responses(
         (status = 200, description = "The effective thresholds", body = thresholds::Effective,
             example = json!({
                 "server_id": ex::SERVER, "site_id": ex::SITE, "revision": 4,
-                "thresholds": ex::effective_thresholds()
+                "thresholds": ex::effective_thresholds(), "recommended": ex::recommended()
             })),
         (status = 404, description = "No such server, or outside the key's reach: `not_found`",
             body = ErrorBody),
@@ -572,6 +597,25 @@ it.\n\n\
         ("off" = (summary = "Turn the CPU threshold off for this server",
             value = json!({"metric": "monitorflow_cpu_usage_ratio", "instance": "total",
                            "comparison": ">", "enabled": false}))),
+        ("window" = (summary = "Warn on the load average over 15 minutes",
+            value = json!({"metric": "monitorflow_cpu_load1", "instance": "", "kind": "window",
+                           "function": "avg", "window_s": 900, "comparison": ">", "warning": 8}))),
+        ("forecast" = (summary = "Warn 3 days before /var is full",
+            value = json!({"metric": "monitorflow_disk_used_ratio", "instance": "/var",
+                           "kind": "forecast", "comparison": ">=", "target": 1, "window_s": 86400,
+                           "warning": 259200, "critical": 86400, "hysteresis": 3600}))),
+        ("compare" = (summary = "Twice last week's traffic",
+            value = json!({"metric": "monitorflow_net_received_bytes_per_second", "instance": "eth0",
+                           "kind": "compare", "function": "ratio", "window_s": 3600,
+                           "offset_s": 604800, "comparison": ">", "warning": 2}))),
+        ("nodata" = (summary = "Critical when the port check stops reporting for 10 minutes",
+            value = json!({"metric": "monitorflow_port_443_up", "instance": "", "kind": "nodata",
+                           "critical": 600}))),
+        ("and" = (summary = "Processor over 90% while the load is over 8",
+            value = json!({"metric": "monitorflow_cpu_usage_ratio", "instance": "total",
+                           "comparison": ">", "warning": 0.9, "duration_s": 300, "conditions": [
+                               {"metric": "monitorflow_cpu_load1", "comparison": ">", "value": 8}
+                           ]}))),
     )),
     responses(
         (status = 201, description = "The new row", body = thresholds::Entry,
@@ -598,7 +642,8 @@ built-in thresholds overlaid with the site's rows, muted ones included.\n\n\
     params(("id" = uuid::Uuid, Path, description = "The site")),
     responses(
         (status = 200, description = "The site's effective thresholds", body = thresholds::SiteEffective,
-            example = json!({"site_id": ex::SITE, "thresholds": ex::effective_thresholds()})),
+            example = json!({"site_id": ex::SITE, "thresholds": ex::effective_thresholds(),
+                             "recommended": ex::recommended()})),
         (status = 404, description = "No such site, or outside the key's reach: `not_found`",
             body = ErrorBody),
     ))]
@@ -643,6 +688,69 @@ key's areas: `api_key_scope`", body = ErrorBody),
 `conflict`", body = ErrorBody),
     ))]
 fn create_site_threshold() {}
+
+#[utoipa::path(post, path = "/api/v1/servers/{id}/thresholds/preview", tag = "thresholds",
+    summary = "Preview a threshold on a server",
+    description = "What a rule would have done to the server over the last `days` (1 to 7, 3 by default): \
+its history from the metrics store replayed through the same code MonitorFlow alerts with. For each series \
+the rule judges (at most 20), the judged value (the sample, the window's value, the ratio, the seconds left \
+or of silence; at most 300 points, the worst of each stretch) and the incidents it would have opened and \
+resolved, with their times. The rule is checked as when it is saved, and nothing is written or audited.\n\n\
+**Who**: any role on the server's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = threshold_preview::PreviewRequest, example = json!({
+        "days": 3,
+        "rule": {"metric": "monitorflow_cpu_load1", "instance": "", "kind": "window",
+                 "function": "avg", "window_s": 900, "comparison": ">", "warning": 4}
+    })),
+    responses(
+        (status = 200, description = "What the rule would have done", body = threshold_preview::ServerPreview,
+            example = json!({
+                "server_id": ex::SERVER, "from": 1763280000000_i64, "to": 1763539200000_i64, "days": 3,
+                "truncated": false,
+                "series": [{"instance": "", "points": [[1763452800000_i64, 2.1], [1763456400000_i64, 4.6]],
+                            "incidents": [{"severity": "warning", "opened_at": 1763456400000_i64,
+                                           "resolved_at": 1763460000000_i64, "peak_value": 4.6}]}]
+            })),
+        (status = 400, description = "The rule or `days` is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 502, description = "The metrics store did not answer: `metrics_unavailable`",
+            body = ErrorBody),
+    ))]
+fn preview_server_threshold() {}
+
+#[utoipa::path(post, path = "/api/v1/sites/{id}/thresholds/preview", tag = "thresholds",
+    summary = "Preview a threshold on a site",
+    description = "The same preview over up to 20 servers of the site, by name, with how many incidents \
+each would have had and when; `more_servers` says when the site has more. Points are left out. Nothing is \
+written or audited.\n\n\
+**Who**: any role on the site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    request_body(content = threshold_preview::PreviewRequest, example = json!({
+        "rule": {"metric": "monitorflow_disk_used_ratio", "kind": "forecast", "comparison": ">=",
+                 "target": 1, "window_s": 86400, "warning": 259200, "critical": 86400}
+    })),
+    responses(
+        (status = 200, description = "What the rule would have done", body = threshold_preview::SitePreview,
+            example = json!({
+                "site_id": ex::SITE, "from": 1763280000000_i64, "to": 1763539200000_i64, "days": 3,
+                "more_servers": false,
+                "servers": [{"server_id": ex::SERVER, "hostname": "web-1", "incidents": 1,
+                             "series": [{"instance": "/var", "points": [],
+                                         "incidents": [{"severity": "warning",
+                                                        "opened_at": 1763456400000_i64,
+                                                        "resolved_at": null, "peak_value": 201600.0}]}]}]
+            })),
+        (status = 400, description = "The rule or `days` is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 502, description = "The metrics store did not answer: `metrics_unavailable`",
+            body = ErrorBody),
+    ))]
+fn preview_site_threshold() {}
 
 #[utoipa::path(put, path = "/api/v1/thresholds/{id}", tag = "thresholds",
     summary = "Replace a threshold row",
