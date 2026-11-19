@@ -153,8 +153,21 @@ describe("DashboardPanel", () => {
             opened_at: new Date(WINDOW.at * 1000 - 600_000).toISOString(),
           },
         ],
+        unreachable: [
+          {
+            server_id: "s2",
+            hostname: "web-1",
+            because: { kind: "device", server_id: "d1", relay_id: null, name: "sw-core", site_id: "x", check: null },
+            incident_id: "i9",
+            since: new Date(WINDOW.at * 1000 - 300_000).toISOString(),
+          },
+        ],
       },
     );
+    // Behind a parent that is down, with no incident of its own (ADR-0152).
+    expect(screen.getByText("Unreachable")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "web-1" })).toHaveAttribute("href", "/servers/view?id=s2");
+    expect(screen.getByText("sw-core is down")).toBeInTheDocument();
     expect(screen.getByText("Critical")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Disk used /var" })).toHaveAttribute("href", "/incidents/view?id=i1");
     expect(screen.getByText("on db-1")).toBeInTheDocument();

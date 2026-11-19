@@ -162,7 +162,11 @@ fn incident_text(event: &str, details: &Value) -> String {
                     "{}: {place} is offline; the {n} servers behind it cannot report",
                     capitalized(severity)
                 ),
-                None => format!("{}: {place} is offline", capitalized(severity)),
+                None => format!(
+                    "{}: {place} is offline{}",
+                    capitalized(severity),
+                    behind(incident)
+                ),
             },
         };
     }
@@ -173,8 +177,26 @@ fn incident_text(event: &str, details: &Value) -> String {
             format!("Escalated to {severity}: {sensor} is {v} on {place}")
         }
         ("incident.escalated", None) => format!("Escalated to {severity}: {sensor} on {place}"),
-        (_, Some(v)) => format!("{}: {sensor} is {v} on {place}", capitalized(severity)),
-        (_, None) => format!("{}: {sensor} on {place}", capitalized(severity)),
+        (_, Some(v)) => format!(
+            "{}: {sensor} is {v} on {place}{}",
+            capitalized(severity),
+            behind(incident)
+        ),
+        (_, None) => format!(
+            "{}: {sensor} on {place}{}",
+            capitalized(severity),
+            behind(incident)
+        ),
+    }
+}
+
+/// What the dispatcher counted behind a parent that is down (ADR-0152):
+/// "; 14 behind it are unreachable", or nothing.
+fn behind(incident: &Value) -> String {
+    match incident.get("behind").and_then(Value::as_u64) {
+        Some(1) => "; 1 behind it is unreachable".into(),
+        Some(n) if n > 1 => format!("; {n} behind it are unreachable"),
+        _ => String::new(),
     }
 }
 
@@ -454,6 +476,29 @@ mod tests {
             WEB,
         );
         assert_eq!(resolved.text, "Resolved: load /var on web-1 (paris)");
+    }
+
+    #[test]
+    fn a_parent_says_what_is_behind_it() {
+        let mut details = incident("monitorflow_ping_up", "critical", Some(0.0));
+        details["incident"]["instance"] = "".into();
+        details["server"]["name"] = "sw-core".into();
+        details["incident"]["behind"] = 14.into();
+        let down = render(&event("incident.opened", details.clone()), WEB);
+        assert_eq!(
+            down.text,
+            "Critical: ping_up is 0 on sw-core (paris); 14 behind it are unreachable"
+        );
+        let mut offline = incident("offline", "critical", None);
+        offline["incident"]["behind"] = 1.into();
+        let down = render(&event("incident.opened", offline), WEB);
+        assert_eq!(
+            down.text,
+            "Critical: web-1 (paris) is offline; 1 behind it is unreachable"
+        );
+        // Its resolution says nothing of it.
+        let up = render(&event("incident.resolved", details), WEB);
+        assert_eq!(up.text, "Resolved: ping_up on sw-core (paris)");
     }
 
     #[test]

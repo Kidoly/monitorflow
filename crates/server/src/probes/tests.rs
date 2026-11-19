@@ -29,6 +29,7 @@ fn probes(kept: &Kept) -> (Probes, Writer<Series>) {
     let ingest = Ingest {
         metrics: Some(writer.queue()),
         events: None,
+        virt: None,
     };
     let pool = sqlx::PgPool::connect_lazy("postgres://localhost/unused").unwrap();
     (Probes::new(ProbeStore::new(pool), ingest, None), writer)

@@ -12,6 +12,9 @@ import {
   type BackupsView,
   type CertificateAuthorityView,
   type DashboardData,
+  type Dependency,
+  type DependencyEnd,
+  type DependencyPage,
   type EffectiveThreshold,
   type IncidentList,
   type Panel,
@@ -19,6 +22,7 @@ import {
   type Preferences,
   type PublicAddress,
   type RequestOptions,
+  type Server,
   type ServerDetail,
   type ServerSettings,
   type ServerUpdateView,
@@ -220,6 +224,17 @@ const ROUTES: [RegExp, Handler][] = [
       servers: SERVERS.filter((s) => s.relay_id === RELAY.id).map((s) => ({ id: s.id, peer_id: s.peer_id, hostname: s.hostname, status: s.status })),
       updates: [],
     };
+  }],
+  // Dependencies (ADR-0152): the demo's are its relay's, automatic.
+  [/^\/api\/dependencies$/, () => ({ dependencies: [] })],
+  [/^\/api\/servers\/([^/]+)\/dependencies$/, ([id]) => {
+    const me = server(id!);
+    return { ...noDependencies(), parents: me.relay_id === RELAY.id ? [behindRelay(me)] : [] };
+  }],
+  [/^\/api\/relays\/([^/]+)\/dependencies$/, ([id]) => {
+    if (id !== RELAY.id) throw new NotFound();
+    const behind = SERVERS.filter((s) => s.relay_id === RELAY.id);
+    return { ...noDependencies(), children: behind.map(behindRelay), behind: behind.map(endOf) };
   }],
   [/^\/api\/maintenance-windows$/, (_, q) => {
     const site = q.get("site_id") ?? SERVERS.find((s) => s.id === q.get("server_id"))?.site_id;
@@ -610,4 +625,19 @@ function autoUpdate(): AutoUpdateStatus {
     agents: { latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(SERVERS.length), sites, history },
     relays: { latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(1), sites: [sites[0]!], history: [] },
   };
+}
+
+/** A demo server as an end of a dependency. */
+function endOf(s: Server): DependencyEnd {
+  return { kind: s.kind === "device" ? "device" : "server", server_id: s.id, relay_id: null, name: s.hostname, site_id: s.site_id, check: null };
+}
+
+/** A demo server behind the demo relay, automatically. */
+function behindRelay(s: Server): Dependency {
+  const parent: DependencyEnd = { kind: "relay", server_id: null, relay_id: RELAY.id, name: RELAY.name, site_id: RELAY.site_id, check: null };
+  return { id: null, automatic: true, child: endOf(s), parent, created_at: null, created_by: null, can_change: false };
+}
+
+function noDependencies(): DependencyPage {
+  return { parents: [], children: [], behind: [], suggestions: [], unreachable: null, unreachable_checks: [], can_change: false };
 }

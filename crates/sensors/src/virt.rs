@@ -21,6 +21,28 @@ pub const MAX_LABEL: usize = 256;
 
 /// The kinds of objects.
 pub const KINDS: [&str; 4] = ["vm", "host", "cluster", "datastore"];
+/// The [`LABEL`] of the source's own `up` sample: the vCenter, ESXi or
+/// Hyper-V host as a whole.
+pub const SOURCE: &str = "source";
+
+/// The source's `up`: 1 when it was read, 0 with `reason` and `error`.
+/// `labels` describe what answered (product, version).
+pub fn up(failure: Option<(&str, &str)>, labels: &[(&str, &str)], now_ms: i64) -> Sample {
+    let mut sample =
+        Sample::metric("up", if failure.is_some() { 0.0 } else { 1.0 }).with_label(LABEL, SOURCE);
+    if let Some((reason, error)) = failure {
+        sample.labels.insert("reason".into(), cut(reason));
+        sample.labels.insert("error".into(), cut(error));
+    }
+    for (name, value) in labels {
+        let value = cut(value);
+        if !value.is_empty() {
+            sample.labels.insert((*name).to_owned(), value);
+        }
+    }
+    sample.timestamp_unix_ms = now_ms;
+    sample
+}
 
 /// An overall status as hypervisors report it: green, yellow, red.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -381,6 +403,21 @@ mod tests {
         samples
             .iter()
             .find(|s| s.sensor == sensor && s.instance == instance)
+    }
+
+    #[test]
+    fn up_says_why() {
+        let ok = up(
+            None,
+            &[("product", "VMware vCenter Server 8"), ("empty", "")],
+            5,
+        );
+        assert_eq!((ok.sensor.as_str(), ok.value), ("up", 1.0));
+        assert_eq!(ok.labels[LABEL], SOURCE);
+        assert!(!ok.labels.contains_key("empty") && !ok.labels.contains_key("reason"));
+        let down = up(Some(("login", "Login failure")), &[], 5);
+        assert_eq!(down.value, 0.0);
+        assert_eq!(down.labels["error"], "Login failure");
     }
 
     #[test]

@@ -111,7 +111,7 @@ impl VmwareSensor {
                     &inventory.datastores,
                     now,
                 );
-                samples.push(up(1.0, now, &content));
+                samples.push(up(now, &content));
                 samples
             }
             Err(failure) => {
@@ -121,11 +121,11 @@ impl VmwareSensor {
                     *session = Session::default();
                 }
                 tracing::debug!(host = %self.target.host, reason = failure.reason(), error = %failure.message(), "vCenter collection failed");
-                let mut sample = Sample::metric("up", 0.0)
-                    .with_label("reason", failure.reason())
-                    .with_label("error", virt::cut(&failure.message()));
-                sample.timestamp_unix_ms = now;
-                vec![sample]
+                vec![virt::up(
+                    Some((failure.reason(), &failure.message())),
+                    &[],
+                    now,
+                )]
             }
         }
     }
@@ -142,7 +142,7 @@ impl VmwareSensor {
             Ok(content) => content,
             Err(failure) => return vec![failed("answers", &failure)],
         };
-        let mut answers = up(1.0, chrono::Utc::now().timestamp_millis(), &content);
+        let mut answers = up(chrono::Utc::now().timestamp_millis(), &content);
         answers.sensor = "answers".into();
         out.push(answers);
         let Some(seen) = look.seen() else {
@@ -182,13 +182,16 @@ impl VmwareSensor {
 }
 
 /// `up` with what answers.
-fn up(value: f64, now: i64, content: &ServiceContent) -> Sample {
-    let mut sample = Sample::metric("up", value)
-        .with_label("product", virt::cut(&content.full_name))
-        .with_label("version", virt::cut(&content.version))
-        .with_label("api_type", virt::cut(&content.api_type));
-    sample.timestamp_unix_ms = now;
-    sample
+fn up(now: i64, content: &ServiceContent) -> Sample {
+    virt::up(
+        None,
+        &[
+            ("product", &content.full_name),
+            ("version", &content.version),
+            ("api_type", &content.api_type),
+        ],
+        now,
+    )
 }
 
 fn failed(metric: &str, failure: &Failure) -> Sample {

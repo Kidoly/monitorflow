@@ -25,6 +25,7 @@ pub mod cpu;
 pub mod disk;
 pub mod diskio;
 pub mod eventlog;
+pub mod hyperv;
 pub mod log;
 pub mod memory;
 pub mod net;
