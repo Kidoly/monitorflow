@@ -19,26 +19,41 @@ impl fmt::Debug for OneTimeToken {
     }
 }
 
+/// 256 random bits as lowercase hex: the secret of a one-time link or of
+/// a session (`session::SessionToken`).
+pub(crate) fn random_hex() -> String {
+    let mut bytes = [0u8; TOKEN_BYTES];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .expect("the system random generator failed");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Whether `value` has the exact format [`random_hex`] produces.
+pub(crate) fn is_random_hex(value: &str) -> bool {
+    value.len() == 2 * TOKEN_BYTES
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// The SHA-256 of a secret, as stored instead of it.
+pub(crate) fn hash_of(secret: &str) -> Vec<u8> {
+    digest(&SHA256, secret.as_bytes()).as_ref().to_vec()
+}
+
 impl OneTimeToken {
     pub(crate) fn generate() -> Self {
-        let mut bytes = [0u8; TOKEN_BYTES];
-        SystemRandom::new()
-            .fill(&mut bytes)
-            .expect("the system random generator failed");
-        Self(bytes.iter().map(|b| format!("{b:02x}")).collect())
+        Self(random_hex())
     }
 
     /// Accepts only the exact format [`OneTimeToken::generate`] produces.
     pub(crate) fn parse(value: &str) -> Option<Self> {
-        let valid = value.len() == 2 * TOKEN_BYTES
-            && value
-                .bytes()
-                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-        valid.then(|| Self(value.to_owned()))
+        is_random_hex(value).then(|| Self(value.to_owned()))
     }
 
     pub(crate) fn hash(&self) -> Vec<u8> {
-        digest(&SHA256, self.0.as_bytes()).as_ref().to_vec()
+        hash_of(&self.0)
     }
 
     /// The secret itself, for the one response or log line that hands it

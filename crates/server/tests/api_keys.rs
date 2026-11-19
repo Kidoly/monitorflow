@@ -49,7 +49,14 @@ struct World {
 
 async fn world_with(pool: &PgPool, limits: v1::Limits) -> World {
     monitorflow_server::secrets::install_for_tests();
-    let mut state = ApiState::new(pool.clone(), Registry::default(), ApiSettings::default());
+    let mut state = ApiState::new(pool.clone(), Registry::default(), ApiSettings::default())
+        .with_enrollment(monitorflow_server::api::EnrollmentSettings {
+            ca_fingerprint: [7; 32],
+            server_names: vec!["mf.example".into()],
+            grpc_port: 7443,
+            enroll_port: 7445,
+            store_names: Vec::new(),
+        });
     state.api_key_limits = Arc::new(limits);
     let app = v1::app(state);
     let one = |sql: &'static str| sqlx::query_scalar::<_, Uuid>(sql);
@@ -517,6 +524,19 @@ db_tests! {
             .fetch_all(&pool).await.unwrap();
         assert_eq!(stored, [None]);
         assert!(!json_of(again).await.to_string().contains(&secret));
+    }
+
+    #[sqlx::test]
+    async fn a_token_made_with_a_key_is_audited_with_it(pool: PgPool) {
+        let w = world(&pool).await;
+        let (id, key) = w.make(&w.root, json!({ "name": "Deploy", "role": "administrator" })).await;
+        let request = json!({ "role": "agent", "peer_id": "web-09", "site_id": w.site_a, "ttl_s": 600 });
+        let (status, body) = w.key("POST", "/api/v1/tokens", &key, Some(request)).await;
+        assert_eq!(status, StatusCode::CREATED, "{}", body["error"]);
+        let details: Value = sqlx::query_scalar(
+            "SELECT details FROM audit_log WHERE action = 'enrollment_token.create'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(details["api_key"], json!(id));
     }
 
     #[sqlx::test]
