@@ -49,7 +49,7 @@ export function VmwareFields({
         <input
           className={fieldClass}
           type="password"
-          autoComplete="off"
+          autoComplete="new-password"
           value={value.password ?? ""}
           onChange={(e) => set({ password: e.target.value })}
         />

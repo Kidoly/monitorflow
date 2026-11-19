@@ -86,7 +86,7 @@ export function SnmpFields({
           <input
             className={fieldClass}
             type="password"
-            autoComplete="off"
+            autoComplete="new-password"
             value={value.community ?? ""}
             onChange={(e) => set({ community: e.target.value })}
           />
@@ -116,7 +116,7 @@ export function SnmpFields({
                 <input
                   className={fieldClass}
                   type="password"
-                  autoComplete="off"
+                  autoComplete="new-password"
                   value={value.auth_password ?? ""}
                   onChange={(e) => set({ auth_password: e.target.value })}
                 />
@@ -139,7 +139,7 @@ export function SnmpFields({
                   <input
                     className={fieldClass}
                     type="password"
-                    autoComplete="off"
+                    autoComplete="new-password"
                     value={value.priv_password ?? ""}
                     onChange={(e) => set({ priv_password: e.target.value })}
                   />

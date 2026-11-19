@@ -1,0 +1,14 @@
+.error {
+  padding: 0.5rem 0.75rem;
+  color: var(--bad);
+  background: var(--bad-bg);
+  border-radius: var(--radius-control);
+}
+
+.confirm {
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  background: var(--bad-bg);
+  border: 1px solid var(--bad);
+  border-radius: var(--radius-control);
+}

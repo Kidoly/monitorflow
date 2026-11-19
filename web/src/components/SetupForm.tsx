@@ -8,8 +8,10 @@ import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
 import { Logo } from "@/components/ui/Logo";
 import { t } from "@/i18n";
-import { ApiError, LOGIN_PATH, MIN_PASSWORD_LENGTH, api, describeError, isAbortError } from "@/lib/api";
+import { ApiError, LOGIN_PATH, api, describeError, isAbortError } from "@/lib/api";
 
+import { takeFragmentSecret } from "./fragmentSecret";
+import { NewPasswordFields } from "./NewPasswordFields";
 import styles from "./LoginForm.module.css";
 
 type Failure = { kind: "link" } | { kind: "mismatch" } | { kind: "other"; message: string };
@@ -30,16 +32,10 @@ export function SetupForm() {
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
 
-  // Read once: the effect strips the fragment, and may run twice in development.
   const secret = useRef<string | null>(null);
 
   useEffect(() => {
-    if (secret.current === null) {
-      secret.current = window.location.hash.slice(1);
-      // Keep the secret out of the history and of anything copied from the address bar.
-      if (secret.current) window.history.replaceState(null, "", window.location.pathname);
-    }
-    setToken(secret.current);
+    setToken(takeFragmentSecret(secret));
     const controller = new AbortController();
     api.setupStatus(controller.signal).then(
       (status) => (status.pending ? setReady(true) : router.replace(LOGIN_PATH)),
@@ -124,36 +120,13 @@ export function SetupForm() {
                 onChange={(e) => setUsername(e.target.value)}
               />
             </label>
-            <label className={styles.label}>
-              {t("auth.password")}
-              <input
-                className={styles.input}
-                name="password"
-                type="password"
-                autoComplete="new-password"
-                required
-                minLength={MIN_PASSWORD_LENGTH}
-                aria-describedby="password-hint"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
-            <p id="password-hint" className={styles.hint}>
-              {t("auth.passwordHint", { count: MIN_PASSWORD_LENGTH })}
-            </p>
-            <label className={styles.label}>
-              {t("auth.confirmPassword")}
-              <input
-                className={styles.input}
-                name="confirm"
-                type="password"
-                autoComplete="new-password"
-                required
-                aria-invalid={failure?.kind === "mismatch" || undefined}
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-              />
-            </label>
+            <NewPasswordFields
+              password={password}
+              confirm={confirm}
+              mismatch={failure?.kind === "mismatch"}
+              onPassword={setPassword}
+              onConfirm={setConfirm}
+            />
             <Button className={styles.submit} variant="k" size="large" type="submit" disabled={pending}>
               {pending ? t("auth.setup.creating") : t("auth.setup.create")}
             </Button>

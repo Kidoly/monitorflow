@@ -374,19 +374,3 @@ function What({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
   }
   return null;
 }
-
-/** Live status of a relay or attached agent, for the relay pages until their redesign. */
-export function StatusBadge({
-  server,
-}: {
-  server: Pick<Server, "status"> & { via_relay?: string | null; revoked_at?: string | null };
-}) {
-  const online = server.status === "online";
-  return (
-    <span className={online ? styles.online : styles.offline}>
-      {online ? t("fleet.online") : t("fleet.offline")}
-      {server.via_relay && ` ${t("fleet.via", { relay: server.via_relay })}`}
-      {server.revoked_at && t("fleet.revoked")}
-    </span>
-  );
-}
