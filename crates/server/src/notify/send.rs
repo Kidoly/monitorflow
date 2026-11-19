@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lettre::message::header::ContentType;
-use lettre::message::Mailbox;
+use lettre::message::{Mailbox, MessageBuilder};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
@@ -21,6 +21,9 @@ use super::{Channel, Destination, Email, Webhook};
 
 /// How long one delivery may take.
 pub const TIMEOUT: Duration = Duration::from_secs(15);
+/// How long sending one email may take, from the connection to the
+/// server's last answer: attachments can be large.
+pub const MAIL_TIMEOUT: Duration = Duration::from_secs(60);
 /// Port of SMTP over TLS from the first byte; others use STARTTLS.
 pub const SMTPS_PORT: u16 = 465;
 
@@ -216,13 +219,13 @@ pub async fn deliver(
     let secret = channel.secret.as_ref();
     match &channel.destination {
         Destination::Email(email) => {
-            let connect_to = if channel.public_only {
-                let addresses = public_addresses(&email.host, email.port).await?;
-                addresses.first().map(|a| a.ip().to_string())
-            } else {
-                None
-            };
-            send_email(email, connect_to, secret, message).await
+            let mail = envelope(email, message.subject.clone())?
+                .header(ContentType::TEXT_PLAIN)
+                .body(message.body.clone())
+                .map_err(|error| {
+                    SendError::new(format!("The email could not be built: {error}"))
+                })?;
+            send_mail(channel, email, mail).await
         }
         Destination::Webhook(webhook) => {
             refuse_private_literal(channel, &webhook.url)?;
@@ -453,12 +456,8 @@ fn transport(
     Ok(builder.build())
 }
 
-async fn send_email(
-    email: &Email,
-    connect_to: Option<String>,
-    password: Option<&Secret>,
-    message: &Message,
-) -> Result<(), SendError> {
+/// The start of an email from `email`'s sender to its recipients.
+fn envelope(email: &Email, subject: String) -> Result<MessageBuilder, SendError> {
     let from = if email.from.is_empty() {
         &email.username
     } else {
@@ -471,19 +470,50 @@ async fn send_email(
     };
     let mut builder = lettre::Message::builder()
         .from(mailbox(from)?)
-        .subject(message.subject.clone())
-        .header(ContentType::TEXT_PLAIN);
+        .subject(subject);
     for to in &email.to {
         builder = builder.to(mailbox(to)?);
     }
-    let mail = builder
-        .body(message.body.clone())
-        .map_err(|error| SendError::new(format!("The email could not be built: {error}")))?;
-    transport(email, connect_to, password)?
-        .send(mail)
-        .await
-        .map(drop)
-        .map_err(|error| SendError::new(smtp_error(email, &error)))
+    Ok(builder)
+}
+
+/// Sends `mail` through `email`, the destination of `channel` or a copy
+/// of it: to a public address of its host when the channel is limited to
+/// those, and within [`MAIL_TIMEOUT`].
+async fn send_mail(
+    channel: &Channel,
+    email: &Email,
+    mail: lettre::Message,
+) -> Result<(), SendError> {
+    let connect_to = if channel.public_only {
+        let addresses = public_addresses(&email.host, email.port).await?;
+        addresses.first().map(|a| a.ip().to_string())
+    } else {
+        None
+    };
+    let transport = transport(email, connect_to, channel.secret.as_ref())?;
+    within(MAIL_TIMEOUT, email, transport.send(mail)).await
+}
+
+/// `sending`, given up after `limit`: the transport's own timeout covers
+/// only the connection, and a server that never answers would hold the
+/// delivery, and every channel waiting on it, for ever.
+async fn within<T>(
+    limit: Duration,
+    email: &Email,
+    sending: impl std::future::Future<Output = Result<T, lettre::transport::smtp::Error>>,
+) -> Result<(), SendError> {
+    match tokio::time::timeout(limit, sending).await {
+        Ok(result) => result
+            .map(drop)
+            .map_err(|error| SendError::new(smtp_error(email, &error))),
+        Err(_) => Err(SendError::new(format!(
+            "No answer from {}:{} within {} seconds. Check the server and port, and that this server can reach it.",
+            email.host,
+            email.port,
+            limit.as_secs()
+        ))),
+    }
 }
 
 /// A file attached to an email.
@@ -515,42 +545,16 @@ pub async fn email_with_attachments(
     if !to.is_empty() {
         email.to = to.to_vec();
     }
-    let connect_to = if channel.public_only {
-        let addresses = public_addresses(&email.host, email.port).await?;
-        addresses.first().map(|a| a.ip().to_string())
-    } else {
-        None
-    };
-    let from = if email.from.is_empty() {
-        &email.username
-    } else {
-        &email.from
-    };
-    let mailbox = |address: &str| {
-        address
-            .parse::<Mailbox>()
-            .map_err(|_| SendError::new(format!("`{address}` is not an email address.")))
-    };
-    let mut builder = lettre::Message::builder()
-        .from(mailbox(from)?)
-        .subject(subject.to_owned());
-    for to in &email.to {
-        builder = builder.to(mailbox(to)?);
-    }
     let mut parts = MultiPart::mixed().singlepart(SinglePart::plain(body.to_owned()));
     for file in attachments {
         let kind = ContentType::parse(file.content_type)
             .map_err(|_| SendError::new("An attachment has no valid type."))?;
         parts = parts.singlepart(Part::new(file.name).body(file.body, kind));
     }
-    let mail = builder
+    let mail = envelope(&email, subject.to_owned())?
         .multipart(parts)
         .map_err(|error| SendError::new(format!("The email could not be built: {error}")))?;
-    transport(&email, connect_to, channel.secret.as_ref())?
-        .send(mail)
-        .await
-        .map(drop)
-        .map_err(|error| SendError::new(smtp_error(&email, &error)))
+    send_mail(channel, &email, mail).await
 }
 
 /// An SMTP failure in plain words.
@@ -611,6 +615,49 @@ mod tests {
         let url = refusing_server("disk full: é".into()).await;
         let response = reqwest::get(&url).await.unwrap();
         assert_eq!(error_body(response).await, "disk full: é");
+    }
+
+    #[tokio::test]
+    async fn a_mail_server_that_never_answers_is_given_up() {
+        // Accepts the connection and never sends its greeting.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let held = tokio::spawn(async move {
+            let mut open = Vec::new();
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                open.push(stream);
+            }
+        });
+        let email = Email {
+            host: "127.0.0.1".into(),
+            port,
+            username: String::new(),
+            from: "monitorflow@example.com".into(),
+            to: vec!["ops@example.com".into()],
+        };
+        let mail = || {
+            envelope(&email, "test".into())
+                .unwrap()
+                .body(String::from("test"))
+                .unwrap()
+        };
+        let transport = || transport(&email, None, None).unwrap();
+        // The transport's own timeout covers the connection only.
+        let alone = tokio::time::timeout(Duration::from_secs(2), transport().send(mail())).await;
+        assert!(alone.is_err(), "the transport gave up by itself");
+        let started = std::time::Instant::now();
+        let error = within(Duration::from_secs(1), &email, transport().send(mail()))
+            .await
+            .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            error
+                .message
+                .starts_with(&format!("No answer from 127.0.0.1:{port} within 1 seconds")),
+            "{error}"
+        );
+        held.abort();
     }
 
     #[test]
