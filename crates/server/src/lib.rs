@@ -35,4 +35,6 @@ pub mod sensor_config;
 pub mod snmp;
 pub mod sso;
 pub mod storage_tls;
+pub mod virt;
 pub mod vm_query;
+pub mod vmware;

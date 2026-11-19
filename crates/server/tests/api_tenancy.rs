@@ -2130,6 +2130,57 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "version": "v2c", "community": "c" }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        // VMware and Hyper-V (ADR-0156): another customer's device, server,
+        // site and virtual machines are not found, and a virtual machine is
+        // never tied to another customer's server.
+        ("GET", "/api/devices/{id}/vmware")
+        | ("PUT", "/api/devices/{id}/vmware")
+        | ("DELETE", "/api/devices/{id}/vmware")
+        | ("GET", "/api/servers/{id}/virtualization")
+        | ("POST", "/api/servers/{id}/hyperv") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "user": "u", "password": "p" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
+        ("POST", "/api/devices/vmware/test") => {
+            let body = json!({ "site_id": b.site, "address": "192.0.2.9", "vmware": {} });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("PUT", "/api/virtual-objects/{id}/server")
+        | ("POST", "/api/virtual-objects/{id}/install-agent") => {
+            let theirs: uuid::Uuid = sqlx::query_scalar(
+                "INSERT INTO virtual_objects (source_id, kind, instance) VALUES ($1, 'vm', 'theirs')
+                 ON CONFLICT (source_id, kind, instance) DO UPDATE SET key = '' RETURNING id",
+            )
+            .bind(b.server)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            let uri = path.replace("{id}", &theirs.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, Some(json!({ "server_id": null })))
+                    .await,
+                not_found,
+                "{uri}"
+            );
+            if method == "PUT" {
+                let ours: uuid::Uuid = sqlx::query_scalar(
+                    "INSERT INTO virtual_objects (source_id, kind, instance) VALUES ($1, 'vm', 'ours')
+                     ON CONFLICT (source_id, kind, instance) DO UPDATE SET key = '' RETURNING id",
+                )
+                .bind(a.server)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+                let uri = path.replace("{id}", &ours.to_string());
+                let body = Some(json!({ "server_id": b.server }));
+                assert_eq!(
+                    ctx.status(method, &uri, body).await,
+                    StatusCode::BAD_REQUEST,
+                    "{uri}"
+                );
+            }
+        }
         ("PUT", "/api/devices/{id}") => {
             let uri = path.replace("{id}", &b.server.to_string());
             let body = Some(json!({ "address": "192.0.2.9" }));

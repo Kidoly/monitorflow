@@ -229,7 +229,10 @@ db_tests! {
                 "user_contacts",
                 "user_preferences",
                 "user_roles",
-                "users"
+                "users",
+                "virtual_objects",
+                "virtual_sources",
+                "vmware_credentials"
             ]
         );
     }

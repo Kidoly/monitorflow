@@ -651,6 +651,75 @@ export interface DeviceRequest {
   snmp?: SnmpCredentialsRequest;
   /** The kind of device whose SNMP checks and alerts it gets. */
   template?: string;
+  /** For a vCenter or ESXi host (ADR-0156): its `vmware` check and alerts come with it. */
+  vmware?: VmwareCredentialsRequest;
+}
+
+/** vCenter or ESXi credentials as sent; what is left out keeps the stored value (ADR-0156). */
+export interface VmwareCredentialsRequest {
+  port?: number;
+  user?: string;
+  password?: string;
+  /** A confirmed certificate's SHA-256; "" goes back to the roots. */
+  fingerprint?: string;
+}
+
+/** A device's vCenter credentials, never the password. */
+export interface VmwareCredentials {
+  port: number;
+  user: string;
+  fingerprint: string | null;
+  password_set: boolean;
+  updated_at: string;
+}
+
+/** What a vCenter or ESXi host answered to a test. */
+export interface VmwareTested {
+  answers: boolean;
+  error: string | null;
+  product: string | null;
+  version: string | null;
+  api_type: string | null;
+  certificate: {
+    fingerprint: string;
+    trusted: boolean;
+    by_roots: boolean;
+    subject: string;
+    not_after: string | null;
+  } | null;
+  /** null when not tried: no credentials, or a certificate not trusted yet. */
+  login: boolean | null;
+  objects: Record<string, number>;
+  probe: string;
+}
+
+/** One host, cluster, virtual machine or datastore of a source. */
+export interface VirtualObject {
+  id: string;
+  kind: "vm" | "host" | "cluster" | "datastore";
+  name: string;
+  key: string;
+  details: Record<string, string>;
+  metrics: Record<string, number>;
+  collected_at: string;
+  seen_at: string;
+  stale: boolean;
+  server: { id: string; hostname: string; kind: string; awaiting_agent: boolean } | null;
+  matched_by: "uuid" | "mac" | "address" | "name" | "person" | null;
+  link_fixed: boolean;
+}
+
+/** `GET /api/servers/{id}/virtualization`. */
+export interface Virtualization {
+  source: {
+    up: boolean;
+    reason: string | null;
+    error: string | null;
+    details: Record<string, string>;
+    seen_at: string;
+  } | null;
+  objects: VirtualObject[];
+  guest_of: { object: VirtualObject; source_id: string; source_name: string }[];
 }
 
 /** SNMP credentials as sent; a secret left out keeps the stored one while the version stays. */
@@ -4046,6 +4115,32 @@ export const api = {
     request<SnmpCredentials>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "PUT", body }),
 
   deleteDeviceSnmp: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "DELETE" }),
+
+  /** What a vCenter or ESXi host answers, from its probe; logs in only once its certificate is trusted (ADR-0156). */
+  testVmware: (body: { site_id: string; address: string; probe?: string; vmware: VmwareCredentialsRequest }) =>
+    request<VmwareTested>("/api/devices/vmware/test", { method: "POST", body }),
+
+  deviceVmware: (id: string, signal?: AbortSignal) =>
+    request<VmwareCredentials>(`/api/devices/${encodeURIComponent(id)}/vmware`, { signal }),
+
+  setDeviceVmware: (id: string, body: VmwareCredentialsRequest) =>
+    request<VmwareCredentials>(`/api/devices/${encodeURIComponent(id)}/vmware`, { method: "PUT", body }),
+
+  /** A source's hosts, clusters, virtual machines and datastores, and the virtual machine a server is. */
+  serverVirtualization: (id: string, signal?: AbortSignal) =>
+    request<Virtualization>(`/api/servers/${encodeURIComponent(id)}/virtualization`, { signal }),
+
+  /** Ties a virtual machine to a server by hand, to none, or back to matching. */
+  linkVirtualObject: (id: string, body: { server_id?: string | null; automatic?: boolean }) =>
+    request<VirtualObject>(`/api/virtual-objects/${encodeURIComponent(id)}/server`, { method: "PUT", body }),
+
+  /** Adds a server waiting for its agent for a virtual machine. */
+  installAgentOnVm: (id: string) =>
+    request<Server>(`/api/virtual-objects/${encodeURIComponent(id)}/install-agent`, { method: "POST" }),
+
+  /** Gives a Windows server the `hyperv` check and its alerts. */
+  watchHyperv: (id: string) =>
+    request<{ added: boolean; check: string }>(`/api/servers/${encodeURIComponent(id)}/hyperv`, { method: "POST" }),
 
   /** Where the site's network checks can run from: the central server, then its relays. */
   siteProbes: (siteId: string, signal?: AbortSignal) =>

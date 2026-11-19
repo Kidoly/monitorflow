@@ -231,6 +231,12 @@ pub enum Watch {
     /// The traffic of the host's network interfaces: the built-in `net`
     /// check of a server, the SNMP interfaces of a device (ADR-0149).
     Traffic,
+    /// A vCenter or ESXi host read through its API from a probe: its hosts,
+    /// virtual machines and datastores (ADR-0156). The host is a device.
+    Vmware,
+    /// The virtual machines of a Hyper-V host, read by its Windows agent
+    /// (ADR-0156).
+    HyperV,
 }
 
 impl Watch {
@@ -397,6 +403,9 @@ pub enum Measure {
     WebResponseTime { url: String },
     /// Days until the certificate of the website check of `url` expires.
     CertificateDays { url: String },
+    /// Share of a vCenter's datastores' space that is free, 0 to 1, every
+    /// datastore (ADR-0156).
+    DatastoreFree,
 }
 
 impl Measure {
@@ -408,6 +417,7 @@ impl Measure {
             Self::MemoryAvailable => Watch::Memory,
             Self::DiskUsed { .. } => Watch::Disk,
             Self::DiskWait { .. } => Watch::DiskIo,
+            Self::DatastoreFree => Watch::Vmware,
             Self::WebResponseTime { url } | Self::CertificateDays { url } => checks
                 .into_iter()
                 .find_map(|c| match &c.watch {
