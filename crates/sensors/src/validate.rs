@@ -14,9 +14,10 @@ pub const MAX_VALUE_LEN: usize = 256;
 /// Most labels on one sample.
 pub const MAX_LABELS: usize = 16;
 /// Label names the server sets itself or keeps for later (ADR-0013); it
-/// drops samples that use them. Names starting with `__` (reserved by
-/// Prometheus) or `mf_` (reserved for the server) are refused too.
-pub const RESERVED_LABELS: [&str; 5] = ["sensor", "instance", "peer", "site", "job"];
+/// drops samples that use them. `probe` names who ran a probe check
+/// (ADR-0148). Names starting with `__` (reserved by Prometheus) or `mf_`
+/// (reserved for the server) are refused too.
+pub const RESERVED_LABELS: [&str; 6] = ["sensor", "instance", "peer", "site", "job", "probe"];
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ValidationError {
@@ -65,6 +66,25 @@ pub fn label_name(name: &str) -> Result<(), ValidationError> {
         .ok_or_else(|| ValidationError::LabelName(truncate(name)))
 }
 
+/// `text` fit for a label value or an instance: control characters
+/// removed, cut to [`MAX_VALUE_LEN`] bytes on a character boundary.
+pub fn label_value(text: &str) -> String {
+    cut(text, MAX_VALUE_LEN)
+}
+
+/// `text` without control characters, cut to `max` bytes on a character
+/// boundary.
+pub fn cut(text: &str, max: usize) -> String {
+    let mut out = String::new();
+    for c in text.chars().filter(|c| !c.is_control()) {
+        if out.len() + c.len_utf8() > max {
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// An instance, which may be empty.
 pub fn instance(value: &str) -> Result<(), ValidationError> {
     text_value(value, "instance")
@@ -111,6 +131,16 @@ fn truncate(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn label_values_are_cut_in_bytes() {
+        assert_eq!(label_value(&"é".repeat(200)).len(), 256);
+        assert_eq!(label_value("a\nb"), "ab");
+        assert_eq!(cut("abc", 2), "ab");
+        assert_eq!(cut("é", 1), "");
+        // What the server refuses, an agent drops too.
+        assert!(label_name("probe").is_err());
+    }
 
     #[test]
     fn sensor_names() {

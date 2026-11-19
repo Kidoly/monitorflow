@@ -300,3 +300,25 @@ async fn the_newest_list_is_remembered_across_restarts() {
     let why = refusal(restarted.build(&config("web", Some("http://x"))));
     assert!(why.contains("older than"), "{why}");
 }
+
+/// Plugins' requests follow `sensors.port_targets` like website checks:
+/// a URL setting the server chose cannot reach the metadata service or
+/// a port outside the list.
+#[test]
+fn plugin_requests_stay_within_port_targets() {
+    let targets = Targets::new(PortTargets::parse(&["10.0.0.0/8:443", "db.example.com"]).unwrap());
+    let url = |text: &str| Url::parse(text).unwrap();
+    assert!(targets.check(&url("https://10.1.2.3/")).is_ok());
+    assert!(targets
+        .check(&url("http://169.254.169.254/latest/"))
+        .is_err());
+    assert!(targets.check(&url("http://10.1.2.3:8080/")).is_err());
+    // A name: allowed when listed, or when a range is listed for its
+    // port, its addresses then checked one by one.
+    assert!(targets.check(&url("http://db.example.com:5432/")).is_ok());
+    assert!(targets.check(&url("https://other.example.com/")).is_ok());
+    let other = url("https://other.example.com/");
+    assert!(targets.allows(&other, "10.0.0.1:443".parse().unwrap()));
+    assert!(!targets.allows(&other, "127.0.0.1:443".parse().unwrap()));
+    assert!(targets.check(&url("http://other.example.com/")).is_err());
+}

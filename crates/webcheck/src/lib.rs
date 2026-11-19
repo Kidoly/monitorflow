@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use monitorflow_sensors::port::PortTargets;
+use monitorflow_sensors::validate::label_value as label;
 use monitorflow_sensors::{BuildError, Sample, Sensor, SensorError};
 use tokio::time::Instant;
 
@@ -44,8 +45,6 @@ pub const KIND: &str = "http";
 /// Time kept before the deadline to report `up 0` rather than be
 /// cancelled with nothing, which could not alert.
 const MARGIN: Duration = Duration::from_millis(200);
-/// Longest label value the server keeps.
-const MAX_LABEL: usize = 256;
 
 /// Checks `params` and builds the check; `targets` is the agent's
 /// `sensors.port_targets`, when it sets one (ADR-0111). The server calls
@@ -54,11 +53,21 @@ pub fn build(
     params: &BTreeMap<String, String>,
     targets: Option<&PortTargets>,
 ) -> Result<Arc<dyn Sensor>, BuildError> {
+    build_within(
+        params,
+        Limits {
+            targets: targets.cloned(),
+            ..Limits::default()
+        },
+    )
+}
+
+/// [`build`] within `limits`.
+fn build_within(
+    params: &BTreeMap<String, String>,
+    limits: Limits,
+) -> Result<Arc<dyn Sensor>, BuildError> {
     let spec = Spec::parse(params)?;
-    let limits = Limits {
-        targets: targets.cloned(),
-        roots: None,
-    };
     limits
         .check(&spec.url)
         .map_err(|reason| BuildError::Refused { kind: KIND, reason })?;
@@ -78,14 +87,6 @@ impl WebCheck {
     pub fn new(spec: Spec, limits: Limits) -> Self {
         Self { spec, limits }
     }
-}
-
-fn label(text: &str) -> String {
-    let mut text: String = text.chars().filter(|c| !c.is_control()).collect();
-    while text.len() > MAX_LABEL {
-        text.pop();
-    }
-    text
 }
 
 fn bool(value: bool) -> f64 {
@@ -112,9 +113,12 @@ pub fn samples(spec: &Spec, outcome: &Outcome, now_unix: i64) -> Vec<Sample> {
     }
     if spec.follow_redirects && outcome.status.is_some() {
         let mut shown = outcome.final_url.clone();
-        // A query may carry a session token: not kept in the label.
+        // A query may carry a session token, and a redirect may name a
+        // user and password: neither is kept in the label.
         shown.set_query(None);
         shown.set_fragment(None);
+        let _ = shown.set_username("");
+        let _ = shown.set_password(None);
         samples.push(
             Sample::metric("redirects", f64::from(outcome.redirects))
                 .with_label("final_url", label(shown.as_str())),
@@ -265,16 +269,68 @@ mod tests {
     }
 
     #[test]
+    fn the_final_url_label_keeps_no_user_or_password() {
+        let spec = Spec::parse(&BTreeMap::from([(
+            "url".to_owned(),
+            "http://x.test/".to_owned(),
+        )]))
+        .unwrap();
+        let outcome = Outcome {
+            failure: None,
+            status: Some(200),
+            seconds: Some(0.1),
+            redirects: 1,
+            final_url: url::Url::parse("https://u:pw@y.test/a?t=1#f").unwrap(),
+            content_ok: None,
+            certificate: None,
+        };
+        let text: Vec<String> = samples(&spec, &outcome, 0)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(
+            text.iter()
+                .any(|t| t.contains(r#"final_url="https://y.test/a""#)),
+            "{text:?}"
+        );
+        assert!(!text.iter().any(|t| t.contains("pw")), "{text:?}");
+    }
+
+    #[test]
     fn labels_are_cut_to_what_the_server_keeps() {
         assert_eq!(label(&"é".repeat(200)).len(), 256);
         assert_eq!(label("a\nb"), "ab");
     }
 }
 
-/// The kinds a probe runs (ADR-0148) plus website checks: what the
-/// central server and relays build their checks with.
+/// The kinds a probe runs (ADR-0148) plus website checks: what relays
+/// build their checks with.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ProbeKinds;
+
+/// [`ProbeKinds`] for the central server, whose website checks never reach
+/// a link-local address: an operator of one customer must not read the
+/// instance metadata of the cloud machine that serves every customer.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CentralProbeKinds;
+
+impl monitorflow_probe::ProbeFactory for CentralProbeKinds {
+    fn build(
+        &self,
+        kind: &str,
+        params: &BTreeMap<String, String>,
+    ) -> Result<Arc<dyn Sensor>, String> {
+        if kind == KIND {
+            let limits = Limits {
+                refuse_link_local: true,
+                ..Limits::default()
+            };
+            build_within(params, limits).map_err(|e| e.to_string())
+        } else {
+            ProbeKinds.build(kind, params)
+        }
+    }
+}
 
 impl monitorflow_probe::ProbeFactory for ProbeKinds {
     fn build(
@@ -305,5 +361,23 @@ mod probe_tests {
         let host = BTreeMap::from([("host".to_owned(), "192.0.2.1".to_owned())]);
         assert!(ProbeKinds.build("ping", &host).is_ok());
         assert!(ProbeKinds.build("cpu", &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn the_central_server_refuses_link_local_websites() {
+        let url = |u: &str| BTreeMap::from([("url".to_owned(), u.to_owned())]);
+        let error = CentralProbeKinds
+            .build("http", &url("http://169.254.169.254/latest/"))
+            .err()
+            .unwrap();
+        assert!(error.contains("link-local"), "{error}");
+        assert!(ProbeKinds
+            .build("http", &url("http://169.254.169.254/"))
+            .is_ok());
+        assert!(CentralProbeKinds
+            .build("http", &url("https://example.com/"))
+            .is_ok());
+        let host = BTreeMap::from([("host".to_owned(), "192.0.2.1".to_owned())]);
+        assert!(CentralProbeKinds.build("ping", &host).is_ok());
     }
 }

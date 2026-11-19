@@ -135,11 +135,7 @@ fn number(table: &Table, column: u32, index: &str) -> Option<f64> {
 /// A name usable as an instance: printable, at most 256 bytes, trimmed.
 pub fn instance_name(raw: &str) -> String {
     let clean: String = raw.chars().filter(|c| !c.is_control()).collect();
-    let mut name = clean.trim().to_owned();
-    while name.len() > 256 {
-        name.pop();
-    }
-    name
+    monitorflow_sensors::validate::label_value(clean.trim())
 }
 
 /// `sysUpTime` in hundredths of a second, as seconds.
