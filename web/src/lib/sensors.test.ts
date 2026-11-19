@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EffectiveSensor } from "./api";
-import { type SensorValues, formatSensorValue, primaryMetric, sensorFacts, sensorOf, sensorRows, seriesTitle, valuesBySensor } from "./sensors";
+import { type SensorValues, formatSensorValue, primaryMetric, sensorOf, sensorRows, seriesTitle, valuesBySensor } from "./sensors";
 import { incident } from "@/test/incidents";
 
 const sensor = (kind: string, name = kind, instance = "", interval_ms = 30_000): EffectiveSensor => ({
@@ -92,8 +92,6 @@ describe("sensor metrics", () => {
     expect(seriesTitle(diskio, "monitorflow_diskio_wait_seconds", "sda")).toBe("Disk wait sda");
     expect(formatSensorValue("monitorflow_diskio_read_bytes_per_second", 3 * 1024 ** 2)).toBe("3 MiB/s");
     expect(formatSensorValue("monitorflow_diskio_reads_per_second", 2.25)).toBe("2.3/s");
-    expect(sensorFacts(disk, "/var")).toBe("disk · /var · every 30 s · timeout 10 s");
-    expect(sensorFacts(cpu, "total")).toBe("cpu · every 15 s");
   });
 });
 

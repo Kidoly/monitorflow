@@ -7,9 +7,6 @@
 
 import { t } from "@/i18n";
 
-/** In English, for comparisons; the screen says `allSites()`. */
-export const ALL_SITES = "All sites";
-
 /** "All sites" in the active language. */
 export const allSites = () => t("ui.allSites");
 

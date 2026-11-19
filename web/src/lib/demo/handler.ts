@@ -117,12 +117,6 @@ export async function demoRequest<T>(path: string, options: RequestOptions = {})
   }
 }
 
-/** Whether `method` and `path` would be refused: a write the demo does not answer. */
-export function isRefused(method: string, path: string): boolean {
-  const pathname = new URL(path, "http://demo.invalid").pathname;
-  return method !== "GET" && !READ_POSTS.has(pathname) && !(method === "PUT" && pathname === "/api/me/preferences");
-}
-
 type Params = URLSearchParams;
 type Handler = (match: string[], query: Params, body: unknown) => unknown;
 

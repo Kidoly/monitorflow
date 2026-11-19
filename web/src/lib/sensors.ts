@@ -2,7 +2,7 @@ import { t } from "@/i18n";
 
 import type { EffectiveSensor, Incident, SensorSeries, SensorValueList } from "./api";
 import { checkTitle } from "./alerts";
-import { formatSeconds, formatValue, unitOf } from "./format";
+import { formatValue, unitOf } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
 import { websiteLabel } from "./website";
 
@@ -133,18 +133,6 @@ export function formatSensorValue(metric: string, value: number | null | undefin
   if (short.endsWith("_loaded")) return value === 1 ? t("sensors.value.loaded") : t("sensors.value.notLoaded");
   if (short.endsWith("_installed")) return value === 1 ? t("sensors.value.installed") : t("sensors.value.notInstalled");
   return formatValue(value, unitOf(metric));
-}
-
-/** "disk · /var · every 30 s · timeout 10 s": a sensor with its timing. */
-export function sensorFacts(sensor: EffectiveSensor, instance: string): string {
-  return [
-    sensor.kind,
-    instance && instance !== "total" ? instance : sensor.instance,
-    t("sensors.facts.every", { interval: formatSeconds(sensor.interval_ms / 1000) }),
-    sensor.timeout_ms !== null && t("sensors.facts.timeout", { interval: formatSeconds(sensor.timeout_ms / 1000) }),
-  ]
-    .filter(Boolean)
-    .join(" · ");
 }
 
 export type SensorStatus = "critical" | "warning" | "unknown" | "ok";

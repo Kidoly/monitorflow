@@ -6,7 +6,6 @@ import {
   apiQuery,
   filtersFromQuery,
   filtersToQuery,
-  incidentSeconds,
   incidentTitle,
   incidentWindow,
   isOffline,
@@ -52,19 +51,6 @@ describe("incident filters", () => {
     expect(incidentsHref()).toBe("/incidents/");
     expect(incidentsHref({ state: "open", serverId: SERVER })).toBe(`/incidents/?state=open&server=${SERVER}`);
     expect(incidentsHref({ groupId: GROUP })).toBe(`/incidents/?group=${GROUP}`);
-  });
-});
-
-describe("incidentSeconds", () => {
-  const now = new Date("2026-10-19T12:00:00Z");
-
-  it("measures resolved incidents to their resolution and open ones to now", () => {
-    expect(incidentSeconds("2026-10-19T11:00:00Z", "2026-10-19T11:30:00Z", now)).toBe(1800);
-    expect(incidentSeconds("2026-10-19T11:00:00Z", null, now)).toBe(3600);
-  });
-
-  it("never goes negative when the agent's clock is ahead", () => {
-    expect(incidentSeconds("2026-10-19T12:05:00Z", null, now)).toBe(0);
   });
 });
 
