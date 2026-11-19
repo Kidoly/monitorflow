@@ -40004,6 +40004,50 @@
           },
           {
             "type": "object",
+            "description": "A dependency (ADR-0152): the server, or one of its checks, is behind\nthe parent server or one of its checks.",
+            "required": [
+              "server",
+              "parent",
+              "object"
+            ],
+            "properties": {
+              "check": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SilencedCheck",
+                    "description": "One check of it; `null` for all of it."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "dependency"
+                ]
+              },
+              "parent": {
+                "type": "string"
+              },
+              "parent_check": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SilencedCheck"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "server": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A notification channel.",
             "required": [
               "kind",

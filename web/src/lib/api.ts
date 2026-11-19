@@ -1587,7 +1587,9 @@ export type ImportCreate =
     }
   | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
   | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
-  | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null };
+  | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null }
+  /** A dependency (ADR-0152): the server, or one of its checks, behind the parent or one of its checks. */
+  | { object: "dependency"; server: string; check?: SilencedCheck; parent: string; parent_check?: SilencedCheck };
 
 /** One line of an import's preview. */
 export interface ImportItem {
