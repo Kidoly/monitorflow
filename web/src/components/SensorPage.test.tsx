@@ -283,6 +283,37 @@ describe("SensorPage", () => {
       await vi.waitFor(() => expect(writes()).toBe(1));
     });
 
+    it("adds a forecast of this disk beside its threshold, with a preview", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const fetchMock = edit({
+        [`POST /api/servers/${ID}/thresholds/preview`]: {
+          status: 200,
+          body: { server_id: ID, from: 0, to: 3_600_000, days: 3, truncated: false, series: [{ instance: "/var", points: [], incidents: [] }] },
+        },
+      });
+      const form = await openEditor(user);
+      await user.selectOptions(within(form).getByLabelText("Alert on"), "When it will reach a value");
+      expect(within(form).getByText("This adds another alert on the same measure. The current one stays.")).toBeInTheDocument();
+      // The plain threshold's fields give way to the forecast's.
+      expect(within(form).queryByPlaceholderText("No warning")).toHaveAttribute("value", "72");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await within(form).findByText("No incident over this period.")).toBeInTheDocument();
+      await user.click(within(form).getByRole("radio", { name: /^this sensor only/ }));
+      await user.click(within(form).getByRole("button", { name: "Save" }));
+      await vi.waitFor(() =>
+        expect(sent(fetchMock, "POST", `/api/servers/${ID}/thresholds`)).toMatchObject({
+          metric: "monitorflow_disk_used_ratio",
+          instance: "/var",
+          kind: "forecast",
+          comparison: ">=",
+          warning: 259_200,
+          critical: 86_400,
+          target: 1,
+          window_s: 86_400,
+        }),
+      );
+    });
+
     it("preselects the level in effect and saves the interval and timeout for this server", async () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
       const fetchMock = edit();

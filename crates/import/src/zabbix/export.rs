@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::config::{
     Config, Host, HttpAgent, Interface, InterfaceKind, Item, ItemKind, Macro, MediaKind, MediaType,
-    Priority, Template, Trigger, WebAuth, WebRequest, WebScenario,
+    Priority, Template, Trigger, TriggerRef, WebAuth, WebRequest, WebScenario,
 };
 use super::expression;
 use crate::source::{File, ReadError};
@@ -257,6 +257,22 @@ fn trigger_of(value: &Value) -> Trigger {
         tags: list(value, "tags")
             .into_iter()
             .map(|t| (text(t, "tag"), text(t, "value")))
+            .collect(),
+        id: None,
+        dependencies: list(value, "dependencies")
+            .into_iter()
+            .map(|d| {
+                let mut name = text(d, "name");
+                if name.is_empty() {
+                    name = text(d, "description");
+                }
+                TriggerRef {
+                    id: None,
+                    name,
+                    expression: text(d, "expression"),
+                }
+            })
+            .filter(|d| !d.name.is_empty())
             .collect(),
     }
 }

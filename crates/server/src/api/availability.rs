@@ -19,8 +19,9 @@ use super::auth::CurrentUser;
 use super::{ApiError, ApiState};
 use crate::availability::data::{load, Reach};
 use crate::availability::report::{build, Report};
+use crate::availability::sender::file_name;
 use crate::availability::words::Language;
-use crate::availability::{csv, Span};
+use crate::availability::{csv, pdf, Span};
 
 /// The shortest period a report covers.
 pub const SHORTEST: TimeDelta = TimeDelta::hours(1);
@@ -162,22 +163,20 @@ pub async fn get(
     ))
 }
 
-/// A file's name: `availability-<customer>-<from>-<to>.<extension>`, with
-/// only letters, digits and dashes.
-pub fn file_name(report: &Report, zone: Tz, extension: &str) -> String {
-    let mut name = String::from("availability");
-    if let Some(customer) = &report.customer_name {
-        name.push('-');
-        name.extend(customer.chars().map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        }));
+/// `report` as a `csv` or `pdf` file; the PDF is made off the runtime.
+pub async fn render(
+    report: &Report,
+    extension: &str,
+    zone: Tz,
+    language: Language,
+) -> Result<Vec<u8>, ApiError> {
+    if extension == "csv" {
+        return Ok(csv::render(report, zone, language).into_bytes());
     }
-    let day = |at: DateTime<Utc>| at.with_timezone(&zone).format("%Y-%m-%d").to_string();
-    format!("{name}-{}-{}.{extension}", day(report.from), day(report.to))
+    let report = report.clone();
+    tokio::task::spawn_blocking(move || pdf::render(&report, zone, language))
+        .await
+        .map_err(|e| ApiError::Internal(format!("making the PDF: {e}")))
 }
 
 /// The language and zone of a file request, or why not.
@@ -208,10 +207,11 @@ pub async fn file(
     let period = period(params.from, params.to, Utc::now()).map_err(ApiError::Invalid)?;
     let (content_type, extension) = match params.format.as_str() {
         "csv" => ("text/csv; charset=utf-8", "csv"),
+        "pdf" => ("application/pdf", "pdf"),
         _ => return Err(ApiError::Invalid("The format is `csv` or `pdf`.".into())),
     };
     let report = report(&state, &user, period, params.customer_id).await?;
-    let body = csv::render(&report, zone, language).into_bytes();
+    let body = render(&report, extension, zone, language).await?;
     let name = file_name(&report, zone, extension);
     let mut response = body.into_response();
     let headers = response.headers_mut();

@@ -111,7 +111,9 @@ async fn world(pool: &PgPool) -> World {
 }
 
 async fn json_of(response: Response) -> Value {
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+    // The OpenAPI document is over 1 MiB since every stack documents its
+    // routes.
+    let bytes = axum::body::to_bytes(response.into_body(), 4 << 20)
         .await
         .unwrap();
     serde_json::from_slice(&bytes).unwrap_or(Value::Null)

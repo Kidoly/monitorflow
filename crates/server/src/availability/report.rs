@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
-use super::data::{Data, Incident, Machine, Silence};
+use super::data::{Data, Incident, Machine, Parent, Silence};
 use super::{combine, error_budget, measure, Measured, Outage, Source, Span, Spans, Timeline};
 use crate::notify::silence::{check_covers, CheckRef};
 
@@ -227,9 +227,124 @@ struct Builder<'a> {
     now: DateTime<Utc>,
 }
 
+/// How deep parents are followed: cycles are refused when set, this only
+/// bounds the work.
+const MAX_DEPTH: usize = 16;
+
+/// Whether the check `wanted` is `check`, or every instance of its name.
+fn same_check(wanted: &CheckRef, check: &CheckRef) -> bool {
+    wanted.name == check.name && (wanted.instance.is_empty() || wanted.instance == check.instance)
+}
+
 impl<'a> Builder<'a> {
     fn machine(&self, id: Uuid) -> Option<&'a Machine> {
         self.data.machines.iter().find(|m| m.id == id)
+    }
+
+    /// A machine of the report, or one only read as a parent.
+    fn any_machine(&self, id: Uuid) -> Option<&'a Machine> {
+        self.machine(id)
+            .or_else(|| self.data.parents.iter().find(|m| m.id == id))
+    }
+
+    /// What `machine`, or its `check`, is behind: its relays, then what
+    /// was set. A check is behind what its machine is behind.
+    fn parents(&self, machine: &Machine, check: Option<&CheckRef>) -> Vec<Parent> {
+        let mut parents: Vec<Parent> = machine.relays.iter().map(|r| Parent::Relay(*r)).collect();
+        for dependency in &self.data.dependencies {
+            let applies = dependency.server_id == machine.id
+                && match (&dependency.check, check) {
+                    (None, _) => true,
+                    (Some(wanted), Some(check)) => same_check(wanted, check),
+                    (Some(_), None) => false,
+                };
+            if applies && !parents.contains(&dependency.parent) {
+                parents.push(dependency.parent.clone());
+            }
+        }
+        parents
+    }
+
+    /// When `parent` was down, by the rule of ADR-0152: a relay or a
+    /// server offline, a server or device whose ping check is critical, a
+    /// check critical; and while it was unreachable itself. An incident
+    /// hidden behind its own parent never counts here.
+    fn parent_down(&self, parent: &Parent, depth: usize) -> Spans {
+        if depth > MAX_DEPTH {
+            return Spans::new();
+        }
+        let names = &self.data.names;
+        let critical = |keep: &dyn Fn(&Incident) -> bool| {
+            Spans::from_spans(
+                self.data
+                    .incidents
+                    .iter()
+                    .filter(|i| !i.hidden && keep(i))
+                    .flat_map(|i| i.critical.spans().iter().copied()),
+            )
+        };
+        match parent {
+            Parent::Relay(relay) => critical(&|i| i.relay_id == Some(*relay)),
+            Parent::Server(id) => {
+                let Some(machine) = self.any_machine(*id) else {
+                    return Spans::new();
+                };
+                let pings = self.data.pings.get(id).map_or(&[][..], Vec::as_slice);
+                critical(&|i| {
+                    i.server_id == Some(*id)
+                        && (i.metric == "offline"
+                            || pings
+                                .iter()
+                                .any(|p| check_covers(p, names, &i.metric, &i.instance)))
+                })
+                .union(&self.unreachable(machine, None, depth + 1))
+            }
+            Parent::Check(id, check) => {
+                let Some(machine) = self.any_machine(*id) else {
+                    return Spans::new();
+                };
+                critical(&|i| {
+                    i.server_id == Some(*id)
+                        && i.metric != "offline"
+                        && check_covers(check, names, &i.metric, &i.instance)
+                })
+                .union(&self.unreachable(machine, Some(check), depth + 1))
+            }
+        }
+    }
+
+    /// When `machine`, or its `check`, was behind a parent that was down.
+    fn unreachable(&self, machine: &Machine, check: Option<&CheckRef>, depth: usize) -> Spans {
+        self.parents(machine, check)
+            .iter()
+            .fold(Spans::new(), |all, p| {
+                all.union(&self.parent_down(p, depth))
+            })
+    }
+
+    /// The name of `parent` in an outage's cause.
+    fn parent_name(&self, parent: &Parent) -> Option<String> {
+        match parent {
+            Parent::Relay(relay) => self.data.relays.get(relay).cloned(),
+            Parent::Server(id) => self.any_machine(*id).map(|m| m.name.clone()),
+            Parent::Check(id, check) => self
+                .any_machine(*id)
+                .map(|m| format!("{} {}", m.name, check.name)),
+        }
+    }
+
+    /// Silences planned for `parent`: they are planned for what is behind
+    /// it too.
+    fn covers_parent(&self, silence: &Silence, parent: &Parent) -> bool {
+        match parent {
+            Parent::Relay(relay) => silence.relay_id == Some(*relay) && silence.checks.is_none(),
+            Parent::Server(id) => self.any_machine(*id).is_some_and(|m| whole(silence, m)),
+            Parent::Check(id, check) => self.any_machine(*id).is_some_and(|m| {
+                whole(silence, m)
+                    || names_checks_of(silence, m)
+                        .is_some_and(|checks| checks.iter().any(|c| same_check(c, check)))
+            }),
+        }
     }
 
     /// When `machine` existed within the period, if at all.
@@ -266,7 +381,12 @@ impl<'a> Builder<'a> {
 
     /// The incidents of `machine` that `keep` takes, each excused by the
     /// silences that cover it, and the offline time of its relays.
-    fn sources(&self, machine: &Machine, keep: impl Fn(&Incident) -> bool) -> Vec<Source<Cause>> {
+    fn sources(
+        &self,
+        machine: &Machine,
+        check: Option<&CheckRef>,
+        keep: impl Fn(&Incident) -> bool,
+    ) -> Vec<Source<Cause>> {
         let names = &self.data.names;
         let mut sources: Vec<Source<Cause>> = self
             .data
@@ -291,28 +411,20 @@ impl<'a> Builder<'a> {
                 }
             })
             .collect();
-        for relay in &machine.relays {
-            let cover = self
-                .spans(|s| whole(s, machine) || (s.relay_id == Some(*relay) && s.checks.is_none()));
-            for incident in self
-                .data
-                .incidents
-                .iter()
-                .filter(|i| i.relay_id == Some(*relay))
-            {
-                sources.push(Source {
-                    down: incident.critical.clone(),
-                    cover: cover.clone(),
-                    cause: Cause {
-                        kind: "unreachable".into(),
-                        server_id: machine.id,
-                        server_name: machine.name.clone(),
-                        check: None,
-                        instance: String::new(),
-                        via: self.data.relays.get(relay).cloned(),
-                    },
-                });
-            }
+        for parent in self.parents(machine, check) {
+            let cover = self.spans(|s| whole(s, machine) || self.covers_parent(s, &parent));
+            sources.push(Source {
+                down: self.parent_down(&parent, 0),
+                cover,
+                cause: Cause {
+                    kind: "unreachable".into(),
+                    server_id: machine.id,
+                    server_name: machine.name.clone(),
+                    check: None,
+                    instance: String::new(),
+                    via: self.parent_name(&parent),
+                },
+            });
         }
         sources
     }
@@ -323,7 +435,7 @@ impl<'a> Builder<'a> {
         Some(measure(
             life,
             &maintenance,
-            &self.sources(machine, |_| true),
+            &self.sources(machine, None, |_| true),
         ))
     }
 
@@ -339,7 +451,7 @@ impl<'a> Builder<'a> {
                     })
                 })
         });
-        let sources = self.sources(machine, |i| {
+        let sources = self.sources(machine, Some(check), |i| {
             i.metric == "offline" || check_covers(check, names, &i.metric, &i.instance)
         });
         Some(measure(life, &maintenance, &sources))

@@ -61,6 +61,8 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Everything | Tout | For a channel or a silence: all customers and sites, plus news about the central server: failed backups, automatic updates, new versions | global, all customers | both columns null; a silence with no target |
 | Silence | Silence, mettre en silence | Stop notifications about a server, relay, site, customer or everything for a while, whatever channel they go to, or about chosen checks of a server or site: "Silence this check". Incidents still open and show; what is still open at the end is sent | mute, snooze, maintenance mode, downtime | `silences`, `checks` |
 | Maintenance window | Fenêtre de maintenance ; « En maintenance jusqu’à 04:00 » | A silence that comes back on its own, every day, week or month, at local times in a time zone: "Every Sunday, 02:00 to 04:00 (Europe/Paris)". Covers a site, chosen servers or chosen checks. While one runs: "In maintenance until 04:00". For a campaign, the times updates may run in | recurring silence, downtime, schedule, blackout | `maintenance_windows`, `window_id` |
+| Depends on, behind it | Dépend de, derrière | A server, device or check that cannot be checked when another one is down: "web-1 depends on sw-core", "12 servers are behind sw-core". Several are allowed. The relay of a server is one without being set: "Automatic" | parent, child, dependency (on screen), upstream | `dependencies`, `parent` |
+| Unreachable | Injoignable | A server, device or check behind something that is down: "Unreachable: sw-core is down". It opens no incident and notifies nobody until 2 minutes after what it depends on is back | suppressed, masked, hidden | `state = 'unreachable'`, `unreachable_because` |
 | Sent together | Envoyés ensemble | Incidents told in one notification: the same check on several machines, the rest of a site, or what a silence held back. Each incident still has its own page | group, batch, digest, bundle, aggregate | `notification_groups`, `?group=` |
 | On call | Astreinte | Who is told of each alert of a place in person, besides the channels, in turns. A page under Monitoring | pager, duty, rota (on screen) | `on_call_schedules` |
 | Schedule | Planning | The people who take turns being on call for everything, a customer or a site, and when they hand off | rotation, layer, policy | `on_call_schedules`, `on_call_members` |
@@ -107,6 +109,11 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Rollback | Retour arrière | Going back to the snapshot taken before an AI change. "Snapshot first" when MonitorFlow takes one, "Rollback limited" when it cannot, with the reason: "the container's storage cannot take snapshots" | revert, restore point | `snapshots.available`, `reason` |
 | VM, container | VM, conteneur | The Proxmox guest a server runs in: a virtual machine, or an LXC container. "VM 101 on pve1", "container 104 on pve2". The ID is Proxmox's | guest, CT, qemu, lxc (on screen) | `server_proxmox_vms`, `kind`, `vmid` |
 | Matched automatically | Associé automatiquement | A server MonitorFlow tied to its Proxmox VM or container by itself: "Matched automatically to VM 104 on pve2 by its hardware ID". "Not this one" undoes it for good; "Change" picks another | discovered, auto-mapped | `matched_by` |
+| Virtual machine | Machine virtuelle | A machine a hypervisor runs, listed from a vCenter, an ESXi host or a Hyper-V host whether or not it has the agent. "Virtual machine web-01 on host esx-02" | guest, VM object, instance (on screen) | `virtual_objects`, `kind = 'vm'` |
+| Host | Hôte | A hypervisor machine of a vCenter, or the Hyper-V server itself, that runs virtual machines | hypervisor node, ESX box | `kind = 'host'` |
+| Datastore | Banque de données | Where a vCenter keeps virtual machines' disks; "Datastore full" when under 10% is free | volume, LUN (on screen) | `kind = 'datastore'` |
+| Snapshot (virtual machine) | Instantané | A saved state of a virtual machine kept by its hypervisor; Hyper-V calls them checkpoints, and the page says "Snapshots (checkpoints)" for Hyper-V. "Snapshot older than 7 days" | checkpoint alone | `vm_snapshots`, `vm_snapshot_age_seconds` |
+| Install the agent | Installer l'agent | The button on a virtual machine without the agent: adds a server waiting for its agent and shows the command | deploy, onboard | `install-agent` |
 
 Keep the technical word when it is the thing being asked for, such as a certificate, a mirror or a sudo rule, and put the rest under a "Details" disclosure. Certificate warnings speak of renewal, and appear only when it is late (under 2 days left) or failed.
 
@@ -134,6 +141,6 @@ The French column is what the French interface says for each word, so a term rea
 | Approval, approve | Approbation, approuver |
 | Audit log | Journal d’audit |
 | Administrator, operator, approver, viewer | Administrateur, opérateur, approbateur, lecteur |
-| Critical, Warning, Offline, OK | Critique, Avertissement, Hors ligne, OK |
+| Critical, Warning, Unreachable, Offline, OK | Critique, Avertissement, Injoignable, Hors ligne, OK |
 
 The French interface says "vous", keeps labels as short as the English ones, and follows French typography: a no-break space before `:` and inside `« »`, a narrow no-break space before `; ? !`, a curly apostrophe (’). Numbers, dates and units follow the language: "1 234,5", "85,3 %", "3 j 4 h", "Gio".
