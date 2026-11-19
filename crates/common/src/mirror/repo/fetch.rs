@@ -212,17 +212,33 @@ impl Fetcher {
             _ => {}
         }
         let mut file = tokio::fs::File::create(&part).await.map_err(io(&part))?;
-        let mut size = 0u64;
-        while let Some(chunk) = self.chunk(&url, &mut response).await? {
-            size += chunk.len() as u64;
-            if size > limit {
-                return Err(FetchError::TooLarge { url, limit });
+        let written = async {
+            let mut size = 0u64;
+            while let Some(chunk) = self.chunk(&url, &mut response).await? {
+                size += chunk.len() as u64;
+                if size > limit {
+                    return Err(FetchError::TooLarge {
+                        url: url.clone(),
+                        limit,
+                    });
+                }
+                digests.update(&chunk);
+                file.write_all(&chunk).await.map_err(io(&part))?;
             }
-            digests.update(&chunk);
-            file.write_all(&chunk).await.map_err(io(&part))?;
+            file.sync_all().await.map_err(io(&part))?;
+            Ok(size)
         }
-        file.sync_all().await.map_err(io(&part))?;
+        .await;
         drop(file);
+        // A download cut short leaves no part behind: on-demand fetches use
+        // a new name each time, and the store's usage does not count them.
+        let size = match written {
+            Ok(size) => size,
+            Err(error) => {
+                let _ = tokio::fs::remove_file(&part).await;
+                return Err(error);
+            }
+        };
         let (listed, sha256) = digests.finish();
         if let Expect::Entry(e) = expect {
             if (size, &listed) != (e.size, &e.checksum) {
@@ -303,5 +319,47 @@ mod tests {
         let (_, sum, sha256) = hash_file(&path, Algorithm::Sha512).unwrap();
         assert!(sum.to_string().starts_with("sha512:ddaf35a1"));
         assert!(sha256.to_string().starts_with("sha256:ba7816bf"));
+    }
+
+    /// Serves `answer` to every connection, then closes it.
+    async fn upstream(answer: &'static [u8]) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket.write_all(answer).await;
+            }
+        });
+        base
+    }
+
+    #[tokio::test]
+    async fn a_download_cut_short_leaves_no_part_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("a.deb");
+        // No length given, longer than allowed.
+        let base = upstream(b"HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n0123456789abcdef").await;
+        let fetcher = Fetcher::new(&base, Duration::from_secs(5)).unwrap();
+        let error = fetcher
+            .file("a.deb", &dest, Expect::AtMost(10))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, FetchError::TooLarge { .. }), "{error}");
+        assert!(!part_path(&dest).exists());
+        // The connection closes before the announced length.
+        let base =
+            upstream(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\nconnection: close\r\n\r\n01234")
+                .await;
+        let fetcher = Fetcher::new(&base, Duration::from_secs(5)).unwrap();
+        assert!(fetcher
+            .file("a.deb", &dest, Expect::AtMost(1000))
+            .await
+            .is_err());
+        assert!(!part_path(&dest).exists());
+        assert!(!dest.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 }
