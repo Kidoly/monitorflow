@@ -493,12 +493,18 @@ impl Parser {
                 }
                 Some(Token::Ident(w)) if w.eq_ignore_ascii_case("offset") => {
                     self.at += 1;
-                    self.eat_op("-");
-                    match self.next() {
-                        Some(Token::Number(_)) => {}
+                    let negative = self.eat_op("-");
+                    let seconds = match self.next() {
+                        Some(Token::Number(n)) => n,
                         _ => return Err(SyntaxError("expected a duration after offset".into())),
-                    }
-                    expr = mark_exotic(expr);
+                    };
+                    // Kept with its duration, for comparisons with the past
+                    // (ADR-0153); every other reading refuses it.
+                    let seconds = if negative { -seconds } else { seconds };
+                    expr = Expr::Call {
+                        func: "offset".into(),
+                        args: vec![mark_exotic(expr), Expr::Number(seconds)],
+                    };
                 }
                 Some(Token::Op("@")) => {
                     self.at += 1;
@@ -738,11 +744,31 @@ pub enum LeafKind {
     CertSecondsLeft,
 }
 
+/// What a function over a range of a gauge reads (ADR-0153).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Window {
+    /// `avg_over_time`, `min_over_time`, `max_over_time` over seconds.
+    Avg(u32),
+    Min(u32),
+    Max(u32),
+    /// `delta`: the last value minus the first.
+    Change(u32),
+    /// `deriv`: the slope per second, of a least-squares line.
+    Slope(u32),
+    /// `predict_linear` over `over` seconds, `within` seconds ahead.
+    Predict {
+        over: u32,
+        within: u32,
+    },
+}
+
 /// A known series in an expression.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Leaf {
     pub kind: LeafKind,
     pub matchers: Vec<Matcher>,
+    /// The function over a range it is read through, for a gauge.
+    pub window: Option<Window>,
 }
 
 /// A product of leaves with their exponents, keyed by kind.
@@ -902,9 +928,16 @@ pub struct Reading {
     /// Whether the expression adds a condition the reading dropped (an
     /// `and` with more than a harmless filter).
     pub extra_condition: bool,
+    /// Other conditions joined with `and` that could be read (ADR-0153).
+    pub also: Vec<Reading>,
 }
 
 impl Reading {
+    /// The function over a range the condition reads through, if any.
+    pub fn window(&self) -> Option<Window> {
+        self.leaves.iter().find_map(|l| l.window)
+    }
+
     /// The matchers on `label`, from every series of the condition.
     pub fn matchers(&self, label: &str) -> Vec<&Matcher> {
         let mut out: Vec<&Matcher> = Vec::new();
@@ -981,7 +1014,14 @@ fn read_expr(expr: &Expr) -> Option<Reading> {
     } = expr
     {
         let mut reading = read_expr(lhs)?;
-        reading.extra_condition |= !is_harmless_filter(rhs);
+        if !is_harmless_filter(rhs) {
+            match read_expr(rhs) {
+                Some(other) if other.also.is_empty() && !other.extra_condition => {
+                    reading.also.push(other);
+                }
+                _ => reading.extra_condition = true,
+            }
+        }
         return Some(reading);
     }
     // `3 <= days < 20`: the first comparison only filters, the second is
@@ -1057,6 +1097,7 @@ fn read_expr(expr: &Expr) -> Option<Reading> {
         },
         leaves,
         extra_condition: false,
+        also: Vec::new(),
     })
 }
 
@@ -1147,6 +1188,215 @@ fn poly(expr: &Expr, leaves: &mut Vec<Leaf>) -> Option<Poly> {
     }
 }
 
+/// A node gauge read through a function over its range (ADR-0153):
+/// `avg_over_time(node_load1[15m])`, `delta(...)`, `deriv(...)`,
+/// `predict_linear(node_filesystem_avail_bytes[6h], 4 * 3600)`.
+fn gauge_over_range(func: &str, args: &[Expr]) -> Option<Leaf> {
+    let (arg, within) = match args {
+        [arg] => (arg, None),
+        [arg, ahead] if func == "predict_linear" => {
+            let mut leaves = Vec::new();
+            let value = match poly(ahead, &mut leaves)?.terms.as_slice() {
+                [(v, m)] if m.is_empty() && *v > 0.0 => *v,
+                _ => return None,
+            };
+            (arg, Some(value as u32))
+        }
+        _ => return None,
+    };
+    let Expr::Selector {
+        range: Some(range), ..
+    } = arg
+    else {
+        return None;
+    };
+    let seconds = u32::try_from(crate::text::seconds(range)?).ok()?;
+    let (metric, matchers) = selector(arg)?;
+    let kind = match metric {
+        "node_memory_MemAvailable_bytes" => LeafKind::MemAvailable,
+        "node_memory_MemTotal_bytes" => LeafKind::MemTotal,
+        "node_filesystem_avail_bytes" | "node_filesystem_free_bytes" => LeafKind::FsAvail,
+        "node_filesystem_size_bytes" => LeafKind::FsSize,
+        "node_load1" => LeafKind::Load(1),
+        "node_load5" => LeafKind::Load(5),
+        "node_load15" => LeafKind::Load(15),
+        _ => return None,
+    };
+    let window = match (func, within) {
+        ("avg_over_time", None) => Window::Avg(seconds),
+        ("min_over_time", None) => Window::Min(seconds),
+        ("max_over_time", None) => Window::Max(seconds),
+        ("delta", None) => Window::Change(seconds),
+        ("deriv", None) => Window::Slope(seconds),
+        ("predict_linear", Some(within)) => Window::Predict {
+            over: seconds,
+            within,
+        },
+        _ => return None,
+    };
+    let mut matchers = matchers.to_vec();
+    matchers.sort();
+    Some(Leaf {
+        kind,
+        matchers,
+        window: Some(window),
+    })
+}
+
+/// `lhs / lhs offset D cmp k` or `lhs - lhs offset D cmp k`: a comparison
+/// with `D` seconds earlier (ADR-0153). Returns the reading of `lhs cmp k`,
+/// whether it divides, and `D`.
+pub fn read_compare(text: &str) -> Option<(Reading, bool, u32)> {
+    let expr = parse(text).ok()?;
+    let Expr::Binary {
+        op,
+        lhs,
+        rhs,
+        bool_modifier: false,
+    } = &expr
+    else {
+        return None;
+    };
+    if !op.is_comparison() {
+        return None;
+    }
+    let Expr::Number(_) = **rhs else {
+        return None;
+    };
+    let Expr::Binary {
+        op: inner,
+        lhs: now,
+        rhs: then,
+        ..
+    } = &**lhs
+    else {
+        return None;
+    };
+    let ratio = match inner {
+        BinOp::Div => true,
+        BinOp::Sub => false,
+        _ => return None,
+    };
+    let (past, seconds) = without_offset(then)?;
+    if !same_ignoring_offset(now, &past) || seconds <= 0.0 {
+        return None;
+    }
+    let condition = Expr::Binary {
+        op: *op,
+        lhs: now.clone(),
+        rhs: rhs.clone(),
+        bool_modifier: false,
+    };
+    Some((read_expr(&condition)?, ratio, seconds as u32))
+}
+
+/// `absent(selector)` or `absent_over_time(selector[range])`: the series
+/// it watches, and the range when there is one (ADR-0153).
+pub fn read_absent(text: &str) -> Option<(Reading, Option<u32>)> {
+    let expr = parse(text).ok()?;
+    let Expr::Call { func, args } = &expr else {
+        return None;
+    };
+    let [arg] = args.as_slice() else {
+        return None;
+    };
+    let range = match (func.as_str(), arg) {
+        ("absent", Expr::Selector { range: None, .. }) => None,
+        (
+            "absent_over_time",
+            Expr::Selector {
+                range: Some(range), ..
+            },
+        ) => Some(u32::try_from(crate::text::seconds(range)?).ok()?),
+        _ => return None,
+    };
+    let leaf = leaf(arg)?;
+    let reading = Reading {
+        condition: Condition {
+            factors: vec![(leaf.kind.clone(), 1)],
+            cmp: Cmp::Eq,
+            value: 0.0,
+        },
+        leaves: vec![leaf],
+        extra_condition: false,
+        also: Vec::new(),
+    };
+    Some((reading, range))
+}
+
+/// `expr` with its one `offset` taken out, and the offset in seconds.
+fn without_offset(expr: &Expr) -> Option<(Expr, f64)> {
+    match expr {
+        Expr::Call { func, args } if func == "offset" => match args.as_slice() {
+            [inner, Expr::Number(seconds)] => Some((unmarked(inner), *seconds)),
+            _ => None,
+        },
+        Expr::Call { func, args } => {
+            let mut found = None;
+            let mut out = Vec::new();
+            for arg in args {
+                match (without_offset(arg), &found) {
+                    (Some((inner, s)), None) => {
+                        found = Some(s);
+                        out.push(inner);
+                    }
+                    (Some(_), Some(_)) => return None,
+                    (None, _) => out.push(arg.clone()),
+                }
+            }
+            Some((
+                Expr::Call {
+                    func: func.clone(),
+                    args: out,
+                },
+                found?,
+            ))
+        }
+        Expr::Agg {
+            op,
+            without,
+            labels,
+            param,
+            expr: inner,
+        } => {
+            let (inner, s) = without_offset(inner)?;
+            Some((
+                Expr::Agg {
+                    op: op.clone(),
+                    without: *without,
+                    labels: labels.clone(),
+                    param: param.clone(),
+                    expr: Box::new(inner),
+                },
+                s,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// A selector as written before `offset` marked it.
+fn unmarked(expr: &Expr) -> Expr {
+    match expr {
+        Expr::Selector {
+            metric,
+            matchers,
+            range,
+            ..
+        } => Expr::Selector {
+            metric: metric.clone(),
+            matchers: matchers.clone(),
+            exotic: range.as_deref().is_some_and(|r| r.contains(':')),
+            range: range.clone(),
+        },
+        other => other.clone(),
+    }
+}
+
+fn same_ignoring_offset(a: &Expr, b: &Expr) -> bool {
+    a == b
+}
+
 /// The matchers of a selector other than its metric name.
 fn selector(expr: &Expr) -> Option<(&str, &[Matcher])> {
     match expr {
@@ -1209,7 +1459,11 @@ fn leaf(expr: &Expr) -> Option<Leaf> {
     let make = |kind: LeafKind, matchers: &[Matcher]| {
         let mut matchers = matchers.to_vec();
         matchers.sort();
-        Some(Leaf { kind, matchers })
+        Some(Leaf {
+            kind,
+            matchers,
+            window: None,
+        })
     };
     if let Some((metric, matchers)) = selector(expr) {
         let kind = match metric {
@@ -1230,6 +1484,9 @@ fn leaf(expr: &Expr) -> Option<Leaf> {
     if let Expr::Call { func, args } = expr {
         if func == "time" && args.is_empty() {
             return make(LeafKind::Time, &[]);
+        }
+        if let Some(leaf) = gauge_over_range(func, args) {
+            return Some(leaf);
         }
         // A probe's value over a short range: `avg_over_time(...[1m])`.
         if matches!(
@@ -1584,9 +1841,24 @@ mod tests {
         .unwrap();
         assert_eq!(r.condition.value, 0.2);
         assert_eq!(r.exact("mountpoint"), None);
-        assert!(r.extra_condition);
-        // Prediction alone cannot be read.
-        assert!(read("predict_linear(node_filesystem_avail_bytes[6h], 4 * 3600) < 0").is_none());
+        // The prediction is a condition of its own (ADR-0153).
+        assert!(!r.extra_condition);
+        assert_eq!(
+            r.also[0].window(),
+            Some(Window::Predict {
+                over: 21_600,
+                within: 86_400
+            })
+        );
+        let alone = read("predict_linear(node_filesystem_avail_bytes[6h], 4 * 3600) < 0").unwrap();
+        assert!(alone.condition.is(&[(FsAvail, 1)]));
+        assert_eq!(
+            alone.window(),
+            Some(Window::Predict {
+                over: 21_600,
+                within: 14_400
+            })
+        );
         // Inodes are another measure.
         assert!(read("node_filesystem_files_free / node_filesystem_files * 100 < 10").is_none());
     }
@@ -1690,5 +1962,51 @@ mod tests {
         ] {
             assert!(read(text).is_none(), "{text}");
         }
+    }
+
+    #[test]
+    fn functions_over_ranges_of_gauges() {
+        let r = read("avg_over_time(node_load5[15m]) > 4").unwrap();
+        assert!(r.condition.is(&[(Load(5), 1)]));
+        assert_eq!(r.window(), Some(Window::Avg(900)));
+        let r = read(
+            "min_over_time(node_memory_MemAvailable_bytes[10m]) / node_memory_MemTotal_bytes < 0.1",
+        )
+        .unwrap();
+        assert_eq!(r.window(), Some(Window::Min(600)));
+        assert_eq!(
+            read("delta(node_load1[5m]) > 2").unwrap().window(),
+            Some(Window::Change(300))
+        );
+        assert_eq!(
+            read("deriv(node_load1[5m]) > 0.1").unwrap().window(),
+            Some(Window::Slope(300))
+        );
+        // Counters are not gauges.
+        assert!(read("avg_over_time(node_cpu_seconds_total[5m]) > 1").is_none());
+        // Conditions joined with and.
+        let r = read("node_load1 > 8 and avg_over_time(node_load15[1h]) > 4").unwrap();
+        assert_eq!(r.also.len(), 1);
+        assert!(r.also[0].condition.is(&[(Load(15), 1)]));
+    }
+
+    #[test]
+    fn comparisons_with_the_past() {
+        let (r, ratio, offset) = read_compare(
+            "avg_over_time(node_load1[1h]) / avg_over_time(node_load1[1h] offset 1w) > 2",
+        )
+        .unwrap();
+        assert!(ratio && offset == 604_800 && r.condition.is(&[(Load(1), 1)]));
+        assert_eq!(
+            (r.condition.value, r.window()),
+            (2.0, Some(Window::Avg(3_600)))
+        );
+        let (_, ratio, offset) = read_compare("node_load5 - node_load5 offset 1d > 3").unwrap();
+        assert!(!ratio && offset == 86_400);
+        // Different sides, or no offset: not a comparison with the past.
+        assert!(read_compare("node_load1 / node_load5 offset 1d > 2").is_none());
+        assert!(read_compare("node_load1 / node_load1 > 2").is_none());
+        // The offset alone still cannot be read.
+        assert!(read("node_load1 offset 1h > 4").is_none());
     }
 }

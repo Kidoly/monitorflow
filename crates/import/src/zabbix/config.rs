@@ -169,6 +169,20 @@ pub struct Trigger {
     pub template: Option<String>,
     /// Its tags, name and value, which maintenances may select.
     pub tags: Vec<(String, String)>,
+    /// Its ID, from the API only.
+    pub id: Option<String>,
+    /// The triggers it depends on (ADR-0152): while one is in problem,
+    /// Zabbix does not raise this one.
+    pub dependencies: Vec<TriggerRef>,
+}
+
+/// A trigger another depends on, as Zabbix names it: by ID from the API,
+/// by name and expression in exports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerRef {
+    pub id: Option<String>,
+    pub name: String,
+    pub expression: String,
 }
 
 /// One HTTP request, as a web scenario's step or an HTTP agent item

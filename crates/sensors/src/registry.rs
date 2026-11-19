@@ -44,6 +44,7 @@ pub const KINDS: &[&str] = &[
     "disk",
     "diskio",
     "eventlog",
+    "hyperv",
     "log",
     "memory",
     "net",
@@ -58,12 +59,12 @@ pub const KINDS: &[&str] = &[
 /// agents refuse them.
 pub const PROBE_KINDS: &[&str] = &["ping"];
 
-/// Whether this platform runs `kind`: `systemd` needs Unix, `eventlog`
-/// and `windows_service` Windows, the others run on both.
+/// Whether this platform runs `kind`: `systemd` needs Unix, `eventlog`,
+/// `windows_service` and `hyperv` Windows, the others run on both.
 pub fn supported(kind: &str) -> bool {
     match kind {
         "systemd" | "ping" => cfg!(unix),
-        "eventlog" | "windows_service" => cfg!(windows),
+        "eventlog" | "windows_service" | "hyperv" => cfg!(windows),
         _ => KINDS.contains(&kind),
     }
 }
@@ -160,6 +161,7 @@ fn build_with(
         "disk" => Arc::new(DiskSensor::from_params(&mut params)?),
         "diskio" => Arc::new(DiskIoSensor::default()),
         "eventlog" => Arc::new(EventLogSensor::from_params(&mut params, local)?),
+        "hyperv" => Arc::new(crate::hyperv::HyperVSensor),
         "log" => Arc::new(LogSensor::from_params(&mut params, local)?),
         "memory" => Arc::new(MemorySensor),
         "net" => Arc::new(NetSensor::default()),
@@ -290,7 +292,7 @@ mod tests {
         let error = build("gpu", &BTreeMap::new()).err().unwrap();
         assert_eq!(error, BuildError::UnknownKind("gpu".into()));
         assert!(error.to_string().contains(
-            "expected one of: cpu, disk, diskio, eventlog, log, memory, net, ping, port, script, systemd, windows_service"
+            "expected one of: cpu, disk, diskio, eventlog, hyperv, log, memory, net, ping, port, script, systemd, windows_service"
         ));
         assert_eq!(
             build("cpu", &params(&[("per_cores", "true")])).err(),
@@ -321,11 +323,14 @@ mod tests {
     fn kinds_of_another_platform_are_refused_by_the_agent() {
         let (here, elsewhere) = if cfg!(windows) {
             (
-                vec!["eventlog", "log", "windows_service"],
+                vec!["eventlog", "hyperv", "log", "windows_service"],
                 vec!["systemd", "ping"],
             )
         } else {
-            (vec!["log", "systemd"], vec!["eventlog", "windows_service"])
+            (
+                vec!["log", "systemd"],
+                vec!["eventlog", "hyperv", "windows_service"],
+            )
         };
         for kind in KINDS {
             assert_eq!(supported(kind), !elsewhere.contains(kind), "{kind}");

@@ -381,9 +381,18 @@ async fn zabbix_7_with_a_bearer_token() {
         .iter()
         .find(|t| t.measure == Measure::CpuUsage)
         .unwrap();
+    // `min(..., 5m)` reads a window of 5 minutes (ADR-0153).
     assert_eq!(
-        (cpu.critical, cpu.for_s, cpu.recovery),
-        (Some(0.8), 300, Some(0.7))
+        (cpu.critical, cpu.for_s, cpu.recovery, &cpu.judged),
+        (
+            Some(0.8),
+            0,
+            Some(0.7),
+            &crate::model::Judged::Window {
+                function: crate::model::WindowFunction::Min,
+                window_s: 300
+            }
+        )
     );
     assert!(inventory.thresholds.iter().any(|t| t.measure
         == Measure::DiskUsed {

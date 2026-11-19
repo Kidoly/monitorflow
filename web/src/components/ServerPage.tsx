@@ -45,7 +45,9 @@ import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { formatExact } from "@/components/ui/time";
 
 import { AllowCommandsLine } from "./AllowCommands";
+import { DependenciesTab, UnreachableBanner } from "./Dependencies";
 import { DeviceFacts, EditDevice } from "./DeviceDetails";
+import { VirtualizationSection } from "./Virtualization";
 import { serverSiblings } from "./breadcrumbSiblings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
@@ -62,7 +64,7 @@ export const COMMANDS_PAGE = 50;
 /** The API's largest page, which caps what a refresh reloads. */
 const MAX_LIMIT = 500;
 
-const TABS = ["sensors", "logs", "updates", "commands"] as const;
+const TABS = ["sensors", "dependencies", "logs", "updates", "commands"] as const;
 export type ServerTab = (typeof TABS)[number];
 
 /** The server page for the `id` query parameter. */
@@ -190,6 +192,9 @@ export function ServerPage({ id }: { id: string | null }) {
   const { server, sensors, values, incidents, commands, latestAgent } = data;
   const device = server.kind === "device";
   const rows = "sensors" in sensors ? sensorRows(sensors.sensors, values, incidents ?? []) : [];
+  const checkNames = "sensors" in sensors ? [...new Set(sensors.sensors.map((s) => s.name))].sort() : [];
+  // A device has no agent: only its checks and dependencies (ADR-0148).
+  const shown: ServerTab = device && tab !== "dependencies" ? "sensors" : tab;
   const active = "commands" in commands ? commands.commands.filter(isActive).length : 0;
 
   return (
@@ -208,6 +213,7 @@ export function ServerPage({ id }: { id: string | null }) {
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {server.awaiting_agent && !server.revoked_at && <WaitingForAgent server={server} />}
+      {server.unreachable && !server.revoked_at && <UnreachableBanner name={server.hostname} note={server.unreachable} />}
       {server.revoked_at && (
         <RemovedPanel
           kind="agent"
@@ -217,10 +223,16 @@ export function ServerPage({ id }: { id: string | null }) {
           canAdminister={!device && administersCustomer(me, server.customer_id)}
         />
       )}
+      {!server.revoked_at && (
+        <VirtualizationSection
+          server={server}
+          hypervWatched={"sensors" in sensors && sensors.sensors.some((sensor) => sensor.kind === "hyperv")}
+        />
+      )}
       <Tabs
         label={t("server.sections")}
         idBase="server"
-        selected={tab}
+        selected={shown}
         // The logs' filters and time belong to that tab.
         onSelect={(next) =>
           setParams({ tab: next === "sensors" ? null : next, level: null, unit: null, q: null, from: null, to: null })
@@ -231,6 +243,7 @@ export function ServerPage({ id }: { id: string | null }) {
             label: t("server.tab.sensors"),
             extra: "sensors" in sensors ? t("server.tab.count", { count: rows.length }) : undefined,
           },
+          { id: "dependencies" as const, label: t("dependencies.tab") },
           // A device has no agent: no logs, updates or commands (ADR-0148).
           ...(device
             ? []
@@ -245,8 +258,9 @@ export function ServerPage({ id }: { id: string | null }) {
               ]),
         ]}
       />
-      <TabPanel idBase="server" id={device ? "sensors" : tab}>
-        {(tab === "sensors" || device) && (
+      <TabPanel idBase="server" id={shown}>
+        {shown === "dependencies" && <DependenciesTab server={server} checks={checkNames} />}
+        {shown === "sensors" && (
           <ServerSensorsTab
             server={server}
             sensors={sensors}
@@ -319,7 +333,7 @@ function ServerHeader({
       <PageHeader
         detail
         title={server.hostname}
-        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.awaiting_agent ? "waiting" : server.status} />}
+        status={<StatusLabel kind="server" value={server.revoked_at ? "revoked" : server.awaiting_agent ? "waiting" : server.unreachable ? "unreachable" : server.status} />}
         meta={<RefreshLine updatedAt={now} stale={stale} />}
         actions={
           <>

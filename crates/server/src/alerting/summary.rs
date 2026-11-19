@@ -290,10 +290,14 @@ pub fn derive(
 }
 
 /// What a server's rules need kept of one metric's series (ADR-0153).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Need {
     /// The longest window a rule or condition reads, 0 for none.
     pub span_ms: i64,
+    /// Every window read, shortest first: each gets a summary of its own,
+    /// so a window of minutes is not read from buckets sized for a day's
+    /// forecast of the same metric.
+    pub spans: Vec<i64>,
     /// How history fills its buckets: `Max` or `Min` when every reader
     /// wants that, `Avg` otherwise.
     pub seed: Function,
@@ -310,6 +314,7 @@ pub fn needs(rules: &Rules) -> BTreeMap<String, Need> {
         let (need, functions) = needs.entry(metric.to_owned()).or_insert((
             Need {
                 span_ms: 0,
+                spans: Vec::new(),
                 seed: Function::Avg,
                 gate: false,
                 arrival: false,
@@ -317,6 +322,10 @@ pub fn needs(rules: &Rules) -> BTreeMap<String, Need> {
             Vec::new(),
         ));
         need.span_ms = need.span_ms.max(span_ms);
+        if span_ms > 0 && !need.spans.contains(&span_ms) {
+            need.spans.push(span_ms);
+            need.spans.sort_unstable();
+        }
         need.gate |= gate;
         need.arrival |= arrival;
         functions.extend(function);
@@ -637,6 +646,8 @@ mod tests {
             needs[load],
             Need {
                 span_ms: 3_600_000,
+                // The 10-minute maximum and the hour's comparison apart.
+                spans: vec![600_000, 3_600_000],
                 seed: Function::Avg,
                 gate: false,
                 arrival: false
@@ -644,7 +655,7 @@ mod tests {
         );
         assert!(needs["monitorflow_port_443_up"].arrival);
         assert_eq!(needs["monitorflow_port_443_up"].span_ms, 0);
-        let memory = needs["monitorflow_memory_available_ratio"];
+        let memory = &needs["monitorflow_memory_available_ratio"];
         assert!(memory.gate);
         assert_eq!((memory.span_ms, memory.seed), (300_000, Function::Min));
         // Plain thresholds, the built-in ones included, need nothing.

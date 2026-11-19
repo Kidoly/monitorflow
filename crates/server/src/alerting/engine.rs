@@ -26,6 +26,7 @@ use super::rules::{Kind, Rule};
 use super::state::{Evaluation, SeriesState, Transition};
 use super::store::{AlertStore, IncidentStep, SeriesKey, ServerRules, Step};
 use super::summary::{bucket_width, derive, Need, Summary};
+use crate::dependencies::Holds;
 use crate::ingest::Series;
 
 #[derive(Debug, Clone)]
@@ -43,6 +44,8 @@ pub struct EngineSettings {
     /// Where richer rules read history (ADR-0153); without it windows
     /// fill from live samples and comparisons with the past judge nothing.
     pub history: Option<Arc<dyn Backend>>,
+    /// Time between two reads of what dependencies hold (ADR-0152).
+    pub holds_interval: Duration,
 }
 
 impl std::fmt::Debug for dyn Backend {
@@ -59,6 +62,7 @@ impl Default for EngineSettings {
             poll_interval: Duration::from_secs(10),
             report_interval: Duration::from_secs(60),
             history: None,
+            holds_interval: Duration::from_secs(5),
         }
     }
 }
@@ -198,6 +202,7 @@ impl Alerts {
                 store,
                 notifier,
                 counters: counters.clone(),
+                holds: Holds::default(),
             },
         };
         tokio::spawn(engine.run(rx, forget_rx, answers_rx));
@@ -276,7 +281,8 @@ struct Tracked {
 /// What the engine keeps of one series a richer rule reads.
 #[derive(Debug)]
 struct Feed {
-    summary: Option<Summary>,
+    /// One per window read, shortest first.
+    summaries: Vec<Summary>,
     /// The latest sample.
     last: Option<(i64, f64)>,
     /// When the latest sample arrived, on the server clock.
@@ -284,9 +290,14 @@ struct Feed {
 }
 
 impl Feed {
+    /// The summary that answers a window of `window_ms` most precisely.
+    fn summary(&self, window_ms: i64) -> Option<&Summary> {
+        self.summaries.iter().find(|s| s.span_ms() >= window_ms)
+    }
+
     fn new(need: &Need, arrived: i64) -> Self {
         Self {
-            summary: (need.span_ms > 0).then(|| Summary::new(need.span_ms)),
+            summaries: need.spans.iter().map(|&span| Summary::new(span)).collect(),
             last: None,
             arrived,
         }
@@ -359,6 +370,8 @@ impl Engine {
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut report = interval(self.settings.report_interval);
         report.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut holds = interval(self.settings.holds_interval);
+        holds.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut reported = Stats::default();
         loop {
             tokio::select! {
@@ -376,6 +389,10 @@ impl Engine {
                     self.poll().await;
                     self.sweep(now_ms()).await;
                 }
+                _ = holds.tick() => match self.out.store.holds().await {
+                    Ok(holds) => self.out.holds = holds,
+                    Err(error) => tracing::warn!(%error, "could not read dependencies; will retry"),
+                },
                 _ = report.tick() => {
                     let stats = self.out.counters.snapshot();
                     if stats != reported {
@@ -489,7 +506,7 @@ impl Engine {
         if feed.last.is_none_or(|(at, _)| point.at > at) {
             feed.last = Some((point.at, point.value));
         }
-        if let Some(summary) = &mut feed.summary {
+        for summary in &mut feed.summaries {
             summary.push(point.at, point.value);
         }
     }
@@ -513,7 +530,7 @@ impl Engine {
             .feeds
             .get(&key)
             .and_then(|f| f.as_ref())
-            .and_then(|f| f.summary.as_ref());
+            .and_then(|f| f.summary(rule.window_ms()));
         derive(rule, summary, point.at, point.value, past)
     }
 
@@ -579,13 +596,15 @@ impl Engine {
             }
             let value = match condition.function {
                 None => Some(value),
-                Some(function) => feed.summary.as_ref().and_then(|s| {
-                    s.function(
-                        function,
-                        at,
-                        i64::from(condition.window_s.unwrap_or(0)) * 1000,
-                    )
-                }),
+                Some(function) => feed
+                    .summary(i64::from(condition.window_s.unwrap_or(0)) * 1000)
+                    .and_then(|s| {
+                        s.function(
+                            function,
+                            at,
+                            i64::from(condition.window_s.unwrap_or(0)) * 1000,
+                        )
+                    }),
             };
             value.is_some_and(|v| condition.comparison.holds(v, condition.value))
         })
@@ -623,7 +642,7 @@ impl Engine {
                     let Some(feed) = feed else {
                         continue;
                     };
-                    if let Some(summary) = &mut feed.summary {
+                    for summary in &mut feed.summaries {
                         if summary.width_ms() == step_ms {
                             summary.load(from_ms, &points);
                         }
@@ -681,7 +700,7 @@ impl Engine {
             .find(|s| s.server_id == server_id)?
             .needs
             .get(metric)
-            .copied()
+            .cloned()
     }
 
     /// Asks history for what the rules of `server` read, for the metrics
@@ -693,16 +712,15 @@ impl Engine {
             let Some(need) = server.needs.get(metric) else {
                 continue;
             };
-            if need.span_ms > 0 {
-                let step_ms = bucket_width(need.span_ms);
+            for &span in &need.spans {
                 self.ask(Request::Seed {
                     server_id: server.server_id,
                     target: target.clone(),
                     metric: metric.clone(),
                     function: need.seed,
-                    from_ms: now - need.span_ms,
+                    from_ms: now - span,
                     to_ms: now,
-                    step_ms,
+                    step_ms: bucket_width(span),
                 });
             }
             if need.arrival {
@@ -977,6 +995,9 @@ struct Output {
     store: AlertStore,
     notifier: Arc<dyn Notifier>,
     counters: Arc<Counters>,
+    /// What dependencies hold (ADR-0152): a held series opens no incident,
+    /// and the next sample that still fails tries again.
+    holds: Holds,
 }
 
 impl Output {
@@ -991,7 +1012,19 @@ impl Output {
         change: Change<'_>,
     ) {
         let mut event = change.transition;
+        let held = || {
+            self.holds
+                .series(key.server_id, &key.metric, &key.instance)
+                .is_some()
+        };
         let incident = match (tracked.state.firing, tracked.incident, rule) {
+            (Some(_), None, Some(_)) if held() => {
+                // Behind a parent that is down, in doubt or recovering: the
+                // state is kept, so the next sample opens it once free.
+                event = None;
+                tracing::debug!(agent_id = change.peer, metric = %key.metric, instance = %key.instance, "incident held by a dependency");
+                IncidentStep::None
+            }
             (Some(severity), None, Some(rule)) => {
                 event = event.or(Some(Transition::Opened(severity)));
                 IncidentStep::Open { severity, rule }
