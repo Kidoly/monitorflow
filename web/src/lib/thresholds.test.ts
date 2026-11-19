@@ -37,6 +37,13 @@ describe("thresholdFor", () => {
     expect(thresholdFor([threshold({ enabled: false })], DISK, "/")).toBeUndefined();
   });
 
+  it("reads only plain thresholds, whose values are in the metric's unit", () => {
+    const forecast = threshold({ kind: "forecast", instance: "/", warning: 259_200, critical: 86_400 });
+    const every = threshold({});
+    expect(thresholdFor([forecast, every], DISK, "/")).toBe(every);
+    expect(thresholdLines([forecast], DISK, ["/"])).toEqual([]);
+  });
+
   it("does not let an exact instance match another one", () => {
     expect(thresholdFor([threshold({ instance: "/var" })], DISK, "/")).toBeUndefined();
   });

@@ -1867,6 +1867,7 @@ dependencies = [
  "monitorflow-common",
  "monitorflow-sensors",
  "monitorflow-snmp",
+ "monitorflow-vmware",
  "tokio",
  "tracing",
 ]
@@ -1917,6 +1918,8 @@ dependencies = [
  "async-trait",
  "regex",
  "rustix",
+ "serde",
+ "serde_json",
  "socket2",
  "surge-ping",
  "tempfile",
@@ -1948,6 +1951,7 @@ dependencies = [
  "monitorflow-sensors",
  "monitorflow-server-ee",
  "monitorflow-snmp",
+ "monitorflow-vmware",
  "monitorflow-webcheck",
  "pdf-writer",
  "pem",
@@ -2029,6 +2033,24 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "monitorflow-vmware"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "monitorflow-sensors",
+ "quick-xml",
+ "reqwest",
+ "ring",
+ "rustls",
+ "rustls-native-certs",
+ "tokio",
+ "tracing",
+ "webpki-roots",
+ "x509-parser",
 ]
 
 [[package]]

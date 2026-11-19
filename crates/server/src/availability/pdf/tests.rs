@@ -39,6 +39,7 @@ fn report(outages: usize) -> Report {
                     metric: "offline".into(),
                     instance: String::new(),
                     critical: Spans::one(from, from + TimeDelta::minutes(10)),
+                    hidden: false,
                 }
             })
             .collect(),
@@ -56,6 +57,7 @@ fn report(outages: usize) -> Report {
         }],
         dependencies: vec![],
         parents: vec![],
+        pings: HashMap::new(),
         names: vec![],
     };
     let period = (start, at("2026-11-01T00:00:00Z"));

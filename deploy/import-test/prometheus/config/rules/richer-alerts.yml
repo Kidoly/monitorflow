@@ -1,0 +1,37 @@
+# Richer alerting rules (ADR-0153): windows, a comparison with last week,
+# forecasts, absent series and conditions joined with and. Prometheus loads
+# them like the others; MonitorFlow's import maps each to a richer rule.
+groups:
+  - name: richer
+    rules:
+      - alert: LoadHighFor15Minutes
+        expr: avg_over_time(node_load1{job="node"}[15m]) > 4
+        labels:
+          severity: warning
+      - alert: MemoryLowAllWindow
+        expr: max_over_time(node_memory_MemAvailable_bytes{job="node"}[10m]) / node_memory_MemTotal_bytes{job="node"} < 0.1
+        labels:
+          severity: critical
+      - alert: LoadJumped
+        expr: delta(node_load5{job="node"}[10m]) > 3
+        labels:
+          severity: warning
+      - alert: LoadTwiceLastWeek
+        expr: avg_over_time(node_load5{job="node"}[1h]) / avg_over_time(node_load5{job="node"}[1h] offset 1w) > 2
+        for: 10m
+        labels:
+          severity: warning
+      - alert: DiskFullIn4Hours
+        expr: node_filesystem_avail_bytes{job="node",mountpoint="/"} / node_filesystem_size_bytes{job="node",mountpoint="/"} < 0.2 and predict_linear(node_filesystem_avail_bytes{job="node",mountpoint="/"}[6h], 4 * 3600) < 0
+        for: 5m
+        labels:
+          severity: critical
+      - alert: NodeLoadMissing
+        expr: absent_over_time(node_load1{job="node"}[10m])
+        labels:
+          severity: critical
+      - alert: BusyAndLoaded
+        expr: node_load1{job="node"} > 8 and node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"} < 0.2
+        for: 5m
+        labels:
+          severity: warning

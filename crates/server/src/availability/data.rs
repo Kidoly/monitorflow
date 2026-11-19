@@ -9,6 +9,7 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 use super::{Rule, Span, Spans};
+use crate::dependencies::Node;
 use crate::notify::silence::CheckRef;
 use crate::sensor_config::builtin_defaults;
 
@@ -38,6 +39,10 @@ pub struct Incident {
     pub metric: String,
     pub instance: String,
     pub critical: Spans,
+    /// Never told because a parent was down (ADR-0152, `hidden_by`): it
+    /// counts against its own server, but never makes it a parent that is
+    /// down, as the dependencies' own rule says.
+    pub hidden: bool,
 }
 
 /// A silence, from when it counts: its start or its creation, whichever
@@ -107,6 +112,8 @@ pub struct Data {
     /// Servers and devices outside the report that something of it
     /// depends on: read for their down time, never reported.
     pub parents: Vec<Machine>,
+    /// The ping checks of the servers and devices read, by server.
+    pub pings: HashMap<Uuid, Vec<CheckRef>>,
     /// Every check name the central server knows, to tell which check
     /// wrote a metric (ADR-0151).
     pub names: Vec<String>,
@@ -230,6 +237,7 @@ pub async fn load(
             .into_iter()
             .collect();
     let incidents = incidents(db, &read, &relay_ids, from, end).await?;
+    let pings = pings(db, &read).await?;
     let silences: Vec<SilenceRow> = sqlx::query_as(
         "SELECT x.server_id, x.relay_id, x.site_id, x.customer_id, x.checks,
                 GREATEST(x.starts_at, x.created_at), coalesce(x.ended_at, x.ends_at),
@@ -272,6 +280,7 @@ pub async fn load(
         services,
         dependencies,
         parents,
+        pings,
         names,
     })
 }
@@ -310,72 +319,40 @@ async fn with_relays(
         .collect())
 }
 
-/// How many levels of parents are read: cycles are refused when set, this
-/// only bounds the work.
-const MAX_PARENT_LEVELS: usize = 16;
-
-type DependencyRow = (
-    Uuid,
-    Option<String>,
-    String,
-    Option<Uuid>,
-    Option<Uuid>,
-    Option<String>,
-    String,
-);
-
-/// The dependencies (ADR-0152) of `servers` and of their parents, level by
-/// level, and the parents outside them. Nothing before the table exists.
+/// The dependencies (ADR-0152) of `servers` and of their parents, through
+/// every level, as [`crate::dependencies::store::edges`] gives them, the
+/// automatic ones included, and the parents outside `servers`.
 async fn dependencies(
     db: &mut PgConnection,
     servers: &[Uuid],
 ) -> Result<(Vec<Dependency>, Vec<Machine>), sqlx::Error> {
-    let exists: bool = sqlx::query_scalar("SELECT to_regclass('dependencies') IS NOT NULL")
-        .fetch_one(&mut *db)
-        .await?;
-    if !exists {
-        return Ok((Vec::new(), Vec::new()));
-    }
-    let check =
-        |name: Option<String>, instance: String| name.map(|name| CheckRef { name, instance });
+    let edges = crate::dependencies::store::edges(&mut *db).await?;
     let mut seen: BTreeSet<Uuid> = servers.iter().copied().collect();
     let mut frontier: Vec<Uuid> = servers.to_vec();
     let mut found = Vec::new();
     let mut outside = Vec::new();
-    for _ in 0..MAX_PARENT_LEVELS {
-        if frontier.is_empty() {
-            break;
-        }
-        // SQL-safe: a constant query.
-        let rows: Vec<DependencyRow> = sqlx::query_as(
-            "SELECT server_id, check_name, check_instance, parent_server_id, parent_relay_id,
-                    parent_check_name, parent_check_instance
-             FROM dependencies WHERE server_id = ANY($1)",
-        )
-        .bind(&frontier)
-        .fetch_all(&mut *db)
-        .await?;
-        frontier.clear();
-        for (server, name, instance, parent_server, parent_relay, parent_name, parent_instance) in
-            rows
-        {
-            let parent = match (parent_server, parent_relay) {
-                (Some(id), _) => {
-                    if seen.insert(id) {
-                        frontier.push(id);
-                        outside.push(id);
-                    }
-                    match check(parent_name, parent_instance) {
-                        Some(c) => Parent::Check(id, c),
-                        None => Parent::Server(id),
-                    }
-                }
-                (None, Some(relay)) => Parent::Relay(relay),
-                (None, None) => continue,
+    while let Some(child) = frontier.pop() {
+        for edge in edges.iter().filter(|e| e.child.server() == Some(child)) {
+            let parent = match &edge.parent {
+                Node::Relay(relay) => Parent::Relay(*relay),
+                Node::Server(id) => Parent::Server(*id),
+                Node::Check(id, name, instance) => Parent::Check(
+                    *id,
+                    CheckRef {
+                        name: name.clone(),
+                        instance: instance.clone(),
+                    },
+                ),
             };
+            if let Some(id) = edge.parent.server() {
+                if seen.insert(id) {
+                    frontier.push(id);
+                    outside.push(id);
+                }
+            }
             found.push(Dependency {
-                server_id: server,
-                check: check(name, instance),
+                server_id: child,
+                check: edge.child.check_ref(),
                 parent,
             });
         }
@@ -389,6 +366,29 @@ async fn dependencies(
     .fetch_all(&mut *db)
     .await?;
     Ok((found, with_relays(db, rows).await?))
+}
+
+/// The ping checks of `servers`: what makes a server a parent that is down
+/// (ADR-0152), with its offline incident.
+async fn pings(
+    db: &mut PgConnection,
+    servers: &[Uuid],
+) -> Result<HashMap<Uuid, Vec<CheckRef>>, sqlx::Error> {
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT server_id, name, instance FROM sensor_configs
+         WHERE server_id = ANY($1) AND kind = 'ping' AND enabled",
+    )
+    .bind(servers)
+    .fetch_all(&mut *db)
+    .await?;
+    let mut pings: HashMap<Uuid, Vec<CheckRef>> = HashMap::new();
+    for (server, name, instance) in rows {
+        pings
+            .entry(server)
+            .or_default()
+            .push(CheckRef { name, instance });
+    }
+    Ok(pings)
 }
 
 /// The incidents of `servers` and `relays` that were open at some point
@@ -407,9 +407,11 @@ async fn incidents(
         String,
         String,
         DateTime<Utc>,
+        bool,
     );
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, server_id, relay_id, metric, instance, opened_at FROM incidents
+        "SELECT id, server_id, relay_id, metric, instance, opened_at, hidden_by IS NOT NULL
+         FROM incidents
          WHERE (server_id = ANY($1) OR relay_id = ANY($2))
            AND opened_at < $4 AND (resolved_at IS NULL OR resolved_at > $3)
          ORDER BY opened_at, id",
@@ -444,6 +446,7 @@ async fn incidents(
             relay_id: r.2,
             metric: r.3,
             instance: r.4,
+            hidden: r.6,
         })
         .filter(|i| !i.critical.is_empty())
         .collect())

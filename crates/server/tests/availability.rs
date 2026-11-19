@@ -245,20 +245,6 @@ db_tests! {
 
     #[sqlx::test]
     async fn what_depends_on_a_parent_is_unreachable(pool: PgPool) {
-        // The table of ADR-0152, with its columns, until its migration is
-        // here; afterwards, its own.
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS dependencies (
-                 id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-                 server_id uuid NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
-                 check_name text, check_instance text NOT NULL DEFAULT '',
-                 parent_server_id uuid REFERENCES servers (id) ON DELETE CASCADE,
-                 parent_relay_id uuid REFERENCES relays (id) ON DELETE CASCADE,
-                 parent_check_name text, parent_check_instance text NOT NULL DEFAULT '')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
         let p = place(&pool, "acme").await;
         // A switch of another site of the customer, which the report of
         // the first site does not cover, and db behind it.
