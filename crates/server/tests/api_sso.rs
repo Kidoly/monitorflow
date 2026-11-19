@@ -537,6 +537,47 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_replayed_return_is_limited_per_source(pool: PgPool) {
+        let app = app(&pool);
+        let (_, cookie) = admin(&app, &pool).await;
+        let p = start_provider().await;
+        let id = add(&app, &cookie, &p, json!([{ "group": "ops", "role": "operator" }])).await;
+        let start = send(&app, "GET", &format!("/api/auth/oidc/{id}/start"), None, None).await;
+        let pending = start.cookies()[0].clone();
+        let url = reqwest::Url::parse(start.location()).unwrap();
+        let state: String = url.query_pairs().find(|(k, _)| k == "state").unwrap().1.into_owned();
+
+        let before = *p.fake.token_requests.lock().unwrap();
+        let audited_before = audited(&pool, "auth.login_failed").await.len();
+        // The same cookie and state again and again, with codes the
+        // provider refuses.
+        for n in 0..25 {
+            let answer = send(&app, "GET", &format!("/api/auth/oidc/callback?code=junk-{n}&state={state}"),
+                None, Some(&pending)).await;
+            assert_eq!(answer.location(), "/login/?sso=provider_error");
+        }
+        // Only the source's allowance reached the provider and the audit log.
+        let limit = 10;
+        assert_eq!(*p.fake.token_requests.lock().unwrap() - before, limit);
+        let refused = audited(&pool, "auth.login_failed").await.len() - audited_before;
+        assert_eq!(refused as u32, limit);
+    }
+
+    #[sqlx::test]
+    async fn mappings_alike_but_for_case_are_one(pool: PgPool) {
+        let app = app(&pool);
+        let (_, cookie) = admin(&app, &pool).await;
+        let p = start_provider().await;
+        let id = add(&app, &cookie, &p, json!([
+            { "group": "Équipe", "role": "operator" },
+            { "group": "équipe", "role": "operator" },
+        ])).await;
+        let mappings: i64 = sqlx::query_scalar("SELECT count(*) FROM identity_provider_groups WHERE provider_id = $1")
+            .bind(id).fetch_one(&pool).await.unwrap();
+        assert_eq!(mappings, 1);
+    }
+
+    #[sqlx::test]
     async fn a_mapping_change_applies_at_once(pool: PgPool) {
         let app = app(&pool);
         let (_, cookie) = admin(&app, &pool).await;

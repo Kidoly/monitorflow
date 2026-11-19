@@ -14,6 +14,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::audit::{self, Event};
+use super::client_addr::Peer;
 use super::{session, ApiError, ApiSettings, ApiState};
 use crate::secrets::Column;
 use crate::sso::accounts::{self, Identity, Outcome, Provider, Refusal};
@@ -259,8 +260,14 @@ pub(super) async fn open_session(
 }
 
 /// `GET /api/auth/oidc/callback`: the provider sends the browser back.
+///
+/// The cookie of `start` can be sent again for ten minutes, so trading
+/// its code at the provider is limited per source address like a
+/// password (ADR-0106): each refused one costs the provider a request and
+/// the audit log a row.
 pub async fn callback(
     State(state): State<ApiState>,
+    peer: Peer,
     headers: HeaderMap,
     Query(query): Query<Callback>,
 ) -> Response {
@@ -292,8 +299,16 @@ pub async fn callback(
     let Some(code) = query.code.filter(|c| !c.is_empty()) else {
         return to_login(settings, "provider_error");
     };
+    let source = settings.trusted_proxies.source(&peer, &headers).await;
+    if !state.login_limits.begin_provider(source) {
+        tracing::debug!(%source, "provider return refused: too many attempts");
+        return to_login(settings, "provider_error");
+    }
     let identity = match oidc_identity(&state, &provider, &pending, &code).await {
-        Ok(identity) => identity,
+        Ok(identity) => {
+            state.login_limits.provider_succeeded(source);
+            identity
+        }
         Err(error) => {
             tracing::warn!(provider = %provider.id, %error, "OpenID Connect sign-in failed");
             audit_failure(

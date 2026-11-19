@@ -21,7 +21,7 @@ use monitorflow_common::release::Version;
 use monitorflow_common::tls::{self, PeerIdentity, PeerRole};
 use monitorflow_common::via::Via;
 use monitorflow_common::{MIN_PEER_VERSION, PROTOCOL_VERSION};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{sleep, timeout, Instant};
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
@@ -507,6 +507,7 @@ impl AgentService for AgentStreamService {
             invalid_logs_logged: None,
             pending_logs: ingest::journal::Pending::default(),
             last_discovery: None,
+            writes: Arc::new(Semaphore::new(WRITES_PER_STREAM)),
         };
         tokio::spawn(connection.run(
             inbound,
@@ -574,7 +575,16 @@ struct Connection {
     pending_logs: ingest::journal::Pending,
     /// When this stream's last discovery report was taken (ADR-0134).
     last_discovery: Option<Instant>,
+    /// Database writes of this stream's reports still running; see
+    /// [`WRITES_PER_STREAM`].
+    writes: Arc<Semaphore>,
 }
+
+/// Database writes one stream may have running at once (command results,
+/// package reports, relay mirrors). Past that, the stream is not read
+/// until one ends, so a peer sending reports back to back slows only
+/// itself instead of taking every connection of the pool.
+const WRITES_PER_STREAM: usize = 2;
 
 /// Fewest seconds between two discovery reports stored for one stream;
 /// agents send one every 5 minutes at most.
@@ -625,7 +635,7 @@ impl Connection {
                 message = inbound.message() => match message {
                     Ok(Some(envelope)) => {
                         idle.as_mut().reset(Instant::now() + heartbeat_timeout);
-                        self.receive(envelope);
+                        self.receive(envelope).await;
                     }
                     Ok(None) => break None,
                     Err(status) => {
@@ -673,7 +683,7 @@ impl Connection {
         tracing::info!(agent_id = %self.id, connection = self.number, "stream closed");
     }
 
-    fn receive(&mut self, envelope: Envelope) {
+    async fn receive(&mut self, envelope: Envelope) {
         let now = Utc::now();
         if envelope.sequence <= self.last_sequence {
             self.counters.stale_sequences += 1;
@@ -685,7 +695,7 @@ impl Connection {
             );
         } else {
             self.last_sequence = envelope.sequence;
-            self.handle(envelope.sequence, envelope.payload);
+            self.handle(envelope.sequence, envelope.payload).await;
             self.record_seen();
         }
         let (sequence, counters) = (self.last_sequence, self.counters);
@@ -829,7 +839,17 @@ impl Connection {
         }
     }
 
-    fn handle(&mut self, sequence: u64, payload: Option<Payload>) {
+    /// A turn to write to the database, waiting while this stream has
+    /// [`WRITES_PER_STREAM`] writes running.
+    async fn write_turn(&self) -> OwnedSemaphorePermit {
+        self.writes
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("the semaphore is never closed")
+    }
+
+    async fn handle(&mut self, sequence: u64, payload: Option<Payload>) {
         let id = &self.id;
         match payload {
             Some(Payload::Heartbeat(_)) => tracing::trace!(agent_id = %id, sequence, "heartbeat"),
@@ -879,18 +899,30 @@ impl Connection {
                 // its agents' results come on their own streams.
                 if let (Some(commands), PeerRole::Agent) = (&self.commands, self.role) {
                     let (commands, id) = (commands.clone(), id.clone());
-                    tokio::spawn(async move { commands.record(&id, result).await });
+                    let turn = self.write_turn().await;
+                    tokio::spawn(async move {
+                        commands.record(&id, result).await;
+                        drop(turn);
+                    });
                 } else if let (Some(commands), PeerRole::Relay) = (&self.relay_commands, self.role)
                 {
                     let (commands, id) = (commands.clone(), id.clone());
-                    tokio::spawn(async move { commands.record(&id, result).await });
+                    let turn = self.write_turn().await;
+                    tokio::spawn(async move {
+                        commands.record(&id, result).await;
+                        drop(turn);
+                    });
                 }
             }
             Some(Payload::PackageReport(report)) => {
                 tracing::debug!(agent_id = %id, sequence, packages = report.packages.len(), "package report");
                 if let (Some(commands), PeerRole::Agent) = (&self.commands, self.role) {
                     let (commands, id) = (commands.clone(), id.clone());
-                    tokio::spawn(async move { commands.report(&id, report).await });
+                    let turn = self.write_turn().await;
+                    tokio::spawn(async move {
+                        commands.report(&id, report).await;
+                        drop(turn);
+                    });
                 }
             }
             Some(Payload::Discovery(report)) => {
@@ -919,11 +951,13 @@ impl Connection {
                 if self.role == PeerRole::Relay {
                     let (inventory, id) = (self.inventory.clone(), id.clone());
                     let received_at = Utc::now();
+                    let turn = self.write_turn().await;
                     tokio::spawn(async move {
                         if let Err(error) = inventory.relay_mirrors(&id, received_at, report).await
                         {
                             tracing::warn!(relay_id = %id, %error, "could not record the relay's mirrors");
                         }
+                        drop(turn);
                     });
                 } else {
                     tracing::warn!(agent_id = %id, sequence, "ignoring RelayMirrors from an agent");

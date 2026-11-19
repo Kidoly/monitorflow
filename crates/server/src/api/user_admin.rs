@@ -29,6 +29,7 @@ use super::one_time::OneTimeToken;
 use super::sensors::{body, parse_id};
 use super::users::{self, CreateUserError, GrantScope};
 use super::{session, ApiError, ApiState, Role, RoleGrant};
+use crate::sso::config::Kind;
 
 /// How long a password link stays valid: long enough for an invitation to
 /// be read after a weekend.
@@ -174,11 +175,7 @@ async fn fetch_users(db: &mut PgConnection, id: Option<Uuid>) -> Result<Vec<User
                 let provider = provider_id.zip(name).map(|(id, name)| AccountProvider {
                     id,
                     name,
-                    kind: if kind.as_deref() == Some("ldap") {
-                        crate::sso::config::Kind::Ldap
-                    } else {
-                        crate::sso::config::Kind::Oidc
-                    },
+                    kind: Kind::of_column(kind.as_deref().unwrap_or_default()),
                 });
                 let invited = no_password && provider.is_none();
                 UserView {
@@ -233,30 +230,16 @@ pub(super) async fn account_provider(
     Ok(row.map(|(id, name, kind)| AccountProvider {
         id,
         name,
-        kind: if kind == "ldap" {
-            crate::sso::config::Kind::Ldap
-        } else {
-            crate::sso::config::Kind::Oidc
-        },
+        kind: Kind::of_column(&kind),
     }))
-}
-
-/// The name of the sign-in provider `user` signs in through, if any.
-async fn provider_of(db: &mut PgConnection, user: Uuid) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT p.name FROM users u JOIN identity_providers p ON p.id = u.identity_provider_id
-         WHERE u.id = $1",
-    )
-    .bind(user)
-    .fetch_optional(db)
-    .await
 }
 
 /// 409 for an account whose roles come from its provider's groups.
 async fn refuse_external(db: &mut PgConnection, user: Uuid, what: &str) -> Result<(), ApiError> {
-    match provider_of(db, user).await? {
-        Some(name) => Err(ApiError::Conflict(format!(
-            "this account signs in through {name}: {what}"
+    match account_provider(db, user).await? {
+        Some(provider) => Err(ApiError::Conflict(format!(
+            "this account signs in through {}: {what}",
+            provider.name
         ))),
         None => Ok(()),
     }
@@ -264,7 +247,7 @@ async fn refuse_external(db: &mut PgConnection, user: Uuid, what: &str) -> Resul
 
 /// Active global administrators: enabled, with a password, and an
 /// administrator role on everything.
-async fn global_admins(db: &mut PgConnection) -> Result<i64, sqlx::Error> {
+pub(super) async fn global_admins(db: &mut PgConnection) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT count(DISTINCT u.id) FROM users u JOIN user_roles r ON r.user_id = u.id
          WHERE r.role = 'administrator' AND r.customer_id IS NULL AND r.site_id IS NULL

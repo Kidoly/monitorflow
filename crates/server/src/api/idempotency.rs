@@ -23,20 +23,25 @@ pub const REPLAYED: &str = "idempotent-replayed";
 const MAX_ANSWER: usize = 1 << 20;
 const MAX_VALUE: usize = 255;
 
-/// Routes whose answer hands out a secret once (`/api/…` paths, POST):
-/// their answers are never stored.
-fn hands_out_a_secret(path: &str) -> bool {
+/// Routes whose answer hands out a secret once (`/api/…` paths): their
+/// answers are never stored. Moving an integration endpoint to a new URL
+/// (PUT) gives it a new signing secret.
+fn hands_out_a_secret(method: &Method, path: &str) -> bool {
     let segments: Vec<&str> = path.trim_start_matches("/api/").split('/').collect();
-    matches!(
-        segments.as_slice(),
-        ["tokens"]
-            | ["install-keys"]
-            | ["display-links"]
-            | ["users"]
-            | ["users", _, "link"]
-            | ["integrations"]
-            | ["integrations", _, "secret"]
-    )
+    match *method {
+        Method::POST => matches!(
+            segments.as_slice(),
+            ["tokens"]
+                | ["install-keys"]
+                | ["display-links"]
+                | ["users"]
+                | ["users", _, "link"]
+                | ["integrations"]
+                | ["integrations", _, "secret"]
+        ),
+        Method::PUT => matches!(segments.as_slice(), ["integrations", _]),
+        _ => false,
+    }
 }
 
 /// A valid header value: 1 to 255 visible ASCII characters.
@@ -150,7 +155,7 @@ async fn idempotent(
         } => return Ok(replay(status, content_type, body)),
     }
 
-    let secret_answer = parts.method == Method::POST && hands_out_a_secret(parts.uri.path());
+    let secret_answer = hands_out_a_secret(&parts.method, parts.uri.path());
     let response = call(inner, Request::from_parts(parts, Body::from(body))).await;
     let status = response.status();
     let (parts, body) = response.into_parts();
@@ -298,15 +303,18 @@ mod tests {
             "/api/integrations",
             "/api/integrations/x/secret",
         ] {
-            assert!(hands_out_a_secret(path), "{path}");
+            assert!(hands_out_a_secret(&Method::POST, path), "{path}");
         }
+        assert!(hands_out_a_secret(&Method::PUT, "/api/integrations/x"));
         for path in [
             "/api/silences",
             "/api/users/x/roles",
             "/api/tokens/x",
             "/api/integrations/x/test",
         ] {
-            assert!(!hands_out_a_secret(path), "{path}");
+            assert!(!hands_out_a_secret(&Method::POST, path), "{path}");
         }
+        assert!(!hands_out_a_secret(&Method::PUT, "/api/silences/x"));
+        assert!(!hands_out_a_secret(&Method::DELETE, "/api/integrations/x"));
     }
 }

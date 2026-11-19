@@ -22,7 +22,6 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use monitorflow_common::redact::REDACTED;
-use ring::digest::{digest, SHA256};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -175,7 +174,7 @@ impl KeySecret {
     }
 
     pub fn hash(&self) -> Vec<u8> {
-        digest(&SHA256, self.0.as_bytes()).as_ref().to_vec()
+        super::one_time::hash_of(&self.0)
     }
 
     fn shown(&self) -> &str {
