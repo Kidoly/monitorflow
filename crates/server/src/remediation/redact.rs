@@ -145,39 +145,43 @@ impl Redacted {
     }
 
     /// The first `max` bytes, cut on a character boundary, then a marker
-    /// with how many bytes were dropped. Cutting redacted text cannot
-    /// reveal a secret, which is why redaction runs first.
+    /// with how many bytes were dropped ([`head`]). Cutting redacted text
+    /// cannot reveal a secret, which is why redaction runs first.
     pub fn head(self, max: usize) -> Self {
-        if self.0.len() <= max {
-            return self;
-        }
-        let end = floor_char_boundary(&self.0, max);
-        Self(format!(
-            "{} [TRUNCATED: {} bytes]",
-            &self.0[..end],
-            self.0.len() - end
-        ))
+        Self(head(&self.0, max))
     }
 
-    /// The last `max` bytes after a marker, like [`Self::head`]; for
-    /// command output, whose end says how it failed.
+    /// The last `max` bytes after a marker ([`tail`]); for command output,
+    /// whose end says how it failed.
     pub fn tail(self, max: usize) -> Self {
-        if self.0.len() <= max {
-            return self;
-        }
-        let mut start = self.0.len() - max;
-        while !self.0.is_char_boundary(start) {
-            start += 1;
-        }
-        Self(format!("[TRUNCATED: {} bytes] {}", start, &self.0[start..]))
+        Self(tail(&self.0, max))
     }
 }
 
-fn floor_char_boundary(text: &str, mut index: usize) -> usize {
-    while !text.is_char_boundary(index) {
-        index -= 1;
+/// The first `max` bytes of `text`, cut on a character boundary, after
+/// which a marker says how many bytes were cut.
+pub fn head(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
     }
-    index
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} [TRUNCATED: {} bytes]", &text[..end], text.len() - end)
+}
+
+/// The last `max` bytes of `text`, cut on a character boundary, after a
+/// marker that says how many bytes were cut.
+pub fn tail(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
+    }
+    let mut start = text.len() - max;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("[TRUNCATED: {start} bytes] {}", &text[start..])
 }
 
 impl fmt::Display for Redacted {

@@ -78,19 +78,7 @@ pub fn classify(command: &str, rules: &RuleSet) -> Decision {
         Verdict::Unknown(reason) => reason,
     };
     let words: Vec<&str> = first.iter().map(|w| w.text.as_str()).collect();
-    let allowed = rules
-        .allow
-        .iter()
-        .filter(|rule| rule.tier < Tier::HighImpact && rule.pattern.matches_all(&words))
-        .max_by_key(|rule| rule.tier);
-    match allowed {
-        Some(rule) => Decision {
-            tier: rule.tier,
-            rule: Rule::Configured { id: rule.id },
-            reason: format!("allowed by the administrator rule `{}`", rule.pattern),
-        },
-        None => Decision::high("default.unknown", unknown),
-    }
+    super::allowed_or_unknown(&words, unknown, rules)
 }
 
 /// The first deny pattern found in `command`, without regard to case:

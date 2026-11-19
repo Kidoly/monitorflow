@@ -9,7 +9,7 @@
 use monitorflow_common::proto::v1::{Package, PackageReport};
 use sqlx::PgPool;
 
-use super::third_party;
+use super::third_party::{self, fits};
 use super::update_source::UpdateSource;
 use crate::remediation::snapshot::local;
 
@@ -24,7 +24,6 @@ pub struct PackageStore {
 
 /// Fits the columns of `server_packages`.
 fn storable(package: &Package) -> bool {
-    let fits = |s: &str, max: usize| s.len() <= max && !s.contains('\0');
     !package.name.is_empty()
         && fits(&package.name, 256)
         && fits(&package.arch, 64)
