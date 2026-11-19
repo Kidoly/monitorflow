@@ -4,7 +4,17 @@ import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { t } from "@/i18n";
-import { type Detected, type Probe, type Site, type SnmpCredentialsRequest, type SnmpTemplate, api, describeError } from "@/lib/api";
+import {
+  type Detected,
+  type Probe,
+  type Site,
+  type SnmpCredentialsRequest,
+  type SnmpTemplate,
+  type VmwareCredentialsRequest,
+  type VmwareTested,
+  api,
+  describeError,
+} from "@/lib/api";
 import { placeLabel } from "@/lib/customers";
 import { modifiesSite, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { serverHref } from "@/lib/routes";
@@ -16,6 +26,7 @@ import { PageHeader } from "@/components/ui/PageState";
 
 import styles from "./AdminPages.module.css";
 import { NEW_CREDENTIALS, SnmpFields, snmpProblem, snmpRequest } from "./SnmpCredentials";
+import { NEW_VMWARE, VmwareFields, VmwareTest, needsTrust, vmwareProblem, vmwareRequest } from "./VmwareCredentials";
 
 /** An IP address (v4, or v6 with or without brackets) or a DNS name, as the server checks it. */
 export function validAddress(value: string): boolean {
@@ -117,6 +128,10 @@ export function AddDevice() {
   const [detected, setDetected] = useState<Detected | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [snmpError, setSnmpError] = useState<string | null>(null);
+  const [vmware, setVmware] = useState(false);
+  const [vcenter, setVcenter] = useState<VmwareCredentialsRequest>(NEW_VMWARE);
+  const [vcenterTested, setVcenterTested] = useState<VmwareTested | null>(null);
+  const [vcenterError, setVcenterError] = useState<string | null>(null);
   const [errors, setErrors] = useState<{ name?: string; address?: string }>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,6 +197,11 @@ export function AddDevice() {
       setSnmpError(problem);
       if (problem) return;
     }
+    if (vmware) {
+      const problem = vmwareProblem(vcenter, false) ?? (needsTrust(vcenterTested, vcenter) ? t("virtualization.vmware.needTrust") : null);
+      setVcenterError(problem);
+      if (problem) return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -190,8 +210,9 @@ export function AddDevice() {
         name: name.trim(),
         address: address.trim(),
         ping,
-        ...((ping || snmp) && probe && { probe }),
+        ...((ping || snmp || vmware) && probe && { probe }),
         ...(snmp && { snmp: snmpRequest(credentials), template }),
+        ...(vmware && { vmware: vmwareRequest(vcenter) }),
       });
       router.push(scopedHref(serverHref(device.id), scope));
     } catch (e) {
@@ -257,7 +278,10 @@ export function AddDevice() {
       <label className={styles.check}>
         <input type="checkbox" checked={snmp} onChange={(e) => setSnmp(e.target.checked)} /> {t("devices.snmp.watch")}
       </label>
-      {(ping || snmp) && siteId && (
+      <label className={styles.check}>
+        <input type="checkbox" checked={vmware} onChange={(e) => setVmware(e.target.checked)} /> {t("virtualization.vmware.watch")}
+      </label>
+      {(ping || snmp || vmware) && siteId && (
         <ProbeSelect key={siteId} siteId={siteId} value={probe} onChange={setProbe} label={t("devices.add.from")} />
       )}
       {snmp && (
@@ -284,6 +308,24 @@ export function AddDevice() {
           {snmpError && (
             <p className={styles.formError} role="alert">
               {snmpError}
+            </p>
+          )}
+        </fieldset>
+      )}
+      {vmware && (
+        <fieldset className={styles.panel} aria-label={t("virtualization.vmware.title")}>
+          <VmwareFields value={vcenter} onChange={setVcenter} />
+          <VmwareTest
+            siteId={siteId}
+            address={address}
+            probe={probe}
+            value={vcenter}
+            onTrust={(fingerprint) => setVcenter({ ...vcenter, fingerprint: fingerprint ?? undefined })}
+            onTested={setVcenterTested}
+          />
+          {vcenterError && (
+            <p className={styles.formError} role="alert">
+              {vcenterError}
             </p>
           )}
         </fieldset>

@@ -41,6 +41,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor a website over HTTPS](monitor-website-https.md): Know when your website stops answering as it should: its status code, the text on the page, how long it takes, its redirects and when its certificate expires.
 - [How to monitor Docker](monitor-docker.md): Get alerted when the Docker engine or containerd stops on a Linux server, and when a published container port stops answering.
 - [How to monitor Proxmox VE](monitor-proxmox-ve.md): Watch your Proxmox VE hosts: the web interface on port 8006, the cluster service, and the disk space, CPU and memory every VM depends on.
+- [How to monitor VMware vSphere and Hyper-V](monitor-vmware-hyper-v.md): Watch the hosts, clusters, virtual machines and datastores of a vCenter, an ESXi host or a Hyper-V host, get alerted on disconnected hosts, full datastores and old snapshots, and tie each virtual machine to its server.
 
 ## Linux services
 

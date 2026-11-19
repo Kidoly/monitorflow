@@ -250,7 +250,7 @@ db_tests! {
                     SensorConfigs::spawn(SensorConfigStore::new(pool.clone()), registry.clone(), watcher);
                 AgentStreamService::new(registry, Arc::new(DbRelayPolicy::new(pool.clone())), server_settings())
                     .with_inventory(Arc::new(DbInventory::new(pool.clone())))
-                    .with_ingest(Ingest { metrics: Some(metrics.queue()), events: None })
+                    .with_ingest(Ingest { metrics: Some(metrics.queue()), events: None, virt: None })
                     .with_sensor_configs(configs)
             })
             .await;

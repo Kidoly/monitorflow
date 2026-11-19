@@ -72,7 +72,7 @@ Adding a vCenter or ESXi host adds, as a template does for SNMP (ADR-0149):
 
 ### Who may, and the API
 
-As for devices and checks: operators of the site add and change a vCenter, its credentials and Hyper-V checks, and correct matches; viewers read the inventory. "Install the agent" is for administrators of the site, who make install commands. Everything is under `/api/v1` with its OpenAPI document: `POST /api/devices` takes `vmware` credentials, `POST /api/devices/vmware/test` tests a connection, `GET`, `PUT` and `DELETE /api/devices/{id}/vmware`, `GET /api/servers/{id}/virtualization`, `PUT /api/virtual-objects/{id}/server`, `POST /api/virtual-objects/{id}/install-agent` and `POST /api/servers/{id}/hyperv`. Changes are audited (`device.create` with the credentials but no secret, `device.vmware_update`, `device.vmware_delete`, `virt.link`, `virt.install_agent`, `server.hyperv_watch`).
+As for devices and checks: operators of the site add and change a vCenter, its credentials and Hyper-V checks, and correct matches; viewers read the inventory. "Install the agent" is for administrators of the source's customer, who make install keys (ADR-0073). Everything is under `/api/v1` with its OpenAPI document: `POST /api/devices` takes `vmware` credentials, `POST /api/devices/vmware/test` tests a connection, `GET`, `PUT` and `DELETE /api/devices/{id}/vmware`, `GET /api/servers/{id}/virtualization`, `PUT /api/virtual-objects/{id}/server`, `POST /api/virtual-objects/{id}/install-agent` and `POST /api/servers/{id}/hyperv`. Changes are audited (`device.create` with the credentials but no secret, `device.vmware_update`, `device.vmware_delete`, `virt.link`, `virt.install_agent`, `server.hyperv_watch`).
 
 ### Moving from another tool
 
