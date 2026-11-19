@@ -36,7 +36,7 @@ pub struct Construct {
     pub reason: &'static str,
 }
 
-const fn construct(rule: &'static str, reason: &'static str) -> Construct {
+pub(super) const fn construct(rule: &'static str, reason: &'static str) -> Construct {
     Construct { rule, reason }
 }
 

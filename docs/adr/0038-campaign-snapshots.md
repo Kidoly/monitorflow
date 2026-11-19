@@ -35,3 +35,7 @@ A configuration that fails, or cannot be built, sets the target's `error`, so it
 - Hand-made changes to a host's sources between the campaign's configuration and its restore are overwritten by the restore, as by any `configure_sources`.
 - The server never deletes snapshots today; a retention on the server must keep those `campaign_snapshots` references while their campaign is not final.
 - Disk use on relays grows by one snapshot per distinct pinned snapshot, mostly hardlinks.
+
+## Amendment: a limit per customer (2026-11-19)
+
+Mirrors are global, but a customer's administrators create campaigns, and every campaign not yet final pins its snapshots, drafts included: retention keeps them, every relay copies them, and the mirror cannot be removed. Drafts never started would so keep old snapshots on the server and on every customer's relays without end. Creating a campaign is now refused (400) when the customer's unfinished campaigns would pin more than 64 distinct snapshots together; a snapshot pinned by several of them counts once. Stopping or finishing a campaign frees its pins. Creations of one customer take a lock for the check, so two at once cannot both pass it.

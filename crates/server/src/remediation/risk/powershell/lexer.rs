@@ -6,7 +6,7 @@
 //! and hashtables, type literals, escapes, redirections and comments.
 //! [`fragments`] is the lenient counterpart used for deny patterns.
 
-use crate::remediation::risk::lexer::Construct;
+use crate::remediation::risk::lexer::{construct, Construct};
 
 /// One word after quote removal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,10 +39,6 @@ impl Word {
             None => (rest.to_ascii_lowercase(), None),
         })
     }
-}
-
-const fn construct(rule: &'static str, reason: &'static str) -> Construct {
-    Construct { rule, reason }
 }
 
 pub const COMMAND_LIST: Construct = construct(
