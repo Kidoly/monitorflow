@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useId, useState } from "react";
 
 import { t } from "@/i18n";
@@ -16,6 +17,7 @@ import {
 import { formatSeconds } from "@/lib/format";
 import { every } from "@/lib/intervals";
 import { modifiesSite, useMe } from "@/lib/me";
+import { SNMP_LIBRARY_PATH } from "@/lib/routes";
 import {
   type ChannelForm,
   type CheckForm,
@@ -665,6 +667,7 @@ export function SnmpCheckForm({
         {form.channels.length < MAX_CHANNELS && <Button onClick={() => add(NEW_CHANNEL)}>{t("snmp.addChannel")}</Button>}
         <Button onClick={() => setAside("browse")}>{t("snmp.browse")}</Button>
         <Button onClick={() => setAside("pick")}>{t("snmp.pick")}</Button>
+        <Link href={SNMP_LIBRARY_PATH}>{t("snmp.manageLibrary")}</Link>
       </div>
       {aside === "browse" && (
         <SnmpBrowse
