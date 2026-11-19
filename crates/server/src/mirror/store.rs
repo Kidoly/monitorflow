@@ -374,7 +374,20 @@ impl RetentionLock {
         Ok(Self { conn })
     }
 
-    pub async fn release(self) {
+    /// Unlocks and closes the connection. Closing alone would leave the
+    /// lock to the backend until it exits, after `close` returns, so a job
+    /// started right after a pass could still find it held.
+    pub async fn release(mut self) {
+        // SQL-safe: interpolates only the constant ALL_MIRRORS_KEY.
+        let unlocked = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT pg_advisory_unlock({ALL_MIRRORS_KEY})"
+        )))
+        .execute(&mut *self.conn)
+        .await;
+        if let Err(error) = unlocked {
+            // Closing the connection below releases it anyway.
+            tracing::warn!(%error, "cannot release the retention lock");
+        }
         let _ = self.conn.close().await;
     }
 }
