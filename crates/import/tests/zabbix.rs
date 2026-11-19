@@ -438,9 +438,16 @@ async fn web_scenarios_and_http_agent_items_are_website_checks() {
     assert_eq!(api.headers, vec![("X-Monitor".into(), "zabbix".into())]);
     assert_eq!(api.timeout_s, Some(5));
     assert_eq!(check.fidelity, Fidelity::Exact);
-    // `nodata(..., 5m)=1`: a no-data rule on the check (ADR-0153).
+    // `nodata(..., 5m)=1`: a no-data rule on the check, carried by a copy
+    // of it beside its own alert (ADR-0153).
+    assert_eq!(check.alert, None);
+    let silent = inventory
+        .checks
+        .iter()
+        .find(|c| c.watch == check.watch && c.alert.as_ref().is_some_and(|a| a.no_data))
+        .expect("a no-data alert of API health");
     assert_eq!(
-        check.alert,
+        silent.alert,
         Some(Alert {
             severity: Severity::Critical,
             for_s: 300,
@@ -482,6 +489,51 @@ async fn the_nginx_template_is_missing_from_a_hosts_export() {
         .unwrap();
     assert_eq!(missing.why.code, "zabbix_template_missing");
     assert_eq!(missing.hosts, ["web-01"]);
+}
+
+#[tokio::test]
+async fn trigger_dependencies_become_dependencies() {
+    use monitorflow_import::model::DependencyEnd;
+
+    let inventory = read(vec![fixture("7.0", "dependencies.yaml")]).await;
+    let pairs: Vec<(&DependencyEnd, &DependencyEnd, Option<&str>)> = inventory
+        .dependencies
+        .iter()
+        .map(|d| (&d.child, &d.parent, note(&d.fidelity)))
+        .collect();
+    let https = Watch::Port {
+        address: None,
+        port: 443,
+    };
+    // The agent's trigger: the server as a whole behind the switch, which
+    // its ping says is down.
+    assert!(pairs.contains(&(
+        &DependencyEnd::host("app-01"),
+        &DependencyEnd::host("sw-core"),
+        None
+    )));
+    // A check its agent runs, on that agent: nothing to add, the agent
+    // being down already stops it.
+    assert!(!pairs
+        .iter()
+        .any(|(_, parent, _)| **parent == DependencyEnd::host("app-01")));
+    // Two triggers on the HTTPS check: the whole check depends, said so.
+    assert!(pairs.contains(&(
+        &DependencyEnd::check("app-01", https.clone()),
+        &DependencyEnd::host("sw-core"),
+        Some("dependency_whole_check")
+    )));
+    assert_eq!(
+        inventory.dependencies.len(),
+        2,
+        "{:#?}",
+        inventory.dependencies
+    );
+    // A trigger that is not exported.
+    assert_eq!(
+        why(&inventory, "trigger", "Nginx is not running"),
+        "dependency_unmapped"
+    );
 }
 
 #[tokio::test]
@@ -616,4 +668,47 @@ async fn a_live_zabbix() {
         "{error}"
     );
     assert!(!error.to_string().contains(&wrong));
+}
+
+/// The VMware template (ADR-0156): the vCenter becomes a device at its
+/// URL's host with its `vmware` check, waiting for its password; the
+/// datastore triggers become alerts on every datastore; hosts its
+/// discovery made stay in the vCenter's inventory.
+#[tokio::test]
+async fn vmware_hosts_become_a_vcenter_device() {
+    let inventory = read(vec![fixture("7.0", "vmware.yaml")]).await;
+    let vcenter = inventory
+        .hosts
+        .iter()
+        .find(|h| h.key == "vcenter-1")
+        .unwrap();
+    assert!(vcenter.agentless, "{vcenter:?}");
+    assert_eq!(vcenter.addresses, ["vcenter-1.example.test"]);
+    let check = check(&inventory, "vcenter-1", &Watch::Vmware);
+    match &check.fidelity {
+        Fidelity::Approximated(note) => assert!(
+            note.code == "vmware_password" || note.code == "zabbix_stock_template",
+            "{note:?}"
+        ),
+        other => panic!("{other:?}"),
+    }
+    let low = thresholds(
+        &inventory,
+        "VMware: [{#DATASTORE}]: Free space is critically low",
+    );
+    assert_eq!(low.len(), 1, "{:#?}", inventory.thresholds);
+    assert_eq!(low[0].measure, Measure::DatastoreFree);
+    assert_eq!(low[0].direction, Direction::Below);
+    assert_eq!(low[0].critical, Some(0.05), "the host's macro wins");
+    let warn = thresholds(&inventory, "VMware: [{#DATASTORE}]: Free space is low");
+    assert_eq!(warn[0].warning, Some(0.2));
+    assert!(inventory
+        .hosts
+        .iter()
+        .all(|h| h.name != "4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"));
+    assert!(inventory
+        .unmovable
+        .iter()
+        .any(|u| u.why.code == "vmware_discovered"
+            && u.hosts == ["4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"]));
 }

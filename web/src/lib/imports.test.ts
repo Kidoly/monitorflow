@@ -60,6 +60,12 @@ describe("imports", () => {
       create: { object: "channel", kind: "email", settings: { to: ["ops@example.com"] }, has_secret: true, site_id: null },
     });
     expect(itemTitle(channel, [])).toBe("Email to ops@example.com");
+    const dependency = item("dependency:app-01/port_443:sw-core", [], {
+      kind: "dependency",
+      hosts: ["app-01", "sw-core"],
+      create: { object: "dependency", server: "app-01", check: { name: "port_443", instance: "" }, parent: "sw-core" },
+    });
+    expect(itemTitle(dependency, [])).toBe("port_443 on app-01 depends on sw-core");
     const window = item("window:Patch", [], {
       kind: "window",
       create: {

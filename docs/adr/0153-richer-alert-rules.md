@@ -39,7 +39,7 @@ Each kind produces one number per evaluation, and that number goes through the s
 
 ### Where values are computed
 
-**In the engine, from a summary kept in memory.** Each series that a `window`, `compare` or `forecast` rule, or a condition, needs gets a summary of at most 60 buckets covering its longest window: per bucket the count, sum, minimum, maximum, first and last sample. A bucket is the window divided by 60, at least 10 s. Functions read the buckets that fall in the window, so a window edge is precise to a 60th of the window; `change` and `rate` use the first and last samples themselves. A forecast fits a least-squares line through the bucket averages, weighted by their counts. A series used only by `value` and `nodata` rules keeps no summary, as today.
+**In the engine, from a summary kept in memory.** Each series that a `window`, `compare` or `forecast` rule, or a condition, needs gets a summary of at most 60 buckets per distinct window read (so a 3-minute average is not read from buckets sized for a day's forecast of the same metric): per bucket the count, sum, minimum, maximum, first and last sample. A bucket is the window divided by 60, at least 10 s. Functions read the buckets that fall in the window, so a window edge is precise to a 60th of the window; `change` and `rate` use the first and last samples themselves. A forecast fits a least-squares line through the bucket averages, weighted by their counts. A series used only by `value` and `nodata` rules keeps no summary, as today.
 
 **A window needs enough history.** A summary knows the series from a point in time: the start of what was loaded from VictoriaMetrics, or its first sample. A `window` or `compare` value exists once the summary knows half of the window, and has a sample in it; `change` and `rate` need two samples; a forecast needs samples over a quarter of its window, in at least 3 buckets. Until then the rule judges nothing: the sample moves no timer, so a fresh agent cannot open a forecast incident from its first two disk samples.
 
@@ -62,7 +62,7 @@ Each kind produces one number per evaluation, and that number goes through the s
 
 Assume every server has its disks forecast (4 mounts), 3 window rules, one comparison with last week and 2 no-data rules: about 10,000 series with a summary.
 
-- **Memory:** a summary is about 4 KiB, so about 40 MiB; no-data series cost a timestamp each.
+- **Memory:** a summary is about 4 KiB, so about 40 MiB with one window per series; no-data series cost a timestamp each.
 - **Processor:** a sample of a series with a summary updates one bucket and reads at most 60; the forecast's fit is 60 multiplications. Negligible next to ingest.
 - **VictoriaMetrics:** after a restart, about 5 range queries per server as their agents reconnect, 4 at a time: a few minutes for the whole fleet, during which windows fill from live samples. In steady state, one query per server, metric and comparison rule per hour (about 1,000 an hour), and none for windows, forecasts or no data.
 - **PostgreSQL:** unchanged: writes follow transitions, not samples.
