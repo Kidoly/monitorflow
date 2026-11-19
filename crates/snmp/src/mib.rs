@@ -21,6 +21,8 @@ pub const MAX_OBJECTS: usize = 20_000;
 pub const MAX_DEPTH: usize = 32;
 /// Longest description kept.
 pub const MAX_DESCRIPTION: usize = 500;
+/// Most arcs in an OID, as written and once resolved.
+pub const MAX_ARCS: usize = 128;
 /// Most tokens of one file, well above what 1 MiB of MIB holds.
 const MAX_TOKENS: usize = 1 << 20;
 /// Most enumeration items of one type.
@@ -474,7 +476,7 @@ impl<'a> Parser<'a> {
                 _ => return Err(self.err("an OID value does not read")),
             }
             first = false;
-            if arcs.len() > 128 {
+            if arcs.len() > MAX_ARCS {
                 return Err(self.err("an OID is too long"));
             }
         }
@@ -780,6 +782,14 @@ pub fn parse(files: &[(String, String)], known: &Known) -> Result<Vec<Module>, M
                 };
                 if let Some(mut oid) = start {
                     oid.extend(&raw.arcs);
+                    // A chain of objects each under the previous one
+                    // would otherwise grow without bound.
+                    if oid.len() > MAX_ARCS {
+                        return Err(invalid(
+                            &module.file,
+                            format!("the OID of {} is longer than {MAX_ARCS} arcs", raw.name),
+                        ));
+                    }
                     done[i].insert(raw.name.clone(), oid.clone());
                     nodes
                         .entry(module.name.clone())

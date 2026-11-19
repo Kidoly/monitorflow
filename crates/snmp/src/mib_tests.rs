@@ -287,3 +287,29 @@ fn every_cut_of_a_file_reads_or_is_refused_without_panicking() {
         let _ = parse(&[file("tail.mib", &VENDOR[end..])], &none);
     }
 }
+
+#[test]
+fn resolved_oids_are_bounded() {
+    // Each object under the previous one: the OIDs grow by one arc each.
+    let chain = |n: usize| {
+        let mut text = String::from(
+            "CHAIN-MIB DEFINITIONS ::= BEGIN\nIMPORTS enterprises FROM SNMPv2-SMI;\na0 OBJECT IDENTIFIER ::= { enterprises 1 }\n",
+        );
+        for i in 1..n {
+            text.push_str(&format!("a{i} OBJECT IDENTIFIER ::= {{ a{} 1 }}\n", i - 1));
+        }
+        text.push_str("END\n");
+        text
+    };
+    assert!(parse(&[file("short.mib", &chain(100))], &Known::default()).is_ok());
+    let started = std::time::Instant::now();
+    match parse(&[file("long.mib", &chain(20_000))], &Known::default()) {
+        Err(MibError::Invalid { file, reason }) => {
+            assert_eq!(file, "long.mib");
+            assert!(reason.contains("arcs"), "{reason}");
+        }
+        Err(other) => panic!("{other:?}"),
+        Ok(_) => panic!("a chain of 20,000 objects was accepted"),
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
