@@ -3,7 +3,16 @@ import type { Tone } from "@/components/ui/tone";
 import { t } from "@/i18n";
 
 /** The states in the order of the status strip (ADR-0130). */
-export const SERVER_STATES: readonly ServerState[] = ["critical", "warning", "acknowledged", "silenced", "offline", "ok", "waiting"];
+export const SERVER_STATES: readonly ServerState[] = [
+  "critical",
+  "warning",
+  "acknowledged",
+  "silenced",
+  "unreachable",
+  "offline",
+  "ok",
+  "waiting",
+];
 
 /** The tint of each state. OK is the quiet one. */
 export const STATE_TONES: Record<ServerState, Tone> = {
@@ -12,6 +21,8 @@ export const STATE_TONES: Record<ServerState, Tone> = {
   offline: "bad",
   acknowledged: "info",
   silenced: "neutral",
+  // Its parent's incident says what is wrong (ADR-0152).
+  unreachable: "neutral",
   ok: "ok",
   waiting: "neutral",
 };
@@ -26,10 +37,13 @@ export function isServerState(value: string | null): value is ServerState {
 /**
  * The server's state, or for a central server older than it, a guess from
  * the other fields: it cannot tell a warning from a critical one, nor an
- * acknowledged one.
+ * acknowledged one. A state this interface has no word for, from a newer
+ * central server, is guessed the same way: shown as is, it would be a raw
+ * catalog key, as `common.state.waiting` was before this page knew it.
  */
 export function serverState(server: Pick<Server, "state" | "status" | "open_incidents" | "silenced_until">): ServerState {
-  if (server.state) return server.state;
+  const { state } = server;
+  if (state && isServerState(state)) return state;
   if (server.silenced_until) return "silenced";
   if (server.status === "offline") return "offline";
   return server.open_incidents > 0 ? "warning" : "ok";

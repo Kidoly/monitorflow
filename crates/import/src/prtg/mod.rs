@@ -5,6 +5,7 @@
 //! the API reader sends only GET requests to reading endpoints.
 
 pub mod api;
+pub mod discovery;
 pub mod export;
 pub mod mapping;
 pub mod sensors;

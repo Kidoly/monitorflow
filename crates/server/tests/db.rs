@@ -145,6 +145,8 @@ db_tests! {
                 "api_keys",
                 "audit_log",
                 "auto_rollouts",
+        "business_service_members",
+        "business_services",
                 "campaign_snapshots",
                 "campaign_targets",
                 "campaign_waves",
@@ -156,6 +158,7 @@ db_tests! {
                 "commands",
                 "customers",
                 "dashboards",
+                "dependencies",
                 "display_link_dashboards",
                 "display_links",
                 "display_sessions",
@@ -208,6 +211,7 @@ db_tests! {
                 "remediation_pending_commands",
                 "remediation_policies",
                 "remediation_rules",
+                "report_schedules",
                 "sealed_columns",
                 "seen_releases",
                 "sensor_configs",
@@ -232,7 +236,10 @@ db_tests! {
                 "user_contacts",
                 "user_preferences",
                 "user_roles",
-                "users"
+                "users",
+                "virtual_objects",
+                "virtual_sources",
+                "vmware_credentials"
             ]
         );
     }

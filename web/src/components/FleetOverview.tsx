@@ -6,12 +6,13 @@ import { useCallback } from "react";
 import { t } from "@/i18n";
 import { type Incident, type Server, type ServerState, api, describeError, isUnauthorized, isAbortError } from "@/lib/api";
 import { certificateProblem, certificateState } from "@/lib/certificates";
+import { endWords } from "@/lib/dependencies";
 import { formatOs } from "@/lib/format";
 import { incidentTitle, isOffline } from "@/lib/incidents";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { ADD_DEVICE_PATH, DISCOVERY_PATH, incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
-import { formatSensorValue } from "@/lib/sensors";
+import { incidentValue } from "@/lib/rules";
 import { isServerState, SERVER_STATES, STATE_TONES, serverState, stateWord, stateHref } from "@/lib/serverState";
 import { REFRESH_MS, usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
@@ -46,7 +47,17 @@ interface Row extends TreeRow {
  * "Problems first": what needs a look, then a late certificate on a server
  * otherwise fine, then what someone is on or silenced, then the rest.
  */
-const RANK: Record<ServerState, number> = { critical: 0, warning: 1, offline: 2, acknowledged: 4, silenced: 5, ok: 6, waiting: 7 };
+const RANK: Record<ServerState, number> = {
+  critical: 0,
+  warning: 1,
+  offline: 2,
+  acknowledged: 4,
+  // Its parent's incident is the problem (ADR-0152).
+  unreachable: 4,
+  silenced: 5,
+  ok: 6,
+  waiting: 7,
+};
 const CERTIFICATE_RANK = 3;
 const HEALTHY = RANK.ok;
 
@@ -82,7 +93,7 @@ function toRows(fleet: Fleet, now: Date): Row[] {
     const certificateWarning = server.cert_not_after !== null && certificateState(server.cert_not_after, now) !== "valid";
     const rank = state === "ok" && certificateWarning ? CERTIFICATE_RANK : RANK[state];
     const what = incident
-      ? `${incidentTitle(incident)}${isOffline(incident) ? "" : ` ${formatSensorValue(incident.metric, incident.last_value)}`}`
+      ? `${incidentTitle(incident)}${isOffline(incident) ? "" : ` ${incidentValue(incident, incident.last_value)}`}`
       : stateWord(state);
     return {
       key: server.id,
@@ -290,7 +301,10 @@ function Problem({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
  * out of the problems, and why (ADR-0130).
  */
 function whoAndWhy(row: Pick<Row, "server" | "state">, now: Date): string | null {
-  const { silence, acknowledgement } = row.server;
+  const { silence, acknowledgement, unreachable } = row.server;
+  if (row.state === "unreachable" && unreachable) {
+    return t("dependencies.fleet.because", { parent: endWords(unreachable.because) });
+  }
   if (row.state === "silenced" && silence?.window) {
     return t("fleet.inMaintenance", { until: formatDay(new Date(silence.until), now), reason: silence.reason });
   }
@@ -324,7 +338,7 @@ function What({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
         )}
         {incidentTitle(incident)}{" "}
         <span>
-          {!isOffline(incident) && `${formatSensorValue(incident.metric, incident.last_value)} · `}
+          {!isOffline(incident) && `${incidentValue(incident, incident.last_value)} · `}
           {formatDuration((now.getTime() - Date.parse(incident.opened_at)) / 1000)}
         </span>
       </span>
