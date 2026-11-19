@@ -7,20 +7,16 @@ use std::time::Duration;
 
 use axum::http::header::COOKIE;
 use axum::http::{HeaderMap, HeaderValue};
-use ring::digest::{digest, SHA256};
-use ring::rand::{SecureRandom, SystemRandom};
 use sqlx::{PgExecutor, PgPool};
 use uuid::Uuid;
 
-use super::ApiSettings;
+use super::{one_time, ApiSettings};
 
 /// Cookie name with `Secure`. The `__Host-` prefix makes browsers refuse it
 /// unless it is `Secure`, has `Path=/` and no `Domain`.
 const COOKIE_SECURE: &str = "__Host-mf_session";
 /// Cookie name without `Secure`, for development over plain HTTP.
 const COOKIE_PLAIN: &str = "mf_session";
-
-const TOKEN_BYTES: usize = 32;
 
 /// A session token as sent in the cookie. `Debug` never shows it.
 #[derive(Clone, PartialEq, Eq)]
@@ -34,11 +30,7 @@ impl fmt::Debug for SessionToken {
 
 impl SessionToken {
     fn generate() -> Self {
-        let mut bytes = [0u8; TOKEN_BYTES];
-        SystemRandom::new()
-            .fill(&mut bytes)
-            .expect("the system random generator failed");
-        Self(bytes.iter().map(|b| format!("{b:02x}")).collect())
+        Self(one_time::random_hex())
     }
 
     #[cfg(test)]
@@ -48,15 +40,11 @@ impl SessionToken {
 
     /// Accepts only the exact format [`SessionToken::generate`] produces.
     fn parse(value: &str) -> Option<Self> {
-        let valid = value.len() == 2 * TOKEN_BYTES
-            && value
-                .bytes()
-                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-        valid.then(|| Self(value.to_owned()))
+        one_time::is_random_hex(value).then(|| Self(value.to_owned()))
     }
 
     fn hash(&self) -> Vec<u8> {
-        digest(&SHA256, self.0.as_bytes()).as_ref().to_vec()
+        one_time::hash_of(&self.0)
     }
 }
 

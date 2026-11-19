@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use super::identity;
 use super::relay_names::{self, NameError};
+use crate::api::audit::{self, Event};
 
 pub const DEFAULT_TTL: Duration = Duration::from_secs(60 * 60);
 pub const MIN_TTL: Duration = Duration::from_secs(60);
@@ -264,16 +265,17 @@ async fn store(
         "server_names": server_names,
         "parent_relay": request.parent_relay,
     });
-    sqlx::query(
-        "INSERT INTO audit_log (actor_kind, actor_id, action, target_kind, target_id, details)
-         VALUES ($1, $2, 'enrollment_token.create', $3, $4, $5::jsonb)",
+    // Through audit::record, which names the API key of the request.
+    audit::record(
+        &mut *tx,
+        Event {
+            actor_kind,
+            actor_id: &actor_id,
+            action: "enrollment_token.create",
+            target: Some((request.role.as_str(), &request.peer_id)),
+            details,
+        },
     )
-    .bind(actor_kind)
-    .bind(actor_id)
-    .bind(request.role.as_str())
-    .bind(&request.peer_id)
-    .bind(details.to_string())
-    .execute(&mut *tx)
     .await?;
     tx.commit().await?;
     tracing::info!(token_id = %id, role = %request.role, peer_id = %request.peer_id, %expires_at, "created an enrollment token");

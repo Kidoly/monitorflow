@@ -521,6 +521,75 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn reports_sent_back_to_back_take_few_database_connections(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        server(&pool, "web-01", paris).await;
+        let h = Harness::start(&pool).await;
+        let peer = h.open("web-01", 10).await;
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        while h.registry.get(PeerRole::Agent, "web-01").is_none() {
+            assert!(tokio::time::Instant::now() < deadline, "the agent never connected");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // Each report's write waits on the server row, held here.
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM servers WHERE peer_id = 'web-01' FOR UPDATE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        const REPORTS: i64 = 12;
+        let tx = peer.tx.clone();
+        let sending = tokio::spawn(async move {
+            for n in 1..=REPORTS {
+                let report = PackageReport {
+                    collected_at_unix_ms: 1_800_000_000_000 + n,
+                    ..PackageReport::default()
+                };
+                let envelope = Envelope { sequence: 1 + n as u64, payload: Some(Payload::PackageReport(report)) };
+                if tx.send(envelope).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let waiting = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let mut most = 0;
+        for _ in 0..30 {
+            most = most.max(waiting().await);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(most >= 1, "no write reached the lock");
+        // Two writes of the stream, and at most the last-seen writer.
+        assert!(most <= 3, "{most} connections wait on one agent's reports");
+
+        // Nothing is lost: the stream goes on once the row is free.
+        lock.rollback().await.unwrap();
+        sending.await.unwrap();
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        loop {
+            let latest: bool = sqlx::query_scalar(
+                "SELECT coalesce(packages_reported_at = to_timestamp(1800000000.012), false) FROM servers WHERE peer_id = 'web-01'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if latest {
+                break;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "the last report was never stored");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        drop(peer);
+    }
+
+    #[sqlx::test]
     async fn package_reports_replace_older_ones_only(pool: PgPool) {
         let paris = site(&pool, "paris").await;
         server(&pool, "web-01", paris).await;

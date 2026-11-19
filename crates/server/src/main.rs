@@ -18,7 +18,7 @@ use monitorflow_server::api::{
 };
 use monitorflow_server::auto_update::AutoUpdate;
 use monitorflow_server::availability;
-use monitorflow_server::ca::{CaOptions, CertificateAuthority};
+use monitorflow_server::ca::{self, CaOptions, CertificateAuthority};
 use monitorflow_server::ca_rotation::{self, Rotator};
 use monitorflow_server::campaign::{self, Runner};
 use monitorflow_server::cluster::{self, Cluster, Links};
@@ -416,6 +416,7 @@ async fn main() -> anyhow::Result<()> {
     // Before admission: an added central server without the first one's
     // key must not take a place.
     open_secrets(&config).await?;
+    check_added_ca(&config).await?;
     // Honour-based by design (ADR-0100, "Not DRM"): a server started
     // without the flag runs as a first server and is not counted.
     if config.additional_instance {
@@ -1302,6 +1303,26 @@ async fn open_secrets(config: &ServerConfig) -> anyhow::Result<()> {
     tracing::info!(keys = ?keyring.ids(), "secrets key loaded");
     monitorflow_server::secrets::install(keyring)?;
     Ok(())
+}
+
+/// An added central server uses the first one's certificate authority,
+/// which the join file brings: it never makes one of its own, which no
+/// peer would trust and to which its enrollment tokens would be pinned.
+async fn check_added_ca(config: &ServerConfig) -> anyhow::Result<()> {
+    if !config.additional_instance {
+        return Ok(());
+    }
+    let dir = config.data_dir.join("ca");
+    // One file without the other is refused when the CA is opened.
+    for file in [ca::KEY_FILE, ca::CERT_FILE] {
+        if tokio::fs::try_exists(dir.join(file)).await? {
+            return Ok(());
+        }
+    }
+    anyhow::bail!(
+        "there is no certificate authority at {}: an added central server uses the first one's. On the first central server, run install-server.sh --add-server, copy the file it writes here, then run install-server.sh --join with it",
+        dir.display()
+    )
 }
 
 async fn open_ca(config: &ServerConfig) -> anyhow::Result<CertificateAuthority> {

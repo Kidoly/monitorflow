@@ -280,9 +280,11 @@ db_tests! {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("server.toml");
         std::fs::write(&config, "").unwrap();
-        // The first central server's secrets key, as the join file brings
-        // it (ADR-0125), so that only the license is missing.
+        // The first central server's secrets key and certificate
+        // authority, as the join file brings them (ADR-0125), so that only
+        // the license is missing.
         monitorflow_server::secrets::Keyring::open_or_create(dir.path(), true).unwrap();
+        monitorflow_server::ca::CertificateAuthority::open_or_create(&dir.path().join("ca"), Default::default()).unwrap();
         let output = tokio::task::spawn_blocking(move || {
             Command::new(env!("CARGO_BIN_EXE_monitorflow-server"))
                 .arg("--config")
@@ -299,6 +301,41 @@ db_tests! {
         assert!(!output.status.success());
         let said = String::from_utf8_lossy(&output.stderr);
         assert!(said.contains("this additional central server does not start: Adding a central server needs a MonitorFlow Enterprise license"), "{said}");
+        assert!(added(&pool).await.is_empty());
+    }
+}
+
+db_tests! {
+    /// An added central server with the first one's secrets key but no
+    /// certificate authority refuses to start, before taking a place,
+    /// rather than make a CA of its own.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_added_server_without_the_ca_does_not_start(pool: PgPool) {
+        let database: String = sqlx::query_scalar("SELECT current_database()").fetch_one(&pool).await.unwrap();
+        let mut url = url_of_database(&database);
+        url.push_str("?sslmode=disable");
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("server.toml");
+        std::fs::write(&config, "").unwrap();
+        monitorflow_server::secrets::Keyring::open_or_create(dir.path(), true).unwrap();
+        let data = dir.path().to_owned();
+        let output = tokio::task::spawn_blocking(move || {
+            Command::new(env!("CARGO_BIN_EXE_monitorflow-server"))
+                .arg("--config")
+                .arg(&config)
+                .env("MONITORFLOW_DATABASE_URL", url)
+                .env("MONITORFLOW_ADDITIONAL_INSTANCE", "true")
+                .env("MONITORFLOW_DATA_DIR", &data)
+                .env("HOSTNAME", "host2")
+                .output()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert!(!output.status.success());
+        let said = String::from_utf8_lossy(&output.stderr);
+        assert!(said.contains("there is no certificate authority at"), "{said}");
+        assert!(!dir.path().join("ca").join(monitorflow_server::ca::KEY_FILE).exists());
         assert!(added(&pool).await.is_empty());
     }
 }

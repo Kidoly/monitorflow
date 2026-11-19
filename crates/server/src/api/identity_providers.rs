@@ -209,16 +209,6 @@ async fn view_of(db: &mut PgConnection, id: Uuid) -> Result<ProviderView, ApiErr
     view(db, provider, accounts).await
 }
 
-async fn local_administrators(db: &mut PgConnection) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT count(DISTINCT u.id) FROM users u JOIN user_roles r ON r.user_id = u.id
-         WHERE r.role = 'administrator' AND r.customer_id IS NULL AND r.site_id IS NULL
-           AND u.disabled_at IS NULL AND u.password_hash IS NOT NULL",
-    )
-    .fetch_one(db)
-    .await
-}
-
 /// `GET /api/identity-providers`.
 pub async fn list(
     State(state): State<ApiState>,
@@ -238,7 +228,7 @@ pub async fn list(
     Ok(Json(ProviderList {
         providers,
         redirect_uri: redirect_uri(&state),
-        local_administrators: local_administrators(&mut db).await?,
+        local_administrators: super::user_admin::global_admins(&mut db).await?,
     }))
 }
 
@@ -661,7 +651,8 @@ pub async fn set_groups(
     for view in request.mappings {
         let mapping = checked_mapping(&mut tx, view).await?;
         let duplicate = new.iter().any(|m| {
-            m.group.eq_ignore_ascii_case(&mapping.group)
+            // As the unique index and sso::grants compare them.
+            m.group.to_lowercase() == mapping.group.to_lowercase()
                 && m.role == mapping.role
                 && m.scope == mapping.scope
         });
