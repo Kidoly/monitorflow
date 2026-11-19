@@ -14,7 +14,7 @@ use axum::Json;
 use base64::Engine;
 use chrono::{DateTime, TimeDelta, Utc};
 use monitorflow_import::source::{self, Connection, File, Input, SourceInfo, MAX_HOSTS};
-use monitorflow_import::{Context, ReadError};
+use monitorflow_import::ReadError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -384,7 +384,7 @@ pub async fn preview(
     source::check_input(&info, &input).map_err(read_error)?;
     let now = Utc::now();
     let inventory = reader
-        .read(input, &Context::new(now))
+        .read(input, &import::reach::context(now, is_global_admin(&user)))
         .await
         .map_err(read_error)?;
     if inventory.hosts.len() > MAX_HOSTS {
@@ -502,6 +502,7 @@ pub async fn confirm(
         serde_json::from_slice(&request).map_err(|e| ApiError::Invalid(e.to_string()))?
     };
     let skip: HashSet<String> = request.skip.into_iter().collect();
+    let administered = user.sites_with(Role::Administrator);
     let (run, outcome) = store::confirm(
         &state.pool,
         run.id,
@@ -509,6 +510,7 @@ pub async fn confirm(
         user.id,
         !is_global_admin(&user),
         Utc::now(),
+        |site| administered.contains(site),
     )
     .await?;
     tracing::info!(user = %user.id, import = %run.id, created = ?outcome.created, failed = outcome.failed.len(), "import confirmed");

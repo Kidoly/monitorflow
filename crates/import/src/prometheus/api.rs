@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
-use reqwest::{Client, Method, Url};
+use reqwest::{Method, Url};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
@@ -144,7 +144,7 @@ fn yes() -> bool {
 
 /// One API with its client and token.
 struct Api {
-    client: Client,
+    client: http::Client,
     base: Url,
     headers: HeaderMap,
 }

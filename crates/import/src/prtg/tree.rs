@@ -2,7 +2,8 @@
 //! ([`super::api`]) or its configuration file ([`super::export`]). The
 //! mapping ([`super::mapping`]) only sees this tree.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::ops::Deref;
 
 use chrono::{DateTime, Utc};
 
@@ -205,30 +206,93 @@ impl Tree {
 
     /// The nearest object of `kind` at or above `id`.
     pub fn ancestor(&self, id: i64, kind: Kind) -> Option<&Object> {
-        let mut current = self.get(id);
-        // Bounded so a parent loop in a damaged file cannot hang the import.
-        for _ in 0..=self.objects.len() {
-            let object = current?;
-            if object.kind == kind {
-                return Some(object);
-            }
-            current = object.parent.and_then(|p| self.get(p));
-        }
-        None
+        up(self.get(id), self.objects.len(), |p| self.get(p)).find(|o| o.kind == kind)
     }
 
     /// Names from the probe down to `id`, joined with ` / `, for the
     /// preview to say where each item comes from.
     pub fn path(&self, id: i64) -> String {
-        let mut names = Vec::new();
-        let mut current = self.get(id);
-        for _ in 0..=self.objects.len() {
-            let Some(object) = current else { break };
-            names.push(object.name.as_str());
-            current = object.parent.and_then(|p| self.get(p));
+        path(up(self.get(id), self.objects.len(), |p| self.get(p)))
+    }
+}
+
+/// `start` and the objects above it, nearest first. Bounded by `limit`,
+/// the number of objects, so a parent loop in a damaged file cannot hang
+/// the import.
+fn up<'a>(
+    start: Option<&'a Object>,
+    limit: usize,
+    get: impl Fn(i64) -> Option<&'a Object>,
+) -> impl Iterator<Item = &'a Object> {
+    std::iter::successors(start, move |o| o.parent.and_then(&get)).take(limit + 1)
+}
+
+fn path<'a>(up: impl Iterator<Item = &'a Object>) -> String {
+    let mut names: Vec<&str> = up.map(|o| o.name.as_str()).collect();
+    names.reverse();
+    names.join(" / ")
+}
+
+/// A [`Tree`] with its objects indexed by ID and by parent. A mapping
+/// looks objects up for each object, which the plain lookups made
+/// quadratic in the size of the tree: a large configuration file kept the
+/// server busy for minutes.
+pub struct Indexed<'a> {
+    tree: &'a Tree,
+    /// The first object of each ID, as [`Tree::get`] finds it.
+    by_id: HashMap<i64, usize>,
+    /// The children of each object, in the order read.
+    children: HashMap<i64, Vec<usize>>,
+}
+
+impl<'a> Indexed<'a> {
+    pub fn new(tree: &'a Tree) -> Self {
+        let mut by_id = HashMap::new();
+        let mut children: HashMap<i64, Vec<usize>> = HashMap::new();
+        for (at, object) in tree.objects.iter().enumerate() {
+            by_id.entry(object.id).or_insert(at);
+            if let Some(parent) = object.parent {
+                children.entry(parent).or_default().push(at);
+            }
         }
-        names.reverse();
-        names.join(" / ")
+        Self {
+            tree,
+            by_id,
+            children,
+        }
+    }
+
+    pub fn get(&self, id: i64) -> Option<&'a Object> {
+        let tree = self.tree;
+        self.by_id.get(&id).map(|at| &tree.objects[*at])
+    }
+
+    /// The direct children of `id`, in the order read.
+    pub fn children(&self, id: i64) -> impl Iterator<Item = &'a Object> + '_ {
+        let tree = self.tree;
+        self.children
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .map(move |at| &tree.objects[*at])
+    }
+
+    /// The nearest object of `kind` at or above `id`.
+    pub fn ancestor(&self, id: i64, kind: Kind) -> Option<&'a Object> {
+        up(self.get(id), self.tree.objects.len(), |p| self.get(p)).find(|o| o.kind == kind)
+    }
+
+    /// Names from the probe down to `id`, joined with ` / `.
+    pub fn path(&self, id: i64) -> String {
+        path(up(self.get(id), self.tree.objects.len(), |p| self.get(p)))
+    }
+}
+
+impl Deref for Indexed<'_> {
+    type Target = Tree;
+
+    fn deref(&self) -> &Tree {
+        self.tree
     }
 }
 
@@ -258,6 +322,35 @@ mod tests {
         assert_eq!(tree.ancestor(30, Kind::Device).unwrap().id, 20);
         assert!(tree.ancestor(10, Kind::Device).is_none());
         assert_eq!(tree.children(10).map(|o| o.id).collect::<Vec<_>>(), [20]);
+    }
+
+    /// The index finds what the plain lookups find, in the same order.
+    #[test]
+    fn the_index_agrees_with_the_tree() {
+        let mut tree = tree();
+        tree.objects
+            .push(Object::new(21, Kind::Device, "db", Some(10)));
+        tree.objects
+            .push(Object::new(20, Kind::Device, "again", Some(1)));
+        let indexed = Indexed::new(&tree);
+        for id in [1, 10, 20, 21, 30, 99] {
+            assert_eq!(indexed.get(id), tree.get(id));
+            assert_eq!(indexed.path(id), tree.path(id));
+            assert_eq!(
+                indexed.children(id).collect::<Vec<_>>(),
+                tree.children(id).collect::<Vec<_>>()
+            );
+            for kind in [Kind::Probe, Kind::Group, Kind::Device, Kind::Sensor] {
+                assert_eq!(indexed.ancestor(id, kind), tree.ancestor(id, kind));
+            }
+        }
+        tree.objects[0].parent = Some(30);
+        let indexed = Indexed::new(&tree);
+        assert_eq!(indexed.path(1), tree.path(1));
+        assert_eq!(
+            indexed.ancestor(30, Kind::Group),
+            tree.ancestor(30, Kind::Group)
+        );
     }
 
     #[test]
