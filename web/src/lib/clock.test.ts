@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { formatDay, formatMinute, formatWhen } from "./clock";
+import { browserTimeZone, formatDay, formatMinute, formatWhen, localToIso, toLocalInput } from "./clock";
 
 const now = new Date(2026, 9, 24, 14, 32, 5);
 
@@ -17,4 +17,21 @@ describe("clock", () => {
     expect(formatWhen(new Date(2026, 9, 31, 9, 5), now)).toBe("2026-10-31 09:05");
   });
 
+  it("reads and writes datetime-local values in local time", () => {
+    const date = new Date(2026, 9, 7, 3, 4, 59);
+    expect(toLocalInput(date)).toBe("2026-10-07T03:04");
+    expect(localToIso(toLocalInput(date))).toBe(new Date(2026, 9, 7, 3, 4).toISOString());
+    expect(localToIso("")).toBeNull();
+    expect(localToIso("nonsense")).toBeNull();
+  });
+
+  it("names the browser's time zone, UTC when it names none", () => {
+    expect(browserTimeZone()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+    const spy = vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({ timeZone: "" } as Intl.ResolvedDateTimeFormatOptions);
+    try {
+      expect(browserTimeZone()).toBe("UTC");
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

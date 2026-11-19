@@ -2,6 +2,8 @@ import { type PlainKey, t } from "@/i18n";
 
 import type { IntegrationDelivery, IntegrationEndpoint } from "./api";
 
+export { localToIso } from "./clock";
+
 /** The receiver guide: payload, headers and how to check the signature (ADR-0102). */
 export const INTEGRATIONS_GUIDE =
   "https://github.com/Kidoly/monitorflow/blob/main/docs/integrations.md";
@@ -101,9 +103,3 @@ export function deliveryResult(delivery: IntegrationDelivery): string {
   return t("integrations.tried", { count, code });
 }
 
-/** The value of a `datetime-local` input as an ISO time, or null when empty or invalid. */
-export function localToIso(value: string): string | null {
-  if (!value) return null;
-  const time = new Date(value);
-  return Number.isNaN(time.getTime()) ? null : time.toISOString();
-}

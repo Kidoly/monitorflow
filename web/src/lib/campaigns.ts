@@ -3,6 +3,7 @@
 // state machine for the action buttons; and display strings.
 
 import { compareVersions } from "./agentVersion";
+import { browserTimeZone, localToIso } from "./clock";
 import type { Tone } from "@/components/ui/tone";
 import { t } from "@/i18n";
 import { activeLocale } from "@/i18n/locale";
@@ -102,10 +103,6 @@ export interface CampaignDraft {
   windows: WindowDraft[];
 }
 
-export function browserTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-}
-
 export function newWindow(kind: WindowDraft["kind"] = "weekly"): WindowDraft {
   return { kind, weekdays: [6, 7], start: "22:00", end: "04:00", timezone: browserTimeZone(), startsAt: "", endsAt: "" };
 }
@@ -130,11 +127,6 @@ export function emptyDraft(customerId = ""): CampaignDraft {
   };
 }
 
-function localToIso(local: string): string {
-  const date = new Date(local);
-  return local && !Number.isNaN(date.getTime()) ? date.toISOString() : "";
-}
-
 export function toRequest(draft: CampaignDraft): CampaignRequest {
   const waves: WaveSpec[] = draft.waves.map((wave) =>
     wave.kind === "servers"
@@ -146,7 +138,7 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
   const windows: CampaignWindow[] = draft.windows.map((w) =>
     w.kind === "weekly"
       ? { kind: "weekly", weekdays: [...w.weekdays].sort((a, b) => a - b), start: w.start, end: w.end, timezone: w.timezone.trim() }
-      : { kind: "once", starts_at: localToIso(w.startsAt), ends_at: localToIso(w.endsAt) },
+      : { kind: "once", starts_at: localToIso(w.startsAt) ?? "", ends_at: localToIso(w.endsAt) ?? "" },
   );
   const agent = draft.update === "agent";
   const os = agent || draft.sources !== "apps";

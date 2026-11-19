@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { setActiveLocale } from "@/i18n/locale";
 import { mirror } from "@/test/mirrors";
 
-import { describeMirror, durationText, intervalText, nextSync, shortTime, upstreamText } from "./mirrors";
+import { describeMirror, durationText, intervalText, minuteText, nextSync, shortTime, upstreamText } from "./mirrors";
 
 describe("mirror helpers", () => {
   it("describes a mirror on one line", () => {
@@ -38,6 +38,7 @@ describe("mirror helpers", () => {
     const now = new Date(2026, 9, 22, 14, 0);
     expect(shortTime(new Date(2026, 9, 22, 20, 30), now)).toBe("20:30");
     expect(shortTime(new Date(2026, 9, 23, 2, 0), now)).toBe("23 Oct 02:00");
+    expect(minuteText(new Date(2026, 9, 22, 8, 0, 59).toISOString())).toBe("2026-10-22 08:00");
     expect(durationText(42_000)).toBe("42 s");
     expect(durationText(252_000)).toBe("4 min 12 s");
     expect(durationText(542_000)).toBe("9 min 02 s");
