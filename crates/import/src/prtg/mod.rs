@@ -21,7 +21,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Duration;
 use reqwest::header::HeaderMap;
-use reqwest::{Client, Method, Url};
+use reqwest::{Method, Url};
 
 use crate::http;
 use crate::model::Inventory;
@@ -34,7 +34,7 @@ pub struct Prtg;
 
 /// The API, authenticated by query parameters as PRTG asks.
 struct HttpFetch {
-    client: Client,
+    client: http::Client,
     base: Url,
     auth: Vec<(&'static str, String)>,
 }

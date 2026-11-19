@@ -136,20 +136,7 @@ pub fn unescape(text: &str) -> String {
             rest = &rest[1..];
             continue;
         };
-        let entity = &rest[1..end];
-        let decoded = match entity {
-            "amp" => Some('&'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "quot" => Some('"'),
-            "apos" => Some('\''),
-            _ => entity
-                .strip_prefix("#x")
-                .and_then(|h| u32::from_str_radix(h, 16).ok())
-                .or_else(|| entity.strip_prefix('#').and_then(|d| d.parse().ok()))
-                .and_then(char::from_u32),
-        };
-        match decoded {
+        match crate::xml::entity(&rest[1..end]) {
             Some(c) => {
                 out.push(c);
                 rest = &rest[end + 1..];

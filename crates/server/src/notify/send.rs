@@ -169,7 +169,7 @@ fn private_address(host: &str) -> SendError {
 /// Resolves names to their public addresses only. The connection uses
 /// what this returns, so a name that changes after a check cannot slip
 /// through.
-struct PublicResolver;
+pub(crate) struct PublicResolver;
 
 impl Resolve for PublicResolver {
     fn resolve(&self, name: Name) -> Resolving {

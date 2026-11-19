@@ -179,36 +179,13 @@ pub async fn existing(
     .await?
     .into_iter()
     .collect();
+    let channels = covering(&mut conn, site_id, None).await?;
     drop(conn);
-    let channels: Vec<(String, Value, Option<String>)> =
-        sqlx::query_as("SELECT kind, settings, secret FROM notification_channels")
-            .fetch_all(pool)
-            .await?;
-    for (kind, settings, secret) in channels {
-        let key = match kind.as_str() {
-            "email" => {
-                let mut to: Vec<String> = settings["to"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(str::to_owned))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                to.sort();
-                let host = settings["host"].as_str().unwrap_or_default();
-                Some(channel_key("email", &format!("{host}|{}", to.join(","))))
-            }
-            "webhook" => settings["url"].as_str().map(|u| channel_key("webhook", u)),
-            "slack" | "teams" | "discord" => {
-                secrets::open_stored(Column::NotificationChannels, secret)
-                    .and_then(|o| o.ok())
-                    .map(|url| channel_key(&kind, url.expose()))
-            }
-            _ => None,
-        };
-        existing.channels.extend(key);
-    }
+    existing.channels.extend(
+        channels
+            .into_iter()
+            .filter_map(|(kind, settings, sealed)| stored_key(&kind, &settings, sealed)),
+    );
     Ok(existing)
 }
 
@@ -308,7 +285,10 @@ pub fn chosen(items: &[Item], skip: &HashSet<String>) -> (Vec<Item>, u32, u32) {
 
 /// Creates what `run` planned but `skip`, in one transaction; records
 /// what it created. `channel_public_only` is what the channels page sets
-/// for someone who is not a global administrator.
+/// for someone who is not a global administrator. `may_change` says
+/// which sites the person who confirms administers: a server already
+/// there is used only in one of them, whoever made the preview and
+/// whatever moved since.
 pub async fn confirm(
     pool: &PgPool,
     id: Uuid,
@@ -316,6 +296,7 @@ pub async fn confirm(
     user: Uuid,
     channel_public_only: bool,
     now: DateTime<Utc>,
+    may_change: impl Fn(Uuid) -> bool + Sync,
 ) -> Result<(Run, Outcome), StoreError> {
     let mut tx = pool.begin().await?;
     let run = get(&mut tx, id, true)
@@ -357,6 +338,7 @@ pub async fn confirm(
             &mut servers,
             user,
             channel_public_only,
+            &may_change,
         )
         .await;
         match result {
@@ -423,14 +405,26 @@ pub async fn confirm(
     Ok((run, outcome))
 }
 
-/// The server of ID `peer_id`, not removed.
-async fn server_id(tx: &mut PgConnection, peer_id: &str) -> Result<Option<Uuid>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT id FROM servers WHERE lower(peer_id) = lower($1) AND revoked_at IS NULL",
+/// The server of ID `peer_id`, not removed; an error when it is in a site
+/// `may_change` refuses.
+async fn server_id(
+    tx: &mut PgConnection,
+    peer_id: &str,
+    may_change: &(dyn Fn(Uuid) -> bool + Sync),
+) -> Result<Option<Uuid>, String> {
+    let found: Option<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT id, site_id FROM servers WHERE lower(peer_id) = lower($1) AND revoked_at IS NULL",
     )
     .bind(peer_id)
     .fetch_optional(tx)
     .await
+    .map_err(db_error)?;
+    match found {
+        Some((_, site)) if !may_change(site) => Err(format!(
+            "the server {peer_id} is in a site you do not administer"
+        )),
+        found => Ok(found.map(|(id, _)| id)),
+    }
 }
 
 fn db_error(error: sqlx::Error) -> String {
@@ -484,7 +478,24 @@ async fn imported_lookup(
     .map_err(db_error)
 }
 
+/// The server `peer_id` an item is on: made by this confirmation, or
+/// there already in a site `may_change` allows.
+async fn server_of(
+    tx: &mut PgConnection,
+    peer_id: &str,
+    servers: &HashMap<String, Uuid>,
+    may_change: &(dyn Fn(Uuid) -> bool + Sync),
+) -> Result<Uuid, String> {
+    match servers.get(&peer_id.to_ascii_lowercase()) {
+        Some(id) => Ok(*id),
+        None => server_id(tx, peer_id, may_change)
+            .await?
+            .ok_or_else(|| "its server is not there".to_owned()),
+    }
+}
+
 /// Creates one object; `None` when it exists already.
+#[allow(clippy::too_many_arguments)]
 async fn create_one(
     tx: &mut Transaction<'_, Postgres>,
     site_id: Uuid,
@@ -493,10 +504,8 @@ async fn create_one(
     servers: &mut HashMap<String, Uuid>,
     user: Uuid,
     public_only: bool,
+    may_change: &(dyn Fn(Uuid) -> bool + Sync),
 ) -> Result<Option<Uuid>, String> {
-    let server = |peer_id: &str, servers: &HashMap<String, Uuid>| {
-        servers.get(&peer_id.to_ascii_lowercase()).copied()
-    };
     match create {
         Create::Server {
             peer_id,
@@ -505,7 +514,7 @@ async fn create_one(
             ..
         } => {
             identity::lock(tx).await.map_err(db_error)?;
-            if let Some(id) = server_id(tx, peer_id).await.map_err(db_error)? {
+            if let Some(id) = server_id(tx, peer_id, may_change).await? {
                 servers.insert(peer_id.to_ascii_lowercase(), id);
                 return Ok(None);
             }
@@ -544,7 +553,7 @@ async fn create_one(
             hostname,
             address,
         } => {
-            if let Some(id) = server_id(tx, peer_id).await.map_err(db_error)? {
+            if let Some(id) = server_id(tx, peer_id, may_change).await? {
                 servers.insert(peer_id.to_ascii_lowercase(), id);
                 return Ok(None);
             }
@@ -567,13 +576,7 @@ async fn create_one(
             probe,
             lookups,
         } => {
-            let id = match server(peer_id, servers) {
-                Some(id) => id,
-                None => server_id(tx, peer_id)
-                    .await
-                    .map_err(db_error)?
-                    .ok_or("its server is not there")?,
-            };
+            let id = server_of(tx, peer_id, servers, may_change).await?;
             // Never a secret: an imported website check has no password
             // (the person sets it after the import).
             // A probe check runs from the site's default probe (ADR-0148).
@@ -638,17 +641,8 @@ async fn create_one(
             parent,
             parent_check,
         } => {
-            let mut id_of = async |peer_id: &str| -> Result<Uuid, String> {
-                match server(peer_id, servers) {
-                    Some(id) => Ok(id),
-                    None => server_id(tx, peer_id)
-                        .await
-                        .map_err(db_error)?
-                        .ok_or_else(|| "its server is not there".to_owned()),
-                }
-            };
-            let child_id = id_of(peer_id).await?;
-            let parent_id = id_of(parent).await?;
+            let child_id = server_of(tx, peer_id, servers, may_change).await?;
+            let parent_id = server_of(tx, parent, servers, may_change).await?;
             let node = |id: Uuid, check: &Option<CheckRef>| match check {
                 Some(c) => Node::Check(id, c.name.clone(), c.instance.clone()),
                 None => Node::Server(id),
@@ -686,13 +680,7 @@ async fn create_one(
             hysteresis,
             richer,
         } => {
-            let id = match server(peer_id, servers) {
-                Some(id) => id,
-                None => server_id(tx, peer_id)
-                    .await
-                    .map_err(db_error)?
-                    .ok_or("its server is not there")?,
-            };
+            let id = server_of(tx, peer_id, servers, may_change).await?;
             let valid =
                 crate::api::thresholds::validate_entry(crate::api::thresholds::EntryRequest {
                     metric: metric.clone(),
@@ -737,13 +725,7 @@ async fn create_one(
             checks,
         } => {
             let server_id = match peer_id {
-                Some(p) => Some(match server(p, servers) {
-                    Some(id) => id,
-                    None => server_id(tx, p)
-                        .await
-                        .map_err(db_error)?
-                        .ok_or("its server is not there")?,
-                }),
+                Some(p) => Some(server_of(tx, p, servers, may_change).await?),
                 None => None,
             };
             let site = server_id.is_none().then_some(site_id);
@@ -790,13 +772,7 @@ async fn create_one(
         Create::Window { servers: peers, .. } => {
             let mut ids = Vec::new();
             for peer in peers {
-                ids.push(match server(peer, servers) {
-                    Some(id) => id,
-                    None => server_id(tx, peer)
-                        .await
-                        .map_err(db_error)?
-                        .ok_or("its server is not there")?,
-                });
+                ids.push(server_of(tx, peer, servers, may_change).await?);
             }
             create_window(tx, site_id, create, &ids, user).await
         }
@@ -809,13 +785,7 @@ async fn create_one(
         } => {
             let mut ids = Vec::new();
             for member in members {
-                ids.push(match server(&member.server, servers) {
-                    Some(id) => id,
-                    None => server_id(tx, &member.server)
-                        .await
-                        .map_err(db_error)?
-                        .ok_or("its server is not there")?,
-                });
+                ids.push(server_of(tx, &member.server, servers, may_change).await?);
             }
             create_service(tx, site_id, name, *at_least, *target, members, &ids, user).await
         }
@@ -834,7 +804,7 @@ async fn create_one(
                 crate::api::notifications::checked(kind, settings, secret.secret, None)
                     .map_err(|e| e.to_string())?;
             let coverage = covered.map_or(Coverage::Everything, Coverage::Site);
-            if channel_exists(tx, &destination, secret.as_deref())
+            if channel_exists(tx, site_id, &destination, secret.as_deref())
                 .await
                 .map_err(db_error)?
             {
@@ -1166,32 +1136,85 @@ async fn existing_windows(
     Ok(keys)
 }
 
-/// Whether a channel with the same destination exists, so a second
-/// import adds none.
+/// `(kind, settings, sealed secret)` of the channels whose messages cover
+/// `site_id`, of `kind` only when given: those of every event, of the
+/// site's customer and of the site. Another customer's channel to the same
+/// destination is not this site's, and saying it exists would tell its
+/// destination.
+async fn covering(
+    db: &mut PgConnection,
+    site_id: Uuid,
+    kind: Option<&str>,
+) -> Result<Vec<(String, Value, Option<String>)>, sqlx::Error> {
+    let customer: Option<Uuid> = sqlx::query_scalar("SELECT customer_id FROM sites WHERE id = $1")
+        .bind(site_id)
+        .fetch_optional(&mut *db)
+        .await?;
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, Value, Option<String>, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
+        "SELECT kind, settings, secret, customer_id, site_id FROM notification_channels
+         WHERE $1::text IS NULL OR kind = $1",
+    )
+    .bind(kind)
+    .fetch_all(&mut *db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, _, _, customer_id, site)| {
+            Coverage::from_columns(*customer_id, *site)
+                .is_some_and(|c| c.includes(customer, Some(site_id)))
+        })
+        .map(|(kind, settings, secret, _, _)| (kind, settings, secret))
+        .collect())
+}
+
+/// Whether a channel of `site_id` with the same destination exists, so a
+/// second import adds none. The same comparison as the preview's.
 async fn channel_exists(
     tx: &mut PgConnection,
+    site_id: Uuid,
     destination: &Destination,
     secret: Option<&str>,
 ) -> Result<bool, sqlx::Error> {
-    let rows: Vec<(Value, Option<String>)> =
-        sqlx::query_as("SELECT settings, secret FROM notification_channels WHERE kind = $1")
-            .bind(destination.kind())
-            .fetch_all(tx)
-            .await?;
-    let wanted = destination.settings();
-    Ok(rows
-        .into_iter()
-        .any(|(settings, stored)| match destination {
-            Destination::Email(_) => {
-                settings["host"] == wanted["host"] && settings["to"] == wanted["to"]
-            }
-            Destination::Webhook(_) => settings["url"] == wanted["url"],
-            _ => {
-                let stored =
-                    secrets::open_stored(Column::NotificationChannels, stored).and_then(|o| o.ok());
-                stored.is_some_and(|s| Some(s.expose()) == secret)
-            }
-        }))
+    let kind = destination.kind();
+    let Some(wanted) = destination_key(kind, &destination.settings(), secret) else {
+        return Ok(false);
+    };
+    let rows = covering(tx, site_id, Some(kind)).await?;
+    Ok(rows.into_iter().any(|(kind, settings, sealed)| {
+        stored_key(&kind, &settings, sealed) == Some(wanted.clone())
+    }))
+}
+
+/// The [`channel_key`] of a destination: an email channel by its server
+/// and recipients, a webhook by its URL, a chat by its secret URL.
+fn destination_key(kind: &str, settings: &Value, secret: Option<&str>) -> Option<String> {
+    match kind {
+        "email" => {
+            let mut to: Vec<&str> = settings["to"]
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            to.sort_unstable();
+            let host = settings["host"].as_str().unwrap_or_default();
+            Some(channel_key("email", &format!("{host}|{}", to.join(","))))
+        }
+        "webhook" => settings["url"].as_str().map(|u| channel_key("webhook", u)),
+        "slack" | "teams" | "discord" => secret.map(|url| channel_key(kind, url)),
+        _ => None,
+    }
+}
+
+/// The [`channel_key`] of a stored channel; a chat's secret is opened
+/// only for this.
+fn stored_key(kind: &str, settings: &Value, sealed: Option<String>) -> Option<String> {
+    let opened = match kind {
+        "slack" | "teams" | "discord" => {
+            secrets::open_stored(Column::NotificationChannels, sealed).and_then(|o| o.ok())
+        }
+        _ => None,
+    };
+    destination_key(kind, settings, opened.as_ref().map(|s| s.expose()))
 }
 
 /// Removes what run `id` created and still exists; servers an agent took
@@ -1313,4 +1336,63 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
     let run = get(&mut tx, id, false).await?.expect("the run exists");
     tx.commit().await?;
     Ok((run, outcome))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The preview and the confirmation compare channels the same way:
+    /// recipients in any order, addresses in any case.
+    #[test]
+    fn destinations_compare_as_the_preview_does() {
+        let email = |to: Value| json!({"host": "smtp.example.com", "to": to});
+        assert_eq!(
+            destination_key(
+                "email",
+                &email(json!(["b@example.com", "a@example.com"])),
+                None
+            ),
+            destination_key(
+                "email",
+                &email(json!(["a@example.com", "b@example.com"])),
+                None
+            ),
+        );
+        assert_ne!(
+            destination_key("email", &email(json!(["a@example.com"])), None),
+            destination_key("email", &email(json!(["b@example.com"])), None),
+        );
+        assert_eq!(
+            destination_key(
+                "webhook",
+                &json!({"url": "https://Hooks.example.com/x"}),
+                None
+            ),
+            Some(channel_key("webhook", "https://hooks.example.com/x")),
+        );
+        assert_eq!(
+            destination_key("slack", &json!({}), Some("https://hooks.slack.com/T/B/x")),
+            Some(channel_key("slack", "https://hooks.slack.com/T/B/x")),
+        );
+        assert_eq!(destination_key("slack", &json!({}), None), None);
+        assert_eq!(destination_key("plugin", &json!({}), Some("x")), None);
+    }
+
+    #[test]
+    fn a_stored_chat_is_compared_by_its_opened_secret() {
+        secrets::install_for_tests();
+        let url = "https://hooks.slack.com/T/B/x";
+        let sealed = secrets::seal(Column::NotificationChannels, url).unwrap();
+        assert_eq!(
+            stored_key("slack", &json!({"name": "Ops"}), Some(sealed)),
+            destination_key("slack", &json!({}), Some(url)),
+        );
+        assert_eq!(stored_key("teams", &json!({}), None), None);
+        let webhook = json!({"url": "https://hooks.example.com/x"});
+        assert_eq!(
+            stored_key("webhook", &webhook, None),
+            destination_key("webhook", &webhook, None)
+        );
+    }
 }

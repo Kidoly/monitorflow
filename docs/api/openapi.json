@@ -11781,7 +11781,7 @@
           "imports"
         ],
         "summary": "Read another tool's configuration into a preview",
-        "description": "Reads `files`, or connects with `connection`, and stores a preview of\nwhat a confirmation would create; nothing else is written. `site_id`\nmay be left out by someone who administers one site. A connection's\ntoken is used for this request only. Audited as `import.preview`. A\npreview can be confirmed for a day.",
+        "description": "Reads `files`, or connects with `connection`, and stores a preview of\nwhat a confirmation would create; nothing else is written. `site_id`\nmay be left out by someone who administers one site. A connection's\ntoken is used for this request only; someone other than a global\nadministrator connects to public addresses only (ADR-0163). Audited as\n`import.preview`. A preview can be confirmed for a day.",
         "operationId": "preview_import",
         "parameters": [
           {
@@ -11969,7 +11969,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: unknown source, files and a connection together or neither, a file it cannot read, a field missing, the other tool unreachable or refusing the token",
+            "description": "`invalid`: unknown source, files and a connection together or neither, a file it cannot read, a field missing, the other tool unreachable or refusing the token, a private address for someone other than a global administrator",
             "content": {
               "application/json": {
                 "schema": {

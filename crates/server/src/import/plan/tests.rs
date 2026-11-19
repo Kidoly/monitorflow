@@ -2174,3 +2174,82 @@ fn custom_snmp_checks_with_their_lookups_and_rules() {
     assert!(planned.items.iter().any(|i| i.list == List::NotMovable
         && i.note.as_ref().is_some_and(|n| n.code == "snmp_of_agent")));
 }
+
+/// A server of a site one does not administer, matched by name, is never
+/// an end of a dependency nor a member of a service: either would hold
+/// its alerts or tell its state to someone of another site.
+#[test]
+fn dependencies_and_services_leave_out_servers_of_other_sites() {
+    use monitorflow_import::model::{Dependency, DependencyEnd, Member, Service};
+
+    let elsewhere = Existing {
+        servers: vec![ExistingServer {
+            peer_id: "victim".into(),
+            hostname: "victim".into(),
+            site_id: Uuid::from_u128(2),
+            may_change: false,
+            device: false,
+        }],
+        ..Existing::default()
+    };
+    let dependency = |child: &str, parent: &str| Dependency {
+        child: DependencyEnd::host(child),
+        parent: DependencyEnd::host(parent),
+        origin: Origin::new("trigger", format!("{child} behind {parent}")),
+        fidelity: Fidelity::Exact,
+    };
+    let member = |host: &str| Member {
+        host: host.into(),
+        check: None,
+    };
+    let inventory = Inventory {
+        hosts: vec![
+            host("mine", "mine", Os::Debian),
+            host("victim", "victim", Os::Debian),
+        ],
+        dependencies: vec![dependency("victim", "mine"), dependency("mine", "victim")],
+        services: vec![
+            Service {
+                name: "Theirs".into(),
+                members: vec![member("victim")],
+                at_least: None,
+                target: None,
+                origin: Origin::new("service", "Theirs"),
+                fidelity: Fidelity::Exact,
+            },
+            Service {
+                name: "Both".into(),
+                members: vec![member("mine"), member("victim")],
+                at_least: None,
+                target: None,
+                origin: Origin::new("service", "Both"),
+                fidelity: Fidelity::Exact,
+            },
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &elsewhere);
+    let dependencies: Vec<&Item> = planned
+        .items
+        .iter()
+        .filter(|i| i.kind == "dependency")
+        .collect();
+    assert_eq!(dependencies.len(), 2);
+    for item in dependencies {
+        assert_eq!(item.list, List::NotMovable);
+        assert_eq!(item.note.as_ref().unwrap().code, "server_elsewhere");
+        assert!(item.create.is_none());
+    }
+    let theirs = planned
+        .items
+        .iter()
+        .find(|i| i.kind == "service" && i.origin.name == "Theirs")
+        .unwrap();
+    assert!(theirs.create.is_none());
+    let both = by_id(&planned, "service:Both");
+    let Some(Create::Service { members, .. }) = &both.create else {
+        panic!("{:?}", both.create);
+    };
+    assert_eq!(members.len(), 1);
+    assert_eq!(members[0].server, "mine");
+}

@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use reqwest::{Client, Method, Url};
+use reqwest::{Method, Url};
 use serde_json::{json, Value};
 
 use super::config::{
@@ -26,7 +26,7 @@ use crate::source::{Connection, Context, ReadError};
 
 /// A session with one Zabbix.
 pub struct Api {
-    client: Client,
+    client: http::Client,
     url: Url,
     token: String,
     /// Major and minor version, as `apiinfo.version` says.
