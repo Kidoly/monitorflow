@@ -172,6 +172,11 @@ impl Holds {
         self.held.get(node)
     }
 
+    /// The held checks of `server`.
+    pub fn checks_of(&self, server: Uuid) -> Vec<(CheckRef, Hold)> {
+        self.checks.get(&server).cloned().unwrap_or_default()
+    }
+
     /// The parent that is down with its incident, when `node` is.
     pub fn down(&self, node: &Node) -> Option<&Down> {
         self.down.get(node)
@@ -196,6 +201,26 @@ impl Holds {
     /// [`super::RECENT`]: the offline rule counts it as heard from.
     pub fn heard(&self, node: &Node) -> Option<DateTime<Utc>> {
         self.heard.get(node).copied()
+    }
+
+    /// Everything behind what the incident `id` says is down, each once.
+    pub fn behind_incident(&self, id: Uuid) -> Vec<Node> {
+        let mut found: Vec<Node> = Vec::new();
+        let mut downs: Vec<&Node> = self
+            .down
+            .iter()
+            .filter(|(_, d)| d.incident == id)
+            .map(|(n, _)| n)
+            .collect();
+        downs.sort();
+        for node in downs {
+            for child in self.behind(node) {
+                if !found.contains(&child) {
+                    found.push(child);
+                }
+            }
+        }
+        found
     }
 
     /// Everything behind `node`, nearest first, each once. A server's

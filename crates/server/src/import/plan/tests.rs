@@ -1468,3 +1468,91 @@ fn devices_and_probe_checks() {
         .iter()
         .any(|i| i.kind == "builtin" && i.note.as_ref().is_some_and(|n| n.code == "builtin_net")));
 }
+
+#[test]
+fn dependencies_follow_the_servers_and_checks_they_name() {
+    use monitorflow_import::model::{Dependency, DependencyEnd};
+
+    let mut switch = host("sw", "sw-core", Os::Unknown);
+    switch.agentless = true;
+    let https = Watch::Port {
+        address: None,
+        port: 443,
+    };
+    let ping = Watch::Ping { address: None };
+    let dependency = |child: DependencyEnd, parent: DependencyEnd, fidelity: Fidelity| Dependency {
+        child,
+        parent,
+        origin: Origin::new("trigger", "HTTPS is down"),
+        fidelity,
+    };
+    let inventory = Inventory {
+        hosts: vec![host("app", "app-01", Os::Debian), switch],
+        checks: vec![
+            check("app", https.clone(), Some(Severity::Critical)),
+            check("sw", ping.clone(), Some(Severity::Critical)),
+        ],
+        dependencies: vec![
+            dependency(
+                DependencyEnd::host("app"),
+                DependencyEnd::host("sw"),
+                Fidelity::Exact,
+            ),
+            dependency(
+                DependencyEnd::check("app", https),
+                DependencyEnd::check("sw", ping),
+                Fidelity::Approximated(Note::new(
+                    "dependency_whole_check",
+                    args! {"trigger" => "HTTPS is down"},
+                )),
+            ),
+            // A host that is not in the inventory is listed with it.
+            dependency(
+                DependencyEnd::host("app"),
+                DependencyEnd::host("gone"),
+                Fidelity::Exact,
+            ),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let whole = by_id(&planned, "dependency:app-01:sw-core");
+    assert_eq!(whole.list, List::Exact);
+    assert_eq!(whole.hosts, ["app-01", "sw-core"]);
+    assert_eq!(whole.needs, ["server:app-01", "server:sw-core"]);
+    assert_eq!(
+        whole.create,
+        Some(Create::Dependency {
+            server: "app-01".into(),
+            check: None,
+            parent: "sw-core".into(),
+            parent_check: None,
+        })
+    );
+    let checks: Vec<&Item> = planned
+        .items
+        .iter()
+        .filter(|i| i.kind == "dependency" && i.id != whole.id)
+        .collect();
+    assert_eq!(checks.len(), 1, "{checks:#?}");
+    let Some(Create::Dependency {
+        check: Some(check),
+        parent_check: Some(parent_check),
+        ..
+    }) = &checks[0].create
+    else {
+        panic!("{:?}", checks[0].create);
+    };
+    assert_eq!(checks[0].list, List::Approximated);
+    // Both checks are made by this import: it needs them.
+    for name in [&check.name, &parent_check.name] {
+        assert!(
+            checks[0]
+                .needs
+                .iter()
+                .any(|n| n.ends_with(&format!(":{name}"))),
+            "{:?}",
+            checks[0].needs
+        );
+    }
+}

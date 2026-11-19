@@ -83,6 +83,18 @@ pub const ORIGIN_KINDS: &[&str] = &[
 pub const NOTES: &[(&str, &str)] = &[
     // Shared: what the server's planner says.
     (
+        "dependency_whole_check",
+        "The whole check depends on it: in the source only {trigger} did.",
+    ),
+    (
+        "dependency_unmapped",
+        "It depends on {parent}, which is not moved.",
+    ),
+    (
+        "dependency_group",
+        "Group {group} depends on it in PRTG: each of its devices does.",
+    ),
+    (
         "builtin",
         "Every MonitorFlow server measures this already; nothing to add.",
     ),

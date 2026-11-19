@@ -14,6 +14,7 @@ import type {
   ImportList,
   ImportNote,
   ImportResult,
+  SilencedCheck,
 } from "./api";
 import { formatDateTime } from "./format";
 
@@ -32,6 +33,7 @@ export const KINDS = [
   "silence",
   "window",
   "channel",
+  "dependency",
   "builtin",
   "other",
 ] as const;
@@ -129,6 +131,14 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
       return create.checks?.length
         ? t("imports.item.windowChecks", { rule, checks: create.checks.map(checkName).join(", "), reason: create.reason })
         : t("imports.item.window", { rule, reason: create.reason });
+    }
+    case "dependency": {
+      const end = (name: string, check?: SilencedCheck) =>
+        check ? t("dependencies.end.check", { check: checkName(check), name }) : name;
+      return t("imports.item.dependency", {
+        child: end(item.hosts[0] ?? create.server, create.check),
+        parent: end(item.hosts[1] ?? create.parent, create.parent_check),
+      });
     }
     case "channel": {
       const settings = create.settings;

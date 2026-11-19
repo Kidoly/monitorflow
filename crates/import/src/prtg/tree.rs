@@ -22,7 +22,8 @@ pub enum Paused {
     Indefinitely,
     /// Paused by a person until this time.
     Until(DateTime<Utc>),
-    /// Paused by its schedule or by a dependency: PRTG decides, nobody did.
+    /// Paused by its schedule: PRTG decides, nobody did. One paused by a
+    /// dependency right now is not paused: its dependency is read instead.
     ByRule,
 }
 
@@ -84,6 +85,37 @@ pub struct Object {
     /// lowercase name.
     pub settings: BTreeMap<String, String>,
     pub channels: Vec<Channel>,
+    /// Its "dependency" setting (ADR-0152).
+    pub depends: Option<Depends>,
+}
+
+/// What an object's dependency setting says, when it is not "use parent".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Depends {
+    /// "Select object": it is paused while this object is down.
+    Object(i64),
+    /// A sensor set as "master object for parent": the other sensors of its
+    /// device are paused while it is down.
+    Master,
+}
+
+impl Depends {
+    /// From the `dependencytype` and `dependency` settings: `1` with an
+    /// object ID (PRTG may write `2034|name`), or `2`.
+    pub fn parse(kind: Option<&str>, object: Option<&str>) -> Option<Self> {
+        match kind?.trim() {
+            "1" => {
+                let digits: String = object?
+                    .trim()
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                digits.parse().ok().map(Self::Object)
+            }
+            "2" => Some(Self::Master),
+            _ => None,
+        }
+    }
 }
 
 impl Object {
@@ -101,6 +133,7 @@ impl Object {
             schedule: None,
             settings: BTreeMap::new(),
             channels: Vec::new(),
+            depends: None,
         }
     }
 
