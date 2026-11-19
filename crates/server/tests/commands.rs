@@ -411,6 +411,36 @@ db_tests! {
         // The agent ran it before expiry by its clock: the result wins.
         let late = result(sent.id, CommandStatus::Succeeded, 0);
         assert_eq!(store.record("web-02", &late).await.unwrap(), Some(State::Succeeded));
+        let finished = audit_count(&pool, "command.finish").await;
+
+        // A command that expired before it was sent never reached the
+        // agent: no result can finish it.
+        assert_eq!(store.record("web-01", &late).await.unwrap(), None);
+        assert_eq!(state(&store, queued.id).await, State::Expired);
+        let mut never_sent = late.clone();
+        never_sent.command_id = queued.id.to_string();
+        assert_eq!(store.record("web-01", &never_sent).await.unwrap(), None);
+        assert_eq!(state(&store, queued.id).await, State::Expired);
+        assert_eq!(audit_count(&pool, "command.finish").await, finished);
+    }
+
+    #[sqlx::test]
+    async fn a_replayed_expired_result_is_recorded_once(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let web1 = server(&pool, "web-01", paris).await;
+        let store = CommandStore::new(pool.clone());
+        let cmd = store.enqueue(&new(web1, b"")).await.unwrap();
+        assert!(store.mark_sent(cmd.id).await.unwrap());
+        let expired = result(cmd.id, CommandStatus::Expired, 0);
+        assert_eq!(store.record("web-01", &expired).await.unwrap(), Some(State::Expired));
+        for _ in 0..3 {
+            assert_eq!(store.record("web-01", &expired).await.unwrap(), None);
+        }
+        assert_eq!(audit_count(&pool, "command.finish").await, 1);
+        // The agent may still report that it ran it after all.
+        let late = result(cmd.id, CommandStatus::Succeeded, 0);
+        assert_eq!(store.record("web-01", &late).await.unwrap(), Some(State::Succeeded));
+        assert_eq!(audit_count(&pool, "command.finish").await, 2);
     }
 
     #[sqlx::test]
