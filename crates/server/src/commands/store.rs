@@ -210,14 +210,17 @@ impl CommandStore {
         };
         let mut tx = self.pool.begin().await?;
         // A late result replaces `expired`: the agent only starts a command
-        // before its expiry (ADR-0031).
+        // before its expiry (ADR-0031). Only a command that reached the
+        // agent can have one, and an `expired` result never replaces
+        // `expired`, so a replayed result cannot add audit rows forever.
         let updated: Option<(String, Uuid)> = sqlx::query_as(
             "UPDATE commands c SET state = $3, exit_code = $4, stdout = $5, stderr = $6,
                  error = $7, finished_at = now(),
                  started_at = CASE WHEN $8 THEN COALESCE(c.started_at, now()) ELSE c.started_at END
              FROM servers s
              WHERE c.id = $1 AND s.id = c.server_id AND s.peer_id = $2
-               AND c.state IN ('sent', 'running', 'expired')
+               AND (c.state IN ('sent', 'running')
+                    OR (c.state = 'expired' AND c.sent_at IS NOT NULL AND $3 <> 'expired'))
              RETURNING c.kind, c.server_id",
         )
         .bind(id)

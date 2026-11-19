@@ -145,39 +145,43 @@ impl Redacted {
     }
 
     /// The first `max` bytes, cut on a character boundary, then a marker
-    /// with how many bytes were dropped. Cutting redacted text cannot
-    /// reveal a secret, which is why redaction runs first.
+    /// with how many bytes were dropped ([`head`]). Cutting redacted text
+    /// cannot reveal a secret, which is why redaction runs first.
     pub fn head(self, max: usize) -> Self {
-        if self.0.len() <= max {
-            return self;
-        }
-        let end = floor_char_boundary(&self.0, max);
-        Self(format!(
-            "{} [TRUNCATED: {} bytes]",
-            &self.0[..end],
-            self.0.len() - end
-        ))
+        Self(head(&self.0, max))
     }
 
-    /// The last `max` bytes after a marker, like [`Self::head`]; for
-    /// command output, whose end says how it failed.
+    /// The last `max` bytes after a marker ([`tail`]); for command output,
+    /// whose end says how it failed.
     pub fn tail(self, max: usize) -> Self {
-        if self.0.len() <= max {
-            return self;
-        }
-        let mut start = self.0.len() - max;
-        while !self.0.is_char_boundary(start) {
-            start += 1;
-        }
-        Self(format!("[TRUNCATED: {} bytes] {}", start, &self.0[start..]))
+        Self(tail(&self.0, max))
     }
 }
 
-fn floor_char_boundary(text: &str, mut index: usize) -> usize {
-    while !text.is_char_boundary(index) {
-        index -= 1;
+/// The first `max` bytes of `text`, cut on a character boundary, after
+/// which a marker says how many bytes were cut.
+pub fn head(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
     }
-    index
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} [TRUNCATED: {} bytes]", &text[..end], text.len() - end)
+}
+
+/// The last `max` bytes of `text`, cut on a character boundary, after a
+/// marker that says how many bytes were cut.
+pub fn tail(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
+    }
+    let mut start = text.len() - max;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("[TRUNCATED: {start} bytes] {}", &text[start..])
 }
 
 impl fmt::Display for Redacted {
@@ -338,6 +342,14 @@ fn sas_kind(_: &str) -> Option<Kind> {
     Some(Kind::AzureSasSignature)
 }
 
+fn password_kind(_: &str) -> Option<Kind> {
+    Some(Kind::Password)
+}
+
+fn token_kind(_: &str) -> Option<Kind> {
+    Some(Kind::Token)
+}
+
 /// In order: whole blocks, then formats with a known prefix, then
 /// credentials in URLs, headers and connection strings, then key-value
 /// pairs. High entropy runs last, over what is left.
@@ -391,11 +403,47 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             r#"(?i)((?:^|[;\s"'])(?:password|pwd|accountkey|sharedaccesskey|sharedaccesssignature)\s*=\s*)([^;"'\r\n]+)(;)"#,
             connection_kind,
         ),
-        // `DB_PASSWORD=x`, `"api_key": "x"`, `X-Auth-Token: x`, `?token=x`:
-        // a key ending in one of these words, `=` or `:`, then a quoted
-        // or bare value.
+        // `Authorization: Token x`, and the whole value of a cookie
+        // header, which holds sessions.
         Rule::value(
-            r#"(?i)(\b[a-z0-9_.-]*?(?:password|passwd|passphrase|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?key|credentials?)["']?\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;&]+)()"#,
+            r"(?i)(\bauthorization\s*[:=]\s*token\s+)([A-Za-z0-9._~+/-]{8,}=*)()",
+            token_kind,
+        ),
+        Rule::value(r"(?i)(\b(?:set-)?cookie\s*:\s*)([^\r\n]+)()", token_kind),
+        // Docker's `config.json`: `"auth": "<base64 of user:password>"`.
+        Rule::value(
+            r#"(?i)("auth"\s*:\s*")([A-Za-z0-9+/]{4,}=*)(")"#,
+            basic_kind,
+        ),
+        // Passwords given on command lines, as `ps` shows them:
+        // `--password x`, `mysql -px`, `sshpass -p x`.
+        Rule::value(
+            r#"(?i)((?:^|\s)--?(?:password|passwd|pass)\s+)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)()"#,
+            password_kind,
+        ),
+        Rule::value(
+            r"(\bmysql(?:dump|admin|check|import|show|slap)?\s(?:[^\r\n|;&]*?\s)?-p)([^\s]+)()",
+            password_kind,
+        ),
+        Rule::value(
+            r"(\bsshpass\s(?:[^\r\n|;&]*?\s)?-p\s*)(\S+)()",
+            password_kind,
+        ),
+        // `.netrc`: `machine host login user password x`.
+        Rule::value(
+            r"(?i)(\bmachine\s+\S+\s+(?:login\s+\S+\s+)?password\s+)(\S+)()",
+            password_kind,
+        ),
+        // `<password>x</password>`, `<token>x</token>`.
+        Rule::value(
+            r"(?i)(<(?:password|passwd|secret|token|api_?key|client_?secret)>)([^<\r\n]+)(</)",
+            key_kind,
+        ),
+        // `DB_PASSWORD=x`, `"api_key": "x"`, `X-Auth-Token: x`, `?token=x`,
+        // `SMTP_PASS=x`, `SECRET_KEY=x`: a key ending in one of these
+        // words, `=` or `:`, then a quoted or bare value.
+        Rule::value(
+            r#"(?i)(\b[a-z0-9_.-]*?(?:password|passwd|passphrase|pwd|(?:\b|[_.-])pass|(?:secret|encryption|signing|master)[_-]?(?:key|salt)|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?key|credentials?)["']?\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;&]+)()"#,
             key_kind,
         ),
     ]

@@ -187,7 +187,8 @@ pub fn command(program: &str, args: &[Word], rules: &RuleSet) -> Verdict {
         }
         // These only report: no option of theirs changes anything, waits
         // or names a file to read or write.
-        "ps" | "lscpu" | "w" => true,
+        "lscpu" | "w" => true,
+        "ps" => ps(args),
         "netstat" => parse(args, &NETSTAT).is_some_and(|p| p.operands.is_empty()),
         "who" => parse(args, &WHO).is_some_and(|p| p.operands.is_empty()),
         // Operands are the words of a socket filter (`state listening`,
@@ -896,10 +897,68 @@ fn file_reader(program: &str, args: &[Word]) -> bool {
     !files.is_empty() && files.iter().all(|f| readable_path(f)) && counts_ok(&parsed)
 }
 
+/// `ps` options that take the next word as their value.
+const PS_VALUE_OPTIONS: &[&str] = &[
+    "--sort",
+    "--format",
+    "--pid",
+    "--ppid",
+    "--user",
+    "--User",
+    "--group",
+    "--Group",
+    "--sid",
+    "--tty",
+    "--cols",
+    "--columns",
+    "--width",
+    "--rows",
+    "--lines",
+];
+
+/// `ps` with any selection, format or sort, but never the BSD `e`
+/// modifier, which prints the environment of every process, as
+/// `/proc/*/environ` would ([`PROC_DENIED`]). A word is a value only after
+/// an option that takes one and is made of option letters alone, so a
+/// format such as `-oetimes` cannot pass the word after it as its value.
+fn ps(args: &[Word]) -> bool {
+    // Flags without a value, then those that take the next word.
+    const DASH_FLAGS: &str = "AadeFfHjLlMmNrTVwxyZch";
+    const DASH_VALUES: &str = "CGgOopqstUuk";
+    const BSD_FLAGS: &str = "aAcfhjlLmrsSTuvwxXnZ";
+    const BSD_VALUES: &str = "OopUtk";
+    let takes_value = |cluster: &str, flags: &str, values: &str| {
+        let mut letters = cluster.chars();
+        letters
+            .next_back()
+            .is_some_and(|last| values.contains(last))
+            && letters.all(|c| flags.contains(c))
+    };
+    let mut value = false;
+    for word in args {
+        let text = word.text.as_str();
+        if std::mem::take(&mut value) {
+            continue;
+        }
+        value = if text.starts_with("--") {
+            PS_VALUE_OPTIONS.contains(&text)
+        } else if let Some(cluster) = text.strip_prefix('-') {
+            takes_value(cluster, DASH_FLAGS, DASH_VALUES)
+        } else if text.contains('e') {
+            return false;
+        } else {
+            takes_value(text, BSD_FLAGS, BSD_VALUES)
+        };
+    }
+    true
+}
+
 /// `/proc` entries that expose secrets or lead elsewhere: environment and
-/// memory, and symlinks to other roots, directories and files.
+/// memory, and symlinks to other roots, directories and files. `kmsg` is
+/// read once: reading it takes kernel messages from the system logger.
 const PROC_DENIED: &[&str] = &[
     "environ",
+    "kmsg",
     "mem",
     "kcore",
     "kmem",

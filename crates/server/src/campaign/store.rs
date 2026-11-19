@@ -155,10 +155,6 @@ impl CampaignStore {
         Self { pool }
     }
 
-    pub fn pool(&self) -> &PgPool {
-        &self.pool
-    }
-
     /// Validates `new`, freezes its targets into waves and stores it as a
     /// draft, audited as `campaign.create`.
     pub async fn create(
@@ -211,6 +207,9 @@ impl CampaignStore {
             Some(pin) => pinned_snapshots(&mut tx, pin, &targets).await?,
             None => Vec::new(),
         };
+        if !pinned.is_empty() {
+            check_pin_limit(&mut tx, new.customer_id, &pinned).await?;
+        }
 
         // SQL-safe: interpolates only the constant COLUMNS.
         let row: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
@@ -540,6 +539,46 @@ async fn pinned_snapshots(
         )));
     }
     Ok(pinned)
+}
+
+/// The most mirror snapshots the unfinished campaigns of one customer pin
+/// together. A pin keeps a snapshot from retention and on every relay,
+/// whoever's they are, so a customer's drafts must not keep them all.
+pub const MAX_PINNED_SNAPSHOTS: usize = 64;
+
+/// Refuses `pinned` when the customer's unfinished campaigns would then
+/// pin more than [`MAX_PINNED_SNAPSHOTS`] snapshots. Holds a lock per
+/// customer to the end of the transaction, so two campaigns created at
+/// once cannot both pass.
+async fn check_pin_limit(
+    conn: &mut PgConnection,
+    customer: Uuid,
+    pinned: &[(Uuid, Uuid)],
+) -> Result<(), CampaignError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('campaign-pins:' || $1::text))")
+        .bind(customer)
+        .execute(&mut *conn)
+        .await?;
+    let snapshots: Vec<Uuid> = pinned.iter().map(|(_, snapshot)| *snapshot).collect();
+    let total: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (
+             SELECT cs.snapshot_id FROM campaign_snapshots cs
+             JOIN campaigns c ON c.id = cs.campaign_id
+             WHERE c.customer_id = $1 AND c.state NOT IN ('stopped', 'completed', 'failed')
+             UNION SELECT unnest($2::uuid[])
+         ) pins",
+    )
+    .bind(customer)
+    .bind(&snapshots)
+    .fetch_one(&mut *conn)
+    .await?;
+    if total > MAX_PINNED_SNAPSHOTS as i64 {
+        return Err(CampaignError::Invalid(format!(
+            "unfinished campaigns of this customer would pin more than \
+             {MAX_PINNED_SNAPSHOTS} mirror snapshots: stop or finish some first"
+        )));
+    }
+    Ok(())
 }
 
 async fn check_timezones(conn: &mut PgConnection, windows: &[Window]) -> Result<(), CampaignError> {

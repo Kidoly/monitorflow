@@ -108,3 +108,18 @@ Rejected:
 
 - On a shared cluster, an administrator of one customer who unmapped a match, or whose server discovery cannot match, asks a global administrator to map it. "Not in the list" answers them with that sentence.
 - Mappings made before this change are not re-checked. `server.proxmox.set` in the audit log lists them, with who made each.
+
+## Amendment: claims on one guest (2026-11-19)
+
+### Context
+
+When two servers matched one guest, both were left unsure and the guest became a candidate of each, whatever matched them. MAC addresses can be copied (a dummy interface on a shared bridge shows them), and a name or the lack of hardware can be reported by a modified agent. A customer's server could so make another customer's guest its own candidate on a cluster serving every customer, map it through the candidate rule above, and remove the other server's automatic mapping on the way.
+
+### Decision
+
+A guest several servers match goes to the strongest signal (UUID, then MAC, then name); weaker claims drop it, as a candidate too. Equal claims leave each claimant unsure with the guest as a candidate, as before, when the servers belong to one customer. When they belong to several customers, the guest is the candidate of none of them: only a global administrator maps it.
+
+### Consequences
+
+- A server matched by its UUID keeps its guest whatever another server reports.
+- Two customers' servers with the same MAC address on one guest both lose an automatic mapping until a global administrator maps the right one; the audit log records `server.proxmox.unmatch` for it.

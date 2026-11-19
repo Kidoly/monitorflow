@@ -48,6 +48,22 @@
 + secret | client_secret='@@s3cr3t value@@'
 + secret | GOOGLE_APPLICATION_CREDENTIALS=@@base64stuff@@
 + password,token | password=@@a1b2@@ token=@@c3d4@@
++ password | DB_PASS=@@Sup3rS3cret!@@
++ password | SMTP_PASS: @@mail-pw-1@@
++ password | pass: @@hunter2@@
++ secret | SECRET_KEY = '@@django-insecure-fake@@'
++ secret | JWT_SECRET_KEY=@@notreal123@@
++ api_key | ENCRYPTION_KEY=@@fakekey99@@
++ password | mysql -u root -p@@S3cr3t@@ -e 'show processlist'
++ password | root 812 0.0 mysqldump --single-transaction -uroot -p@@S3cr3t@@ app
++ password | sshpass -p @@hunter2@@ ssh deploy@web-01
++ password | /usr/bin/app --password @@hunter2@@ --verbose
++ password | machine api.example.net login deploy password @@hunter2@@
++ password | <password>@@hunter2@@</password>
++ token | <token>@@abcd1234@@</token>
++ basic_auth | {"auths": {"registry.example.net": {"auth": "@@dXNlcjpwYXNz@@"}}}
++ token | Cookie: @@sessionid=abcd1234; csrftoken=efgh5678@@
++ token | Authorization: Token @@0123456789abcdef0123@@
 
 # High entropy
 + high_entropy | session id @@Zq3vT9xKpL2mW8rB5nY7cF4hJ6dG1sA0@@ accepted
@@ -80,3 +96,8 @@
 - | secret-scanning disabled; the token expired
 - | monitorflow_disk_used_ratio{instance="/var",peer="web-01"} 0.97
 - | Load average: 12.04, 9.87, 7.11
+- | mysql -u root -p -e 'select 1'
+- | mysql -h db -P 3306 -u app -p
+- | bypass=1 compass: north passes: 3
+- | --password-file=/run/secrets/db
+- | <password></password>

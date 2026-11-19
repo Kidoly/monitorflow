@@ -286,8 +286,9 @@ pub async fn list(
 }
 
 /// `POST /api/remediation/approvals/{id}/approve`: runs the command, or
-/// the edited `command`. Editing never lowers the role needed: it is the
-/// higher of the two commands' tiers.
+/// the edited `command`. The role needed is the higher of the tier the
+/// command was parked with and the final command's tier under the rules
+/// of now, so neither an edit nor a removed allow rule lowers it.
 pub async fn approve(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -297,20 +298,26 @@ pub async fn approve(
     let target = target(&state, &user, &id).await?;
     let request = body(request)?;
     let edited = request.command.filter(|c| *c != target.command);
-    let mut tier = target.tier;
     if let Some(command) = &edited {
         check_command(command).map_err(|m| ApiError::Invalid(m.into()))?;
-        let rules =
-            risk::store::rule_set(&state.pool, target.customer_id, Some(target.site_id)).await?;
-        let decision = risk::classify_for(target.shell, command, &rules);
-        if decision.tier == Tier::Forbidden {
-            return Err(ApiError::Invalid(format!(
-                "the edited command is forbidden: {}",
-                decision.reason
-            )));
-        }
-        tier = tier.max(decision.tier);
     }
+    // Classified again even unedited: the rules may have changed since.
+    let command = edited.as_deref().unwrap_or(&target.command);
+    let rules =
+        risk::store::rule_set(&state.pool, target.customer_id, Some(target.site_id)).await?;
+    let decision = risk::classify_for(target.shell, command, &rules);
+    if decision.tier == Tier::Forbidden {
+        let which = if edited.is_some() {
+            "edited"
+        } else {
+            "proposed"
+        };
+        return Err(ApiError::Invalid(format!(
+            "the {which} command is forbidden: {}",
+            decision.reason
+        )));
+    }
+    let tier = target.tier.max(decision.tier);
     if !user
         .sites_with(approver_role(tier))
         .contains(target.site_id)
