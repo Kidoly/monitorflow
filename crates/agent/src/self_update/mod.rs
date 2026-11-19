@@ -259,18 +259,47 @@ impl Connected {
     }
 }
 
-/// The file at `path`, `None` when missing; refuses links and large files.
-pub(crate) fn read_small(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    use std::io::Read;
-
+/// Opens, for reading, a file in a directory the agent's account writes,
+/// where root or LocalSystem cannot trust what sits at `path`: a final
+/// symlink or junction is opened as itself and refused, not followed, and
+/// only a regular file is accepted. On Unix the open does not wait for
+/// the writer of a FIFO planted there. On Windows it asks for
+/// identification-level impersonation, so a named pipe the agent's
+/// account put in its place cannot act as LocalSystem.
+pub(crate) fn open_untrusted(path: &Path) -> io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     {
+        use rustix::fs::OFlags;
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
+        let flags = OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY;
+        options.custom_flags(flags.bits() as i32);
     }
-    let file = match options.open(path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT; SECURITY_IDENTIFICATION, to which
+        // std adds SECURITY_SQOS_PRESENT.
+        options.custom_flags(0x0020_0000);
+        options.security_qos_flags(0x0001_0000);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+    Ok(file)
+}
+
+/// The file at `path`, `None` when missing; opened as
+/// [`open_untrusted`] does, and refused when large.
+pub(crate) fn read_small(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+
+    let file = match open_untrusted(path) {
         Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),

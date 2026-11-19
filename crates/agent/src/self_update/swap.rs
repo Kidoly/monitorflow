@@ -22,7 +22,7 @@ use monitorflow_common::release::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{unix_ms, Connected, Phase, Status, AGENT_DIR, STATUS_FILE};
+use super::{open_untrusted, unix_ms, Connected, Phase, Status, AGENT_DIR, STATUS_FILE};
 
 /// Where the agent stages a release, under its data directory.
 pub const STAGED_DIR: &str = "staged";
@@ -218,38 +218,9 @@ pub enum Swapped {
     Current(Version),
 }
 
-/// Opens a staged file, in a directory the agent's account writes, for
-/// reading: a final symlink or junction is opened as itself and refused,
-/// not followed. On Windows the open also asks for identification-level
-/// impersonation, so a named pipe the agent's account put in its place
-/// cannot act as LocalSystem; what is read is checked against the
-/// release's signature anyway.
-fn open_staged(path: &Path) -> io::Result<fs::File> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        // FILE_FLAG_OPEN_REPARSE_POINT; SECURITY_IDENTIFICATION, to which
-        // std adds SECURITY_SQOS_PRESENT.
-        options.custom_flags(0x0020_0000);
-        options.security_qos_flags(0x0001_0000);
-    }
-    let file = options.open(path)?;
-    if !file.metadata()?.is_file() {
-        return Err(io::Error::other("not a regular file"));
-    }
-    Ok(file)
-}
-
 fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, SwapError> {
     use std::io::Read;
-    let file = open_staged(path).map_err(io_error(path))?;
+    let file = open_untrusted(path).map_err(io_error(path))?;
     let mut bytes = Vec::new();
     file.take(limit + 1)
         .read_to_end(&mut bytes)

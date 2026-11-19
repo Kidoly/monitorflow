@@ -311,3 +311,32 @@ fn products_name_their_own_files_and_units() {
         assert_eq!(paths.state_dir, std::path::Path::new(RELAY.state_dir));
     }
 }
+
+/// Root reads files the agent's account can replace: a FIFO without a
+/// writer must not stop the helper, which holds its lock meanwhile.
+#[cfg(unix)]
+#[test]
+fn small_reads_refuse_links_fifos_and_directories() {
+    use rustix::fs::{mknodat, FileType, Mode, CWD};
+
+    use super::read_small;
+    let dir = TempDir::new().unwrap();
+    let fifo = dir.path().join("ca-bundles.pb");
+    mknodat(CWD, &fifo, FileType::Fifo, Mode::from_raw_mode(0o600), 0).unwrap();
+    let (done, result) = std::sync::mpsc::channel();
+    let path = fifo.clone();
+    std::thread::spawn(move || done.send(read_small(&path).map_err(|e| e.to_string())));
+    let read = result
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the read waits on the FIFO");
+    assert!(read.unwrap_err().contains("not a regular file"));
+
+    assert!(read_small(dir.path()).is_err());
+    let file = dir.path().join("cert.pem");
+    std::fs::write(&file, b"pem").unwrap();
+    let link = dir.path().join("link.pem");
+    std::os::unix::fs::symlink(&file, &link).unwrap();
+    assert!(read_small(&link).is_err());
+    assert_eq!(read_small(&file).unwrap().unwrap(), b"pem");
+    assert_eq!(read_small(&dir.path().join("none")).unwrap(), None);
+}
