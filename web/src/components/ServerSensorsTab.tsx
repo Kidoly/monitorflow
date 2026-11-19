@@ -19,7 +19,7 @@ import { coversCheck } from "@/lib/maintenance";
 import { inOneHour, tomorrowMorning } from "@/lib/silences";
 import { formatDay } from "@/components/ui/time";
 import { modifiesSite, useMe } from "@/lib/me";
-import { sensorHref } from "@/lib/routes";
+import { sensorHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { LEVEL_LABELS, perInstance, ruleCompact, ruleLevel, ruleSummary, rowRule } from "@/lib/sensorRules";
 import { type SensorRow, formatSensorValue } from "@/lib/sensors";
@@ -118,6 +118,13 @@ export function ServerSensorsTab({
     if (canEdit && onSilenceCheck) {
       items.push({ label: t("maintenance.check.hour"), onSelect: () => silenceRow(row, inOneHour(new Date())) });
       items.push({ label: t("maintenance.check.tomorrow"), onSelect: () => silenceRow(row, tomorrowMorning(new Date())) });
+    }
+    // What this check depends on (ADR-0152), set on the Depends on tab.
+    if (canEdit) {
+      items.push({
+        label: t("dependencies.check.menu"),
+        href: scopedHref(`${serverHref(server.id, "dependencies")}&check=${encodeURIComponent(row.sensor.name)}`, scope),
+      });
     }
     // One disk of several mutes its alert, which needs one to mute.
     const muting = perInstance(row.sensor, row.instance);
