@@ -26,6 +26,7 @@ use super::rules::{Kind, Rule};
 use super::state::{Evaluation, SeriesState, Transition};
 use super::store::{AlertStore, IncidentStep, SeriesKey, ServerRules, Step};
 use super::summary::{bucket_width, derive, Need, Summary};
+use crate::dependencies::Holds;
 use crate::ingest::Series;
 
 #[derive(Debug, Clone)]
@@ -43,6 +44,8 @@ pub struct EngineSettings {
     /// Where richer rules read history (ADR-0153); without it windows
     /// fill from live samples and comparisons with the past judge nothing.
     pub history: Option<Arc<dyn Backend>>,
+    /// Time between two reads of what dependencies hold (ADR-0152).
+    pub holds_interval: Duration,
 }
 
 impl std::fmt::Debug for dyn Backend {
@@ -59,6 +62,7 @@ impl Default for EngineSettings {
             poll_interval: Duration::from_secs(10),
             report_interval: Duration::from_secs(60),
             history: None,
+            holds_interval: Duration::from_secs(5),
         }
     }
 }
@@ -198,6 +202,7 @@ impl Alerts {
                 store,
                 notifier,
                 counters: counters.clone(),
+                holds: Holds::default(),
             },
         };
         tokio::spawn(engine.run(rx, forget_rx, answers_rx));
@@ -365,6 +370,8 @@ impl Engine {
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut report = interval(self.settings.report_interval);
         report.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut holds = interval(self.settings.holds_interval);
+        holds.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut reported = Stats::default();
         loop {
             tokio::select! {
@@ -382,6 +389,10 @@ impl Engine {
                     self.poll().await;
                     self.sweep(now_ms()).await;
                 }
+                _ = holds.tick() => match self.out.store.holds().await {
+                    Ok(holds) => self.out.holds = holds,
+                    Err(error) => tracing::warn!(%error, "could not read dependencies; will retry"),
+                },
                 _ = report.tick() => {
                     let stats = self.out.counters.snapshot();
                     if stats != reported {
@@ -984,6 +995,9 @@ struct Output {
     store: AlertStore,
     notifier: Arc<dyn Notifier>,
     counters: Arc<Counters>,
+    /// What dependencies hold (ADR-0152): a held series opens no incident,
+    /// and the next sample that still fails tries again.
+    holds: Holds,
 }
 
 impl Output {
@@ -998,7 +1012,19 @@ impl Output {
         change: Change<'_>,
     ) {
         let mut event = change.transition;
+        let held = || {
+            self.holds
+                .series(key.server_id, &key.metric, &key.instance)
+                .is_some()
+        };
         let incident = match (tracked.state.firing, tracked.incident, rule) {
+            (Some(_), None, Some(_)) if held() => {
+                // Behind a parent that is down, in doubt or recovering: the
+                // state is kept, so the next sample opens it once free.
+                event = None;
+                tracing::debug!(agent_id = change.peer, metric = %key.metric, instance = %key.instance, "incident held by a dependency");
+                IncidentStep::None
+            }
             (Some(severity), None, Some(rule)) => {
                 event = event.or(Some(Transition::Opened(severity)));
                 IncidentStep::Open { severity, rule }

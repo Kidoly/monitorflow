@@ -160,6 +160,17 @@ fn builtin_runs_network_kinds_only() {
         .err()
         .unwrap()
         .contains("`host`"));
+    let vmware = BTreeMap::from([
+        ("host".to_string(), "192.0.2.9".to_string()),
+        ("what".to_string(), "test".to_string()),
+    ]);
+    assert!(Builtin.build("vmware", &vmware).is_ok());
+    assert!(Builtin
+        .build(
+            "vmware",
+            &BTreeMap::from([("host".to_string(), "x".to_string())])
+        )
+        .is_err());
 }
 
 #[test]

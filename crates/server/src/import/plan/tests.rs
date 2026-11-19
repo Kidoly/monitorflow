@@ -136,6 +136,7 @@ fn servers_monitorflow_has_are_present_and_keep_their_id() {
             hostname: "web-01".into(),
             site_id: site(),
             may_change: true,
+            device: false,
         }],
         checks: HashSet::from([("web-01".to_owned(), "port_22".to_owned())]),
         ..Existing::default()
@@ -934,6 +935,7 @@ fn servers_of_sites_one_does_not_administer_get_nothing() {
             hostname: "a".into(),
             site_id: Uuid::from_u128(2),
             may_change: false,
+            device: false,
         }],
         ..Existing::default()
     };
@@ -1617,4 +1619,242 @@ fn a_check_that_goes_silent_gets_a_no_data_rule_beside_its_alert() {
         ),
         ("monitorflow_port_443_up", ">", Some(600.0), 0, "nodata")
     );
+}
+
+#[test]
+fn a_second_rule_of_a_kind_on_a_measure_says_why_it_stays() {
+    let window = |name: &str, function, window_s| {
+        let mut t = threshold(&["1"], Measure::CpuUsage, Some(0.9), None, name);
+        t.judged = Judged::Window { function, window_s };
+        t.for_s = 0;
+        t
+    };
+    let inventory = Inventory {
+        hosts: vec![host("1", "web-01", Os::Linux)],
+        thresholds: vec![
+            window("Busy for 5 minutes", WindowFunction::Min, 300),
+            window("Busy this hour", WindowFunction::Avg, 3_600),
+            // The same rule again merges, as before.
+            window("Busy for 5 minutes, critical", WindowFunction::Min, 300),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let kept = by_id(
+        &planned,
+        "threshold:web-01:monitorflow_cpu_usage_ratio:total:window",
+    );
+    assert_eq!(
+        kept.origin.name,
+        "Busy for 5 minutes + Busy for 5 minutes, critical"
+    );
+    let left: Vec<&Item> = planned
+        .items
+        .iter()
+        .filter(|i| i.list == List::NotMovable)
+        .collect();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].origin.name, "Busy this hour");
+    assert_eq!(left[0].note.as_ref().unwrap().code, "kind_taken");
+}
+
+#[test]
+fn a_host_already_a_server_with_its_agent_stays_one() {
+    // The source watches db-01 by ping only, but MonitorFlow has it as a
+    // server with an agent: its ping names the host, as for any server.
+    let mut db = host("1", "db-01", Os::Linux);
+    db.agentless = true;
+    let inventory = Inventory {
+        hosts: vec![db],
+        checks: vec![check("1", Watch::Ping { address: None }, None)],
+        ..Inventory::default()
+    };
+    let existing = Existing {
+        servers: vec![ExistingServer {
+            peer_id: "db-01".into(),
+            hostname: "db-01".into(),
+            site_id: site(),
+            may_change: true,
+            device: false,
+        }],
+        ..Existing::default()
+    };
+    let planned = run(&inventory, &existing);
+    let ping = planned.items.iter().find(|i| i.kind == "check").unwrap();
+    let Some(Create::Check { params, probe, .. }) = &ping.create else {
+        panic!("{ping:?}")
+    };
+    assert!(*probe);
+    assert_eq!(params["host"], "10.0.0.5");
+}
+
+/// VMware and Hyper-V (ADR-0156): a vCenter is a device with its
+/// `vmware` check waiting for its password, a Hyper-V host a Windows
+/// server with its `hyperv` check, and a datastore threshold a vCenter's.
+#[test]
+fn vcenters_and_hyperv_hosts_get_their_checks() {
+    let vcenter = Host {
+        agentless: true,
+        addresses: vec!["vcenter-1.example.test".into()],
+        ..host("1", "vcenter-1", Os::Unknown)
+    };
+    let mut low = threshold(
+        &["1"],
+        Measure::DatastoreFree,
+        Some(0.2),
+        Some(0.1),
+        "Free space is low",
+    );
+    low.direction = Direction::Below;
+    let inventory = Inventory {
+        hosts: vec![
+            vcenter,
+            host("2", "hv-01", Os::Windows),
+            host("3", "web-01", Os::Debian),
+        ],
+        checks: vec![
+            check("1", Watch::Vmware, None),
+            check("2", Watch::HyperV, None),
+            check("3", Watch::HyperV, None),
+            check("3", Watch::Vmware, None),
+        ],
+        thresholds: vec![low],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let vmware = by_id(&planned, "check:vcenter-1:vmware");
+    assert_eq!(vmware.list, List::Approximated);
+    assert_eq!(vmware.note.as_ref().unwrap().code, "vmware_password");
+    let Some(Create::Check {
+        kind,
+        probe,
+        params,
+        ..
+    }) = &vmware.create
+    else {
+        panic!("{vmware:?}")
+    };
+    assert_eq!((kind.as_str(), *probe), ("vmware", true));
+    assert!(
+        params.is_empty(),
+        "the credentials come from the device's page"
+    );
+    let hyperv = by_id(&planned, "check:hv-01:hyperv");
+    assert_eq!(hyperv.note.as_ref().unwrap().code, "hyperv_group");
+    let Some(Create::Check { kind, probe, .. }) = &hyperv.create else {
+        panic!()
+    };
+    assert_eq!((kind.as_str(), *probe), ("hyperv", false));
+    let refused: Vec<&str> = planned
+        .items
+        .iter()
+        .filter(|i| i.list == List::NotMovable && i.hosts == ["web-01"])
+        .filter_map(|i| i.note.as_ref().map(|n| n.code.as_str()))
+        .collect();
+    assert_eq!(refused, ["hyperv_windows", "vmware_of_agent"]);
+    let datastore = planned
+        .items
+        .iter()
+        .find(|i| {
+            i.id.starts_with("threshold:vcenter-1:monitorflow_vmware_datastore_free_ratio")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{:#?}",
+                planned.items.iter().map(|i| &i.id).collect::<Vec<_>>()
+            )
+        });
+    assert!(matches!(
+        &datastore.create,
+        Some(Create::Threshold { comparison, warning: Some(w), critical: Some(c), .. })
+            if comparison == "<" && *w == 0.2 && *c == 0.1
+    ));
+}
+
+#[test]
+fn dependencies_follow_the_servers_and_checks_they_name() {
+    use monitorflow_import::model::{Dependency, DependencyEnd};
+
+    let mut switch = host("sw", "sw-core", Os::Unknown);
+    switch.agentless = true;
+    let https = Watch::Port {
+        address: None,
+        port: 443,
+    };
+    let ping = Watch::Ping { address: None };
+    let dependency = |child: DependencyEnd, parent: DependencyEnd, fidelity: Fidelity| Dependency {
+        child,
+        parent,
+        origin: Origin::new("trigger", "HTTPS is down"),
+        fidelity,
+    };
+    let inventory = Inventory {
+        hosts: vec![host("app", "app-01", Os::Debian), switch],
+        checks: vec![
+            check("app", https.clone(), Some(Severity::Critical)),
+            check("sw", ping.clone(), Some(Severity::Critical)),
+        ],
+        dependencies: vec![
+            dependency(
+                DependencyEnd::host("app"),
+                DependencyEnd::host("sw"),
+                Fidelity::Exact,
+            ),
+            dependency(
+                DependencyEnd::check("app", https),
+                DependencyEnd::check("sw", ping),
+                Fidelity::Approximated(Note::new(
+                    "dependency_whole_check",
+                    args! {"trigger" => "HTTPS is down"},
+                )),
+            ),
+            // A host that is not in the inventory is listed with it.
+            dependency(
+                DependencyEnd::host("app"),
+                DependencyEnd::host("gone"),
+                Fidelity::Exact,
+            ),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let whole = by_id(&planned, "dependency:app-01:sw-core");
+    assert_eq!(whole.list, List::Exact);
+    assert_eq!(whole.hosts, ["app-01", "sw-core"]);
+    assert_eq!(whole.needs, ["server:app-01", "server:sw-core"]);
+    assert_eq!(
+        whole.create,
+        Some(Create::Dependency {
+            server: "app-01".into(),
+            check: None,
+            parent: "sw-core".into(),
+            parent_check: None,
+        })
+    );
+    let checks: Vec<&Item> = planned
+        .items
+        .iter()
+        .filter(|i| i.kind == "dependency" && i.id != whole.id)
+        .collect();
+    assert_eq!(checks.len(), 1, "{checks:#?}");
+    let Some(Create::Dependency {
+        check: Some(check),
+        parent_check: Some(parent_check),
+        ..
+    }) = &checks[0].create
+    else {
+        panic!("{:?}", checks[0].create);
+    };
+    assert_eq!(checks[0].list, List::Approximated);
+    // Both checks are made by this import: it needs them.
+    for name in [&check.name, &parent_check.name] {
+        assert!(
+            checks[0]
+                .needs
+                .iter()
+                .any(|n| n.ends_with(&format!(":{name}"))),
+            "{:?}",
+            checks[0].needs
+        );
+    }
 }
