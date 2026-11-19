@@ -12,6 +12,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use crate::shutdown::Shutdown;
+use crate::unix_ms;
 use monitorflow_common::proto::v1::{DiscoveredMount, DiscoveredPort, DiscoveryReport};
 use tokio::process::Command;
 use tokio::sync::watch;
@@ -339,12 +340,6 @@ impl Discovery {
             }
         }
     }
-}
-
-fn unix_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 #[cfg(test)]

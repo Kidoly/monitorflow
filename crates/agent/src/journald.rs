@@ -28,7 +28,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use monitorflow_common::proto::v1::LogEntry;
 use monitorflow_common::rate::TokenBucket;
@@ -460,10 +460,7 @@ pub fn start(data_dir: &Path, uplink: Uplink<LogEntry>, stop: Shutdown) {
             tracing::warn!(
                 "cannot read the system journal: add the agent's user to the systemd-journal group"
             );
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as i64);
-            uplink.push(no_access_notice(now));
+            uplink.push(no_access_notice(crate::unix_ms()));
         }
         Some(true) => {}
     }

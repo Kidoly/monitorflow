@@ -8,7 +8,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use monitorflow_common::config::AgentPluginsConfig;
@@ -125,9 +124,7 @@ impl PluginChecks {
             *newest = set.issued_at_unix_ms;
             self.remember(set.issued_at_unix_ms);
         }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as i64);
+        let now = crate::unix_ms();
         if now >= set.expires_at_unix_ms {
             return Err(
                 "the server's list of plugins has expired; a new one comes when this server connects"

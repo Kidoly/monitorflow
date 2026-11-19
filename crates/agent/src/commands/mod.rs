@@ -39,7 +39,7 @@ use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use monitorflow_common::client::identity::StoredIdentity;
 use monitorflow_common::command;
@@ -51,6 +51,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use crate::shutdown::Shutdown;
+use crate::unix_ms;
 pub use journal::Journal;
 use journal::{valid_id, Entry};
 
@@ -558,12 +559,6 @@ fn tail(mut bytes: Vec<u8>) -> Vec<u8> {
         bytes.drain(..bytes.len() - MAX_OUTPUT);
     }
     bytes
-}
-
-fn unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
 }
 
 // Uses the server's CA, which only builds on Unix.

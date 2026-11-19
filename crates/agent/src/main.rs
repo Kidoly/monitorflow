@@ -145,10 +145,10 @@ fn default_config() -> PathBuf {
 #[cfg(unix)]
 #[derive(Subcommand, Debug, Clone, Copy)]
 enum PackagesCommand {
-    /// Read an update spec (JSON, like `{"kind": "named", "packages":
-    /// ["openssl"]}`, kind `all`, `security` or `named`) on stdin, check
-    /// it, then refresh and upgrade with the host's apt or dnf. Exits with
-    /// the package manager's code when it fails.
+    /// Read an `apply_updates` command the central server signed on stdin,
+    /// check it, then refresh and upgrade with the host's apt or dnf the
+    /// packages it names (all, security only or named). Exits with the
+    /// package manager's code when it fails.
     Update,
 }
 
@@ -158,11 +158,12 @@ enum SnapshotsCommand {
     /// Print the system volumes (/, /usr, /var, /opt, /boot) and
     /// MonitorFlow's snapshots of them, as JSON.
     Inspect,
-    /// Read `{"name": "monitorflow-…"}` on stdin and snapshot every system
-    /// volume on LVM or ZFS under that name, if there is room.
+    /// Read a `take_snapshot` command the central server signed on stdin
+    /// and snapshot every system volume on LVM or ZFS under the name it
+    /// gives, if there is room.
     Take,
-    /// Read `{"name": "monitorflow-…"}` on stdin and delete MonitorFlow's
-    /// snapshots of that name.
+    /// Read a `delete_snapshot` command the central server signed on stdin
+    /// and delete MonitorFlow's snapshots of the name it gives.
     Delete,
 }
 
@@ -177,11 +178,12 @@ enum SelfUpdateStep {
 #[cfg(unix)]
 #[derive(Subcommand, Debug, Clone, Copy)]
 enum SourcesCommand {
-    /// Read a `ConfigureSources` message (binary Protobuf) on stdin, point
-    /// the package manager at the mirror and check it with `apt-get
-    /// update` or `dnf makecache`; reverts on failure.
+    /// Read a `configure_sources` command the central server signed on
+    /// stdin, point the package manager at the mirror it names and check
+    /// it with `apt-get update` or `dnf makecache`; reverts on failure.
     Apply,
-    /// Restore the sources `apply` changed.
+    /// Restore the sources `apply` changed, on a signed `revert_sources`
+    /// command read on stdin.
     Revert,
 }
 
