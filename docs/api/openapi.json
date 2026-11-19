@@ -5476,6 +5476,445 @@
         }
       }
     },
+    "/api/v1/dependencies": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "List dependencies",
+        "description": "What is behind what, among the servers, devices and relays the key reads. A dependency says that a child (a server, a device, or one of its checks) is behind a parent (a server, a device, a relay, or one check such as an uplink ping). While a parent is down, what is behind it opens no incident of its own and notifies nobody: it is unreachable, and the parent's incident speaks for it. Children are judged again 2 minutes after the parent's incident resolves.\n\nA parent is down while its offline incident is open (a server's agent, a relay), while a ping check of it has a critical incident open (a server or device), or, for a check, while that check has a critical incident open.\n\nThis lists the dependencies people set; the automatic ones (a server behind its relay, a check behind the relay that runs it) are in `GET /api/v1/servers/{id}/dependencies`.\n\n**Who**: any role. **Area**: `alerts`.\n\n**Filter**: `server_id` for those whose child or parent is that server or device or one of its checks, `relay_id` for those behind that relay. Unknown parameters are 400.",
+        "operationId": "list_dependencies",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Only those whose child or parent is this server or device, or one\nof its checks.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "relay_id",
+            "in": "query",
+            "description": "Only those behind this relay.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The dependencies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DependencyList"
+                },
+                "example": {
+                  "dependencies": [
+                    {
+                      "automatic": false,
+                      "can_change": true,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": "2026-11-18T09:30:00Z",
+                      "created_by": "alice",
+                      "id": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+                      "parent": {
+                        "check": null,
+                        "kind": "device",
+                        "name": "sw-core",
+                        "relay_id": null,
+                        "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server or relay of the filter does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Add dependencies",
+        "description": "Puts `children` behind `parent`: \"these servers are behind this switch\". Each end is a `server_id` (a server or device), with `check` for one of its checks instead of all of it; a parent may be a `relay_id` instead. All are added, or none.\n\nRefused: a child behind itself, a server behind one of its own checks (one check of a server may depend on another of its checks), a dependency that already exists (409), one that would put something behind itself through others (409, with the path in words: \"web-1 cannot depend on sw-core: sw-core already depends on web-1 (sw-core, then fw-1, then web-1)\"), and ends of two customers (400).\n\n**Who**: operator or above on the site of every end. **Area**: `alerts`. Audited as `dependency.create`, one entry per child. **Not safe to repeat**: a second time answers 409.",
+        "operationId": "create_dependencies",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DependencyRequest"
+              },
+              "example": {
+                "children": [
+                  {
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  },
+                  {
+                    "check": {
+                      "name": "https"
+                    },
+                    "server_id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a"
+                  }
+                ],
+                "parent": {
+                  "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The dependencies added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DependencyList"
+                },
+                "example": {
+                  "dependencies": [
+                    {
+                      "automatic": false,
+                      "can_change": true,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": "2026-11-18T09:30:00Z",
+                      "created_by": "alice",
+                      "id": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+                      "parent": {
+                        "check": null,
+                        "kind": "device",
+                        "name": "sw-core",
+                        "relay_id": null,
+                        "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No child or over 500, an end without `server_id` (or `relay_id` for the parent), a relay as a child, an unknown check, something behind itself, or two customers: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read one of the sites: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "An end does not exist, was removed, or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It exists already, or would close a loop: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dependencies/{id}": {
+      "delete": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Remove a dependency",
+        "description": "The child is no longer behind the parent: it opens its own incidents again at its next check that fails. Automatic dependencies have no ID and cannot be removed.\n\n**Who**: operator or above on the sites of both ends. **Area**: `alerts`. Audited as `dependency.remove`.",
+        "operationId": "remove_dependency",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The dependency",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read one of the sites: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such dependency, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/devices": {
       "post": {
         "tags": [
@@ -19995,6 +20434,150 @@
         }
       }
     },
+    "/api/v1/relays/{id}/dependencies": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "What is behind a relay",
+        "description": "The servers behind a relay and the checks it runs, which are behind it without being set (`automatic: true`), and what people put behind it. A relay depends on nothing, so `parents` and `suggestions` are empty.\n\n**Who**: any role on its site. **Area**: `alerts`.",
+        "operationId": "relay_dependencies",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The relay",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What is behind it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dependencies"
+                },
+                "example": {
+                  "behind": [
+                    {
+                      "check": null,
+                      "kind": "server",
+                      "name": "web-1",
+                      "relay_id": null,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    }
+                  ],
+                  "can_change": true,
+                  "children": [
+                    {
+                      "automatic": true,
+                      "can_change": false,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": null,
+                      "created_by": null,
+                      "id": null,
+                      "parent": {
+                        "check": null,
+                        "kind": "relay",
+                        "name": "gw-1",
+                        "relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                        "server_id": null,
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    }
+                  ],
+                  "parents": [],
+                  "suggestions": [],
+                  "unreachable": null,
+                  "unreachable_checks": []
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such relay, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/relays/{id}/names": {
       "post": {
         "tags": [
@@ -24119,6 +24702,187 @@
           },
           "422": {
             "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/dependencies": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "A server's dependencies",
+        "description": "What a server's or device's page shows: what it and its checks depend on, automatic ones included (`automatic: true`, such as its relay); what depends directly on it (`children`); everything behind it, directly or through others (`behind`); parents that look obvious and are not set (`suggestions`: the Proxmox host its virtual machine or container runs on, when monitored, and the switches, routers and firewalls of its site), never added without a request; and, while a parent is down, which one and its incident (`unreachable`), for it or for some of its checks (`unreachable_checks`).\n\n**Who**: any role on its site. **Area**: `alerts`.",
+        "operationId": "server_dependencies",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server or device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Its dependencies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dependencies"
+                },
+                "example": {
+                  "behind": [],
+                  "can_change": true,
+                  "children": [],
+                  "parents": [
+                    {
+                      "automatic": false,
+                      "can_change": true,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": "2026-11-18T09:30:00Z",
+                      "created_by": "alice",
+                      "id": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+                      "parent": {
+                        "check": null,
+                        "kind": "device",
+                        "name": "sw-core",
+                        "relay_id": null,
+                        "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    },
+                    {
+                      "automatic": true,
+                      "can_change": false,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": null,
+                      "created_by": null,
+                      "id": null,
+                      "parent": {
+                        "check": null,
+                        "kind": "relay",
+                        "name": "gw-1",
+                        "relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                        "server_id": null,
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    }
+                  ],
+                  "suggestions": [
+                    {
+                      "parent": {
+                        "check": null,
+                        "kind": "device",
+                        "name": "fw-1",
+                        "relay_id": null,
+                        "server_id": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "reason": "network_device"
+                    }
+                  ],
+                  "unreachable": {
+                    "because": {
+                      "check": null,
+                      "kind": "device",
+                      "name": "sw-core",
+                      "relay_id": null,
+                      "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    },
+                    "incident_id": "4d3c2b1a-0f9e-4d8c-b7a6-5f4e3d2c1b0a",
+                    "since": "2026-11-18T10:02:00Z"
+                  },
+                  "unreachable_checks": []
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or one the key does not see: `not_found`",
             "content": {
               "application/json": {
                 "schema": {
@@ -38410,6 +39174,289 @@
           }
         }
       },
+      "Dependencies": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/dependencies` and\n`GET /api/relays/{id}/dependencies`: what its page shows.",
+        "required": [
+          "parents",
+          "children",
+          "behind",
+          "suggestions",
+          "unreachable_checks",
+          "can_change"
+        ],
+        "properties": {
+          "behind": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DependencyEnd"
+            },
+            "description": "Everything behind it, directly or through others."
+          },
+          "can_change": {
+            "type": "boolean",
+            "description": "Whether the caller may add and remove its dependencies."
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dependency"
+            },
+            "description": "What depends directly on it or one of its checks."
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dependency"
+            },
+            "description": "What it, or one of its checks, depends on, automatic ones included."
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DependencySuggestion"
+            },
+            "description": "Parents that look obvious and are not set."
+          },
+          "unreachable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Unreachable",
+                "description": "While a parent is down; `null` otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unreachable_checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnreachableCheck"
+            },
+            "description": "Its checks that are unreachable while it is not."
+          }
+        }
+      },
+      "Dependency": {
+        "type": "object",
+        "description": "A dependency: `child` is behind `parent`.",
+        "required": [
+          "automatic",
+          "child",
+          "parent",
+          "can_change"
+        ],
+        "properties": {
+          "automatic": {
+            "type": "boolean",
+            "description": "A server behind its relay, or a check behind the relay that runs it."
+          },
+          "can_change": {
+            "type": "boolean",
+            "description": "Whether the caller may remove it."
+          },
+          "child": {
+            "$ref": "#/components/schemas/DependencyEnd"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` for an automatic one."
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who added it; `null` for an automatic one, an import's without a\nperson, or once the account is removed."
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for an automatic one, which cannot be removed."
+          },
+          "parent": {
+            "$ref": "#/components/schemas/DependencyEnd"
+          }
+        }
+      },
+      "DependencyCheck": {
+        "type": "object",
+        "description": "A check of a server or device, by its name and what it watches.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "instance": {
+            "type": "string",
+            "description": "What it watches, `\"\"` (the default) for every instance."
+          },
+          "name": {
+            "type": "string",
+            "description": "The check's name, like `ping` or `service_nginx`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DependencyEnd": {
+        "type": "object",
+        "description": "One end of a dependency, named.",
+        "required": [
+          "kind",
+          "name",
+          "site_id"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DependencyCheck",
+                "description": "One of its checks; `null` for all of it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DependencyEndKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "Its host name, or the relay's name."
+          },
+          "relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The relay; `null` otherwise."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The server or device; `null` for a relay."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DependencyEndKind": {
+        "type": "string",
+        "description": "What an end is.",
+        "enum": [
+          "server",
+          "device",
+          "relay"
+        ]
+      },
+      "DependencyEndRequest": {
+        "type": "object",
+        "description": "One end of a dependency in a request: a server or device, one of its\nchecks, or (for a parent only) a relay.",
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DependencyCheck",
+                "description": "One check of `server_id` instead of all of it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A relay; a parent only."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A server or device."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DependencyList": {
+        "type": "object",
+        "description": "Body of `GET /api/dependencies` and `POST /api/dependencies`.",
+        "required": [
+          "dependencies"
+        ],
+        "properties": {
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dependency"
+            }
+          }
+        }
+      },
+      "DependencyRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/dependencies`: `children` are behind `parent`.",
+        "required": [
+          "parent",
+          "children"
+        ],
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DependencyEndRequest"
+            },
+            "description": "At most 500, all added or none."
+          },
+          "parent": {
+            "$ref": "#/components/schemas/DependencyEndRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DependencySuggestion": {
+        "type": "object",
+        "description": "A parent that looks obvious; never added without being asked.",
+        "required": [
+          "parent",
+          "reason"
+        ],
+        "properties": {
+          "parent": {
+            "$ref": "#/components/schemas/DependencyEnd"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/DependencySuggestionReason"
+          }
+        }
+      },
+      "DependencySuggestionReason": {
+        "type": "string",
+        "description": "Why a parent is suggested.",
+        "enum": [
+          "proxmox_host",
+          "network_device"
+        ]
+      },
       "DetectRequest": {
         "type": "object",
         "description": "Body of `POST /api/devices/detect`.",
@@ -40213,6 +41260,50 @@
           },
           {
             "type": "object",
+            "description": "A dependency (ADR-0152): the server, or one of its checks, is behind\nthe parent server or one of its checks.",
+            "required": [
+              "server",
+              "parent",
+              "object"
+            ],
+            "properties": {
+              "check": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SilencedCheck",
+                    "description": "One check of it; `null` for all of it."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "dependency"
+                ]
+              },
+              "parent": {
+                "type": "string"
+              },
+              "parent_check": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SilencedCheck"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "server": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A notification channel.",
             "required": [
               "kind",
@@ -40611,7 +41702,9 @@
             "type": "object",
             "required": [
               "events",
-              "notification_groups"
+              "notification_groups",
+              "hides",
+              "hidden"
             ],
             "properties": {
               "acknowledged_via": {
@@ -40638,6 +41731,21 @@
                     "type": "null"
                   }
                 ]
+              },
+              "hidden": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "The incidents it hid: opened by children a moment before it, never\ntold."
+              },
+              "hides": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DependencyEnd"
+                },
+                "description": "While it says a parent is down: everything behind that parent,\nunreachable meanwhile (ADR-0152)."
               },
               "notification_groups": {
                 "type": "array",
@@ -40725,6 +41833,14 @@
           "customer_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "hidden_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The parent's incident that speaks for it (ADR-0152): it opened a\nmoment before its parent went down and was never told; `null`\notherwise."
           },
           "hostname": {
             "type": "string",
@@ -43902,6 +45018,7 @@
             "type": "object",
             "required": [
               "alerts",
+              "unreachable",
               "kind"
             ],
             "properties": {
@@ -43916,6 +45033,13 @@
                 "enum": [
                   "alerts"
                 ]
+              },
+              "unreachable": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/UnreachableServer"
+                },
+                "description": "Its servers behind a parent that is down (ADR-0152): they open\nno incident of their own meanwhile."
               }
             }
           },
@@ -47040,7 +48164,7 @@
       },
       "ServerState": {
         "type": "string",
-        "description": "The one status of a server on the fleet's pages, worst first\n(ADR-0130): a silence wins, then being offline, then the worst open\nincident nobody acknowledged; a server whose open incidents are all\nacknowledged is `acknowledged`, the rest `ok`.",
+        "description": "The one status of a server on the fleet's pages, worst first\n(ADR-0130): a silence wins, then being unreachable behind a parent that\nis down (ADR-0152), then being offline, then the worst open\nincident nobody acknowledged; a server whose open incidents are all\nacknowledged is `acknowledged`, the rest `ok`.",
         "enum": [
           "critical",
           "warning",
@@ -47048,7 +48172,8 @@
           "silenced",
           "offline",
           "ok",
-          "waiting"
+          "waiting",
+          "unreachable"
         ]
       },
       "ServerStatus": {
@@ -47070,6 +48195,7 @@
           "offline",
           "ok",
           "waiting",
+          "unreachable",
           "total"
         ],
         "properties": {
@@ -47101,6 +48227,12 @@
           "total": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          },
+          "unreachable": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Behind a parent that is down (ADR-0152).",
             "minimum": 0
           },
           "waiting": {
@@ -47338,6 +48470,17 @@
           },
           "status": {
             "$ref": "#/components/schemas/ServerStatus"
+          },
+          "unreachable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Unreachable",
+                "description": "While a parent it depends on is down (ADR-0152): which, and its\nincident; `null` otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "via_relay": {
             "type": [
@@ -48965,6 +50108,73 @@
             "description": "In the metric's unit: a ratio from 0 to 1 for `_ratio` metrics."
           }
         }
+      },
+      "Unreachable": {
+        "type": "object",
+        "description": "Why something cannot be checked now.",
+        "required": [
+          "because",
+          "incident_id",
+          "since"
+        ],
+        "properties": {
+          "because": {
+            "$ref": "#/components/schemas/DependencyEnd",
+            "description": "The nearest parent that is down."
+          },
+          "incident_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Its incident, which speaks for what is behind it."
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UnreachableCheck": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Unreachable"
+          },
+          {
+            "type": "object",
+            "required": [
+              "check"
+            ],
+            "properties": {
+              "check": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              }
+            }
+          }
+        ],
+        "description": "A check of a page's server that is unreachable, while the server is not."
+      },
+      "UnreachableServer": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Unreachable"
+          },
+          {
+            "type": "object",
+            "required": [
+              "server_id",
+              "hostname"
+            ],
+            "properties": {
+              "hostname": {
+                "type": "string"
+              },
+              "server_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ],
+        "description": "A server of an alerts panel that is unreachable now."
       },
       "UpdateChannel": {
         "type": "string",
