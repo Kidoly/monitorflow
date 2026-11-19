@@ -4,6 +4,7 @@ import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 import { t } from "@/i18n";
 import type { DashboardData, Panel, PanelData } from "@/lib/api";
+import { endWords } from "@/lib/dependencies";
 import { formatNumber, unitOf } from "@/lib/format";
 import { incidentTitle } from "@/lib/incidents";
 import { formatSensorValue } from "@/lib/sensors";
@@ -11,7 +12,7 @@ import { niceTicks, segments, timeTicks } from "@/components/ui/chartScale";
 import { SkeletonLines } from "@/components/ui/PageState";
 import { formatSince } from "@/components/ui/time";
 
-import { emptyReason, quiet } from "./DashboardPanel";
+import { emptyReason, quiet, seriesLabel } from "./DashboardPanel";
 import styles from "./Display.module.css";
 
 /** Chart text in SVG units; the drawing is scaled so it matches the panel's text. */
@@ -164,7 +165,7 @@ export function ScreenPanel({
         <Frame panel={panel}>
           {data.series.some((s) => s.points.some((p) => p[1] !== null)) ? (
             <ScreenChart
-              series={data.series}
+              series={data.series.map((s) => ({ label: seriesLabel(panel, s), points: s.points }))}
               start={window.start}
               end={window.end}
               step={window.step}
@@ -198,7 +199,8 @@ export function ScreenPanel({
                 <li key={`${row.server_id}/${row.instance ?? ""}`}>
                   <span className={styles.name}>
                     {row.hostname}
-                    {row.instance && <span className={styles.muted}> {row.instance}</span>}
+                    {/* The instance the panel watches ("total") is the same on every row. */}
+                    {row.instance && !panel.instance && <span className={styles.muted}> {row.instance}</span>}
                   </span>
                   <b>{format(row.value ?? Number.NaN)}</b>
                 </li>
@@ -211,7 +213,7 @@ export function ScreenPanel({
       const now = new Date(window.at * 1000);
       return (
         <Frame panel={panel}>
-          {data.alerts.length === 0 ? (
+          {data.alerts.length === 0 && !data.unreachable?.length ? (
             <p className={styles.ok}>{t("display.screen.noAlerts")}</p>
           ) : (
             <ul className={styles.rows}>
@@ -226,6 +228,14 @@ export function ScreenPanel({
                     {t("display.panel.since", { time: formatSince(new Date(alert.opened_at), now) })}
                     {alert.silenced_until && ` · ${quiet(alert, now)}`}
                   </span>
+                </li>
+              ))}
+              {data.unreachable?.map((server) => (
+                <li key={server.server_id}>
+                  <span className={styles.name}>
+                    <b>{t("common.state.unreachable")}</b> {server.hostname}
+                  </span>
+                  <span className={styles.muted}>{t("dependencies.fleet.because", { parent: endWords(server.because) })}</span>
                 </li>
               ))}
             </ul>

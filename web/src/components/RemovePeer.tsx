@@ -11,7 +11,7 @@ import { api, describeError } from "@/lib/api";
 import { uninstallCommand } from "@/lib/install";
 import { TOKENS_PATH } from "@/lib/routes";
 
-import styles from "./Admin.module.css";
+import styles from "./RemovePeer.module.css";
 import pageStyles from "./AdminPages.module.css";
 
 /**
