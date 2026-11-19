@@ -597,6 +597,20 @@ db_tests! {
         assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS);
         assert!(over.body["error"].as_str().unwrap().contains("tries again by itself"));
 
+        // Made-up screen sessions count as failures of their source, not
+        // against real screens.
+        let (name, _) = screen.split_once('=').unwrap();
+        let made_up = format!("{name}={}", "0".repeat(64));
+        let data = |source: &'static str| {
+            let (app, made_up, body) = (w.app.clone(), made_up.clone(), json!({ "dashboard_id": board }));
+            async move { call(&app, &made_up, "POST", "/api/display/data", Some(body), Some(source)).await.status }
+        };
+        for _ in 0..10 {
+            assert_eq!(data("192.0.2.5").await, StatusCode::UNAUTHORIZED);
+        }
+        assert_eq!(data("192.0.2.5").await, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(data("192.0.2.6").await, StatusCode::UNAUTHORIZED);
+
         // Requests per screen.
         for _ in 0..REQUESTS_PER_MINUTE {
             assert_eq!(screen_data(&w.app, &screen, &board).await.0, StatusCode::OK);
