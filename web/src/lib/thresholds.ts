@@ -31,7 +31,8 @@ export function thresholdFor(
   metric: string,
   instance: string,
 ): EffectiveThreshold | undefined {
-  const ofMetric = thresholds.filter((t) => t.metric === metric);
+  // Only plain thresholds are in the metric's unit; a forecast judges seconds (ADR-0153).
+  const ofMetric = thresholds.filter((t) => t.metric === metric && (t.kind ?? "value") === "value");
   const rule = ofMetric.find((t) => t.instance === instance) ?? ofMetric.find((t) => t.instance === null);
   return rule?.enabled ? rule : undefined;
 }

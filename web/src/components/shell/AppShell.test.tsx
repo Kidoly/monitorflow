@@ -171,6 +171,7 @@ describe("AppShell", () => {
       "Incidents",
       "Silences",
       "On call",
+      "Reports",
       "Mirrors",
       "Automatic updates",
       "Campaigns",

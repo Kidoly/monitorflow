@@ -21,6 +21,7 @@ use sqlx::{PgExecutor, PgPool};
 use tokio::time::{interval, MissedTickBehavior};
 use uuid::Uuid;
 
+use crate::dependencies::{self, store::Streams, Hold, Holds, Node};
 use crate::grpc::Registry;
 
 /// The metric of offline incidents; sensor metrics all start with
@@ -87,12 +88,17 @@ pub enum Action {
 /// nothing either: the relay's incident says it. Once the relay is back,
 /// the start of its stream counts as heard from for its servers, which get
 /// the same time to reconnect through it (ADR-0080).
+///
+/// The same holds for any parent (ADR-0152): a server behind a parent that
+/// is down or in doubt in `holds` opens nothing, and the last recovery of
+/// what it is behind counts as heard from.
 pub fn decide(
     peers: &[Watched],
     online: &HashMap<(PeerRole, String), DateTime<Utc>>,
     now: DateTime<Utc>,
     started: DateTime<Utc>,
     after: Duration,
+    holds: &Holds,
 ) -> Vec<(Peer, Action)> {
     let connected = |p: &Watched| {
         let role = match p.peer {
@@ -115,9 +121,22 @@ pub fn decide(
             Peer::Server(_) => None,
         })
         .collect();
+    let node = |p: &Watched| match p.peer {
+        Peer::Server(id) => Some(Node::Server(id)),
+        Peer::Relay(_) => None,
+    };
     let heard = |p: &Watched| {
         let relay = p.relay.and_then(|r| relays_back.get(&r)).copied();
-        p.last_seen.max(started).max(relay.unwrap_or(started))
+        let parent = node(p).and_then(|n| holds.heard(&n));
+        p.last_seen
+            .max(started)
+            .max(relay.unwrap_or(started))
+            .max(parent.unwrap_or(started))
+    };
+    let held = |p: &Watched| {
+        node(p)
+            .and_then(|n| holds.of(&n))
+            .is_some_and(|h| matches!(h, Hold::Unreachable { .. } | Hold::Doubt))
     };
     let after = chrono::Duration::from_std(after).unwrap_or(chrono::Duration::MAX);
     peers
@@ -137,7 +156,8 @@ pub fn decide(
                 },
                 (None, None, false)
                     if now - heard(p) >= after
-                        && !p.relay.is_some_and(|r| relays_down.contains(&r)) =>
+                        && !p.relay.is_some_and(|r| relays_down.contains(&r))
+                        && !held(p) =>
                 {
                     Action::Open { since: p.last_seen }
                 }
@@ -292,8 +312,13 @@ pub async fn check(
         tracing::info!(removed, "resolved the incidents of removed peers");
     }
     let peers = load(pool).await?;
+    let live: HashSet<(PeerRole, String)> = online.keys().cloned().collect();
+    let holds = {
+        let mut conn = pool.acquire().await?;
+        dependencies::store::holds(&mut conn, Streams::Live(&live)).await?
+    };
     let mut written = Vec::new();
-    for (peer, action) in decide(&peers, online, Utc::now(), started, settings.after) {
+    for (peer, action) in decide(&peers, online, Utc::now(), started, settings.after, &holds) {
         if let Some(id) = apply(pool, peer, &action, settings.after).await? {
             match &action {
                 Action::Open { since } => {
@@ -372,25 +397,31 @@ mod tests {
         let a = Peer::Server(Uuid::from_u128(1));
         let peers = [peer(a, "a", 0)];
         let none = online(&[]);
-        assert!(decide(&peers, &none, at(4), at(-60), AFTER).is_empty());
+        assert!(decide(&peers, &none, at(4), at(-60), AFTER, &Holds::default()).is_empty());
         assert_eq!(
-            decide(&peers, &none, at(5), at(-60), AFTER),
+            decide(&peers, &none, at(5), at(-60), AFTER, &Holds::default()),
             [(a, Action::Open { since: at(0) })]
         );
         // The server's own downtime does not count.
-        assert!(decide(&peers, &none, at(12), at(8), AFTER).is_empty());
-        assert_eq!(decide(&peers, &none, at(13), at(8), AFTER).len(), 1);
+        assert!(decide(&peers, &none, at(12), at(8), AFTER, &Holds::default()).is_empty());
+        assert_eq!(
+            decide(&peers, &none, at(13), at(8), AFTER, &Holds::default()).len(),
+            1
+        );
         // Connected, or muted, opens nothing.
         let up = online(&[(PeerRole::Agent, "a")]);
-        assert!(decide(&peers, &up, at(60), at(-60), AFTER).is_empty());
+        assert!(decide(&peers, &up, at(60), at(-60), AFTER, &Holds::default()).is_empty());
         let muted = [Watched {
             muted: true,
             ..peer(a, "a", 0)
         }];
-        assert!(decide(&muted, &none, at(60), at(-60), AFTER).is_empty());
+        assert!(decide(&muted, &none, at(60), at(-60), AFTER, &Holds::default()).is_empty());
         // A relay with the agent's ID is another peer.
         let relay = online(&[(PeerRole::Relay, "a")]);
-        assert_eq!(decide(&peers, &relay, at(60), at(-60), AFTER).len(), 1);
+        assert_eq!(
+            decide(&peers, &relay, at(60), at(-60), AFTER, &Holds::default()).len(),
+            1
+        );
     }
 
     #[test]
@@ -402,7 +433,15 @@ mod tests {
         let up = online(&[(PeerRole::Agent, "a")]);
         for minute in [5, 59, 61, 120] {
             let heartbeat = peer(a, "a", minute - 1);
-            assert!(decide(&[heartbeat], &up, at(minute), at(-60), AFTER).is_empty());
+            assert!(decide(
+                &[heartbeat],
+                &up,
+                at(minute),
+                at(-60),
+                AFTER,
+                &Holds::default()
+            )
+            .is_empty());
         }
     }
 
@@ -415,10 +454,25 @@ mod tests {
             ..peer(a, "a", 0)
         };
         let none = online(&[]);
-        assert!(decide(std::slice::from_ref(&open), &none, at(60), at(-60), AFTER).is_empty());
+        assert!(decide(
+            std::slice::from_ref(&open),
+            &none,
+            at(60),
+            at(-60),
+            AFTER,
+            &Holds::default()
+        )
+        .is_empty());
         let up = online(&[(PeerRole::Relay, "a")]);
         assert_eq!(
-            decide(std::slice::from_ref(&open), &up, at(60), at(-60), AFTER),
+            decide(
+                std::slice::from_ref(&open),
+                &up,
+                at(60),
+                at(-60),
+                AFTER,
+                &Holds::default()
+            ),
             [(
                 a,
                 Action::Resolve {
@@ -433,7 +487,7 @@ mod tests {
             ..open.clone()
         };
         assert_eq!(
-            decide(&[muted], &none, at(60), at(-60), AFTER),
+            decide(&[muted], &none, at(60), at(-60), AFTER, &Holds::default()),
             [(
                 a,
                 Action::Resolve {
@@ -456,15 +510,15 @@ mod tests {
         let peers = [relay.clone(), behind.clone()];
         let none = online(&[]);
         assert_eq!(
-            decide(&peers, &none, at(10), at(-60), AFTER),
+            decide(&peers, &none, at(10), at(-60), AFTER, &Holds::default()),
             [(relay.peer, Action::Open { since: at(0) })]
         );
         // Up relay, down agent: the agent's own incident, once the agent
         // had as long as anyone to reconnect through the relay, back at 9.
         let up = online(&[(PeerRole::Relay, "r")]);
-        assert!(decide(&peers, &up, at(13), at(-60), AFTER).is_empty());
+        assert!(decide(&peers, &up, at(13), at(-60), AFTER, &Holds::default()).is_empty());
         assert_eq!(
-            decide(&peers, &up, at(14), at(-60), AFTER),
+            decide(&peers, &up, at(14), at(-60), AFTER, &Holds::default()),
             [(behind.peer, Action::Open { since: at(0) })]
         );
         // A muted relay no longer covers them.
@@ -473,7 +527,14 @@ mod tests {
             ..relay
         };
         assert_eq!(
-            decide(&[muted, behind.clone()], &none, at(10), at(-60), AFTER),
+            decide(
+                &[muted, behind.clone()],
+                &none,
+                at(10),
+                at(-60),
+                AFTER,
+                &Holds::default()
+            ),
             [(behind.peer, Action::Open { since: at(0) })]
         );
     }
@@ -494,11 +555,88 @@ mod tests {
         let peers: Vec<Watched> = std::iter::once(relay.clone()).chain(behind).collect();
         // The relay reconnected at 9; its agents are still on their way.
         let up = online(&[(PeerRole::Relay, "r")]);
-        let changes = decide(&peers, &up, at(10), at(-60), AFTER);
+        let changes = decide(&peers, &up, at(10), at(-60), AFTER, &Holds::default());
         assert_eq!(changes.len(), 1);
         assert!(matches!(
             changes[0],
             (Peer::Relay(_), Action::Resolve { .. })
         ));
+    }
+
+    #[test]
+    fn any_parent_speaks_for_what_is_behind_it() {
+        use crate::dependencies::holds::{Down, Facts};
+        use crate::dependencies::Edge;
+
+        let host = Uuid::from_u128(1);
+        let behind = peer(Peer::Server(Uuid::from_u128(2)), "web-1", 0);
+        let edges = [Edge {
+            id: Some(Uuid::from_u128(5)),
+            child: Node::Server(Uuid::from_u128(2)),
+            parent: Node::Server(host),
+        }];
+        let none = online(&[]);
+        // The host is down, or may be about to be: nothing opens.
+        let down = Facts {
+            down: HashMap::from([(
+                Node::Server(host),
+                Down {
+                    incident: Uuid::from_u128(9),
+                    since: at(5),
+                },
+            )]),
+            ..Facts::default()
+        };
+        let holds = Holds::new(&edges, down, at(20));
+        assert!(decide(
+            std::slice::from_ref(&behind),
+            &none,
+            at(20),
+            at(-60),
+            AFTER,
+            &holds
+        )
+        .is_empty());
+        let doubt = Facts {
+            doubt: [Node::Server(host)].into(),
+            ..Facts::default()
+        };
+        let holds = Holds::new(&edges, doubt, at(20));
+        assert!(decide(
+            std::slice::from_ref(&behind),
+            &none,
+            at(20),
+            at(-60),
+            AFTER,
+            &holds
+        )
+        .is_empty());
+        // Back at 21: its servers get five minutes from then to reconnect.
+        let back = Facts {
+            recovered: HashMap::from([(Node::Server(host), at(21))]),
+            ..Facts::default()
+        };
+        let holds = Holds::new(&edges, back.clone(), at(25));
+        assert!(decide(
+            std::slice::from_ref(&behind),
+            &none,
+            at(25),
+            at(-60),
+            AFTER,
+            &holds
+        )
+        .is_empty());
+        let holds = Holds::new(&edges, back, at(26));
+        assert_eq!(
+            decide(
+                std::slice::from_ref(&behind),
+                &none,
+                at(26),
+                at(-60),
+                AFTER,
+                &holds
+            ),
+            [(behind.peer, Action::Open { since: at(0) })]
+        );
     }
 }

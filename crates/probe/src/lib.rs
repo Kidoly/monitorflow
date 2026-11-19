@@ -44,8 +44,8 @@ pub trait ProbeFactory: Send + Sync + 'static {
 }
 
 /// The kinds of `monitorflow-sensors`, without an agent's local limits:
-/// `ping` and `port` over TCP or UDP, `snmp` of `monitorflow-snmp`, and
-/// the scans' `discover` tests.
+/// `ping` and `port` over TCP or UDP, `snmp` of `monitorflow-snmp`,
+/// `vmware` of `monitorflow-vmware`, and the scans' `discover` tests.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Builtin;
 
@@ -61,6 +61,9 @@ impl ProbeFactory for Builtin {
         if kind == discover::KIND {
             return discover::build(params);
         }
+        if kind == monitorflow_vmware::KIND {
+            return monitorflow_vmware::build(params);
+        }
         if !PROBE_RUNS.contains(&kind) {
             return Err(format!("a probe does not run `{kind}` checks"));
         }
@@ -69,9 +72,14 @@ impl ProbeFactory for Builtin {
 }
 
 /// Built-in kinds a probe runs: what it measures over the network, SNMP
-/// included (ADR-0149). Machine kinds (processor, disks, services) only
+/// and the vSphere API included (ADR-0149, ADR-0156). Machine kinds (processor, disks, services) only
 /// make sense on an agent.
-pub const PROBE_RUNS: &[&str] = &["ping", "port", monitorflow_snmp::KIND];
+pub const PROBE_RUNS: &[&str] = &[
+    "ping",
+    "port",
+    monitorflow_snmp::KIND,
+    monitorflow_vmware::KIND,
+];
 
 /// One check of a probe.
 #[derive(Debug, Clone, PartialEq, Eq)]

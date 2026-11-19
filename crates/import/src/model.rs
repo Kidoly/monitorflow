@@ -27,6 +27,13 @@ pub struct Inventory {
     /// Maintenance windows that come back (ADR-0151).
     pub windows: Vec<Window>,
     pub channels: Vec<Channel>,
+    /// Network scans (ADR-0154): the source's network discovery.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scans: Vec<Scan>,
+    /// Business services, with their rule and SLA target (ADR-0155).
+    pub services: Vec<Service>,
+    /// What is behind what (ADR-0152).
+    pub dependencies: Vec<Dependency>,
     /// What the source has and MonitorFlow cannot do, with why.
     pub unmovable: Vec<Unmovable>,
 }
@@ -45,6 +52,9 @@ impl Inventory {
             && self.silences.is_empty()
             && self.windows.is_empty()
             && self.channels.is_empty()
+            && self.scans.is_empty()
+            && self.services.is_empty()
+            && self.dependencies.is_empty()
             && self.unmovable.is_empty()
     }
 }
@@ -56,7 +66,8 @@ pub struct Origin {
     /// [`crate::notes::ORIGIN_KINDS`]): `host`, `item`, `trigger`,
     /// `template`, `web_scenario`, `maintenance`, `media_type`,
     /// `user_media`, `scrape_target`, `alerting_rule`, `receiver`,
-    /// `silence`, `sensor`, `notification`, `device`, `group`, `probe`.
+    /// `silence`, `sensor`, `notification`, `device`, `group`, `probe`,
+    /// `time_interval`, `schedule`, `discovery_rule`, `action`.
     pub kind: String,
     /// Its name there.
     pub name: String,
@@ -228,6 +239,12 @@ pub enum Watch {
     /// The traffic of the host's network interfaces: the built-in `net`
     /// check of a server, the SNMP interfaces of a device (ADR-0149).
     Traffic,
+    /// A vCenter or ESXi host read through its API from a probe: its hosts,
+    /// virtual machines and datastores (ADR-0156). The host is a device.
+    Vmware,
+    /// The virtual machines of a Hyper-V host, read by its Windows agent
+    /// (ADR-0156).
+    HyperV,
 }
 
 impl Watch {
@@ -349,6 +366,10 @@ impl Website {
 pub struct Alert {
     pub severity: Severity,
     pub for_s: u32,
+    /// The alert is about the check sending nothing for `for_s` seconds,
+    /// not about what it measures (ADR-0153).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_data: bool,
 }
 
 /// Something a host is checked for.
@@ -394,6 +415,9 @@ pub enum Measure {
     WebResponseTime { url: String },
     /// Days until the certificate of the website check of `url` expires.
     CertificateDays { url: String },
+    /// Share of a vCenter's datastores' space that is free, 0 to 1, every
+    /// datastore (ADR-0156).
+    DatastoreFree,
 }
 
 impl Measure {
@@ -405,6 +429,7 @@ impl Measure {
             Self::MemoryAvailable => Watch::Memory,
             Self::DiskUsed { .. } => Watch::Disk,
             Self::DiskWait { .. } => Watch::DiskIo,
+            Self::DatastoreFree => Watch::Vmware,
             Self::WebResponseTime { url } | Self::CertificateDays { url } => checks
                 .into_iter()
                 .find_map(|c| match &c.watch {
@@ -424,9 +449,73 @@ pub enum Direction {
     Below,
 }
 
+/// A function over a window (ADR-0153).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowFunction {
+    Avg,
+    Min,
+    Max,
+    /// The last value minus the first one.
+    Change,
+    /// The change per second.
+    Rate,
+}
+
+/// What a threshold judges (ADR-0153): the value by default.
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+#[serde(tag = "judged", rename_all = "snake_case")]
+pub enum Judged {
+    /// The latest value.
+    #[default]
+    Value,
+    /// A function of the values of the last `window_s` seconds.
+    Window {
+        function: WindowFunction,
+        window_s: u32,
+    },
+    /// The average over `window_s` against the same `offset_s` earlier:
+    /// divided (`ratio`) or subtracted.
+    Compare {
+        ratio: bool,
+        offset_s: u32,
+        window_s: u32,
+    },
+    /// Seconds left until the measure reaches `target` on the side of
+    /// `direction`, from its trend over `window_s`; warning and critical
+    /// are seconds left.
+    Forecast { target: f64, window_s: u32 },
+    /// Seconds without a value; warning and critical are seconds.
+    NoData,
+}
+
+impl Judged {
+    pub fn is_value(&self) -> bool {
+        *self == Self::Value
+    }
+}
+
+/// Another measure of the same host that must also be past a value, for
+/// a threshold joined with "and" (ADR-0153).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Condition {
+    pub measure: Measure,
+    pub direction: Direction,
+    pub value: f64,
+    /// A function over a window of seconds, else the latest value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<(WindowFunction, u32)>,
+}
+
 /// When a measure is a problem, on some hosts.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Threshold {
+    /// What is judged: the value, a window, a forecast...
+    #[serde(flatten, skip_serializing_if = "Judged::is_value")]
+    pub judged: Judged,
+    /// More conditions joined with "and", at most two.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<Condition>,
     /// The hosts it applies to.
     pub hosts: Vec<String>,
     pub measure: Measure,
@@ -613,6 +702,104 @@ pub struct Channel {
     pub fidelity: Fidelity,
 }
 
+/// How often a network scan comes back on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Every {
+    Hour,
+    Day,
+    Week,
+}
+
+impl Every {
+    /// `hour`, `day` or `week`, as a scan's `every` says it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Hour => "hour",
+            Self::Day => "day",
+            Self::Week => "week",
+        }
+    }
+}
+
+/// SNMP credentials a scan tries, as MonitorFlow names their settings
+/// (ADR-0149). Never shown, never logged.
+#[derive(Clone, Default, PartialEq)]
+pub struct ScanSnmp {
+    /// `v2c` or `v3`.
+    pub version: String,
+    pub port: u16,
+    pub community: Option<Secret>,
+    pub user: Option<String>,
+    /// `sha`, `sha256`, `sha384`, `sha512` or `md5`.
+    pub auth_protocol: Option<String>,
+    pub auth_password: Option<Secret>,
+    /// `aes128`, `aes256` or `aes256c`.
+    pub priv_protocol: Option<String>,
+    pub priv_password: Option<Secret>,
+}
+
+impl fmt::Debug for ScanSnmp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScanSnmp")
+            .field("version", &self.version)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A scan of addresses the source looks for hosts in (ADR-0154): a
+/// Zabbix network discovery rule, a PRTG group with auto-discovery.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Scan {
+    pub name: String,
+    /// IP addresses, blocks like `192.168.1.0/24` and ranges like
+    /// `192.168.1.10-50`, as MonitorFlow takes them: at most 64 entries
+    /// and 1,024 addresses.
+    pub targets: Vec<String>,
+    /// TCP ports to try; `None` for MonitorFlow's default ones.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ports: Option<Vec<u16>>,
+    /// `None`: only when asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub every: Option<Every>,
+    /// Its own SNMP credentials, when the source has some.
+    #[serde(skip)]
+    pub snmp: Option<ScanSnmp>,
+    /// Where in the source what it finds goes, a group or a proxy, which
+    /// the import's site stands for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    pub origin: Origin,
+    #[serde(flatten)]
+    pub fidelity: Fidelity,
+}
+
+/// A member of a business service: a whole host, or one of its checks.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Member {
+    /// The host's [`Host::key`].
+    pub host: String,
+    /// One check of it; `None` for the whole host.
+    pub check: Option<Watch>,
+}
+
+/// A business service (ADR-0155): a named group with one availability.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Service {
+    pub name: String,
+    pub members: Vec<Member>,
+    /// Down while fewer than this many members are up; `None` for all of
+    /// them.
+    pub at_least: Option<u32>,
+    /// The SLA target in percent, like 99.9.
+    pub target: Option<f64>,
+    pub origin: Origin,
+    #[serde(flatten)]
+    pub fidelity: Fidelity,
+}
+
 /// Something the source does that MonitorFlow cannot.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Unmovable {
@@ -620,6 +807,57 @@ pub struct Unmovable {
     pub hosts: Vec<String>,
     pub origin: Origin,
     pub why: Note,
+}
+
+/// One end of a dependency (ADR-0152): a host, or one of its checks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DependencyEnd {
+    pub host: String,
+    /// The check it is, by what it watches; `None` for all of the host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watch: Option<Watch>,
+}
+
+impl DependencyEnd {
+    pub fn host(host: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            watch: None,
+        }
+    }
+
+    /// One check of `host`; the agent answering is the host itself.
+    pub fn check(host: impl Into<String>, watch: Watch) -> Self {
+        Self {
+            host: host.into(),
+            watch: (watch != Watch::Agent).then_some(watch),
+        }
+    }
+}
+
+impl DependencyEnd {
+    /// The parent `parent` for `child`, where `watch` is what it is: a
+    /// host as a whole is behind its own checks only one check at a time,
+    /// so a check of a host that depends on that host's ping depends on
+    /// the ping check. `None` when a host would depend on itself.
+    pub fn parent_for(parent: Self, watch: &Watch, child: &Self) -> Option<Self> {
+        if parent.host != child.host || parent.watch.is_some() {
+            return (parent != *child).then_some(parent);
+        }
+        let own = Self::check(parent.host, watch.clone());
+        (child.watch.is_some() && own.watch.is_some() && own != *child).then_some(own)
+    }
+}
+
+/// `child` is behind `parent`: while the parent is down, the child opens
+/// no incident of its own (ADR-0152).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Dependency {
+    pub child: DependencyEnd,
+    pub parent: DependencyEnd,
+    pub origin: Origin,
+    #[serde(flatten)]
+    pub fidelity: Fidelity,
 }
 
 /// Arguments of a [`Note`], built with [`args!`](crate::args).

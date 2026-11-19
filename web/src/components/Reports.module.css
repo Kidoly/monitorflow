@@ -1,0 +1,109 @@
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.downloads {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* The summary's numbers, side by side, wrapping on a phone. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.tileLabel {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tileValue {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sentence {
+  margin: 0;
+  font-size: 13px;
+}
+
+.bad {
+  color: var(--bad);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 640px;
+}
+
+.fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.fieldset legend {
+  padding: 0 4px;
+  font-size: 13px;
+}
+
+.memberRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}

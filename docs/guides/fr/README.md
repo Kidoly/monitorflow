@@ -25,6 +25,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller les erreurs des fichiers journaux sous Linux et Windows](surveiller-fichiers-journaux.md) : Soyez alerté quand une erreur, un échec de connexion ou un motif choisi apparaît dans un fichier journal, et lisez les journaux système au même endroit.
 - [Comment tout surveiller avec votre propre script (Bash ou PowerShell)](surveiller-avec-votre-script.md) : Transformez un script shell ou PowerShell en vérification avec alerte : codes de sortie pour OK, avertissement et critique, lignes nom=valeur en métriques.
 - [Comment surveiller switchs, imprimantes, onduleurs et autres équipements réseau](surveiller-equipements-reseau.md) : Surveillez ce qui ne peut pas faire tourner l’agent : ping, ports TCP et UDP, et SNMP v2c ou v3 pour les interfaces, le trafic, la batterie des onduleurs, les températures et les consommables d’imprimante.
+- [Comment trouver ce qui est sur votre réseau](analyser-le-reseau.md) : Analysez une plage d’adresses depuis le serveur central ou un relais, voyez quelles machines peuvent recevoir l’agent et quels équipements surveiller, et ajoutez-les en un clic.
 
 ## Bases de données
 
@@ -41,6 +42,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller un site web en HTTPS](surveiller-site-web-https.md) : Sachez quand votre site ne répond plus comme il le devrait : son code de réponse, le texte de la page, son temps de réponse, ses redirections et l'expiration de son certificat.
 - [Comment surveiller Docker](surveiller-docker.md) : Soyez alerté quand le moteur Docker ou containerd s'arrête sur un serveur Linux, et quand un port publié par un conteneur ne répond plus.
 - [Comment surveiller Proxmox VE](surveiller-proxmox-ve.md) : Surveillez vos hôtes Proxmox VE : l'interface web sur le port 8006, le service de cluster, et l'espace disque, le CPU et la mémoire des VM.
+- [Comment surveiller VMware vSphere et Hyper-V](surveiller-vmware-hyper-v.md) : Surveillez les hôtes, clusters, machines virtuelles et banques de données d'un vCenter, d'un hôte ESXi ou d'un hôte Hyper-V, et reliez chaque machine virtuelle à son serveur.
 
 ## Services Linux
 

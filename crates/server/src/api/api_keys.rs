@@ -101,7 +101,7 @@ impl Area {
             ("sites" | "customers", None) if read && segments.len() == 1 => return None,
             ("servers" | "relays" | "sites", Some(sub)) => match sub {
                 "sensors" | "sensor_configs" | "thresholds" | "offline-alerts"
-                | "check-interval" => Self::Alerts,
+                | "check-interval" | "dependencies" => Self::Alerts,
                 "commands" | "packages" | "sources" | "rollback" | "update"
                 | "agent-auto-update" => Self::Updates,
                 "ai-commands" => Self::Remediation,
@@ -109,11 +109,18 @@ impl Area {
                 _ if first == "sites" => Self::Administration,
                 _ => Self::Servers,
             },
-            ("servers" | "relays" | "metrics" | "devices", _) => Self::Servers,
+            (
+                "servers" | "relays" | "metrics" | "devices" | "virtual-objects" | "network-scans",
+                _,
+            ) => Self::Servers,
             (
                 "incidents"
                 | "silences"
                 | "maintenance-windows"
+                | "business-services"
+                | "availability"
+                | "report-schedules"
+                | "dependencies"
                 | "on-call"
                 | "follow-up"
                 | "sensor_configs"
@@ -777,6 +784,12 @@ mod tests {
             (&post, "/api/incidents/acknowledge", Some(Area::Alerts)),
             (&post, "/api/silences", Some(Area::Alerts)),
             (&get, "/api/maintenance-windows", Some(Area::Alerts)),
+            (&post, "/api/business-services", Some(Area::Alerts)),
+            (&get, "/api/availability", Some(Area::Alerts)),
+            (&post, "/api/report-schedules/{id}/send", Some(Area::Alerts)),
+            (&get, "/api/dependencies", Some(Area::Alerts)),
+            (&get, "/api/servers/{id}/dependencies", Some(Area::Alerts)),
+            (&get, "/api/relays/{id}/dependencies", Some(Area::Alerts)),
             (&post, "/api/sites/{id}/thresholds", Some(Area::Alerts)),
             (&get, "/api/servers/{id}/sensor_configs", Some(Area::Alerts)),
             (&get, "/api/sites/{id}/sensors", Some(Area::Alerts)),

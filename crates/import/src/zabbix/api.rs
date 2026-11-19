@@ -15,8 +15,9 @@ use reqwest::{Client, Method, Url};
 use serde_json::{json, Value};
 
 use super::config::{
-    Config, Host, HttpAgent, Interface, InterfaceKind, Item, ItemKind, Macro, Maintenance,
-    MediaKind, MediaType, Period, PeriodKind, Priority, TagFilter, Template, Trigger, UserMedia,
+    Action, ActionSource, Config, DiscoveryCheck, DiscoveryRule, Host, HttpAgent, Interface,
+    InterfaceKind, Item, ItemKind, Macro, Maintenance, MediaKind, MediaType, Period, PeriodKind,
+    Priority, Service, Sla, StatusRule, TagFilter, Template, Trigger, TriggerRef, UserMedia,
     WebAuth, WebRequest, WebScenario,
 };
 use super::export::{list, text};
@@ -154,6 +155,18 @@ impl Api {
             _ => Err(ReadError::Connect(format!(
                 "Zabbix answered {method} with something else than a list."
             ))),
+        }
+    }
+
+    /// [`Self::get`], with nothing when Zabbix answers an error, as it
+    /// does to a token whose role may not read these.
+    async fn get_optional(&mut self, method: &str, params: Value) -> Result<Vec<Value>, ReadError> {
+        match self.get(method, params).await {
+            Err(ReadError::Connect(why)) => {
+                tracing::debug!(%method, %why, "not read");
+                Ok(Vec::new())
+            }
+            other => other,
         }
     }
 
@@ -371,15 +384,119 @@ impl Api {
             }
         }
 
+        let (discovery, actions) = self.read_discovery().await?;
+        let (services, slas) = if self.version >= (6, 0) {
+            self.read_services().await?
+        } else {
+            (vec![], vec![])
+        };
+
         Ok(Config {
             hosts: hosts.into_values().collect(),
             templates,
             global_macros,
             maintenances,
             media_types,
+            services,
+            slas,
             user_media: Some(user_media),
+            discovery,
+            actions,
             inherited: true,
         })
+    }
+
+    /// Network discovery rules, the proxies that run them, and the
+    /// actions on what they find or on agents registering. A token that
+    /// may not read them reads none.
+    async fn read_discovery(&mut self) -> Result<(Vec<DiscoveryRule>, Vec<Action>), ReadError> {
+        let raw = self
+            .get_optional(
+                "drule.get",
+                json!({"output": "extend", "selectDChecks": "extend"}),
+            )
+            .await?;
+        let proxy_key = if self.version >= (7, 0) {
+            "proxyid"
+        } else {
+            "proxy_hostid"
+        };
+        let mut proxies: HashMap<String, String> = HashMap::new();
+        if raw
+            .iter()
+            .any(|r| !matches!(text(r, proxy_key).as_str(), "" | "0"))
+        {
+            let name = if self.version >= (7, 0) {
+                "name"
+            } else {
+                "host"
+            };
+            for p in self
+                .get_optional("proxy.get", json!({"output": ["proxyid", name]}))
+                .await?
+            {
+                proxies.insert(text(&p, "proxyid"), text(&p, name));
+            }
+        }
+        let rules = raw
+            .iter()
+            .map(|r| DiscoveryRule {
+                id: text(r, "druleid"),
+                name: text(r, "name"),
+                iprange: text(r, "iprange"),
+                delay: text(r, "delay"),
+                enabled: text(r, "status") == "0",
+                proxy: proxies.get(&text(r, proxy_key)).cloned(),
+                checks: list(r, "dchecks").into_iter().map(dcheck_of).collect(),
+            })
+            .collect();
+        let actions = self
+            .get_optional(
+                "action.get",
+                json!({
+                    "output": ["actionid", "name", "eventsource", "status"],
+                    "filter": {"eventsource": ["1", "2"]},
+                    "selectFilter": "extend",
+                    "selectOperations": ["operationtype"],
+                }),
+            )
+            .await?
+            .iter()
+            .filter_map(action_of)
+            .collect();
+        Ok((rules, actions))
+    }
+
+    /// Services and SLAs (ADR-0155), which exports do not have.
+    async fn read_services(&mut self) -> Result<(Vec<Service>, Vec<Sla>), ReadError> {
+        let raw = self
+            .get(
+                "service.get",
+                json!({
+                    "output": "extend",
+                    "selectChildren": ["serviceid", "weight"],
+                    "selectProblemTags": "extend",
+                    "selectStatusRules": "extend",
+                    "selectTags": "extend",
+                }),
+            )
+            .await?;
+        let services = raw.iter().map(service_of).collect();
+        let slas = self
+            .get(
+                "sla.get",
+                json!({
+                    "output": "extend",
+                    "selectServiceTags": "extend",
+                    "selectSchedule": "extend",
+                    "selectExcludedDowntimes": "extend",
+                }),
+            )
+            .await?
+            .iter()
+            .map(sla_of)
+            .collect();
+        Ok((services, slas))
     }
 
     /// Hosts' items: plain and discovered ones, and the prototypes of
@@ -494,6 +611,7 @@ impl Api {
                     "selectHosts": ["hostid"],
                     "selectTags": "extend",
                     "selectTriggerDiscovery": ["parent_triggerid"],
+                    "selectDependencies": ["triggerid", "description"],
                 }),
             )
             .await?;
@@ -765,6 +883,16 @@ fn trigger_of(raw: &Value, prototype: bool) -> Trigger {
             .into_iter()
             .map(|t| (text(t, "tag"), text(t, "value")))
             .collect(),
+        id: Some(text(raw, "triggerid")).filter(|id| !id.is_empty()),
+        dependencies: list(raw, "dependencies")
+            .into_iter()
+            .map(|d| TriggerRef {
+                id: Some(text(d, "triggerid")),
+                name: text(d, "description"),
+                expression: String::new(),
+            })
+            .filter(|d| d.id.as_deref().is_some_and(|id| !id.is_empty()))
+            .collect(),
     }
 }
 
@@ -850,6 +978,95 @@ fn maintenance_of(
             .collect(),
         tags_all: text(raw, "tags_evaltype") != "2",
         collect_data: text(raw, "maintenance_type") != "1",
+    }
+}
+
+fn dcheck_of(raw: &Value) -> DiscoveryCheck {
+    DiscoveryCheck {
+        kind: number(raw, "type"),
+        ports: text(raw, "ports"),
+        community: text(raw, "snmp_community"),
+        security_name: text(raw, "snmpv3_securityname"),
+        security_level: number(raw, "snmpv3_securitylevel"),
+        auth_protocol: number(raw, "snmpv3_authprotocol"),
+        auth_passphrase: text(raw, "snmpv3_authpassphrase"),
+        priv_protocol: number(raw, "snmpv3_privprotocol"),
+        priv_passphrase: text(raw, "snmpv3_privpassphrase"),
+    }
+}
+
+/// A discovery (event source 1) or auto-registration (2) action.
+fn action_of(raw: &Value) -> Option<Action> {
+    let source = match text(raw, "eventsource").as_str() {
+        "1" => ActionSource::Discovery,
+        "2" => ActionSource::Registration,
+        _ => return None,
+    };
+    let filter = raw.get("filter").unwrap_or(&Value::Null);
+    Some(Action {
+        name: text(raw, "name"),
+        source,
+        enabled: text(raw, "status") == "0",
+        // Condition type 18 is "discovery rule".
+        rules: list(filter, "conditions")
+            .into_iter()
+            .filter(|c| text(c, "conditiontype") == "18" && text(c, "operator") == "0")
+            .map(|c| text(c, "value"))
+            .collect(),
+        // Add a host, add it to a group, link a template.
+        adds_hosts: list(raw, "operations")
+            .into_iter()
+            .any(|o| matches!(text(o, "operationtype").as_str(), "2" | "4" | "6")),
+    })
+}
+
+/// Tag conditions of a service or SLA: operator 0 is equals, 2 contains.
+fn tag_filters(raw: &Value, key: &str) -> Vec<TagFilter> {
+    list(raw, key)
+        .iter()
+        .map(|t| TagFilter {
+            tag: text(t, "tag"),
+            value: text(t, "value"),
+            contains: text(t, "operator") == "2",
+        })
+        .collect()
+}
+
+fn service_of(raw: &Value) -> Service {
+    Service {
+        id: text(raw, "serviceid"),
+        name: text(raw, "name"),
+        algorithm: number(raw, "algorithm"),
+        problem_tags: tag_filters(raw, "problem_tags"),
+        children: list(raw, "children")
+            .iter()
+            .map(|c| text(c, "serviceid"))
+            .collect(),
+        status_rules: list(raw, "status_rules")
+            .iter()
+            .map(|r| StatusRule {
+                kind: number(r, "type"),
+                limit: number(r, "limit_value"),
+            })
+            .collect(),
+        tags: list(raw, "tags")
+            .iter()
+            .map(|t| (text(t, "tag"), text(t, "value")))
+            .collect(),
+        weighted: list(raw, "children")
+            .iter()
+            .any(|c| number::<u32>(c, "weight") > 0),
+    }
+}
+
+fn sla_of(raw: &Value) -> Sla {
+    Sla {
+        name: text(raw, "name"),
+        enabled: text(raw, "status") != "0",
+        slo: number(raw, "slo"),
+        scheduled: !list(raw, "schedule").is_empty(),
+        excluded: list(raw, "excluded_downtimes").len(),
+        service_tags: tag_filters(raw, "service_tags"),
     }
 }
 

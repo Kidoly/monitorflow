@@ -60,6 +60,23 @@ describe("imports", () => {
       create: { object: "channel", kind: "email", settings: { to: ["ops@example.com"] }, has_secret: true, site_id: null },
     });
     expect(itemTitle(channel, [])).toBe("Email to ops@example.com");
+    const service = item("sv", [], {
+      kind: "service",
+      create: {
+        object: "service",
+        name: "Shop",
+        at_least: 1,
+        target: 99.9,
+        members: [{ server: "web-01" }, { server: "db-01", check: { name: "port_5432", instance: "" } }],
+      },
+    });
+    expect(itemTitle(service, [])).toBe("Shop: up while at least 1 of web-01, db-01 port_5432 is, target 99.9 %");
+    const dependency = item("dependency:app-01/port_443:sw-core", [], {
+      kind: "dependency",
+      hosts: ["app-01", "sw-core"],
+      create: { object: "dependency", server: "app-01", check: { name: "port_443", instance: "" }, parent: "sw-core" },
+    });
+    expect(itemTitle(dependency, [])).toBe("port_443 on app-01 depends on sw-core");
     const window = item("window:Patch", [], {
       kind: "window",
       create: {
@@ -74,11 +91,33 @@ describe("imports", () => {
     );
   });
 
+  it("titles network scans, from the central server or a relay", () => {
+    const scan = (every: "day" | null, probe: string) =>
+      item("network_scan:Office", [], {
+        kind: "network_scan",
+        create: {
+          object: "network_scan", name: "Office", targets: ["192.0.2.0/24"], addresses: 254,
+          ports: [22], every, probe, has_snmp: true,
+        },
+      });
+    expect(itemTitle(scan("day", "central"), [])).toBe(
+      "Office: 254 addresses, every day, from the central server",
+    );
+    expect(itemTitle(scan(null, "relay-paris"), [])).toBe("Office: 254 addresses, when asked, from relay-paris");
+    setActiveLocale("fr");
+    expect(itemTitle(scan("day", "central"), [])).toBe(
+      "Office\u00a0: 254 adresses, tous les jours, depuis le serveur central",
+    );
+  });
+
   it("groups by list and kind, in order", () => {
     const items = [item("c"), item("s", [], { kind: "server" }), item("x", [], { list: "approximated" })];
     expect(grouped(items, "exact").map((g) => g.kind)).toEqual(["server", "check"]);
     expect(grouped(items, "not_movable")).toEqual([]);
     expect(countsText({ server: 1, check: 2 })).toBe("1 server, 2 checks");
+    expect(countsText({ server: 1, network_scan: 2 })).toBe("1 server, 2 network scans");
+    const scans = [item("n", [], { kind: "network_scan" }), item("w", [], { kind: "window" }), item("h", [], { kind: "channel" })];
+    expect(grouped(scans, "exact").map((g) => g.kind)).toEqual(["window", "network_scan", "channel"]);
     expect(countsText({})).toBe("nothing");
   });
 });

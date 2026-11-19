@@ -476,4 +476,81 @@ db_tests! {
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
         }
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn richer_kinds_are_created_listed_and_read_by_the_engine(pool: PgPool) {
+        use monitorflow_server::alerting::Kind;
+        let f = fleet(&pool).await;
+        let operator = session(&pool, "paris-op", Role::Operator, Some(f.paris)).await;
+        let site = format!("/api/sites/{}/thresholds", f.paris);
+        let effective = format!("/api/sites/{}/thresholds/effective", f.paris);
+        // The disk forecast is offered while the site has none.
+        let (_, view) = call(&pool, &operator, "GET", &effective, None).await;
+        assert_eq!(view["recommended"][0]["key"], "disk_forecast");
+        let offer = view["recommended"][0]["rule"].clone();
+        let (status, forecast) = call(&pool, &operator, "POST", &site, Some(offer.clone())).await;
+        assert_eq!(status, StatusCode::CREATED, "{forecast}");
+        assert_eq!((forecast["kind"].as_str(), forecast["target"].as_f64()), (Some("forecast"), Some(1.0)));
+        let (_, view) = call(&pool, &operator, "GET", &effective, None).await;
+        assert_eq!(view["recommended"], json!([]));
+        // Same metric and instance, another kind: fine; the same kind: 409.
+        let (status, conflict) = call(&pool, &operator, "POST", &site, Some(offer)).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(conflict["error"].as_str().unwrap().contains("of kind `forecast`"), "{conflict}");
+        let (status, nodata) = call(&pool, &operator, "POST", &site, Some(json!({
+            "metric": DISK, "kind": "nodata", "critical": 600
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{nodata}");
+        assert_eq!(nodata["comparison"], ">");
+        let (status, window) = call(&pool, &operator, "POST",
+            &format!("/api/servers/{}/thresholds", f.paris_server),
+            Some(json!({
+                "metric": "monitorflow_cpu_usage_ratio", "instance": "total", "kind": "window",
+                "function": "avg", "window_s": 900, "comparison": ">", "warning": 0.8,
+                "conditions": [{"metric": "monitorflow_cpu_load1", "comparison": ">", "value": 8}]
+            }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{window}");
+        assert_eq!(window["conditions"][0]["function"], "value");
+        // A field the kind does not use is refused, not ignored.
+        let (status, refused) = call(&pool, &operator, "POST", &site, Some(json!({
+            "metric": DISK, "kind": "nodata", "critical": 600, "window_s": 600
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(refused["error"].as_str().unwrap().contains("window_s is not used"));
+
+        // The server's view lists each kind with its origin.
+        let (_, view) = call(&pool, &operator, "GET",
+            &format!("/api/servers/{}/thresholds/effective", f.paris_server), None).await;
+        let kinds: Vec<(String, String, String)> = view["thresholds"].as_array().unwrap().iter()
+            .filter(|t| t["kind"] != "value")
+            .map(|t| (t["metric"].as_str().unwrap().into(), t["kind"].as_str().unwrap().into(),
+                      t["origin"].as_str().unwrap().into()))
+            .collect();
+        assert_eq!(kinds, [
+            ("monitorflow_cpu_usage_ratio".to_owned(), "window".to_owned(), "server".to_owned()),
+            (DISK.to_owned(), "forecast".to_owned(), "site".to_owned()),
+            (DISK.to_owned(), "nodata".to_owned(), "site".to_owned()),
+        ]);
+        // The engine reads what the API wrote.
+        let loaded = AlertStore::new(pool.clone()).load_rules("agent-paris").await.unwrap().unwrap();
+        let forecast_rule = loaded.rules.lookup_kind(DISK, "/", Kind::Forecast).unwrap();
+        assert_eq!((forecast_rule.window_s, forecast_rule.target), (86_400, Some(1.0)));
+        let cpu = loaded.rules.lookup_kind("monitorflow_cpu_usage_ratio", "total", Kind::Window).unwrap();
+        assert_eq!(cpu.conditions.len(), 1);
+        assert!(loaded.rules.lookup_kind(DISK, "/", Kind::Value).is_some());
+
+        // Updating keeps the kind's checks; every change is audited with
+        // the new fields.
+        let id = forecast["id"].as_str().unwrap();
+        let (status, updated) = call(&pool, &operator, "PUT", &format!("/api/thresholds/{id}"),
+            Some(json!({"metric": DISK, "kind": "forecast", "comparison": ">=", "target": 0.95,
+                        "window_s": 172800, "warning": 172800}))).await;
+        assert_eq!(status, StatusCode::OK, "{updated}");
+        let records = audit(&pool).await;
+        let last = &records.last().unwrap().2;
+        assert_eq!(last["before"]["target"], 1.0);
+        assert_eq!(last["after"]["target"], 0.95);
+        assert_eq!(last["after"]["kind"], "forecast");
+        assert_eq!(records[0].2["kind"], "forecast");
+    }
 }
