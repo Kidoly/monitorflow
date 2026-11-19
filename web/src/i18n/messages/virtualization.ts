@@ -3,6 +3,8 @@ import type { Catalog, Translation } from "../catalog";
 /** VMware and Hyper-V (ADR-0156): vCenters, ESXi and Hyper-V hosts, their virtual machines. */
 export const en = {
   title: "Virtualization",
+  "check.vmware": "vCenter inventory",
+  "check.hyperv": "Hyper-V virtual machines",
   "vmware.watch": "It is a vCenter or an ESXi host: read its hosts, virtual machines and datastores",
   "vmware.title": "vCenter or ESXi",
   "vmware.note": "Use an account with the Read-only role, granted on the vCenter or the host and propagated to what it holds. MonitorFlow only reads.",
@@ -109,6 +111,8 @@ export const en = {
 
 export const fr: Translation<typeof en> = {
   title: "Virtualisation",
+  "check.vmware": "Inventaire du vCenter",
+  "check.hyperv": "Machines virtuelles Hyper-V",
   "vmware.watch": "C’est un vCenter ou un hôte ESXi : lire ses hôtes, machines virtuelles et banques de données",
   "vmware.title": "vCenter ou ESXi",
   "vmware.note": "Utilisez un compte avec le rôle Lecture seule, donné sur le vCenter ou l’hôte et propagé à ce qu’il contient. MonitorFlow ne fait que lire.",

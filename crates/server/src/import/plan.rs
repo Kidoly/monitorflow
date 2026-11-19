@@ -178,6 +178,7 @@ pub fn plan_in(
     planner.silences();
     planner.windows();
     planner.channels();
+    planner.dependencies();
     planner.unmovable();
     planner.out
 }
@@ -1631,6 +1632,87 @@ impl Planner<'_> {
                     settings,
                     has_secret,
                     site_id,
+                }),
+            });
+        }
+    }
+
+    /// Dependencies (ADR-0152), once every server and check is planned:
+    /// each end is a server or the check its watch became.
+    fn dependencies(&mut self) {
+        for dependency in &self.inventory.dependencies {
+            let origin: OriginView = (&dependency.origin).into();
+            // A host that is not moved is listed already.
+            let (Some(child), Some(parent)) = (
+                self.server_of(&dependency.child.host),
+                self.server_of(&dependency.parent.host),
+            ) else {
+                continue;
+            };
+            let end = |server: &Server, watch: &Option<Watch>| match watch {
+                None => Some(None),
+                Some(watch) => self
+                    .check_refs(Some(server), std::slice::from_ref(watch))
+                    .into_iter()
+                    .next()
+                    .map(Some),
+            };
+            let (Some(check), Some(parent_check)) = (
+                end(&child, &dependency.child.watch),
+                end(&parent, &dependency.parent.watch),
+            ) else {
+                self.not_movable(
+                    "dependency",
+                    origin,
+                    vec![child.name.clone(), parent.name.clone()],
+                    note("no_equivalent", args! {}),
+                );
+                continue;
+            };
+            let (list, why) = list_of(&dependency.fidelity);
+            let part = |server: &Server, check: &Option<CheckRef>| {
+                let lower = server.peer_id.to_ascii_lowercase();
+                match check {
+                    Some(c) => format!("{lower}/{}", c.name),
+                    None => lower,
+                }
+            };
+            let id = self.unique_id(format!(
+                "dependency:{}:{}",
+                part(&child, &check),
+                part(&parent, &parent_check)
+            ));
+            let mut needs: Vec<String> = Self::needs(&child)
+                .into_iter()
+                .chain(Self::needs(&parent))
+                .collect();
+            for (server, check) in [(&child, &check), (&parent, &parent_check)] {
+                if let Some(check) = check {
+                    let item = format!(
+                        "check:{}:{}",
+                        server.peer_id.to_ascii_lowercase(),
+                        check.name
+                    );
+                    if self.out.items.iter().any(|i| i.id == item) {
+                        needs.push(item);
+                    }
+                }
+            }
+            needs.dedup();
+            self.push(Item {
+                id,
+                kind: "dependency".into(),
+                list,
+                note: why,
+                origin,
+                hosts: vec![child.name.clone(), parent.name.clone()],
+                present: false,
+                needs,
+                create: Some(Create::Dependency {
+                    server: child.peer_id.clone(),
+                    check,
+                    parent: parent.peer_id.clone(),
+                    parent_check,
                 }),
             });
         }

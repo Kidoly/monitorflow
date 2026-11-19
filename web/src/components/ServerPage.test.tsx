@@ -669,7 +669,7 @@ describe("ServerPage", () => {
       await heading();
       expect(screen.getByRole("tab", { name: "Sensors · 3" })).toHaveAttribute("aria-selected", "true");
       await vi.waitFor(() => expect(window.location.search).toBe(`?id=${ID}`));
-      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Sensors · 3", "Logs", "Updates", "Commands · 1 running"]);
+      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Sensors · 3", "Depends on", "Logs", "Updates", "Commands · 1 running"]);
       expect(screen.getByRole("button", { name: "Add a check" })).toBeInTheDocument();
       // How often built-in checks run is a site setting, under Settings, Sites.
       expect(screen.queryByText(/Built-in checks run/)).not.toBeInTheDocument();
@@ -688,6 +688,7 @@ describe("ServerPage", () => {
         "Open chart",
         "Silence this check for 1 hour",
         "Silence this check until tomorrow, 8:00",
+        "Depends on…",
         "Turn off…",
       ]);
       expect(items[0]).toHaveFocus();
@@ -695,7 +696,7 @@ describe("ServerPage", () => {
       await user.keyboard("{ArrowDown}");
       expect(items[1]).toHaveFocus();
       await user.keyboard("{ArrowUp}{ArrowUp}");
-      expect(items[4]).toHaveFocus();
+      expect(items[5]).toHaveFocus();
       await user.keyboard("{Escape}");
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(button).toHaveFocus();
