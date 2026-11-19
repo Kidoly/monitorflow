@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use super::offline::OFFLINE_METRIC;
 use super::rules::Comparison;
+use crate::notify::message::capitalized;
 
 const PREFIX: &str = "monitorflow_";
 
@@ -51,12 +52,7 @@ pub fn incident(metric: &str, severity: &str, open: bool, value: f64, threshold:
     let shown = with_noun(short, &format_value(metric, value));
     match (comparison, limit) {
         (Some(comparison), Some(limit)) => {
-            let side = match comparison {
-                Comparison::Gt => "above",
-                Comparison::Ge => "at or above",
-                Comparison::Lt => "below",
-                Comparison::Le => "at or below",
-            };
+            let side = side(comparison);
             let limit = format_value(metric, limit);
             if open {
                 format!("{shown} is {side} the {severity} limit of {limit}")
@@ -66,6 +62,16 @@ pub fn incident(metric: &str, severity: &str, open: bool, value: f64, threshold:
         }
         _ if open => format!("{} past the {severity} limit", capitalized(&shown)),
         _ => format!("Peaked at {shown}"),
+    }
+}
+
+/// "above", "at or below": where a value is against a limit.
+fn side(comparison: Comparison) -> &'static str {
+    match comparison {
+        Comparison::Gt => "above",
+        Comparison::Ge => "at or above",
+        Comparison::Lt => "below",
+        Comparison::Le => "at or below",
     }
 }
 
@@ -125,12 +131,7 @@ fn against_limit(
     let side = threshold["comparison"]
         .as_str()
         .and_then(|c| Comparison::from_str(c).ok())
-        .map_or("past", |c| match c {
-            Comparison::Gt => "above",
-            Comparison::Ge => "at or above",
-            Comparison::Lt => "below",
-            Comparison::Le => "at or below",
-        });
+        .map_or("past", side);
     let verb = if open { "is" } else { "peaked at" };
     match threshold[severity].as_f64() {
         Some(l) => format!(
@@ -267,13 +268,6 @@ fn with_noun(short: &str, value: &str) -> String {
         Some(noun) if short.ends_with("_ratio") => format!("{value} {noun}"),
         _ => value.to_owned(),
     }
-}
-
-fn capitalized(text: &str) -> String {
-    let mut chars = text.chars();
-    chars.next().map_or_else(String::new, |c| {
-        c.to_uppercase().chain(chars).collect::<String>()
-    })
 }
 
 fn plural(n: u64, unit: &str) -> String {

@@ -42,25 +42,40 @@ pub fn encode(text: &str) -> Vec<u8> {
 
 /// The width of `text` at `size` points.
 pub fn width(text: &str, size: f32, bold: bool) -> f32 {
+    scaled(units(text, bold), size)
+}
+
+/// The width of `text` in thousandths of the font size.
+fn units(text: &str, bold: bool) -> u32 {
     let table = if bold { &BOLD } else { &REGULAR };
     encode(text)
         .into_iter()
-        .map(|b| f32::from(table[usize::from(b.max(32)) - 32]))
-        .sum::<f32>()
-        * size
-        / 1000.0
+        .map(|b| u32::from(table[usize::from(b.max(32)) - 32]))
+        .sum()
 }
 
-/// `text` cut with an ellipsis to fit `room` points.
+fn scaled(units: u32, size: f32) -> f32 {
+    units as f32 * size / 1000.0
+}
+
+/// `text` cut with an ellipsis to fit `room` points. One pass: each
+/// character is one byte of [`encode`], so widths add up, and a cell of
+/// a few thousand server names costs no more than reading it.
 fn fit(text: &str, size: f32, bold: bool, room: f32) -> String {
     if width(text, size, bold) <= room {
         return text.to_owned();
     }
-    let mut cut: String = text.to_owned();
-    while !cut.is_empty() && width(&format!("{cut}..."), size, bold) > room {
-        cut.pop();
+    let mut used = units("...", bold);
+    let mut end = 0;
+    let mut one = [0u8; 4];
+    for (at, c) in text.char_indices() {
+        used += units(c.encode_utf8(&mut one), bold);
+        if scaled(used, size) > room {
+            break;
+        }
+        end = at + c.len_utf8();
     }
-    format!("{}...", cut.trim_end())
+    format!("{}...", text[..end].trim_end())
 }
 
 /// `text` in lines of at most `room` points, broken at spaces.

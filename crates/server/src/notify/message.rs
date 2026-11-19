@@ -128,7 +128,7 @@ pub(super) fn sensor(incident: &Value) -> String {
     }
 }
 
-pub(super) fn capitalized(word: &str) -> String {
+pub(crate) fn capitalized(word: &str) -> String {
     let mut chars = word.chars();
     chars.next().map_or_else(String::new, |c| {
         c.to_uppercase().chain(chars).collect::<String>()

@@ -334,7 +334,7 @@ impl Job {
                     .await?;
                 if !signing::verified(&status) {
                     return Err(Failed(
-                        "the upstream's Release is not signed by a key of upstream-keyring.gpg"
+                        "the upstream's Release is not signed by a valid key of upstream-keyring.gpg (an expired or revoked key is refused)"
                             .into(),
                     ));
                 }

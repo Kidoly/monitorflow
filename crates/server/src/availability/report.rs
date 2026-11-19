@@ -324,12 +324,12 @@ impl<'a> Builder<'a> {
 
     /// The name of `parent` in an outage's cause.
     fn parent_name(&self, parent: &Parent) -> Option<String> {
+        // A parent on a site the report does not reach has no name.
+        let named = |id: Uuid| self.any_machine(id).filter(|m| !m.name.is_empty());
         match parent {
             Parent::Relay(relay) => self.data.relays.get(relay).cloned(),
-            Parent::Server(id) => self.any_machine(*id).map(|m| m.name.clone()),
-            Parent::Check(id, check) => self
-                .any_machine(*id)
-                .map(|m| format!("{} {}", m.name, check.name)),
+            Parent::Server(id) => named(*id).map(|m| m.name.clone()),
+            Parent::Check(id, check) => named(*id).map(|m| format!("{} {}", m.name, check.name)),
         }
     }
 
