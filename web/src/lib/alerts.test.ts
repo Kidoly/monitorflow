@@ -57,6 +57,7 @@ describe("in French", () => {
     expect(describeThreshold(shapeFor([port], closed), closed)).toBe("Critique quand le port 443 est fermé pendant 1 min.");
     expect(type("port").label).toBe("Un port répond");
     expect(checkTitle(sensor("systemd", "service_nginx", { units: "nginx" }))).toBe("Service nginx");
+    expect(checkTitle(sensor("hyperv", "hyperv", {}))).toBe("Machines virtuelles Hyper-V");
     expect(checkErrors(type("port"), { port: "", host: "127.0.0.1" })).toEqual({ port: "Renseignez le champ «\u00a0port\u00a0»." });
     const shape = shapeFor([], rule());
     expect(thresholdRequest(shape, rule(), { warning: "85,5", critical: "95", severity: "critical", minutes: "5" })).toMatchObject({
@@ -233,6 +234,7 @@ describe("adding a check", () => {
     expect(checkTitle(sensor("disk", "disk", {}))).toBe("Disk space");
     expect(checkTitle(sensor("port", "port_5432", { port: "5432", host: "db.lan" }))).toBe("Port 5432 on db.lan");
     expect(checkTitle(sensor("systemd", "service_nginx", { units: "nginx" }))).toBe("Service nginx");
+    expect(checkTitle(sensor("hyperv", "hyperv", {}))).toBe("Hyper-V virtual machines");
     expect(checkTitle(sensor("log", "log_syslog", { path: "/var/log/syslog", pattern: "error" }))).toBe("“error” in /var/log/syslog");
   });
 });

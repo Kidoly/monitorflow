@@ -2,7 +2,7 @@ import { type IncidentFilters, NO_FILTERS, filtersToQuery } from "./incidents";
 import { shortMetric } from "./metrics";
 
 /** Link to the page of the server `id` (a query parameter, ADR-0020), on `tab` when given. */
-export function serverHref(id: string, tab?: "sensors" | "updates" | "commands" | "logs"): string {
+export function serverHref(id: string, tab?: "sensors" | "dependencies" | "updates" | "commands" | "logs"): string {
   return `/servers/view/?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ""}`;
 }
 

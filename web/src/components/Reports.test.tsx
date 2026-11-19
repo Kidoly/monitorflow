@@ -65,7 +65,9 @@ function stubReport(body: AvailabilityReport) {
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
     const url = new URL(String(input), "http://localhost");
     if (url.pathname !== "/api/availability") throw new Error(`unexpected request ${String(input)}`);
-    const answer = { ...body, from: url.searchParams.get("from") ?? "", to: url.searchParams.get("to") ?? "" };
+    // As the server writes them: without milliseconds.
+    const second = (iso: string | null) => (iso ?? "").replace(/\.\d{3}Z$/, "Z");
+    const answer = { ...body, from: second(url.searchParams.get("from")), to: second(url.searchParams.get("to")) };
     return new Response(JSON.stringify(answer), { status: 200, headers: { "Content-Type": "application/json" } });
   });
   vi.stubGlobal("fetch", fetchMock);
