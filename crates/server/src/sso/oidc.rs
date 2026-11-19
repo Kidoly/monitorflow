@@ -102,7 +102,10 @@ impl Discovery {
             ("userinfo endpoint", self.userinfo_endpoint.as_ref()),
         ] {
             if let Some(url) = url {
-                if Url::parse(url).map_or(true, |u| u.scheme() != "https") {
+                // Visible ASCII only: the authorization endpoint goes into
+                // a Location header as it is.
+                let header_safe = url.bytes().all(|b| b.is_ascii_graphic());
+                if !header_safe || Url::parse(url).map_or(true, |u| u.scheme() != "https") {
                     return Err(OidcError::NotHttps(what));
                 }
             }

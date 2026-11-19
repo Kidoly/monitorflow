@@ -131,6 +131,19 @@ impl LoginLimits {
         }
     }
 
+    /// Counts a return from a sign-in provider from `source`, which costs
+    /// a request to the provider and, when refused, an audit row: false
+    /// when the source is over its limit, shared with passwords. Give a
+    /// return that signed someone in back with [`Self::provider_succeeded`].
+    pub fn begin_provider(&self, source: IpAddr) -> bool {
+        self.sources.attempt(source)
+    }
+
+    /// The provider's return signed someone in: it no longer counts.
+    pub fn provider_succeeded(&self, source: IpAddr) {
+        self.sources.forgive(source);
+    }
+
     fn is_known(&self, account: &AccountKey, source: IpAddr) -> bool {
         let known = self.known.lock().unwrap_or_else(PoisonError::into_inner);
         known
@@ -168,6 +181,19 @@ mod tests {
         assert!(limits.begin(ip(1), "d").is_none());
         // Another source is not concerned.
         assert_eq!(fail(&limits, ip(2), "a"), Some(None));
+    }
+
+    #[test]
+    fn provider_returns_share_the_source_limit() {
+        let limits = LoginLimits::new(3, 100, WINDOW);
+        assert!(limits.begin_provider(ip(1)));
+        limits.provider_succeeded(ip(1));
+        assert!(limits.begin_provider(ip(1)));
+        assert_eq!(fail(&limits, ip(1), "a"), Some(None));
+        assert!(limits.begin_provider(ip(1)));
+        assert!(!limits.begin_provider(ip(1)));
+        assert!(limits.begin(ip(1), "a").is_none());
+        assert!(limits.begin_provider(ip(2)));
     }
 
     #[test]

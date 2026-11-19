@@ -238,17 +238,18 @@ impl Enroller {
             "serial": cert.serial.to_string(),
             "source": source.map(|ip| ip.to_string()),
         });
-        sqlx::query(
-            "INSERT INTO audit_log (actor_kind, actor_id, action, target_kind, target_id, details)
-             VALUES ('peer', $1, 'peer.enroll', $2, $3, $4::jsonb)",
-        )
-        .bind(identity.uri())
-        .bind(role.as_str())
-        .bind(&peer_id)
-        .bind(details.to_string())
-        .execute(&mut *tx)
-        .await?;
         let actor = identity.uri();
+        audit::record(
+            &mut *tx,
+            Event {
+                actor_kind: "peer",
+                actor_id: &actor,
+                action: "peer.enroll",
+                target: Some((role.as_str(), &peer_id)),
+                details,
+            },
+        )
+        .await?;
         match prepared {
             Prepared::Ready => {}
             Prepared::NewRelay(relay_id) => {
