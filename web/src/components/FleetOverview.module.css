@@ -18,25 +18,6 @@
   color: var(--muted);
 }
 
-/* StatusBadge, kept for the relay pages until their redesign. */
-.online,
-.offline {
-  padding: 2px 8px;
-  border-radius: var(--radius-label);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.online {
-  color: var(--ok);
-  background: var(--ok-bg);
-}
-
-.offline {
-  color: var(--bad);
-  background: var(--bad-bg);
-}
-
 /* A silenced or acknowledged row: the problem, then who and why on a line of its own. */
 .stack {
   display: flex;
