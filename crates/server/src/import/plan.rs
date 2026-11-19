@@ -1813,7 +1813,12 @@ impl Planner<'_> {
             let mut members: Vec<ServiceMember> = Vec::new();
             let mut servers: Vec<Server> = Vec::new();
             for member in &service.members {
-                let Some(server) = self.server_of(&member.host) else {
+                // A server of a site the person does not administer would
+                // tell its state through the service.
+                let Some(server) = self
+                    .server_of(&member.host)
+                    .filter(|server| server.may_change)
+                else {
                     continue;
                 };
                 let check = member.check.as_ref().and_then(|watch| {
@@ -1984,6 +1989,17 @@ impl Planner<'_> {
             ) else {
                 continue;
             };
+            // Either end in a site the person does not administer would
+            // hold that server's alerts, or tell its state.
+            if !child.may_change || !parent.may_change {
+                self.not_movable(
+                    "dependency",
+                    origin,
+                    vec![child.name.clone(), parent.name.clone()],
+                    note("server_elsewhere", args! {}),
+                );
+                continue;
+            }
             let end = |server: &Server, watch: &Option<Watch>| match watch {
                 None => Some(None),
                 Some(watch) => self

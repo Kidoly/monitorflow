@@ -591,7 +591,7 @@ db_tests! {
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 0);
         let skip: HashSet<String> = HashSet::new();
-        assert!(store::confirm(&pool, id, &skip, admin, false, Utc::now()).await.is_err());
+        assert!(store::confirm(&pool, id, &skip, admin, false, Utc::now(), |_| true).await.is_err());
     }
 
     #[sqlx::test]
@@ -998,5 +998,108 @@ db_tests! {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(accept.await.unwrap());
         assert_eq!(count(&pool, "SELECT count(*) FROM import_runs").await, 0);
+    }
+
+    /// An administrator of one customer's site imports a file naming a
+    /// server of another customer, with a channel to the same address as
+    /// one of that customer's: nothing of theirs is touched, told or
+    /// taken for this site's.
+    #[sqlx::test]
+    async fn an_import_stays_within_the_sites_one_administers(pool: PgPool) {
+        use monitorflow_import::model::{Dependency, DependencyEnd, Member, Service};
+
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (cookie, user) = login(&pool, "bob", Role::Administrator, GrantScope::Site(paris)).await;
+        let other: Uuid = sqlx::query_scalar("INSERT INTO customers (name) VALUES ('other') RETURNING id")
+            .fetch_one(&pool).await.unwrap();
+        let lyon: Uuid = sqlx::query_scalar("INSERT INTO sites (name, customer_id) VALUES ('lyon', $1) RETURNING id")
+            .bind(other).fetch_one(&pool).await.unwrap();
+        sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family) VALUES ('victim', $1, 'victim', 'debian')")
+            .bind(lyon).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO notification_channels (kind, settings, customer_id) VALUES ('webhook', $1, $2)")
+            .bind(json!({"url": "https://hooks.example.com/t/s3cret"}))
+            .bind(other).execute(&pool).await.unwrap();
+
+        let mut inventory = inventory();
+        inventory.hosts[1].name = "victim".into();
+        inventory.thresholds.clear();
+        inventory.silences.clear();
+        inventory.checks.truncate(1);
+        inventory.channels.retain(|c| matches!(c.target, Target::Webhook { .. }));
+        inventory.dependencies = vec![Dependency {
+            child: DependencyEnd::host("2"),
+            parent: DependencyEnd::host("1"),
+            origin: origin("trigger", "behind web-01"),
+            fidelity: Fidelity::Exact,
+        }];
+        inventory.services = vec![Service {
+            name: "Shop".into(),
+            members: vec![
+                Member { host: "1".into(), check: None },
+                Member { host: "2".into(), check: None },
+            ],
+            at_least: None,
+            target: None,
+            origin: origin("service", "Shop"),
+            fidelity: Fidelity::Exact,
+        }];
+        let existing = store::existing(&pool, &inventory, paris, |s| s == paris).await.unwrap();
+        let planned = import::plan(&inventory, paris, false, &existing, Utc::now());
+        let channel = planned.items.iter().find(|i| i.kind == "channel").unwrap();
+        assert!(!channel.present, "another customer's channel is not this site's");
+        let id = store::create(&pool, "test", paris, "export.yaml", &planned.items, &planned.secrets, user)
+            .await
+            .unwrap();
+        let (status, body) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(count(&pool, "SELECT count(*) FROM dependencies").await, 0);
+        let members: Vec<String> = sqlx::query_scalar(
+            "SELECT s.peer_id FROM business_service_members m JOIN servers s ON s.id = m.server_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(members, ["web-01"]);
+        let channels: Vec<(Option<Uuid>, Option<Uuid>)> =
+            sqlx::query_as("SELECT customer_id, site_id FROM notification_channels ORDER BY created_at")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(channels, [(Some(other), None), (None, Some(paris))]);
+    }
+
+    /// A preview a global administrator made, confirmed by an
+    /// administrator of its site only: what it plans on a server of
+    /// another site fails instead of being made in their name.
+    #[sqlx::test]
+    async fn a_confirmation_uses_only_servers_the_confirming_person_administers(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let lyon = site(&pool, "lyon").await;
+        let (_, admin) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let (cookie, _) = login(&pool, "bob", Role::Administrator, GrantScope::Site(paris)).await;
+        sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family) VALUES ('db-01', $1, 'db-01', 'debian')")
+            .bind(lyon).execute(&pool).await.unwrap();
+        let id = preview(&pool, paris, admin, &inventory()).await;
+        let (status, body) = call(&pool, "POST", &format!("/api/imports/{id}/confirm"), &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let failed = body["result"]["failed"].as_array().unwrap();
+        assert!(
+            failed.iter().any(|f| f["error"].as_str().unwrap_or_default().contains("site you do not administer")),
+            "{body}"
+        );
+        let on_lyon: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM sensor_configs c JOIN servers s ON s.id = c.server_id WHERE s.site_id = $1)
+                  + (SELECT count(*) FROM thresholds t JOIN servers s ON s.id = t.server_id WHERE s.site_id = $1)
+                  + (SELECT count(*) FROM silences t JOIN servers s ON s.id = t.server_id WHERE s.site_id = $1)",
+        )
+        .bind(lyon)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(on_lyon, 0);
+        // web-01 is made in paris with its check.
+        assert_eq!(count(&pool, "SELECT count(*) FROM servers WHERE peer_id = 'web-01'").await, 1);
     }
 }

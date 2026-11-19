@@ -53,24 +53,9 @@ pub fn to_json(text: &str) -> Result<Value, String> {
             }
             Ok(Event::GeneralRef(reference)) => {
                 let name: &str = reference.as_ref();
-                let text = match name {
-                    "lt" => "<".to_owned(),
-                    "gt" => ">".to_owned(),
-                    "amp" => "&".to_owned(),
-                    "apos" => "'".to_owned(),
-                    "quot" => "\"".to_owned(),
-                    other => {
-                        let code = other
-                            .strip_prefix("#x")
-                            .and_then(|h| u32::from_str_radix(h, 16).ok())
-                            .or_else(|| other.strip_prefix('#').and_then(|d| d.parse().ok()));
-                        code.and_then(char::from_u32)
-                            .map(String::from)
-                            .ok_or_else(|| format!("unknown entity &{other};"))?
-                    }
-                };
+                let c = entity(name).ok_or_else(|| format!("unknown entity &{name};"))?;
                 if let Some(top) = stack.last_mut() {
-                    top.2.push_str(&text);
+                    top.2.push(c);
                 }
             }
             Ok(Event::CData(data)) => {
@@ -99,6 +84,23 @@ pub fn to_json(text: &str) -> Result<Value, String> {
         Ok(Value::Object(object))
     } else {
         Err("an XML document has exactly one root element".into())
+    }
+}
+
+/// The character of an entity's name between `&` and `;`: one of the
+/// five XML entities, or a numeric character reference.
+pub fn entity(name: &str) -> Option<char> {
+    match name {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => name
+            .strip_prefix("#x")
+            .and_then(|h| u32::from_str_radix(h, 16).ok())
+            .or_else(|| name.strip_prefix('#').and_then(|d| d.parse().ok()))
+            .and_then(char::from_u32),
     }
 }
 
@@ -217,6 +219,29 @@ mod tests {
             to_json(xml).unwrap(),
             json!({"root": {"n": ["1", "2", "3"]}})
         );
+    }
+
+    #[test]
+    fn entities_and_character_references() {
+        for (name, c) in [
+            ("amp", '&'),
+            ("lt", '<'),
+            ("gt", '>'),
+            ("quot", '"'),
+            ("apos", '\''),
+            ("#233", 'é'),
+            ("#xE9", 'é'),
+        ] {
+            assert_eq!(entity(name), Some(c), "{name}");
+        }
+        for name in ["nbsp", "#xD800", "#", "#x", ""] {
+            assert_eq!(entity(name), None, "{name}");
+        }
+        assert_eq!(
+            to_json("<a t=\"&#x41;\">&#66;&amp;&#x43;</a>").unwrap(),
+            json!({"a": {"t": "A", "#text": "B&C"}})
+        );
+        assert!(to_json("<a>&nbsp;</a>").is_err());
     }
 
     #[test]

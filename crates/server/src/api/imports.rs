@@ -502,6 +502,7 @@ pub async fn confirm(
         serde_json::from_slice(&request).map_err(|e| ApiError::Invalid(e.to_string()))?
     };
     let skip: HashSet<String> = request.skip.into_iter().collect();
+    let administered = user.sites_with(Role::Administrator);
     let (run, outcome) = store::confirm(
         &state.pool,
         run.id,
@@ -509,6 +510,7 @@ pub async fn confirm(
         user.id,
         !is_global_admin(&user),
         Utc::now(),
+        |site| administered.contains(site),
     )
     .await?;
     tracing::info!(user = %user.id, import = %run.id, created = ?outcome.created, failed = outcome.failed.len(), "import confirmed");
