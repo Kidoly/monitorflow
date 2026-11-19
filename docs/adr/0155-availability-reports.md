@@ -56,9 +56,9 @@ The **PDF** is made by the central server with `pdf-writer` (MIT or Apache 2.0, 
 
 A **report schedule** sends a report by email: for one customer or, for administrators of everything, for everything; **monthly** (the default, on the first day of the month for the month before) or **weekly** (on Monday for the week before), at 06:00 in its time zone, in English or French, with the PDF, the CSV or both attached (both by default). It is sent through an email channel of the notifications (ADR-0060) that covers its customer, to the channel's recipients or to its own list.
 
-The central server looks every minute for schedules whose last period sent is not the latest one ended, and sends it; the row is claimed for 10 minutes (`claimed_until`) so two central servers (ADR-0089) never both send it, and a failure is retried at the next look, at most every 15 minutes, with the error shown on the schedule. A report that was due while the server was down is sent when it comes back, once: only the latest period is ever sent. **Send now** sends the last period at once, to check the setup.
+The leading central server looks every minute for schedules whose last period sent is not the latest one ended, and sends it; the row is also claimed for 10 minutes (`claimed_until`), so two central servers (ADR-0089) never both send it even while leadership changes hands, and a failure is tried again 15 minutes later, with the error shown on the schedule. A report that was due while the server was down is sent when it comes back, once: only the latest period is ever sent. A new schedule starts with the next period. **Send now** sends the latest period at once, to check the setup, and leaves the schedule's own sending as planned.
 
-Who: operators and above of the whole customer make, change and remove schedules of that customer; for everything, of everything. Every change is audited, and so is each report sent (`report.sent`), with its period and recipients.
+Who: a schedule sends through a notification channel, and channels are managed by administrators of what they cover (ADR-0078), so schedules are too: administrators of the whole customer for its schedules, global administrators for everything. Every change is audited, and so is each report sent (`report.sent`), with its period and recipients.
 
 ### Single company and MSPs
 
@@ -74,16 +74,16 @@ Under the `alerts` area of API keys, documented in OpenAPI:
 | GET | `/api/v1/availability/report?from&to&customer_id&format=pdf\|csv&language&time_zone` | any role |
 | GET, POST | `/api/v1/business-services` | read: customer-wide grant; create: operator of the customer |
 | PUT, DELETE | `/api/v1/business-services/{id}` | operator of the customer |
-| GET, POST | `/api/v1/report-schedules` | operator of the customer |
-| PUT, DELETE | `/api/v1/report-schedules/{id}` | operator of the customer |
-| POST | `/api/v1/report-schedules/{id}/send` | operator of the customer |
+| GET, POST | `/api/v1/report-schedules` | administrator of the customer |
+| PUT, DELETE | `/api/v1/report-schedules/{id}` | administrator of the customer |
+| POST | `/api/v1/report-schedules/{id}/send` | administrator of the customer |
 
 ### Moving from another tool
 
 The importer (ADR-0146) maps:
 
-- **Zabbix services** (6.0 and later) to business services: the hosts and triggers their problem tags match become members (servers, or the checks the triggers became), "most critical of child services" becomes "all of them", and an additional rule "at least N child services are OK" becomes "at least N". Its **SLA** with the service tags that pick it gives the target (`slo`). Child services, a weighted rule, a schedule other than 24x7 and excluded downtimes are approximated, each with its reason: child services are flattened into their members, and planned time is kept with the maintenances already imported.
-- **PRTG business process sensors** to business services: each channel's objects become members and its "minimum objects up" becomes "at least N"; several channels become several services. A **PRTG report** of the SLA kind for a group or device becomes a monthly report schedule of its customer, without recipients, to finish in the web interface.
+- **Zabbix services** (6.0 and later, read through the API: exports have none) to business services of the import's customer. A service watches the problems its tags select: its members are the checks whose triggers carry those tags, on the import's hosts, which is exact. "Most critical of child services" is all of them, "most critical if all children have problems" at least one, an additional rule "at least N child services have a problem" at least the others, and "fewer than N child services are OK" at least N. Child services are flattened into their members under the parent's rule; rules by percentage or weight, weights and "set status to OK" are approximated, each with its reason. The target is the SLO of the enabled SLAs whose service tags select the service, the strictest when several do; an SLA's schedule other than 24x7 and its excluded downtimes are approximated (maintenances already move as maintenance windows, which are planned maintenance). A service whose tags select no problem of the import's hosts is listed as not moved.
+- **PRTG business process sensors** are listed as not moved, with their channels: neither PRTG's API nor its configuration file says which objects a channel watches, so the service is made by hand under Reports (a channel with an error threshold of T % over N objects is "at least" the smallest whole number not under N × T / 100). PRTG reports are not read by the importer.
 
 ## Consequences
 

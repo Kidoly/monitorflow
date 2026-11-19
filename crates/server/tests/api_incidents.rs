@@ -152,11 +152,7 @@ struct Engine {
 
 impl Engine {
     fn key(server: Uuid, instance: &str) -> SeriesKey {
-        SeriesKey {
-            server_id: server,
-            metric: DISK.into(),
-            instance: instance.into(),
-        }
+        SeriesKey::value(server, DISK, instance)
     }
 
     async fn apply(

@@ -232,7 +232,7 @@ db_tests! {
         assert_eq!(
             all,
             json!({"critical": 1, "warning": 1, "acknowledged": 1, "silenced": 1,
-                   "offline": 1, "ok": 1, "waiting": 0, "total": 6})
+                   "offline": 1, "ok": 1, "waiting": 0, "unreachable": 0, "total": 6})
         );
         let (_, of_b) = call(&state, &format!("/api/servers/summary?site_id={b}"), Some(&admin), None).await;
         assert_eq!((of_b["offline"].clone(), of_b["total"].clone()), (json!(1), json!(1)));
