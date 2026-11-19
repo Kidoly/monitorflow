@@ -137,9 +137,10 @@ impl OpenAiProvider {
             }
             None => None,
         };
+        let base = parse_base_url(&options.base_url)?;
         Ok(Self {
-            client: http::client(options.request_timeout)?,
-            base: parse_base_url(&options.base_url)?,
+            client: http::client(options.request_timeout, base.scheme() == "http")?,
+            base,
             api_key,
             options,
             json_only: AtomicBool::new(false),
