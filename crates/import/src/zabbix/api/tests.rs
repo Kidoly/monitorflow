@@ -253,6 +253,21 @@ fn answer(version: &str, groups: &str, method: &str, params: &Value) -> Value {
                 {"mediatypeid": "2", "sendto": "https://example.webhook.office.com/webhookb2/1", "active": "0"},
             ],
         }]),
+        // A service of the PostgreSQL problems, with a gold SLA (ADR-0155),
+        // and one of problems no host has.
+        "service.get" => json!([
+            {"serviceid": "1", "name": "Database", "algorithm": "2",
+             "problem_tags": [{"tag": "service", "operator": "2", "value": "postgres"}],
+             "children": [], "status_rules": [], "tags": [{"tag": "sla", "value": "gold"}]},
+            {"serviceid": "2", "name": "Printing", "algorithm": "2",
+             "problem_tags": [{"tag": "service", "operator": "0", "value": "cups"}],
+             "children": [], "status_rules": [], "tags": []},
+        ]),
+        "sla.get" => json!([
+            {"slaid": "1", "name": "Gold", "slo": "99.9", "status": "1", "period": "2",
+             "service_tags": [{"tag": "sla", "operator": "0", "value": "gold"}],
+             "schedule": [], "excluded_downtimes": []},
+        ]),
         other => panic!("unexpected call {other}"),
     }
 }
@@ -282,6 +297,24 @@ async fn zabbix_7_with_a_bearer_token() {
     assert!(host_get.params.get("selectHostGroups").is_some());
 
     assert!(config.inherited);
+    // Services and SLAs (ADR-0155): the PostgreSQL problems' check, with
+    // the gold target; the service of problems no host has is listed.
+    assert_eq!(config.services.len(), 2);
+    assert_eq!(config.slas[0].slo, 99.9);
+    let inventory = crate::zabbix::map::inventory(&config, chrono::Utc::now());
+    let database = inventory
+        .services
+        .iter()
+        .find(|s| s.name == "Database")
+        .unwrap();
+    assert_eq!(database.target, Some(99.9));
+    assert_eq!(database.members.len(), 1);
+    assert_eq!(database.members[0].host, "web-01");
+    assert!(database.members[0].check.is_some());
+    assert!(inventory
+        .unmovable
+        .iter()
+        .any(|u| u.origin.name == "Printing" && u.why.code == "service_no_members"));
     let host = &config.hosts[0];
     assert_eq!(host.host, "web-01");
     assert_eq!(host.groups, ["Linux servers"]);
@@ -381,9 +414,18 @@ async fn zabbix_7_with_a_bearer_token() {
         .iter()
         .find(|t| t.measure == Measure::CpuUsage)
         .unwrap();
+    // `min(..., 5m)` reads a window of 5 minutes (ADR-0153).
     assert_eq!(
-        (cpu.critical, cpu.for_s, cpu.recovery),
-        (Some(0.8), 300, Some(0.7))
+        (cpu.critical, cpu.for_s, cpu.recovery, &cpu.judged),
+        (
+            Some(0.8),
+            0,
+            Some(0.7),
+            &crate::model::Judged::Window {
+                function: crate::model::WindowFunction::Min,
+                window_s: 300
+            }
+        )
     );
     assert!(inventory.thresholds.iter().any(|t| t.measure
         == Measure::DiskUsed {

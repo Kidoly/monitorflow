@@ -141,7 +141,7 @@ db_tests! {
         let web = server(&pool, "web-01", paris).await;
         let store = AlertStore::new(pool.clone());
         let rule = store.load_rules("web-01").await.unwrap().unwrap().rules.lookup(DISK, "/").unwrap().clone();
-        let key = SeriesKey { server_id: web, metric: DISK.into(), instance: "/".into() };
+        let key = SeriesKey::value(web, DISK, "/");
         let state = SeriesState { firing: Some(Severity::Warning), warning_since: Some(0), critical_since: None, last_at: Some(base()) };
         let opens = (0..8).map(|i| {
             let (store, key, rule, state) = (store.clone(), key.clone(), rule.clone(), state.clone());
@@ -178,7 +178,7 @@ db_tests! {
         let store = AlertStore::new(pool.clone());
         let rule = store.load_rules("web-01").await.unwrap().unwrap().rules.lookup(DISK, "/").unwrap().clone();
         let t0 = base();
-        let key = |instance: &str| SeriesKey { server_id: web, metric: DISK.into(), instance: instance.into() };
+        let key = |instance: &str| SeriesKey::value(web, DISK, instance);
         let (root, var) = (key("/"), key("/var"));
         // / fires warning with a pending critical timer; /var is pending.
         let firing = SeriesState { firing: Some(Severity::Warning), warning_since: Some(t0), critical_since: Some(t0 + 60 * S), last_at: Some(t0 + 300 * S) };

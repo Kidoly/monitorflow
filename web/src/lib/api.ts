@@ -137,10 +137,25 @@ export type ServerStatus = "online" | "offline" | "device";
 
 /** A server's one status on the fleet's pages, worst first (ADR-0130). */
 /** `waiting`: made by an import, waiting for its agent (ADR-0146). */
-export type ServerState = "critical" | "warning" | "acknowledged" | "silenced" | "offline" | "ok" | "waiting";
+/** `unreachable`: behind a parent that is down (ADR-0152). */
+export type ServerState =
+  | "critical"
+  | "warning"
+  | "acknowledged"
+  | "silenced"
+  | "unreachable"
+  | "offline"
+  | "ok"
+  | "waiting";
 
-/** `GET /api/servers/summary`: servers per state, out of `total`; `waiting` is absent from a central server older than ADR-0146. */
-export type ServerSummary = Record<Exclude<ServerState, "waiting"> | "total", number> & { waiting?: number };
+/**
+ * `GET /api/servers/summary`: servers per state, out of `total`; `waiting` is absent from a central server older
+ * than ADR-0146, `unreachable` from one older than ADR-0152.
+ */
+export type ServerSummary = Record<Exclude<ServerState, "waiting" | "unreachable"> | "total", number> & {
+  waiting?: number;
+  unreachable?: number;
+};
 
 /** One entry of `GET /api/servers`. Timestamps are RFC 3339 in UTC. */
 export interface Server {
@@ -191,6 +206,65 @@ export interface Server {
   kind?: "agent" | "device";
   /** A device's address; null for an agent. */
   address?: string | null;
+  /** While a parent it depends on is down (ADR-0152). */
+  unreachable?: Unreachable | null;
+}
+
+/** What a dependency's end is (ADR-0152). */
+export type DependencyEndKind = "server" | "device" | "relay";
+
+/** A check of a server or device; `instance` `""` is every instance. */
+export interface DependencyCheck {
+  name: string;
+  instance: string;
+}
+
+/** One end of a dependency, named. */
+export interface DependencyEnd {
+  kind: DependencyEndKind;
+  server_id: string | null;
+  relay_id: string | null;
+  name: string;
+  site_id: string;
+  /** One of its checks; null for all of it. */
+  check: DependencyCheck | null;
+}
+
+/** `child` is behind `parent`; `automatic` for a server behind its relay or a check behind the relay that runs it. */
+export interface Dependency {
+  id: string | null;
+  automatic: boolean;
+  child: DependencyEnd;
+  parent: DependencyEnd;
+  created_at: string | null;
+  created_by: string | null;
+  can_change: boolean;
+}
+
+/** Why something cannot be checked now: the nearest parent that is down and its incident. */
+export interface Unreachable {
+  because: DependencyEnd;
+  incident_id: string;
+  since: string;
+}
+
+/** `GET /api/servers/{id}/dependencies` and `GET /api/relays/{id}/dependencies`. */
+export interface DependencyPage {
+  parents: Dependency[];
+  children: Dependency[];
+  /** Everything behind it, directly or through others. */
+  behind: DependencyEnd[];
+  suggestions: { parent: DependencyEnd; reason: "proxmox_host" | "network_device" }[];
+  unreachable: Unreachable | null;
+  unreachable_checks: (Unreachable & { check: DependencyCheck })[];
+  can_change: boolean;
+}
+
+/** One end in `POST /api/dependencies`: a server or device, one of its checks, or a relay for a parent. */
+export interface DependencyEndRequest {
+  server_id?: string;
+  relay_id?: string;
+  check?: DependencyCheck;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -328,7 +402,8 @@ export type PanelData = { id: string; servers: number; unavailable: number } & (
   | { kind: "chart"; series: ChartLine[] }
   | { kind: "figure"; value: number | null }
   | { kind: "top"; rows: TopRow[] }
-  | { kind: "alerts"; alerts: PanelAlert[] }
+  /** `unreachable`: its servers behind a parent that is down (ADR-0152); absent before it. */
+  | { kind: "alerts"; alerts: PanelAlert[]; unreachable?: (Unreachable & { server_id: string; hostname: string })[] }
   | { kind: "error"; error: string }
 );
 
@@ -576,6 +651,75 @@ export interface DeviceRequest {
   snmp?: SnmpCredentialsRequest;
   /** The kind of device whose SNMP checks and alerts it gets. */
   template?: string;
+  /** For a vCenter or ESXi host (ADR-0156): its `vmware` check and alerts come with it. */
+  vmware?: VmwareCredentialsRequest;
+}
+
+/** vCenter or ESXi credentials as sent; what is left out keeps the stored value (ADR-0156). */
+export interface VmwareCredentialsRequest {
+  port?: number;
+  user?: string;
+  password?: string;
+  /** A confirmed certificate's SHA-256; "" goes back to the roots. */
+  fingerprint?: string;
+}
+
+/** A device's vCenter credentials, never the password. */
+export interface VmwareCredentials {
+  port: number;
+  user: string;
+  fingerprint: string | null;
+  password_set: boolean;
+  updated_at: string;
+}
+
+/** What a vCenter or ESXi host answered to a test. */
+export interface VmwareTested {
+  answers: boolean;
+  error: string | null;
+  product: string | null;
+  version: string | null;
+  api_type: string | null;
+  certificate: {
+    fingerprint: string;
+    trusted: boolean;
+    by_roots: boolean;
+    subject: string;
+    not_after: string | null;
+  } | null;
+  /** null when not tried: no credentials, or a certificate not trusted yet. */
+  login: boolean | null;
+  objects: Record<string, number>;
+  probe: string;
+}
+
+/** One host, cluster, virtual machine or datastore of a source. */
+export interface VirtualObject {
+  id: string;
+  kind: "vm" | "host" | "cluster" | "datastore";
+  name: string;
+  key: string;
+  details: Record<string, string>;
+  metrics: Record<string, number>;
+  collected_at: string;
+  seen_at: string;
+  stale: boolean;
+  server: { id: string; hostname: string; kind: string; awaiting_agent: boolean } | null;
+  matched_by: "uuid" | "mac" | "address" | "name" | "person" | null;
+  link_fixed: boolean;
+}
+
+/** `GET /api/servers/{id}/virtualization`. */
+export interface Virtualization {
+  source: {
+    up: boolean;
+    reason: string | null;
+    error: string | null;
+    details: Record<string, string>;
+    seen_at: string;
+  } | null;
+  objects: VirtualObject[];
+  guest_of: { object: VirtualObject; source_id: string; source_name: string }[];
 }
 
 /** SNMP credentials as sent; a secret left out keeps the stored one while the version stays. */
@@ -657,11 +801,40 @@ export interface EffectiveThreshold {
   instance: string | null;
   /** False: muted by a disabled row, which the engine skips. */
   enabled: boolean;
+  /** What the rule judges (ADR-0153); absent from older servers: `value`. */
+  kind?: RuleKind;
   comparison: Comparison;
   warning: number | null;
   critical: number | null;
   duration_s: number;
   hysteresis: number;
+  function?: RuleFunction | null;
+  window_s?: number | null;
+  offset_s?: number | null;
+  target?: number | null;
+  conditions?: RuleCondition[];
+}
+
+/** What a threshold judges (ADR-0153). */
+export type RuleKind = "value" | "window" | "compare" | "forecast" | "nodata";
+/** A window's function, or how a comparison compares. */
+export type RuleFunction = "avg" | "min" | "max" | "change" | "rate" | "ratio" | "difference";
+
+/** A condition joined with "and" to a threshold, on the same server. */
+export interface RuleCondition {
+  metric: string;
+  /** Null: the instance of the series judged, else the one without. */
+  instance: string | null;
+  function: "value" | "avg" | "min" | "max" | "change" | "rate";
+  window_s?: number | null;
+  comparison: Comparison;
+  value: number;
+}
+
+/** A rule MonitorFlow suggests: post `rule` to add it, with `enabled: false` to decline it. */
+export interface RecommendedThreshold {
+  key: string;
+  rule: ThresholdRequest;
 }
 
 /** `GET /api/servers/{id}/thresholds/effective`. */
@@ -670,6 +843,43 @@ export interface EffectiveThresholds {
   site_id: string;
   revision: number;
   thresholds: EffectiveThreshold[];
+  recommended?: RecommendedThreshold[];
+}
+
+/** An incident a rule would have opened, in a preview. Unix milliseconds. */
+export interface PreviewIncident {
+  severity: "warning" | "critical";
+  opened_at: number;
+  resolved_at: number | null;
+  peak_value: number;
+}
+
+/** One series replayed by a preview. */
+export interface PreviewSeries {
+  instance: string;
+  /** `[Unix ms, judged value]`. */
+  points: [number, number][];
+  incidents: PreviewIncident[];
+}
+
+/** `POST /api/servers/{id}/thresholds/preview`. */
+export interface ServerPreview {
+  server_id: string;
+  from: number;
+  to: number;
+  days: number;
+  series: PreviewSeries[];
+  truncated: boolean;
+}
+
+/** `POST /api/sites/{id}/thresholds/preview`. */
+export interface SitePreview {
+  site_id: string;
+  from: number;
+  to: number;
+  days: number;
+  servers: { server_id: string; hostname: string; incidents: number; series: PreviewSeries[] }[];
+  more_servers: boolean;
 }
 
 /** `GET /api/sites/{id}/sensors`: the built-in defaults overlaid with the site's rows. */
@@ -682,6 +892,7 @@ export interface SiteSensors extends CheckIntervalOf {
 export interface SiteThresholds {
   site_id: string;
   thresholds: EffectiveThreshold[];
+  recommended?: RecommendedThreshold[];
 }
 
 /** Where a sensor or threshold row applies: every server of a site, or one server. */
@@ -779,12 +990,19 @@ export interface WebsiteCheckList {
 export interface ThresholdRequest {
   metric: string;
   instance: string | null;
+  /** `value` when absent. */
+  kind?: RuleKind;
   comparison: Comparison;
   warning: number | null;
   critical: number | null;
   duration_s: number;
   hysteresis: number;
   enabled: boolean;
+  function?: RuleFunction;
+  window_s?: number;
+  offset_s?: number;
+  target?: number;
+  conditions?: RuleCondition[];
 }
 
 /** One stored row of `thresholds`; exactly one of `site_id` and `server_id` is set. */
@@ -1054,6 +1272,13 @@ export interface ThresholdSnapshot {
   critical: number | null;
   duration_s: number;
   hysteresis: number;
+  /** Set for every kind but `value` (ADR-0153). */
+  kind?: RuleKind;
+  function?: RuleFunction | null;
+  window_s?: number | null;
+  offset_s?: number | null;
+  target?: number | null;
+  conditions?: RuleCondition[];
 }
 
 /** One incident of `GET /api/incidents`. Times are sample times. */
@@ -1088,6 +1313,12 @@ export interface Incident {
   in_maintenance?: boolean;
   /** Whether a silence ever held back a notification of it. */
   silenced?: boolean;
+  /** The kind of rule that opened it (ADR-0153); absent from older servers. */
+  kind?: RuleKind;
+  /** While a forecast is open, when it expects its target. */
+  expected_at?: string | null;
+  /** The parent's incident that speaks for it: it opened a moment before its parent went down and was never told (ADR-0152). */
+  hidden_by?: string | null;
   /** Who said they are on it, and when (ADR-0082); null until someone does. */
   acknowledged_by?: string | null;
   acknowledged_at?: string | null;
@@ -1262,6 +1493,10 @@ export interface IncidentDetail extends Incident {
   acknowledged_via?: "page" | "link" | null;
   /** Null when no follow-up started: a warning, or not sent yet. */
   follow_up?: FollowUp | null;
+  /** While it says a parent is down: everything behind it, unreachable meanwhile (ADR-0152). */
+  hides?: DependencyEnd[];
+  /** Incidents children opened a moment before it, never told. */
+  hidden?: string[];
 }
 
 /** Something a follow-up step names; `name` is null once removed. */
@@ -1503,10 +1738,26 @@ export type ImportCreate =
       critical: number | null;
       duration_s: number;
       hysteresis: number;
+      /** What a richer rule judges (ADR-0153); absent for a plain threshold. */
+      kind?: RuleKind;
+      function?: RuleFunction;
+      window_s?: number;
+      offset_s?: number;
+      target?: number;
+      conditions?: RuleCondition[];
     }
   | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
   | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
-  | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null };
+  | { object: "channel"; kind: string; settings: Record<string, unknown>; has_secret: boolean; site_id: string | null }
+  | {
+      object: "service";
+      name: string;
+      at_least: number | null;
+      target: number | null;
+      members: { server: string; check?: SilencedCheck }[];
+    }
+  /** A dependency (ADR-0152): the server, or one of its checks, behind the parent or one of its checks. */
+  | { object: "dependency"; server: string; check?: SilencedCheck; parent: string; parent_check?: SilencedCheck };
 
 /** One line of an import's preview. */
 export interface ImportItem {
@@ -3770,6 +4021,21 @@ export const api = {
   sendReportNow: (id: string) =>
     request<ReportSent>(`/api/report-schedules/${encodeURIComponent(id)}/send`, { method: "POST" }),
 
+  /** What a server or device depends on, what is behind it, and why it is unreachable (ADR-0152). */
+  serverDependencies: (id: string, signal?: AbortSignal) =>
+    request<DependencyPage>(`/api/servers/${encodeURIComponent(id)}/dependencies`, { signal }),
+
+  /** What is behind a relay. */
+  relayDependencies: (id: string, signal?: AbortSignal) =>
+    request<DependencyPage>(`/api/relays/${encodeURIComponent(id)}/dependencies`, { signal }),
+
+  /** Puts `children` behind `parent`, all or none; operators of every end's site. */
+  addDependencies: (parent: DependencyEndRequest, children: DependencyEndRequest[]) =>
+    request<{ dependencies: Dependency[] }>("/api/dependencies", { method: "POST", body: { parent, children } }),
+
+  /** Removes a dependency set by someone. */
+  removeDependency: (id: string) => request<void>(`/api/dependencies/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
   /** Creates the site `name` under `customerId`; customer administrators only. */
   createSite: (customerId: string, name: string) =>
     request<Site>(`/api/customers/${encodeURIComponent(customerId)}/sites`, {
@@ -4131,6 +4397,21 @@ export const api = {
       body,
     }),
 
+  /** What a rule would have done over the last days (ADR-0153); writes nothing. */
+  previewServerThreshold: (serverId: string, rule: ThresholdRequest, days: number, signal?: AbortSignal) =>
+    request<ServerPreview>(`/api/servers/${encodeURIComponent(serverId)}/thresholds/preview`, {
+      method: "POST",
+      body: { rule, days },
+      signal,
+    }),
+
+  previewSiteThreshold: (siteId: string, rule: ThresholdRequest, days: number, signal?: AbortSignal) =>
+    request<SitePreview>(`/api/sites/${encodeURIComponent(siteId)}/thresholds/preview`, {
+      method: "POST",
+      body: { rule, days },
+      signal,
+    }),
+
   deleteThreshold: (id: string) =>
     request<void>(`/api/thresholds/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -4164,6 +4445,32 @@ export const api = {
     request<SnmpCredentials>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "PUT", body }),
 
   deleteDeviceSnmp: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "DELETE" }),
+
+  /** What a vCenter or ESXi host answers, from its probe; logs in only once its certificate is trusted (ADR-0156). */
+  testVmware: (body: { site_id: string; address: string; probe?: string; vmware: VmwareCredentialsRequest }) =>
+    request<VmwareTested>("/api/devices/vmware/test", { method: "POST", body }),
+
+  deviceVmware: (id: string, signal?: AbortSignal) =>
+    request<VmwareCredentials>(`/api/devices/${encodeURIComponent(id)}/vmware`, { signal }),
+
+  setDeviceVmware: (id: string, body: VmwareCredentialsRequest) =>
+    request<VmwareCredentials>(`/api/devices/${encodeURIComponent(id)}/vmware`, { method: "PUT", body }),
+
+  /** A source's hosts, clusters, virtual machines and datastores, and the virtual machine a server is. */
+  serverVirtualization: (id: string, signal?: AbortSignal) =>
+    request<Virtualization>(`/api/servers/${encodeURIComponent(id)}/virtualization`, { signal }),
+
+  /** Ties a virtual machine to a server by hand, to none, or back to matching. */
+  linkVirtualObject: (id: string, body: { server_id?: string | null; automatic?: boolean }) =>
+    request<VirtualObject>(`/api/virtual-objects/${encodeURIComponent(id)}/server`, { method: "PUT", body }),
+
+  /** Adds a server waiting for its agent for a virtual machine. */
+  installAgentOnVm: (id: string) =>
+    request<Server>(`/api/virtual-objects/${encodeURIComponent(id)}/install-agent`, { method: "POST" }),
+
+  /** Gives a Windows server the `hyperv` check and its alerts. */
+  watchHyperv: (id: string) =>
+    request<{ added: boolean; check: string }>(`/api/servers/${encodeURIComponent(id)}/hyperv`, { method: "POST" }),
 
   /** Where the site's network checks can run from: the central server, then its relays. */
   siteProbes: (siteId: string, signal?: AbortSignal) =>

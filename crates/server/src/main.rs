@@ -483,14 +483,20 @@ async fn main() -> anyhow::Result<()> {
     );
     // Threshold engine (ADR-0017): open incidents and pending timers are
     // reloaded before any stream can deliver samples.
+    // Richer rules read their history from VictoriaMetrics (ADR-0153).
+    let history = VmQuery::with_auth(&config.victoriametrics_url, QUERY_TIMEOUT, storage.as_ref())
+        .context("VictoriaMetrics query client")?;
+    let registry = Registry::default();
     let alerts = Alerts::start(
-        AlertStore::new(pool.clone()),
-        EngineSettings::default(),
+        AlertStore::new(pool.clone()).with_registry(registry.clone()),
+        EngineSettings {
+            history: Some(Arc::new(history)),
+            ..EngineSettings::default()
+        },
         Arc::new(LogNotifier),
     )
     .await
     .context("loading the threshold engine state")?;
-    let registry = Registry::default();
     let sensor_configs = SensorConfigs::spawn(
         SensorConfigStore::new(pool.clone()).with_plugin_grants(ca.clone()),
         registry.clone(),
@@ -521,6 +527,7 @@ async fn main() -> anyhow::Result<()> {
     .context("joining the server instances")?;
     let offline_pool = pool.clone();
     let offline_registry = registry.clone();
+    let dispatcher_registry = registry.clone();
     // Settings of the web interface that apply without a restart (ADR-0069).
     let api_settings = ApiSettings::from_config(&config);
     api_settings
@@ -536,6 +543,8 @@ async fn main() -> anyhow::Result<()> {
         .with_sources(api_settings.live.clone(), mirrors.clone())
         .with_agent_releases(api_settings.agent_releases.clone())
         .with_proxmox(config.proxmox.enabled);
+    // Virtual machines, hosts and datastores from the samples (ADR-0156).
+    let virt = monitorflow_server::virt::Sink::spawn(pool.clone());
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
@@ -549,6 +558,7 @@ async fn main() -> anyhow::Result<()> {
     .with_ingest(Ingest {
         metrics: Some(metrics.queue()),
         events: Some(events.queue()),
+        virt: Some(virt.clone()),
     });
     // Network checks from the central server and from relays (ADR-0148).
     let probes = Probes::new(
@@ -556,6 +566,7 @@ async fn main() -> anyhow::Result<()> {
         Ingest {
             metrics: Some(metrics.queue()),
             events: Some(events.queue()),
+            virt: Some(virt),
         },
         Some(alerts),
     );
@@ -796,7 +807,8 @@ async fn main() -> anyhow::Result<()> {
         },
         async {
             let dispatcher = notify::Dispatcher::new(notify_pool, config.web_base_url())
-                .with_status_dir(config.server_update_dir.clone());
+                .with_status_dir(config.server_update_dir.clone())
+                .with_registry(dispatcher_registry);
             cluster::lead(cluster.leadership(), stopped.clone(), |until| {
                 dispatcher.clone().run(notify::dispatcher::POLL, until)
             })

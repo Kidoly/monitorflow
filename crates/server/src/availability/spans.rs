@@ -44,10 +44,11 @@ impl Spans {
 
     /// Seconds in all, rounded down to the millisecond.
     pub fn seconds(&self) -> f64 {
+        // A sum of floats starts at -0.0, which a CSV would write "-0".
         self.0
             .iter()
             .map(|(a, b)| (*b - *a).num_milliseconds() as f64 / 1000.0)
-            .sum()
+            .fold(0.0, |all, s| all + s)
     }
 
     pub fn union(&self, other: &Spans) -> Spans {
@@ -126,6 +127,7 @@ mod tests {
         let spans = s(&[(10, 20), (0, 5), (5, 7), (15, 30), (40, 40)]);
         assert_eq!(spans, Spans(vec![(t(0), t(7)), (t(10), t(30))]));
         assert_eq!(spans.seconds(), 27.0 * 60.0);
+        assert!(Spans::new().seconds().is_sign_positive());
     }
 
     #[test]
