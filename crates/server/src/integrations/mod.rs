@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::notify::send::{
     error_body, http_client, public_http_client, refuse_private_address_in, request_error,
-    response_error, signature, SendError, DELIVERY_HEADER, EVENT_HEADER, SIGNATURE_HEADER,
+    signature, webhook_refusal, SendError, DELIVERY_HEADER, EVENT_HEADER, SIGNATURE_HEADER,
     TIMESTAMP_HEADER,
 };
 use crate::notify::Coverage;
@@ -99,8 +99,7 @@ impl From<EndpointRow> for Endpoint {
             id: row.id,
             name: row.name,
             url: row.url,
-            secret: crate::secrets::open(crate::secrets::Column::IntegrationEndpoints, &row.secret)
-                .map_err(|e| e.to_string()),
+            secret: open_secret(&row.secret),
             events: row.events,
             // The table's check allows at most one of the two.
             coverage: Coverage::from_columns(row.customer_id, row.site_id)
@@ -109,6 +108,12 @@ impl From<EndpointRow> for Endpoint {
             state: row.state,
         }
     }
+}
+
+/// An endpoint's stored signing secret, opened, or why it does not open.
+pub(crate) fn open_secret(stored: &str) -> crate::secrets::Opened {
+    crate::secrets::open(crate::secrets::Column::IntegrationEndpoints, stored)
+        .map_err(|e| e.to_string())
 }
 
 const SELECT: &str = "SELECT id, name, url, secret, events, customer_id, site_id, allow_private,
@@ -153,21 +158,11 @@ pub fn generate_secret() -> Secret {
 
 /// The URL trimmed and checked; the error is a sentence for the form.
 pub fn normalize_url(url: &str) -> Result<String, String> {
-    let url = url.trim();
-    if url.is_empty() {
-        return Err("Enter the URL to send events to.".into());
-    }
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|_| format!("`{url}` is not a URL; it starts with https://."))?;
-    if !matches!(parsed.scheme(), "https" | "http") || parsed.host_str().is_none() {
-        return Err(format!("`{url}` is not an http or https URL."));
-    }
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(
-            "Put no password in the URL: requests are signed with the endpoint's secret.".into(),
-        );
-    }
-    Ok(parsed.to_string())
+    crate::notify::http_url(
+        url,
+        "Enter the URL to send events to.",
+        "Put no password in the URL: requests are signed with the endpoint's secret.",
+    )
 }
 
 /// The events asked for, known ones only, each once, in [`EVENTS`] order;
@@ -342,7 +337,7 @@ impl Clients {
         let text = error_body(response).await;
         Err(Failure {
             status: Some(status.as_u16()),
-            message: response_error(&host, status, &text).message,
+            message: webhook_refusal(&endpoint.url, status, &text).message,
         })
     }
 }
