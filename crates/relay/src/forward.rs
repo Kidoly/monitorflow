@@ -369,21 +369,36 @@ impl AgentService for Forwarder {
         // of another sender. Waits for an older session of the same lane
         // to stop, so its records stay in order.
         let lane = buffer::lane_key(&via);
-        let held = self.lanes.take(&lane, &via.origin_peer().uri()).await;
         // A path through a relay is that relay's claim until the upstream
         // accepts it: its Hello, which makes it replayable, is stored only
-        // then, and nothing is buffered for it before.
+        // then, and nothing is buffered for it before. Nor does it name the
+        // lane's origin before, which would hold back the replay of the
+        // agent it claims to come from.
         let relayed = via.relays().next().is_some();
+        let origin = via.origin_peer().uri();
+        let held = self
+            .lanes
+            .take(&lane, if relayed { "" } else { &origin })
+            .await;
         let accepted = !relayed || self.accepted(&lane, &via).await;
         if accepted {
+            self.lanes.set_origin(&lane, &origin);
             self.store_hello(&lane, &hello, &via).await;
         }
+        // A refused stream leaves no slot behind: a relay could otherwise
+        // grow the map with one path after another.
+        let refuse = |held: session::Held, status: Status| {
+            drop(held);
+            self.lanes.forget_idle(&lane);
+            Err(status)
+        };
         let (down_tx, down_rx) = mpsc::channel(self.settings.queue.max(1));
         let mut retry_at = Instant::now();
         let upstream = if *self.upstream_up.borrow() {
             match self.open(&hello, &via, Some(down_tx.clone())).await {
                 Ok(upstream) => {
                     if !accepted {
+                        self.lanes.set_origin(&lane, &origin);
                         self.store_hello(&lane, &hello, &via).await;
                     }
                     Some(upstream)
@@ -392,10 +407,10 @@ impl AgentService for Forwarder {
                     if session::is_permanent(&status) {
                         let _ = self.buffer.discard(&lane).await;
                     }
-                    return Err(status);
+                    return refuse(held, status);
                 }
                 Err(Ended::Link) if !accepted => {
-                    return Err(Status::unavailable(UPSTREAM_UNAVAILABLE));
+                    return refuse(held, Status::unavailable(UPSTREAM_UNAVAILABLE));
                 }
                 Err(Ended::Link) => {
                     retry_at += self.settings.backoff.clone().next_delay();
@@ -404,7 +419,7 @@ impl AgentService for Forwarder {
             }
         } else if !accepted {
             tracing::info!(%agent_id, %via, "stream refused: a path the upstream has not accepted yet, while it is down");
-            return Err(Status::unavailable(UPSTREAM_UNAVAILABLE));
+            return refuse(held, Status::unavailable(UPSTREAM_UNAVAILABLE));
         } else {
             None
         };

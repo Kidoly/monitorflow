@@ -153,6 +153,27 @@ impl Lanes {
         Some((guard, cancelled))
     }
 
+    /// Removes the lane's slot if nothing holds it or waits for it: its
+    /// buffered records, if any, keep their place in the buffer, and the
+    /// next session or replay makes a new slot.
+    pub fn forget_idle(&self, lane: &str) {
+        let mut lanes = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        // Every holder and waiter keeps a clone of the lock, made under
+        // this map's lock: one left means none of them.
+        if lanes
+            .get(lane)
+            .is_some_and(|slot| Arc::strong_count(&slot.lock) == 1)
+        {
+            lanes.remove(lane);
+        }
+    }
+
+    /// How many lanes have a slot.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
     /// Records the origin of a lane taken with [`Self::try_take`].
     pub fn set_origin(&self, lane: &str, origin: &str) {
         let mut lanes = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -513,6 +534,40 @@ mod tests {
         assert_eq!(status.code(), Code::Aborted);
         assert!(!is_permanent(&status));
         assert!(is_permanent(&Status::permission_denied("not your site")));
+    }
+
+    #[tokio::test]
+    async fn an_idle_slot_is_forgotten_but_never_one_in_use() {
+        let lanes = Arc::new(Lanes::default());
+        let held = lanes.take("relay-1/x-1", "").await;
+        lanes.forget_idle("relay-1/x-1");
+        assert_eq!(lanes.len(), 1, "held");
+        // A session waiting for the slot keeps it too.
+        let waiting = tokio::spawn({
+            let lanes = lanes.clone();
+            async move { lanes.take("relay-1/x-1", "").await }
+        });
+        while Arc::strong_count(&lanes.0.lock().unwrap()["relay-1/x-1"].lock) < 3 {
+            tokio::task::yield_now().await;
+        }
+        drop(held);
+        lanes.forget_idle("relay-1/x-1");
+        let next = waiting.await.unwrap();
+        assert_eq!(lanes.len(), 1, "waited for");
+        drop(next);
+        lanes.forget_idle("relay-1/x-1");
+        assert_eq!(lanes.len(), 0);
+        lanes.forget_idle("never-there");
+    }
+
+    #[tokio::test]
+    async fn a_lane_without_an_origin_holds_back_no_replay() {
+        let lanes = Lanes::default();
+        // A relayed claim not accepted yet: no origin.
+        let _claim = lanes.take("relay-1/web-01", "").await;
+        assert!(!lanes.origin_busy_elsewhere("web-01", "agent/web-01"));
+        lanes.set_origin("relay-1/web-01", "agent/web-01");
+        assert!(lanes.origin_busy_elsewhere("web-01", "agent/web-01"));
     }
 
     #[tokio::test]
