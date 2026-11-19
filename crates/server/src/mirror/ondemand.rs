@@ -175,10 +175,6 @@ impl Staging {
         })
     }
 
-    pub fn stats(&self) -> Stats {
-        self.stats
-    }
-
     /// apt: downloads the suite's `Release` and `Release.gpg`, which the
     /// caller must verify before [`Self::apt_indexes`]. Returns their
     /// paths.
