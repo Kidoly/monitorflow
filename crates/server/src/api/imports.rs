@@ -14,7 +14,7 @@ use axum::Json;
 use base64::Engine;
 use chrono::{DateTime, TimeDelta, Utc};
 use monitorflow_import::source::{self, Connection, File, Input, SourceInfo, MAX_HOSTS};
-use monitorflow_import::{Context, ReadError};
+use monitorflow_import::ReadError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -384,7 +384,7 @@ pub async fn preview(
     source::check_input(&info, &input).map_err(read_error)?;
     let now = Utc::now();
     let inventory = reader
-        .read(input, &Context::new(now))
+        .read(input, &import::reach::context(now, is_global_admin(&user)))
         .await
         .map_err(read_error)?;
     if inventory.hosts.len() > MAX_HOSTS {

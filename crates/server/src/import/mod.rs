@@ -6,6 +6,7 @@
 //! would create. [`store`] reads and writes runs.
 
 pub mod plan;
+pub mod reach;
 pub mod store;
 
 use std::collections::BTreeMap;

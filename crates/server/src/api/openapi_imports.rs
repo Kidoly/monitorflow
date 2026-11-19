@@ -73,8 +73,9 @@ fn list_imports() {}
 /// Reads `files`, or connects with `connection`, and stores a preview of
 /// what a confirmation would create; nothing else is written. `site_id`
 /// may be left out by someone who administers one site. A connection's
-/// token is used for this request only. Audited as `import.preview`. A
-/// preview can be confirmed for a day.
+/// token is used for this request only; someone other than a global
+/// administrator connects to public addresses only (ADR-0163). Audited as
+/// `import.preview`. A preview can be confirmed for a day.
 #[utoipa::path(post, path = "/api/v1/imports", tag = "imports",
     request_body(content = imports::PreviewRequest, example = json!({
         "source": "example",
@@ -83,7 +84,7 @@ fn list_imports() {}
     })),
     responses(
         (status = 201, description = "The preview", body = imports::RunView, example = json!(run(true))),
-        (status = 400, description = "`invalid`: unknown source, files and a connection together or neither, a file it cannot read, a field missing, the other tool unreachable or refusing the token", body = ErrorBody),
+        (status = 400, description = "`invalid`: unknown source, files and a connection together or neither, a file it cannot read, a field missing, the other tool unreachable or refusing the token, a private address for someone other than a global administrator", body = ErrorBody),
         (status = 403, description = "`forbidden`: not an administrator of the site; `api_key_scope`", body = ErrorBody),
         (status = 404, description = "`not_found`: no such site", body = ErrorBody),
     ))]

@@ -3,12 +3,14 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+use crate::http::Guard;
 use crate::model::Inventory;
 
 /// Largest file a reader is given, in bytes.
@@ -96,6 +98,8 @@ pub struct Context {
     pub now: DateTime<Utc>,
     /// Timeout of each request of a connection.
     pub timeout: Duration,
+    /// What a connection may reach; `None` for any address.
+    pub guard: Option<Arc<dyn Guard>>,
 }
 
 impl Context {
@@ -103,7 +107,14 @@ impl Context {
         Self {
             now,
             timeout: Duration::from_secs(30),
+            guard: None,
         }
+    }
+
+    /// This context, its connections limited by `guard`.
+    pub fn with_guard(mut self, guard: Arc<dyn Guard>) -> Self {
+        self.guard = Some(guard);
+        self
     }
 }
 

@@ -971,4 +971,32 @@ db_tests! {
         assert_eq!(count(&pool, "SELECT count(*) FROM sensor_configs WHERE kind = 'snmp_custom'").await, 0);
         assert_eq!(count(&pool, "SELECT count(*) FROM snmp_lookups").await, 2);
     }
+
+    /// A connection reaches private addresses only for a global
+    /// administrator (ADR-0163): an administrator of one site cannot make
+    /// the central server probe its own side of the network.
+    #[sqlx::test]
+    async fn only_a_global_administrator_connects_to_private_addresses(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (global, _) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        let (local, _) = login(&pool, "bob", Role::Administrator, GrantScope::Site(paris)).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        for url in [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")] {
+            let request = json!({"source": "prometheus", "site_id": paris, "connection": {"url": url}});
+            let (status, body) = call(&pool, "POST", "/api/imports", &local, Some(request)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert!(body.to_string().contains("private address"), "{body}");
+        }
+        let reached = tokio::time::timeout(std::time::Duration::from_millis(200), listener.accept()).await;
+        assert!(reached.is_err(), "the connection reached a private address");
+        // The same address for a global administrator: the server connects.
+        let accept = tokio::spawn(async move { listener.accept().await.is_ok() });
+        let request = json!({"source": "prometheus", "site_id": paris, "connection": {"url": format!("http://127.0.0.1:{port}")}});
+        let (status, _) = call(&pool, "POST", "/api/imports", &global, Some(request)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(accept.await.unwrap());
+        assert_eq!(count(&pool, "SELECT count(*) FROM import_runs").await, 0);
+    }
 }
