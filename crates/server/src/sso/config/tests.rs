@@ -124,3 +124,12 @@ fn the_address_keeps_a_secret_where_it_was_entered() {
     assert!(ldap("ldaps://a", false).needs_secret());
     assert!(!oidc("https://a").needs_secret());
 }
+
+#[test]
+fn kinds_come_from_the_column() {
+    assert_eq!(Kind::of_column("ldap"), Kind::Ldap);
+    assert_eq!(Kind::of_column("oidc"), Kind::Oidc);
+    for kind in [Kind::Oidc, Kind::Ldap] {
+        assert_eq!(Kind::of_column(kind.as_str()), kind);
+    }
+}
