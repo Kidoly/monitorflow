@@ -268,7 +268,11 @@ scrape_configs:
             name: name.into(),
             content: text.as_bytes().to_vec(),
         };
-        let collected = crate::prometheus::files::collect(&[file("prometheus.yml", prometheus), file("snmp.yml", SNMP_YML)]).unwrap();
+        let collected = crate::prometheus::files::collect(&[
+            file("prometheus.yml", prometheus),
+            file("snmp.yml", SNMP_YML),
+        ])
+        .unwrap();
         let inventory = collected.inventory();
         let custom: Vec<_> = inventory
             .checks
@@ -278,7 +282,9 @@ scrape_configs:
         assert_eq!(custom.len(), 2, "{:?}", inventory.checks);
         assert_eq!(custom[0].origin.name, "synology");
         assert_eq!(custom[0].interval_s, Some(120));
-        assert!(inventory.checks.iter().any(|c| c.watch == crate::model::Watch::Snmp { group: "system".into() }));
+        assert!(inventory.checks.iter().any(|c| c.watch
+            == crate::model::Watch::Snmp {
+                group: "system".into()
+            }));
     }
-
 }

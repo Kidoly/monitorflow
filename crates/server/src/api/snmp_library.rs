@@ -1039,33 +1039,33 @@ pub async fn name_oids(
     .bind(&prefixes)
     .fetch_all(&mut *db)
     .await?;
-    let mut known: BTreeMap<Vec<u32>, String> = rows
+    // The customer's MIBs first, then the library, then the standard roots:
+    // a name the customer uploaded wins over one MonitorFlow knows.
+    let mibs: BTreeMap<Vec<u32>, String> = rows
         .into_iter()
         .filter_map(|(oid, name)| Some((parse_oid(&oid)?, name)))
         .collect();
-    for object in library::library() {
-        if let Some(oid) = parse_oid(object.oid) {
-            known
-                .entry(oid)
-                .or_insert_with(|| object.name.trim_end_matches(".0").to_owned());
-        }
-    }
-    for (oid, name) in mib::base()
+    let library: BTreeMap<Vec<u32>, String> = library::library()
+        .iter()
+        .filter_map(|o| Some((parse_oid(o.oid)?, o.name.trim_end_matches(".0").to_owned())))
+        .collect();
+    let roots: BTreeMap<Vec<u32>, String> = mib::base()
         .modules
         .values()
         .flat_map(|m| &m.nodes)
         .map(|(n, o)| (o.clone(), n.clone()))
-    {
-        known.entry(oid).or_insert(name);
-    }
+        .collect();
     Ok(oids
         .iter()
         .filter_map(|oid| {
             // Roots shorter than `internet` (1.3.6.1) name nothing useful.
-            let n = (4..=oid.len())
-                .rev()
-                .find(|n| known.contains_key(&oid[..*n]))?;
-            let name = &known[&oid[..n]];
+            let (n, name) = [&mibs, &library, &roots].into_iter().find_map(|known| {
+                let n = (4..=oid.len())
+                    .rev()
+                    .find(|n| known.contains_key(&oid[..*n]))?;
+                Some((n, known[&oid[..n]].clone()))
+            })?;
+            let name = &name;
             let rest = &oid[n..];
             let full = if rest.is_empty() {
                 name.clone()
