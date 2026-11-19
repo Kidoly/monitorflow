@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EffectiveThreshold } from "./api";
-import { thresholdFor, thresholdLines } from "./thresholds";
+import { thresholdFor } from "./thresholds";
 
 const DISK = "monitorflow_disk_used_ratio";
 
@@ -41,52 +41,9 @@ describe("thresholdFor", () => {
     const forecast = threshold({ kind: "forecast", instance: "/", warning: 259_200, critical: 86_400 });
     const every = threshold({});
     expect(thresholdFor([forecast, every], DISK, "/")).toBe(every);
-    expect(thresholdLines([forecast], DISK, ["/"])).toEqual([]);
   });
 
   it("does not let an exact instance match another one", () => {
     expect(thresholdFor([threshold({ instance: "/var" })], DISK, "/")).toBeUndefined();
-  });
-});
-
-describe("thresholdLines", () => {
-  it("draws shared values once with plain labels", () => {
-    expect(thresholdLines([threshold({})], DISK, ["/", "/var", "/home"])).toEqual([
-      { severity: "warning", value: 0.85, label: "Warning" },
-      { severity: "critical", value: 0.95, label: "Critical" },
-    ]);
-  });
-
-  it("names the instances of values not every line shares", () => {
-    const lines = thresholdLines(
-      [threshold({ critical: null }), threshold({ instance: "/data", warning: 0.7, critical: 0.9 })],
-      DISK,
-      ["/", "/var", "/data"],
-    );
-    expect(lines).toEqual([
-      { severity: "warning", value: 0.85, label: "Warning (/, /var)" },
-      { severity: "warning", value: 0.7, label: "Warning (/data)" },
-      { severity: "critical", value: 0.9, label: "Critical (/data)" },
-    ]);
-  });
-
-  it("leaves out muted instances and shortens long lists", () => {
-    const lines = thresholdLines(
-      [threshold({ critical: null }), threshold({ instance: "/boot", enabled: false })],
-      DISK,
-      ["/", "/a", "/b", "/c", "/boot"],
-    );
-    expect(lines).toEqual([{ severity: "warning", value: 0.85, label: "Warning (/, /a and 2 more)" }]);
-  });
-
-  it("matches the series without an instance", () => {
-    const port = "monitorflow_port_open";
-    const t = threshold({ metric: port, instance: "", comparison: "<", warning: null, critical: 1 });
-    expect(thresholdLines([t], port, [""])).toEqual([{ severity: "critical", value: 1, label: "Critical" }]);
-  });
-
-  it("draws nothing for a chart without lines or thresholds", () => {
-    expect(thresholdLines([threshold({})], DISK, [])).toEqual([]);
-    expect(thresholdLines([], DISK, ["/"])).toEqual([]);
   });
 });

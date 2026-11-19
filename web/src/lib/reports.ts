@@ -2,6 +2,7 @@ import { t } from "@/i18n";
 import { activeLocale } from "@/i18n/locale";
 
 import type { AvailabilityCause } from "./api";
+import { formatDay } from "./clock";
 
 /** The periods the Reports page offers (ADR-0155). */
 export type PeriodChoice = "thisMonth" | "lastMonth" | "last7" | "last30" | "custom";
@@ -10,11 +11,9 @@ export const PERIOD_CHOICES: PeriodChoice[] = ["thisMonth", "lastMonth", "last7"
 
 const DAY_MS = 86_400_000;
 
-const pad = (n: number) => String(n).padStart(2, "0");
-
 /** `date` as the value of a date input: "2026-10-04", local. */
 export function dateInput(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return formatDay(date);
 }
 
 /** Local midnight of a date input's value, or null. */

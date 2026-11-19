@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ALL_SITES, customerWide, placeLabel } from "./customers";
+import { customerWide, placeLabel } from "./customers";
 
 describe("customer wording (ADR-0104)", () => {
   it("names the customer of a site only among several", () => {
@@ -12,6 +12,6 @@ describe("customer wording (ADR-0104)", () => {
 
   it("calls a customer-wide choice all sites for a single company", () => {
     expect(customerWide("All of acme", true)).toBe("All of acme");
-    expect(customerWide("All of acme", false)).toBe(ALL_SITES);
+    expect(customerWide("All of acme", false)).toBe("All sites");
   });
 });

@@ -76,12 +76,6 @@ export function apiQuery(filters: IncidentFilters): IncidentQuery {
   };
 }
 
-/** Seconds an incident lasted, or has lasted so far when still open. */
-export function incidentSeconds(openedAt: string, resolvedAt: string | null, now: Date): number {
-  const end = resolvedAt ? Date.parse(resolvedAt) : now.getTime();
-  return Math.max(0, Math.round((end - Date.parse(openedAt)) / 1000));
-}
-
 /** Steps for an incident's chart, the graphs' ones first (ADR-0020). */
 const CHART_STEPS = [30, 120, 300, 1_800, 3_600, 21_600];
 /** Most points in an incident's chart. */

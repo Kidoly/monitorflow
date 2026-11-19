@@ -22,6 +22,23 @@ export function formatMinute(date: Date): string {
   return `${formatDay(date)} ${formatHourMinute(date)}`;
 }
 
+/** A `datetime-local` value for `date`, in the browser's time zone: "2026-10-15T07:40". */
+export function toLocalInput(date: Date): string {
+  return `${formatDay(date)}T${formatHourMinute(date)}`;
+}
+
+/** The value of a `datetime-local` input as an ISO time, or null when empty or invalid. */
+export function localToIso(value: string): string | null {
+  if (!value) return null;
+  const time = new Date(value);
+  return Number.isNaN(time.getTime()) ? null : time.toISOString();
+}
+
+/** The browser's time zone, UTC when it names none. */
+export function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
 /** Relative to `now`'s day: "14:32 today", "yesterday 22:05", else "2026-10-20 16:40". */
 export function formatWhen(date: Date, now: Date): string {
   if (sameDay(date, now)) return t("ui.clock.today", { time: formatHourMinute(date) });
