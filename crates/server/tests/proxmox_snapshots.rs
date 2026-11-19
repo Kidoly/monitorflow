@@ -1253,6 +1253,30 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_copied_mac_address_takes_no_guest_from_another_customer(pool: PgPool) {
+        let h = Harness::start().await;
+        let [(_, acme_site), (_, globex_site)] = tenants(&pool).await;
+        // The operator's cluster, serving every customer.
+        h.guest(101, "pve1", "qemu", "web-1", json!({
+            "smbios1": format!("uuid={UUID_1}"),
+            "net0": "virtio=BC:24:11:00:00:01,bridge=vmbr0",
+        }));
+        h.guest(102, "pve1", "qemu", "app-1", json!({ "net0": "virtio=BC:24:11:00:00:02,bridge=vmbr0" }));
+        let theirs = reporting(&pool, globex_site, "web-1", Some(UUID_1), &["bc:24:11:00:00:01"]).await;
+        let snapshots = snapshotter(&h, &pool, 3);
+        snapshots.discover().await.unwrap();
+        // Another customer's server reports that MAC address next to its own.
+        let ours = reporting(&pool, acme_site, "app-1", None, &["bc:24:11:00:00:01", "bc:24:11:00:00:02"]).await;
+        let found = snapshots.discover().await.unwrap();
+        assert_eq!(found.unmapped, 0, "{found:?}");
+        let rows: Vec<(Uuid, i32)> = mappings(&pool).await.into_iter().map(|m| (m.0, m.3)).collect();
+        assert_eq!(rows, [(theirs, 101)]);
+        let candidates: Vec<(Uuid, i32)> = sqlx::query_as("SELECT server_id, vmid FROM server_proxmox_candidates")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(candidates, [(ours, 102)], "the other customer's guest is no candidate");
+    }
+
+    #[sqlx::test]
     async fn a_cluster_that_cannot_be_listed_unmaps_nothing(pool: PgPool) {
         let h = Harness::start().await;
         let [(_, site), _] = tenants(&pool).await;

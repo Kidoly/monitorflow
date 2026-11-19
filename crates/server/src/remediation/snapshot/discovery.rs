@@ -118,8 +118,9 @@ pub fn reported_macs(list: &[String]) -> Vec<String> {
     macs
 }
 
-/// What matched a server to a guest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// What matched a server to a guest, strongest first: the order is the
+/// one `Ord` follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Signal {
     Uuid,
@@ -304,21 +305,64 @@ pub fn match_servers(
         };
         found.insert(server.id, result);
     }
-    // A guest one server matches alone, but another too: neither is sure.
-    let mut claims: HashMap<GuestKey, Vec<Uuid>> = HashMap::new();
-    for (server, result) in &found {
-        if let Found::One(key, _) = result {
-            claims.entry(key.clone()).or_default().push(*server);
-        }
-    }
-    for servers in claims.values().filter(|s| s.len() > 1) {
-        for server in servers {
-            if let Some(Found::One(key, signal)) = found.get(server).cloned() {
-                found.insert(*server, Found::Several(vec![(key, signal)]));
-            }
-        }
-    }
+    settle_claims(&mut found, servers);
     found
+}
+
+/// Settles guests that several servers match. The strongest signal keeps
+/// the guest and weaker claims lose it, so a copied MAC address or name
+/// cannot take a guest from the server its UUID matches. Equal claims
+/// leave each claimant unsure, with the guest as a candidate, unless they
+/// belong to different customers: then the guest is the candidate of none
+/// of them, as only a global administrator may decide between customers.
+fn settle_claims(found: &mut HashMap<Uuid, Found>, servers: &[ServerFacts]) {
+    let customer: HashMap<Uuid, Uuid> = servers.iter().map(|s| (s.id, s.customer)).collect();
+    let mut claims: HashMap<GuestKey, Vec<(Uuid, Signal)>> = HashMap::new();
+    for (server, result) in found.iter() {
+        let list = match result {
+            Found::One(key, signal) => vec![(key.clone(), *signal)],
+            Found::Several(list) => list.clone(),
+            Found::Nothing => Vec::new(),
+        };
+        for (key, signal) in list {
+            claims.entry(key).or_default().push((*server, signal));
+        }
+    }
+    for (key, claimants) in claims.into_iter().filter(|(_, c)| c.len() > 1) {
+        let Some(best) = claimants.iter().map(|(_, signal)| *signal).min() else {
+            continue;
+        };
+        let winners: Vec<Uuid> = claimants
+            .iter()
+            .filter(|(_, signal)| *signal == best)
+            .map(|(server, _)| *server)
+            .collect();
+        let customers: HashSet<Option<&Uuid>> = winners.iter().map(|w| customer.get(w)).collect();
+        for (server, _) in &claimants {
+            let Some(result) = found.get_mut(server) else {
+                continue;
+            };
+            let keeps = winners.contains(server) && customers.len() == 1;
+            *result = match std::mem::replace(result, Found::Nothing) {
+                Found::One(k, signal) if keeps && winners.len() > 1 => {
+                    Found::Several(vec![(k, signal)])
+                }
+                one @ Found::One(..) if keeps => one,
+                Found::Several(list) => {
+                    let list: Vec<_> = list
+                        .into_iter()
+                        .filter(|(k, _)| keeps || *k != key)
+                        .collect();
+                    if list.is_empty() {
+                        Found::Nothing
+                    } else {
+                        Found::Several(list)
+                    }
+                }
+                _ => Found::Nothing,
+            };
+        }
+    }
 }
 
 /// What a pass did, for logs and tests.
@@ -828,6 +872,53 @@ mod tests {
         let both = Found::Several(vec![(("pve".into(), 103), Signal::Mac)]);
         assert_eq!(found[&Uuid::from_u128(2)], both);
         assert_eq!(found[&Uuid::from_u128(3)], both);
+    }
+
+    #[test]
+    fn a_weaker_claim_never_takes_a_guest_from_another_server() {
+        let guests = [
+            guest(101, "web-1", Some(1), &["bc:24:11:00:00:01"]),
+            guest(102, "app-1", Some(2), &["bc:24:11:00:00:02"]),
+        ];
+        let theirs = server(1, "web-1", Some(1), &["bc:24:11:00:00:01"]);
+        // Another customer's server copies the MAC address of 101, alone
+        // or next to its own guest's, or reports its name and nothing
+        // else.
+        for (macs, own) in [
+            (vec!["bc:24:11:00:00:01"], None),
+            (vec!["bc:24:11:00:00:01", "bc:24:11:00:00:02"], Some(102)),
+        ] {
+            let mut ours = server(2, "x", None, &macs);
+            ours.customer = GLOBEX;
+            let found = match_servers(
+                &[theirs.clone(), ours],
+                &guests,
+                &everyone(),
+                &HashSet::new(),
+            );
+            assert_eq!(found[&Uuid::from_u128(1)], one(101, Signal::Uuid));
+            let expected = match own {
+                Some(vmid) => Found::Several(vec![(("pve".into(), vmid), Signal::Mac)]),
+                None => Found::Nothing,
+            };
+            assert_eq!(found[&Uuid::from_u128(2)], expected, "{macs:?}");
+        }
+        let mut named = server(2, "web-1", None, &[]);
+        named.customer = GLOBEX;
+        let found = match_servers(&[theirs, named], &guests, &everyone(), &HashSet::new());
+        assert_eq!(found[&Uuid::from_u128(1)], one(101, Signal::Uuid));
+        assert_eq!(found[&Uuid::from_u128(2)], Found::Nothing);
+    }
+
+    #[test]
+    fn equal_claims_of_two_customers_make_no_candidate() {
+        let guests = [guest(101, "web-1", None, &["bc:24:11:00:00:01"])];
+        let theirs = server(1, "web-1", None, &["bc:24:11:00:00:01"]);
+        let mut ours = server(2, "x", None, &["bc:24:11:00:00:01"]);
+        ours.customer = GLOBEX;
+        let found = match_servers(&[theirs, ours], &guests, &everyone(), &HashSet::new());
+        assert_eq!(found[&Uuid::from_u128(1)], Found::Nothing);
+        assert_eq!(found[&Uuid::from_u128(2)], Found::Nothing);
     }
 
     #[test]
