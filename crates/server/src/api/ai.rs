@@ -17,11 +17,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgExecutor;
 
-use super::access::Scope;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::notifications::TestResult;
 use super::sensors::body;
+use super::server_update::require_global_admin;
 use super::{ApiError, ApiState};
 use crate::secrets::Column;
 
@@ -220,14 +220,6 @@ async fn stored(db: impl PgExecutor<'_>, lock: bool) -> Result<Stored, ApiError>
 async fn current(state: &ApiState) -> Result<AiView, ApiError> {
     let stored = stored(&state.pool, false).await?;
     Ok(view(&state.settings.ai.config, &stored))
-}
-
-fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
-    if user.administered_customers() == Scope::All {
-        Ok(())
-    } else {
-        Err(ApiError::Forbidden)
-    }
 }
 
 /// A pasted key: `None` when empty, which keeps the stored one.

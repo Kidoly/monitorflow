@@ -253,6 +253,24 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn endpoints_and_channels_cover_only_what_exists(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let missing = Uuid::new_v4();
+        for (field, error) in [("customer_id", "unknown customer"), ("site_id", "unknown site")] {
+            let ask = json!({ "name": "PSA", "url": "https://psa.example/hook", field: missing });
+            let (status, body, _) = call(&pool, "POST", ENDPOINTS, Some(&global), Some(ask)).await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some(error)));
+            let channel = json!({
+                "kind": "webhook", "settings": { "url": "https://hooks.example/x" }, field: missing,
+            });
+            let (status, body, _) =
+                call(&pool, "POST", "/api/notifications/channels", Some(&global), Some(channel)).await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some(error)));
+        }
+    }
+
+    #[sqlx::test]
     async fn customer_administrators_manage_theirs_but_not_private_addresses(pool: PgPool) {
         monitorflow_server::secrets::install_for_tests();
         let (acme, _) = place(&pool, "acme").await;

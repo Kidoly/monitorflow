@@ -26,8 +26,8 @@ use uuid::Uuid;
 
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
-use super::mirrors::require_global_admin;
 use super::sensors::body;
+use super::server_update::require_global_admin;
 use super::servers::page_limit;
 use super::{ApiError, ApiState};
 use crate::auto_update::policy::{self, Settings, SitePhase, Tries};

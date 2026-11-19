@@ -22,9 +22,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::access::Scope;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
+use super::notifications::is_global_admin;
 use super::sensors::body;
 use super::{ApiError, ApiState};
 use crate::release_check::{self, running_version};
@@ -157,7 +157,7 @@ pub struct Started {
 }
 
 pub(super) fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
-    if user.administered_customers() != Scope::All {
+    if !is_global_admin(user) {
         return Err(ApiError::Forbidden);
     }
     Ok(())

@@ -170,6 +170,29 @@ async fn view(db: impl PgExecutor<'_>, id: Uuid) -> Result<ChannelView, ApiError
         .ok_or(ApiError::NotFound)
 }
 
+/// 400 unless the customer or site `coverage` names exists.
+pub(super) async fn check_exists(
+    db: impl PgExecutor<'_>,
+    coverage: Coverage,
+) -> Result<(), ApiError> {
+    let unknown = match coverage {
+        Coverage::Everything => None,
+        Coverage::Customer(id) => Some((
+            sqlx::query_scalar("SELECT id FROM customers WHERE id = $1").bind(id),
+            "unknown customer",
+        )),
+        Coverage::Site(id) => Some((
+            sqlx::query_scalar("SELECT id FROM sites WHERE id = $1").bind(id),
+            "unknown site",
+        )),
+    };
+    if let Some((query, error)) = unknown {
+        let exists: Option<Uuid> = query.fetch_optional(db).await?;
+        exists.ok_or_else(|| ApiError::Invalid(error.into()))?;
+    }
+    Ok(())
+}
+
 /// A valid request: what it sends to, its secret and what it covers.
 struct Valid {
     destination: Destination,
@@ -201,21 +224,7 @@ async fn validate(
         request.secret,
         current.map(|c| &c.destination),
     )?;
-    let unknown = match coverage {
-        Coverage::Everything => None,
-        Coverage::Customer(id) => Some((
-            sqlx::query_scalar("SELECT id FROM customers WHERE id = $1").bind(id),
-            "unknown customer",
-        )),
-        Coverage::Site(id) => Some((
-            sqlx::query_scalar("SELECT id FROM sites WHERE id = $1").bind(id),
-            "unknown site",
-        )),
-    };
-    if let Some((query, error)) = unknown {
-        let exists: Option<Uuid> = query.fetch_optional(db).await?;
-        exists.ok_or_else(|| ApiError::Invalid(error.into()))?;
-    }
+    check_exists(db, coverage).await?;
     Ok(Valid {
         destination,
         secret: secret.map(Secret::new),

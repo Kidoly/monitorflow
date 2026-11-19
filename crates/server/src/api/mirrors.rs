@@ -11,9 +11,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::access::Scope;
 use super::auth::CurrentUser;
 use super::sensors::{body, parse_id};
+use super::server_update::require_global_admin;
 use super::{ApiError, ApiState};
 use crate::mirror::cache;
 use crate::mirror::catalog::{self, Disk, CATALOG};
@@ -210,13 +210,6 @@ pub struct AddRequest {
 pub struct UpdateRequest {
     /// What the next sync downloads (ADR-0142).
     pub mode: Mode,
-}
-
-pub(super) fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
-    if user.administered_customers() != Scope::All {
-        return Err(ApiError::Forbidden);
-    }
-    Ok(())
 }
 
 async fn view(state: &ApiState, mirror: Mirror) -> Result<MirrorView, ApiError> {

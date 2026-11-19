@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
-use super::notifications::{is_global_admin, manages, require_administrator};
+use super::notifications::{check_exists, is_global_admin, manages, require_administrator};
 use super::roles::Role;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
@@ -301,21 +301,7 @@ async fn validate(
         }
         kept && request.allow_private
     };
-    let unknown = match coverage {
-        Coverage::Everything => None,
-        Coverage::Customer(id) => Some((
-            sqlx::query_scalar("SELECT id FROM customers WHERE id = $1").bind(id),
-            "unknown customer",
-        )),
-        Coverage::Site(id) => Some((
-            sqlx::query_scalar("SELECT id FROM sites WHERE id = $1").bind(id),
-            "unknown site",
-        )),
-    };
-    if let Some((query, error)) = unknown {
-        let exists: Option<Uuid> = query.fetch_optional(db).await?;
-        exists.ok_or_else(|| ApiError::Invalid(error.into()))?;
-    }
+    check_exists(db, coverage).await?;
     Ok(Valid {
         name,
         url,

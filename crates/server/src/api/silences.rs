@@ -18,9 +18,10 @@ use serde_json::json;
 use sqlx::PgExecutor;
 use uuid::Uuid;
 
-use super::access::{authorize, Scope};
+use super::access::authorize;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
+use super::notifications::is_global_admin;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
 use crate::notify::silence::{CheckRef, MAX_CHECKS};
@@ -159,7 +160,7 @@ fn may_end(user: &CurrentUser, silence: &SilenceView) -> bool {
     match (silence.site_id, silence.customer_id) {
         (Some(site), _) => user.modifiable_sites().contains(site),
         (None, Some(customer)) => user.modifiable_customers().contains(customer),
-        (None, None) => user.administered_customers() == Scope::All,
+        (None, None) => is_global_admin(user),
     }
 }
 
@@ -250,7 +251,7 @@ async fn authorize_target(
 ) -> Result<(), ApiError> {
     match (target, id) {
         (Target::All, None) => {
-            if user.administered_customers() == Scope::All {
+            if is_global_admin(user) {
                 Ok(())
             } else {
                 Err(ApiError::Forbidden)
