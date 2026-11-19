@@ -19,8 +19,8 @@
 //! one reports none. Counters that go back (a reboot, a wrap of a 32-bit
 //! counter) give no rate for that collection.
 //!
-//! Parameters: `host` (required), `port` (161), `version` (`v2c` or
-//! `v3`), `community` for v2c; for v3 `user`, `auth_protocol` (`sha`,
+//! Parameters: `host` (required), `port` (161), `version` (`v1`, `v2c` or
+//! `v3`; `v1` since ADR-0157), `community` for v1 and v2c; for v3 `user`, `auth_protocol` (`sha`,
 //! `sha256`, `sha384`, `sha512`, `md5`) and `auth_password`, and
 //! `priv_protocol` (`aes128`, `aes256`, `aes256c` for Cisco's key
 //! extension) and `priv_password`. The server keeps the credentials sealed
@@ -29,6 +29,7 @@
 
 mod mibs;
 mod sensor;
+mod session;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -56,6 +57,9 @@ pub const CREDENTIAL_PARAMS: [&str; 7] = [
 /// How to authenticate to a device.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Credentials {
+    V1 {
+        community: String,
+    },
     V2c {
         community: String,
     },
@@ -69,6 +73,7 @@ pub enum Credentials {
 impl std::fmt::Debug for Credentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::V1 { .. } => f.write_str("V1 { community: <hidden> }"),
             Self::V2c { .. } => f.write_str("V2c { community: <hidden> }"),
             Self::V3 {
                 user,
@@ -161,23 +166,17 @@ const MIN_PASSWORD: usize = 8;
 /// Reads and checks the parameters of an `snmp` check. Errors never
 /// quote a secret.
 pub fn parse(params: &BTreeMap<String, String>) -> Result<Target, String> {
-    let get = |name: &str| params.get(name).map(|v| v.trim()).filter(|v| !v.is_empty());
     if let Some(unknown) = params.keys().find(|k| {
         !["host", "port", "what"].contains(&k.as_str()) && !CREDENTIAL_PARAMS.contains(&k.as_str())
     }) {
         return Err(format!("unknown parameter `{}`", unknown.escape_debug()));
     }
-    let host = get("host").ok_or("parameter `host` is required")?;
-    monitorflow_sensors::port::parse_host(host).map_err(|e| format!("parameter `host`: {e}"))?;
-    let port = match get("port") {
-        None => 161,
-        Some(port) => port
-            .parse::<u16>()
-            .ok()
-            .filter(|p| *p > 0)
-            .ok_or("parameter `port` must be between 1 and 65535")?,
-    };
-    let group = match get("what") {
+    let device = device(params)?;
+    let group = match params
+        .get("what")
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         None => Group::System,
         Some(what) => Group::parse(what).ok_or_else(|| {
             format!(
@@ -190,6 +189,36 @@ pub fn parse(params: &BTreeMap<String, String>) -> Result<Target, String> {
             )
         })?,
     };
+    Ok(Target {
+        host: device.host,
+        port: device.port,
+        credentials: device.credentials,
+        group,
+    })
+}
+
+/// A device to poll: where and with what credentials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Device {
+    pub host: String,
+    pub port: u16,
+    pub credentials: Credentials,
+}
+
+/// Reads `host`, `port` and the credentials of any kind of this crate,
+/// leaving other parameters to the caller. Errors never quote a secret.
+pub fn device(params: &BTreeMap<String, String>) -> Result<Device, String> {
+    let get = |name: &str| params.get(name).map(|v| v.trim()).filter(|v| !v.is_empty());
+    let host = get("host").ok_or("parameter `host` is required")?;
+    monitorflow_sensors::port::parse_host(host).map_err(|e| format!("parameter `host`: {e}"))?;
+    let port = match get("port") {
+        None => 161,
+        Some(port) => port
+            .parse::<u16>()
+            .ok()
+            .filter(|p| *p > 0)
+            .ok_or("parameter `port` must be between 1 and 65535")?,
+    };
     let secret = |name: &str| -> Result<Option<String>, String> {
         match params.get(name) {
             None => Ok(None),
@@ -201,6 +230,9 @@ pub fn parse(params: &BTreeMap<String, String>) -> Result<Target, String> {
         }
     };
     let credentials = match get("version").unwrap_or("v2c") {
+        "v1" | "1" => Credentials::V1 {
+            community: secret("community")?.ok_or("a v1 check needs a `community`")?,
+        },
         "v2c" | "2c" | "2" => Credentials::V2c {
             community: secret("community")?.ok_or("a v2c check needs a `community`")?,
         },
@@ -243,13 +275,12 @@ pub fn parse(params: &BTreeMap<String, String>) -> Result<Target, String> {
                 privacy,
             }
         }
-        _ => return Err("parameter `version` must be `v2c` or `v3`".into()),
+        _ => return Err("parameter `version` must be `v1`, `v2c` or `v3`".into()),
     };
-    Ok(Target {
+    Ok(Device {
         host: host.to_owned(),
         port,
         credentials,
-        group,
     })
 }
 
