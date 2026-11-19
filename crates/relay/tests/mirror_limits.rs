@@ -238,3 +238,29 @@ async fn a_body_without_a_length_is_cut_off_at_the_limit() {
         "{error}"
     );
 }
+
+#[tokio::test]
+async fn a_redirect_from_the_upstream_is_not_followed() {
+    // A page of the relay's own network, which a forged redirect on the
+    // plain HTTP link must not make it fetch and publish.
+    let inner = raw_upstream(
+        "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\n",
+        b"internal".to_vec(),
+        true,
+    )
+    .await;
+    let head = format!(
+        "HTTP/1.1 302 Found\r\nLocation: {inner}/latest/meta-data/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let base = raw_upstream(Box::leak(head.into_boxed_str()), Vec::new(), true).await;
+    let fetcher = Fetcher::new(&base, Duration::from_secs(30)).unwrap();
+    let got = fetcher.bytes("keys/monitorflow-archive.asc", 1 << 20).await;
+    assert!(got.is_err(), "{got:?}");
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("InRelease");
+    let got = fetcher
+        .file("InRelease", &dest, Expect::AtMost(1 << 20))
+        .await;
+    assert!(got.is_err(), "{got:?}");
+    assert!(std::fs::read(&dest).map_or(true, |b| b != b"internal"));
+}

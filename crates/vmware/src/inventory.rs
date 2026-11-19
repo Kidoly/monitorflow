@@ -107,12 +107,12 @@ fn snapshots(trees: &Element, out: &mut Vec<i64>) {
 /// Reads the objects of a collection. Templates are left out.
 pub fn read(objects: &[Element]) -> Inventory {
     let objects: Vec<Object<'_>> = objects.iter().filter_map(Object::read).collect();
-    let name_of = |key: &str| {
-        objects
-            .iter()
-            .find(|o| o.key == key)
-            .and_then(|o| o.text("name"))
-    };
+    // The first object of each key, as a search in order would find.
+    let mut by_key: HashMap<&str, &Object<'_>> = HashMap::new();
+    for object in &objects {
+        by_key.entry(object.key.as_str()).or_insert(object);
+    }
+    let name_of = |key: &str| by_key.get(key).and_then(|o| o.text("name"));
     let mut inventory = Inventory::default();
     for object in &objects {
         let key = object.key.clone();

@@ -80,17 +80,36 @@ pub struct Fetcher {
 impl Fetcher {
     /// `base` is the upstream's mirror listener, `http://host:7480`;
     /// `timeout` bounds connecting and every wait for more data. Requests
-    /// say they come from a relay.
+    /// say they come from a relay. A mirror listener never redirects, and
+    /// the link is plain HTTP: a redirect, which anyone in the middle can
+    /// forge, would make the relay fetch and publish a page of its own
+    /// network, so none is followed.
     pub fn new(base: &str, timeout: Duration) -> Result<Self, reqwest::Error> {
-        Self::with_agent(base, timeout, "monitorflow-relay")
+        Self::build(
+            base,
+            timeout,
+            "monitorflow-relay",
+            reqwest::redirect::Policy::none(),
+        )
     }
 
     /// As [`Self::new`], naming the program `agent` in the `User-Agent`
-    /// header, with this version.
+    /// header, with this version, and following redirects, as public
+    /// repositories send.
     pub fn with_agent(base: &str, timeout: Duration, agent: &str) -> Result<Self, reqwest::Error> {
+        Self::build(base, timeout, agent, reqwest::redirect::Policy::default())
+    }
+
+    fn build(
+        base: &str,
+        timeout: Duration,
+        agent: &str,
+        redirect: reqwest::redirect::Policy,
+    ) -> Result<Self, reqwest::Error> {
         let client = reqwest::Client::builder()
             .connect_timeout(timeout)
             .user_agent(format!("{agent}/{}", crate::VERSION))
+            .redirect(redirect)
             .build()?;
         Ok(Self {
             client,
