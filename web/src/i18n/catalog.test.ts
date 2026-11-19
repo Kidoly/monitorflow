@@ -3,7 +3,14 @@ import { join, relative } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { STATUS_TONES } from "@/components/ui/StatusLabel";
+import { CATALOGUE } from "@/lib/catalogue";
+import { KINDS as IMPORT_KINDS } from "@/lib/imports";
+import { EVENT_GROUPS } from "@/lib/integrations";
+import { SERVER_STATES } from "@/lib/serverState";
+
 import type { Message } from "./catalog";
+import { setActiveLocale } from "./locale";
 import { en, fr } from "./messages";
 
 type Catalogs = Record<string, Record<string, Message>>;
@@ -48,6 +55,30 @@ describe("catalogs", () => {
         expect(text, key).not.toMatch(/["']/);
       }
     }
+  });
+});
+
+// Keys built at run time from a list escape the type check when cast, and
+// the source test below sees only their fixed part: one missing showed as
+// the raw `common.state.waiting` in the fleet.
+describe("keys built from a list", () => {
+  it("are in both catalogs", () => {
+    const keys = [
+      ...SERVER_STATES.flatMap((state) => [`common.state.${state}`, `fleet.tree.pill.${state}`]),
+      ...Object.entries(STATUS_TONES).flatMap(([kind, values]) => Object.keys(values).map((value) => `ui.status.${kind}.${value}`)),
+      ...EVENT_GROUPS.flatMap((group) => [`integrations.group.${group.group}`, ...group.events.map((e) => `integrations.event.${e.event}`)]),
+      ...IMPORT_KINDS.flatMap((kind) => [`imports.kind.${kind}`, `imports.count.${kind}`]),
+    ];
+    expect(keys.filter((key) => !english.has(key) || !french.has(key))).toEqual([]);
+  });
+
+  it("give every check of the catalogue its words", () => {
+    for (const locale of ["en", "fr"] as const) {
+      setActiveLocale(locale);
+      const shown = CATALOGUE.flatMap((entry) => [entry.title, entry.description, JSON.stringify(entry.type)]);
+      expect(shown.filter((text) => text.includes("checks.entry.")), locale).toEqual([]);
+    }
+    setActiveLocale("en");
   });
 });
 
