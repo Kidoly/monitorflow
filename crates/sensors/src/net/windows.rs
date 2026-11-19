@@ -41,15 +41,18 @@ fn name(row: &MIB_IF_ROW2) -> String {
 }
 
 fn read() -> Result<Vec<(String, Counters)>, SensorError> {
-    let mut table: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
+    let mut out = std::mem::MaybeUninit::<*mut MIB_IF_TABLE2>::uninit();
     // SAFETY: GetIfTable2 writes the address of a table it allocates into
-    // `table`, which `Table` frees.
-    let status = unsafe { GetIfTable2(&mut table) };
-    if status != 0 || table.is_null() {
+    // `out`, which `Table` frees.
+    let status = unsafe { GetIfTable2(out.as_mut_ptr()) };
+    // SAFETY: on success the call has written the pointer; on failure it
+    // is never read.
+    let table = (status == 0).then(|| unsafe { out.assume_init() });
+    let Some(table) = table.filter(|t| !t.is_null()) else {
         return Err(SensorError::Transient(format!(
             "GetIfTable2 failed with error {status}"
         )));
-    }
+    };
     let table = Table(table);
     // SAFETY: a successful call returns NumEntries rows laid out after the
     // count, as the C declaration's flexible array; the slice lives no
