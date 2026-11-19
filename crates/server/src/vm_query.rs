@@ -139,10 +139,7 @@ async fn read_capped(mut response: reqwest::Response) -> Result<Vec<u8>, QueryEr
 
 fn excerpt(body: &[u8]) -> String {
     let text = String::from_utf8_lossy(body);
-    let mut end = text.len().min(MAX_ERROR_BODY);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = crate::ingest::journal::cut_at(&text, MAX_ERROR_BODY);
     text[..end].trim().to_owned()
 }
 
