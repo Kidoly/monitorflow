@@ -661,7 +661,8 @@ pub async fn set_groups(
     for view in request.mappings {
         let mapping = checked_mapping(&mut tx, view).await?;
         let duplicate = new.iter().any(|m| {
-            m.group.eq_ignore_ascii_case(&mapping.group)
+            // As the unique index and sso::grants compare them.
+            m.group.to_lowercase() == mapping.group.to_lowercase()
                 && m.role == mapping.role
                 && m.scope == mapping.scope
         });
