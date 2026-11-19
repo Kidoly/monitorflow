@@ -87,6 +87,32 @@ impl From<&model::Origin> for OriginView {
     }
 }
 
+/// The fields of a richer threshold (ADR-0153), as the threshold API takes
+/// them; all absent for a plain one.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct Richer {
+    /// `window`, `compare`, `forecast` or `nodata`; absent: `value`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_s: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset_s: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<crate::api::thresholds::ThresholdCondition>,
+}
+
+impl Richer {
+    /// The kind, `value` when absent.
+    pub fn kind(&self) -> &str {
+        self.kind.as_deref().unwrap_or("value")
+    }
+}
+
 /// What an item creates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "object", rename_all = "snake_case")]
@@ -128,7 +154,7 @@ pub enum Create {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         probe: bool,
     },
-    /// A threshold of a server.
+    /// A threshold of a server, as `POST /thresholds` takes it.
     Threshold {
         server: String,
         metric: String,
@@ -139,6 +165,10 @@ pub enum Create {
         critical: Option<f64>,
         duration_s: u32,
         hysteresis: f64,
+        /// What a richer rule judges (ADR-0153); empty for a plain
+        /// threshold.
+        #[serde(flatten, default)]
+        richer: Richer,
     },
     /// A silence of a server, or of the import's site when `server` is
     /// `null`.
@@ -176,6 +206,17 @@ pub enum Create {
         ends_on: Option<NaiveDate>,
         reason: String,
     },
+    /// A dependency (ADR-0152): the server, or one of its checks, is behind
+    /// the parent server or one of its checks.
+    Dependency {
+        server: String,
+        /// One check of it; `null` for all of it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check: Option<CheckRef>,
+        parent: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_check: Option<CheckRef>,
+    },
     /// A notification channel.
     Channel {
         /// `email`, `webhook`, `slack`, `teams` or `discord`.
@@ -211,7 +252,8 @@ pub struct ServiceMember {
 }
 
 impl Create {
-    /// `server`, `check`, `threshold`, `silence`, `window` or `channel`.
+    /// `server`, `check`, `threshold`, `silence`, `window`, `channel` or
+    /// `dependency`.
     pub fn object(&self) -> &'static str {
         match self {
             Self::Server { .. } | Self::Device { .. } => "server",
@@ -221,6 +263,7 @@ impl Create {
             Self::Window { .. } => "window",
             Self::Channel { .. } => "channel",
             Self::Service { .. } => "service",
+            Self::Dependency { .. } => "dependency",
         }
     }
 }

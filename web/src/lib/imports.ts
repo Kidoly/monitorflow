@@ -6,15 +6,17 @@
 
 import { type MessageKey, t } from "@/i18n";
 
-import { checkTitle, describeThreshold, shapeOf } from "./alerts";
+import { checkTitle, shapeOf } from "./alerts";
 import { checkName, describeRule } from "./maintenance";
 import { formatTarget } from "./reports";
+import { describeRule as describeAlertRule } from "./rules";
 import type {
   EffectiveSensor,
   ImportItem,
   ImportList,
   ImportNote,
   ImportResult,
+  SilencedCheck,
 } from "./api";
 import { formatDateTime } from "./format";
 
@@ -34,6 +36,7 @@ export const KINDS = [
   "window",
   "channel",
   "service",
+  "dependency",
   "builtin",
   "other",
 ] as const;
@@ -107,8 +110,14 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
         critical: create.critical,
         duration_s: create.duration_s,
         hysteresis: create.hysteresis,
+        kind: create.kind,
+        function: create.function,
+        window_s: create.window_s,
+        offset_s: create.offset_s,
+        target: create.target,
+        conditions: create.conditions,
       } as const;
-      return describeThreshold(
+      return describeAlertRule(
         shapeOf(sensorsOf(items), create.metric, create.instance),
         rule,
       );
@@ -138,6 +147,14 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
         ? t("imports.item.serviceAtLeast", { count: create.at_least, members })
         : t("imports.item.serviceAll", { members });
       return create.target === null ? t("imports.item.service", { name: create.name, rule }) : t("imports.item.serviceTarget", { name: create.name, rule, target: formatTarget(create.target) });
+    }
+    case "dependency": {
+      const end = (name: string, check?: SilencedCheck) =>
+        check ? t("dependencies.end.check", { check: checkName(check), name }) : name;
+      return t("imports.item.dependency", {
+        child: end(item.hosts[0] ?? create.server, create.check),
+        parent: end(item.hosts[1] ?? create.parent, create.parent_check),
+      });
     }
     case "channel": {
       const settings = create.settings;

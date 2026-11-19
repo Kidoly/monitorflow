@@ -3,7 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
-import type { Server } from "@/lib/api";
+import { en } from "@/i18n/messages";
+import type { Server, ServerState } from "@/lib/api";
+import { isServerState, SERVER_STATES, stateWord } from "@/lib/serverState";
 import { As, customerAdmin, oneSite, single as oneCustomer, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
@@ -15,6 +17,13 @@ import { GROUP_PAGE } from "./FleetTree";
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
 const NOW = new Date("2026-10-22T14:32:05");
+
+/**
+ * What `t` shows for a key the catalog lacks: `area.name`, the area one of
+ * the catalog's. Cells run together in `textContent` ("0.1.0common.state"),
+ * so no word boundary.
+ */
+const CATALOG_KEY = new RegExp(`(?<![A-Za-z])(?:${Object.keys(en).join("|")})\\.[A-Za-z_][\\w.]*`);
 
 function server(overrides: Partial<Server>): Server {
   return {
@@ -277,6 +286,28 @@ describe("FleetOverview", () => {
     expect(await rows()).toHaveLength(GROUP_PAGE);
     await userEvent.click(screen.getByRole("button", { name: "Show 5 more of paris" }));
     expect(await rows()).toHaveLength(GROUP_PAGE + 5);
+  });
+
+  // Every state the central server sends, and one a newer server might add,
+  // in both languages: a word in each row, never a raw catalog key such as
+  // `common.state.waiting`.
+  it.each(["en", "fr"] as const)("shows a word for every state, never a catalog key (%s)", async (locale) => {
+    setActiveLocale(locale);
+    const states = [...SERVER_STATES, "draining" as ServerState];
+    const servers = states.map((state, i) =>
+      server({ id: `s${i}`, hostname: `host-${state}`, state, open_incidents: state === "warning" || state === "critical" ? 1 : 0 }),
+    );
+    stubFetch(reply(servers, []));
+    const { container } = render(<FleetOverview />);
+    await screen.findByRole("table", { busy: false });
+    expect(container.textContent).not.toMatch(CATALOG_KEY);
+    // A search opens every group, OK servers included.
+    await userEvent.type(screen.getByRole("searchbox"), "host-");
+    for (const state of states) {
+      const row = screen.getByRole("link", { name: `host-${state}` }).closest("tr")!;
+      expect(row, state).toHaveTextContent(stateWord(isServerState(state) ? state : "ok"));
+    }
+    expect(container.textContent).not.toMatch(CATALOG_KEY);
   });
 
   it("falls back to the servers' counts when incidents cannot be read", async () => {

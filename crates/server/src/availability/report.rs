@@ -265,18 +265,21 @@ impl<'a> Builder<'a> {
         parents
     }
 
-    /// When `parent` was down: its own critical time, and the time it was
-    /// unreachable itself.
+    /// When `parent` was down, by the rule of ADR-0152: a relay or a
+    /// server offline, a server or device whose ping check is critical, a
+    /// check critical; and while it was unreachable itself. An incident
+    /// hidden behind its own parent never counts here.
     fn parent_down(&self, parent: &Parent, depth: usize) -> Spans {
         if depth > MAX_DEPTH {
             return Spans::new();
         }
+        let names = &self.data.names;
         let critical = |keep: &dyn Fn(&Incident) -> bool| {
             Spans::from_spans(
                 self.data
                     .incidents
                     .iter()
-                    .filter(|i| keep(i))
+                    .filter(|i| !i.hidden && keep(i))
                     .flat_map(|i| i.critical.spans().iter().copied()),
             )
         };
@@ -286,26 +289,24 @@ impl<'a> Builder<'a> {
                 let Some(machine) = self.any_machine(*id) else {
                     return Spans::new();
                 };
-                let own = critical(&|i| {
+                let pings = self.data.pings.get(id).map_or(&[][..], Vec::as_slice);
+                critical(&|i| {
                     i.server_id == Some(*id)
-                        && if machine.device {
-                            i.metric != "offline"
-                                && check_of(&i.metric, &self.data.names).starts_with("ping")
-                        } else {
-                            i.metric == "offline"
-                        }
-                });
-                own.union(&self.unreachable(machine, None, depth + 1))
+                        && (i.metric == "offline"
+                            || pings
+                                .iter()
+                                .any(|p| check_covers(p, names, &i.metric, &i.instance)))
+                })
+                .union(&self.unreachable(machine, None, depth + 1))
             }
             Parent::Check(id, check) => {
                 let Some(machine) = self.any_machine(*id) else {
                     return Spans::new();
                 };
-                let names = &self.data.names;
                 critical(&|i| {
                     i.server_id == Some(*id)
-                        && (i.metric == "offline"
-                            || check_covers(check, names, &i.metric, &i.instance))
+                        && i.metric != "offline"
+                        && check_covers(check, names, &i.metric, &i.instance)
                 })
                 .union(&self.unreachable(machine, Some(check), depth + 1))
             }
