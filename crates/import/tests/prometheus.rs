@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use monitorflow_import::model::{
-    Alert, Check, Direction, Fidelity, Inventory, Measure, Os, Severity, SilenceScope, Target,
-    Threshold, Watch, WebMethod,
+    Alert, Check, Direction, Fidelity, Inventory, Judged, Measure, Os, Severity, SilenceScope,
+    Target, Threshold, Watch, WebMethod,
 };
 use monitorflow_import::prometheus::Prometheus;
 use monitorflow_import::source::{self, Connection, File, Input};
@@ -83,6 +83,7 @@ fn critical(for_s: u32) -> Option<Alert> {
     Some(Alert {
         severity: Severity::Critical,
         for_s,
+        no_data: false,
     })
 }
 
@@ -178,7 +179,8 @@ fn assert_common(inventory: &Inventory) {
         exporter.alert,
         Some(Alert {
             severity: Severity::Warning,
-            for_s: 300
+            for_s: 300,
+            no_data: false,
         })
     );
     assert_eq!(
@@ -261,12 +263,27 @@ fn assert_common(inventory: &Inventory) {
             Some(0.1)
         )
     );
-    assert_eq!(inventory.thresholds.len(), 9);
+    // Free space predicted to be gone within a day: a forecast of the
+    // disk full (ADR-0153); `node_filesystem_avail_bytes > 0` only guards.
+    let t = threshold(inventory, "HostDiskMayFillIn24Hours");
+    assert_eq!(
+        (&t.measure, t.direction, t.warning, &t.judged, &t.fidelity),
+        (
+            &Measure::DiskUsed { mount: None },
+            Direction::Above,
+            Some(86_400.0),
+            &Judged::Forecast {
+                target: 1.0,
+                window_s: 3_600
+            },
+            &Fidelity::Exact
+        )
+    );
+    assert_eq!(inventory.thresholds.len(), 10);
 
     // What cannot be moved, and why.
     assert_eq!(unmovable(inventory, "HostSystemSaturated"), "per_cpu_load");
     for rule in [
-        "HostDiskMayFillIn24Hours",
         "HostOutOfInodes",
         "HostUnusualNetworkThroughputIn",
         "HostOomKillDetected",

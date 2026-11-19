@@ -86,6 +86,8 @@ pub enum Column {
     SensorConfigs,
     /// A network scan's own SNMP credentials (ADR-0154).
     NetworkScans,
+    /// The password of a vCenter or ESXi host (ADR-0156).
+    VmwareCredentials,
 }
 
 impl Column {
@@ -102,6 +104,7 @@ impl Column {
             Self::SnmpCredentials => "snmp_credentials.secret",
             Self::SensorConfigs => "sensor_configs.secret",
             Self::NetworkScans => "network_scans.snmp_secret",
+            Self::VmwareCredentials => "vmware_credentials.secret",
         }
     }
 

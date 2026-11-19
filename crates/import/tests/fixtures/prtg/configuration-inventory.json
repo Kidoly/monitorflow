@@ -229,5 +229,46 @@
       }
     }
   ],
-  "unmovable": []
+  "services": [],
+  "dependencies": [
+    {
+      "child": {
+        "host": "device:2001",
+        "watch": {
+          "kind": "service",
+          "name": "Spooler"
+        }
+      },
+      "parent": {
+        "host": "device:2001",
+        "watch": {
+          "kind": "ping"
+        }
+      },
+      "origin": {
+        "kind": "sensor",
+        "name": "Print Spooler",
+        "detail": "wmiservice"
+      },
+      "fidelity": "exact"
+    }
+  ],
+  "unmovable": [
+    {
+      "hosts": [
+        "device:2001"
+      ],
+      "origin": {
+        "kind": "sensor",
+        "name": "Application errors",
+        "detail": "wineventlog"
+      },
+      "why": {
+        "code": "dependency_unmapped",
+        "args": {
+          "parent": "#9999"
+        }
+      }
+    }
+  ]
 }
