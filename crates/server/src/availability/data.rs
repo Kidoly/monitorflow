@@ -104,13 +104,15 @@ pub struct Service {
 #[derive(Debug, Clone, Default)]
 pub struct Data {
     pub machines: Vec<Machine>,
+    /// The names of the relays read, on the sites the report reaches.
     pub relays: HashMap<Uuid, String>,
     pub incidents: Vec<Incident>,
     pub silences: Vec<Silence>,
     pub services: Vec<Service>,
     pub dependencies: Vec<Dependency>,
     /// Servers and devices outside the report that something of it
-    /// depends on: read for their down time, never reported.
+    /// depends on: read for their down time, never reported, and without
+    /// a name on a site the report does not reach.
     pub parents: Vec<Machine>,
     /// The ping checks of the servers and devices read, by server.
     pub pings: HashMap<Uuid, Vec<CheckRef>>,
@@ -212,7 +214,14 @@ pub async fn load(
     .await?;
     let ids: Vec<Uuid> = rows.iter().map(|r| r.0).collect();
     let machines = with_relays(db, rows).await?;
-    let (dependencies, parents) = dependencies(db, &ids).await?;
+    let (dependencies, mut parents) = dependencies(db, &ids).await?;
+    // Read for their down time; named only where the reader can see them.
+    let named = |site: &Uuid| all_sites || sites.contains(site);
+    for parent in &mut parents {
+        if !named(&parent.site_id) {
+            parent.name.clear();
+        }
+    }
     let relay_ids: Vec<Uuid> = machines
         .iter()
         .chain(&parents)
@@ -229,13 +238,16 @@ pub async fn load(
         .copied()
         .chain(parents.iter().map(|m| m.id))
         .collect();
-    let relays: HashMap<Uuid, String> =
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM relays WHERE id = ANY($1)")
-            .bind(&relay_ids)
-            .fetch_all(&mut *db)
-            .await?
-            .into_iter()
-            .collect();
+    let relays: HashMap<Uuid, String> = sqlx::query_as::<_, (Uuid, String, Uuid)>(
+        "SELECT id, name, site_id FROM relays WHERE id = ANY($1)",
+    )
+    .bind(&relay_ids)
+    .fetch_all(&mut *db)
+    .await?
+    .into_iter()
+    .filter(|(_, _, site)| named(site))
+    .map(|(id, name, _)| (id, name))
+    .collect();
     let incidents = incidents(db, &read, &relay_ids, from, end).await?;
     let pings = pings(db, &read).await?;
     let silences: Vec<SilenceRow> = sqlx::query_as(

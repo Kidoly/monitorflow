@@ -95,11 +95,6 @@ pub fn time(at: DateTime<Utc>, zone: Tz) -> String {
     at.with_timezone(&zone).format("%Y-%m-%d %H:%M").to_string()
 }
 
-/// A date in `zone`, like `2026-10-04`.
-pub fn date(at: DateTime<Utc>, zone: Tz) -> String {
-    at.with_timezone(&zone).format("%Y-%m-%d").to_string()
-}
-
 /// What a cause was, in a few words: "web-1: check disk (/)", "web-1:
 /// offline", "web-1: unreachable, relay-paris down".
 pub fn cause(cause: &Cause, language: Language) -> String {
@@ -198,6 +193,5 @@ mod tests {
             .unwrap()
             .to_utc();
         assert_eq!(time(at, chrono_tz::Europe::Paris), "2026-11-01 00:30");
-        assert_eq!(date(at, chrono_tz::UTC), "2026-10-31");
     }
 }

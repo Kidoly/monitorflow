@@ -372,7 +372,7 @@ impl Dispatcher {
         let resolved: HashMap<Uuid, i64> = fresh
             .iter()
             .filter(|e| e.event == "incident.resolved")
-            .filter_map(|e| Some((incident_id(e)?, e.id)))
+            .filter_map(|e| Some((silence::incident_of(e)?, e.id)))
             .collect();
         if !resolved.is_empty() {
             let ids: Vec<Uuid> = resolved.keys().copied().collect();
@@ -420,7 +420,7 @@ impl Dispatcher {
                 continue;
             }
             for event in events.iter().filter(|e| extra.unrouted.contains(&e.id)) {
-                if let Some(incident) = incident_id(event) {
+                if let Some(incident) = silence::incident_of(event) {
                     told.entry(incident).or_default().channels.push(channel.id);
                 }
             }
@@ -433,7 +433,7 @@ impl Dispatcher {
         for (channel, ids) in people {
             let events: Vec<&Event> = fresh.iter().filter(|e| ids.contains(&e.id)).collect();
             for event in events.iter().filter(|e| problem(e)) {
-                if let Some(incident) = incident_id(event) {
+                if let Some(incident) = silence::incident_of(event) {
                     told.entry(incident).or_default().users.push(channel.id);
                 }
             }
@@ -733,14 +733,6 @@ impl Links {
     }
 }
 
-fn incident_id(event: &Event) -> Option<Uuid> {
-    event
-        .event
-        .starts_with("incident.")
-        .then(|| event.details["incident"]["id"].as_str()?.parse().ok())
-        .flatten()
-}
-
 /// Whether `event` tells of an incident still a problem: opened or worse,
 /// or a follow-up step.
 fn problem(event: &Event) -> bool {
@@ -766,7 +758,7 @@ fn acknowledgeable(
             e.site_id
                 .is_some_and(|site| directory.acknowledges(person, Coverage::Site(site)))
         })
-        .filter_map(|e| incident_id(e))
+        .filter_map(|e| silence::incident_of(e))
         .collect();
     incidents.sort();
     incidents.dedup();
@@ -882,7 +874,7 @@ async fn still_failing(db: &mut sqlx::PgConnection, holds: &Holds) -> Result<(),
 /// devices and checks are behind it, as `incident.behind` (ADR-0152).
 fn count_behind(holds: &Holds, events: &mut [Event]) {
     for event in events.iter_mut().filter(|e| e.event == "incident.opened") {
-        let Some(id) = incident_id(event) else {
+        let Some(id) = silence::incident_of(event) else {
             continue;
         };
         let behind = holds.behind_incident(id).len();

@@ -11,7 +11,7 @@ use monitorflow_common::mirror::store::Store;
 use super::model::{Family, Mirror};
 
 /// File name of the public signing key under `keys/`.
-pub const PUBLIC_KEY: &str = "monitorflow-archive.asc";
+pub use monitorflow_common::mirror::PUBLIC_KEY;
 /// Directory of the tools sidecar's socket under `mirror_dir` (ADR-0067).
 pub const TOOLS_DIR: &str = "tools";
 /// Directory of the working trees of on-demand mirrors (ADR-0142).

@@ -171,8 +171,8 @@ pub async fn load(
     Ok(silences)
 }
 
-/// The incident an event is about.
-fn incident_of(event: &Event) -> Option<Uuid> {
+/// The incident an `incident.*` event is about.
+pub(super) fn incident_of(event: &Event) -> Option<Uuid> {
     id_at(&event.details, "incident").filter(|_| event.event.starts_with("incident."))
 }
 
