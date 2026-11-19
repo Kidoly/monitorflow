@@ -344,11 +344,7 @@ impl Resumer for StatusResumer {
     }
 }
 
-pub fn unix_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-}
+pub use crate::unix_ms;
 
 #[cfg(test)]
 mod tests;

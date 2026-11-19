@@ -34,7 +34,7 @@ pub mod windows_update;
 pub mod winget;
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use monitorflow_common::command;
 use monitorflow_common::proto::v1::{
@@ -46,6 +46,7 @@ use tokio::sync::watch;
 #[cfg(unix)]
 use crate::os::OsFamily;
 use crate::shutdown::Shutdown;
+use crate::unix_ms;
 #[cfg(unix)]
 pub use apply::ApplyUpdatesHandler;
 #[cfg(unix)]
@@ -228,12 +229,6 @@ impl Reports {
             }
         }
     }
-}
-
-fn unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
 }
 
 #[cfg(all(test, unix))]

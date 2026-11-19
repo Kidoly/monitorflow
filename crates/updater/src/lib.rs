@@ -185,44 +185,50 @@ impl Lock {
     }
 }
 
+/// Takes the file `name` out of the inbox, if it is there, and parses it.
+/// It is consumed once, whatever it holds; `what` names it in the error.
+fn take<T>(
+    update_dir: &Path,
+    name: &str,
+    what: &str,
+    parse: impl FnOnce(&[u8]) -> Result<T, String>,
+) -> Option<Result<T, String>> {
+    let path = update_dir.join(INBOX).join(name);
+    let bytes = match read_small(&path, MAX_STATE_FILE) {
+        Ok(None) => return None,
+        Ok(Some(bytes)) => Ok(bytes),
+        Err(e) => Err(format!("cannot read the {what}: {e}")),
+    };
+    let _ = std::fs::remove_file(&path);
+    Some(bytes.and_then(|bytes| parse(&bytes)))
+}
+
 /// Takes the request out of the inbox, if there is one. `Err` carries why
 /// a request was refused before any update began.
 pub fn take_request(
     update_dir: &Path,
 ) -> Option<Result<(Request, monitorflow_common::release::Version), String>> {
-    let path = update_dir.join(INBOX).join(REQUEST_FILE);
-    let bytes = match read_small(&path, MAX_STATE_FILE) {
-        Ok(None) => return None,
-        Ok(Some(bytes)) => Ok(bytes),
-        Err(e) => Err(format!("cannot read the request: {e}")),
-    };
-    // Consumed once, whatever it holds.
-    let _ = std::fs::remove_file(&path);
-    Some(bytes.and_then(|bytes| Request::parse(&bytes)))
+    take(update_dir, REQUEST_FILE, "request", Request::parse)
 }
 
 /// Takes "Back up now" out of the inbox, if it is there.
 pub fn take_backup_request(update_dir: &Path) -> Option<Result<BackupRequest, String>> {
-    let path = update_dir.join(INBOX).join(BACKUP_REQUEST_FILE);
-    let bytes = match read_small(&path, MAX_STATE_FILE) {
-        Ok(None) => return None,
-        Ok(Some(bytes)) => Ok(bytes),
-        Err(e) => Err(format!("cannot read the backup request: {e}")),
-    };
-    let _ = std::fs::remove_file(&path);
-    Some(bytes.and_then(|bytes| BackupRequest::parse(&bytes)))
+    take(
+        update_dir,
+        BACKUP_REQUEST_FILE,
+        "backup request",
+        BackupRequest::parse,
+    )
 }
 
 /// Takes a change of retention out of the inbox, if it is there.
 pub fn take_retention_request(update_dir: &Path) -> Option<Result<RetentionRequest, String>> {
-    let path = update_dir.join(INBOX).join(RETENTION_REQUEST_FILE);
-    let bytes = match read_small(&path, MAX_STATE_FILE) {
-        Ok(None) => return None,
-        Ok(Some(bytes)) => Ok(bytes),
-        Err(e) => Err(format!("cannot read the retention request: {e}")),
-    };
-    let _ = std::fs::remove_file(&path);
-    Some(bytes.and_then(|bytes| RetentionRequest::parse(&bytes)))
+    take(
+        update_dir,
+        RETENTION_REQUEST_FILE,
+        "retention request",
+        RetentionRequest::parse,
+    )
 }
 
 /// Serves requests and takes the daily backup until `stop` resolves. At

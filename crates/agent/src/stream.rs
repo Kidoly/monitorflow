@@ -29,7 +29,7 @@
 //! Envelope payloads are never logged.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use monitorflow_common::client::failure::classify_error;
 pub use monitorflow_common::client::failure::{classify_status, Failure};
@@ -54,6 +54,7 @@ use crate::identity::AgentIdentity;
 use crate::os::HostInfo;
 use crate::sensor_config::StreamEnd;
 use crate::shutdown::Shutdown;
+use crate::unix_ms;
 use crate::upload::Uplink;
 
 /// Envelopes queued towards the upstream. Heartbeats are skipped, not
@@ -580,12 +581,6 @@ async fn report_changed(reporting: &mut Option<(commands::Handlers, watch::Recei
 
 async fn drain(inbound: &mut Streaming<Envelope>) {
     while let Ok(Some(_)) = inbound.message().await {}
-}
-
-fn unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
 }
 
 #[cfg(test)]

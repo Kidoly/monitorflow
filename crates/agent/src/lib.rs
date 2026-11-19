@@ -34,3 +34,10 @@ pub mod stream;
 pub mod upload;
 
 pub use monitorflow_common::client::{backoff, shutdown};
+
+/// Now, in Unix milliseconds; 0 before 1970.
+pub fn unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
