@@ -157,6 +157,20 @@ describe("RelayPage", () => {
     expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
   });
 
+  it("names an incident as the other incident lists do", async () => {
+    const offline = incident({ id: "i4", server_id: DB1, hostname: "db-1", metric: "offline", severity: "critical", last_value: 1 });
+    stubFetch({
+      [`GET /api/relays/${ID}`]: { status: 200, body: detail() },
+      ...lists,
+      "GET /api/incidents?state=open&limit=500": { status: 200, body: { incidents: [offline], next_cursor: null } },
+    });
+    render(<RelayPage id={ID} me={siteAdmin} />);
+    const attached = await screen.findByRole("region", { name: "Servers connecting through relay-1" });
+    const [, , db] = within(attached).getAllByRole("row");
+    // "Offline" in words and no value, not the raw metric and a number.
+    expect(db).toHaveTextContent(/Critical\s+Offline\s+\d+ d ago/);
+  });
+
   it("removes after confirmation, then shows the uninstall command", async () => {
     const fetchMock = stubFetch({
       [`GET /api/relays/${ID}`]: [
