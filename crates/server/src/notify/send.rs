@@ -486,6 +486,73 @@ async fn send_email(
         .map_err(|error| SendError::new(smtp_error(email, &error)))
 }
 
+/// A file attached to an email.
+#[derive(Debug, Clone)]
+pub struct Attachment {
+    pub name: String,
+    pub content_type: &'static str,
+    pub body: Vec<u8>,
+}
+
+/// Sends `subject` and `body` with `attachments` through the email channel
+/// `channel`, to `to`, or to the channel's own recipients when empty: what
+/// a scheduled report goes out with (ADR-0155).
+pub async fn email_with_attachments(
+    channel: &Channel,
+    to: &[String],
+    subject: &str,
+    body: &str,
+    attachments: Vec<Attachment>,
+) -> Result<(), SendError> {
+    use lettre::message::{Attachment as Part, MultiPart, SinglePart};
+    let Destination::Email(email) = &channel.destination else {
+        return Err(SendError::new("Reports are sent through an email channel."));
+    };
+    if let Some(error) = &channel.secret_error {
+        return Err(SendError::new(error.clone()));
+    }
+    let mut email = email.clone();
+    if !to.is_empty() {
+        email.to = to.to_vec();
+    }
+    let connect_to = if channel.public_only {
+        let addresses = public_addresses(&email.host, email.port).await?;
+        addresses.first().map(|a| a.ip().to_string())
+    } else {
+        None
+    };
+    let from = if email.from.is_empty() {
+        &email.username
+    } else {
+        &email.from
+    };
+    let mailbox = |address: &str| {
+        address
+            .parse::<Mailbox>()
+            .map_err(|_| SendError::new(format!("`{address}` is not an email address.")))
+    };
+    let mut builder = lettre::Message::builder()
+        .from(mailbox(from)?)
+        .subject(subject.to_owned());
+    for to in &email.to {
+        builder = builder.to(mailbox(to)?);
+    }
+    let mut parts = MultiPart::mixed().singlepart(SinglePart::plain(body.to_owned()));
+    for file in attachments {
+        let kind = ContentType::parse(file.content_type)
+            .map_err(|_| SendError::new("An attachment has no valid type."))?;
+        parts = parts.singlepart(Part::new(file.name).body(file.body, kind));
+    }
+    let mail = builder
+        .multipart(parts)
+        .map_err(|error| SendError::new(format!("The email could not be built: {error}")))?;
+    transport(&email, connect_to, channel.secret.as_ref())?
+        .send(mail)
+        .await
+        .map(drop)
+        .map_err(|error| SendError::new(smtp_error(&email, &error)))
+}
+
 /// An SMTP failure in plain words.
 fn smtp_error(email: &Email, error: &lettre::transport::smtp::Error) -> String {
     let server = format!("{}:{}", email.host, email.port);

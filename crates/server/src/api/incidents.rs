@@ -24,6 +24,7 @@ use super::follow_up::{follow_up_view, FollowUpView};
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
 use crate::alerting::reason;
+use crate::alerting::rules::FOREVER_S;
 use crate::notify::follow_up;
 
 /// Page size without `limit`.
@@ -116,6 +117,17 @@ pub struct IncidentView {
     pub in_maintenance: bool,
     /// Whether a silence ever held back a notification of it.
     pub silenced: bool,
+    /// The kind of rule that opened it (ADR-0153): `value`, `window`,
+    /// `compare`, `forecast` or `nodata`; `value` for `offline`.
+    pub kind: String,
+    /// While a `forecast` incident is open, when the value is expected to
+    /// reach its target: the time of the last value plus the time left.
+    #[sqlx(skip)]
+    pub expected_at: Option<DateTime<Utc>>,
+    /// The parent's incident that speaks for it (ADR-0152): it opened a
+    /// moment before its parent went down and was never told; `null`
+    /// otherwise.
+    pub hidden_by: Option<Uuid>,
     /// Who said they are on it, and when (ADR-0082); `null` until someone
     /// does. The name stays when the account is removed.
     pub acknowledged_by: Option<String>,
@@ -138,6 +150,7 @@ impl IncidentView {
     fn complete(&mut self, modifiable: &Scope) {
         self.can_acknowledge = acknowledgeable(self, modifiable);
         let open = self.state == "open";
+        self.expected_at = expected_at(&self.kind, open, self.last_value, self.last_value_at);
         self.reason = reason::incident(
             &self.metric,
             &self.severity,
@@ -150,6 +163,15 @@ impl IncidentView {
             &self.threshold,
         );
     }
+}
+
+/// When an open forecast expects its target; `None` for other kinds and
+/// for a forecast that never gets there.
+fn expected_at(kind: &str, open: bool, left_s: f64, at: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    if kind != "forecast" || !open || !(0.0..FOREVER_S).contains(&left_s) {
+        return None;
+    }
+    Some(at + chrono::Duration::milliseconds((left_s * 1000.0) as i64))
 }
 
 /// Body of `GET /api/incidents`.
@@ -211,6 +233,12 @@ pub struct IncidentDetail {
     /// Who is told next if nobody acknowledges (ADR-0082); `null` when no
     /// follow-up started: a warning, or not sent yet.
     pub follow_up: Option<FollowUpView>,
+    /// While it says a parent is down: everything behind that parent,
+    /// unreachable meanwhile (ADR-0152).
+    pub hides: Vec<super::dependencies::EndView>,
+    /// The incidents it hid: opened by children a moment before it, never
+    /// told.
+    pub hidden: Vec<Uuid>,
 }
 
 /// The sort key `(open, opened_at, id)` of a page's last incident.
@@ -244,6 +272,8 @@ const SELECT: &str = "SELECT i.id, i.server_id, i.relay_id,
                                  WHERE x.window_id IS NOT NULL) AS in_maintenance,
                              EXISTS (SELECT 1 FROM incident_events e
                                      WHERE e.incident_id = i.id AND e.kind = 'silenced') AS silenced,
+                             i.kind,
+                             i.hidden_by,
                              a.username AS acknowledged_by, a.acknowledged_at,
                              a.note AS acknowledged_note
                       FROM incidents i
@@ -383,12 +413,30 @@ pub async fn detail(
             .fetch_optional(&state.pool)
             .await?;
     let follow_up = follow_up_view(&state.pool, &incident).await?;
+    let hides = if incident.state == "open" {
+        super::dependencies::hides(&state, &user, id).await?
+    } else {
+        Vec::new()
+    };
+    let hidden = sqlx::query_scalar(
+        "SELECT i.id FROM incidents i
+         LEFT JOIN servers s ON s.id = i.server_id
+         WHERE i.hidden_by = $1 AND ($2 OR s.site_id = ANY($3))
+         ORDER BY i.opened_at, i.id",
+    )
+    .bind(id)
+    .bind(all_sites)
+    .bind(&sites)
+    .fetch_all(&state.pool)
+    .await?;
     Ok(Json(IncidentDetail {
         incident,
         events,
         notification_groups,
         acknowledged_via,
         follow_up,
+        hides,
+        hidden,
     }))
 }
 
@@ -559,5 +607,23 @@ mod tests {
         assert!(parse("state=closed").is_err());
         assert!(parse("severity=Warning").is_err());
         assert!(parse("sort=asc").is_err());
+    }
+
+    #[test]
+    fn open_forecasts_say_when_they_expect_their_target() {
+        let at = DateTime::parse_from_rfc3339("2026-11-20T10:00:00Z")
+            .unwrap()
+            .to_utc();
+        let in_two_days = DateTime::parse_from_rfc3339("2026-11-22T10:00:00Z")
+            .unwrap()
+            .to_utc();
+        assert_eq!(
+            expected_at("forecast", true, 172_800.0, at),
+            Some(in_two_days)
+        );
+        assert_eq!(expected_at("forecast", true, 0.0, at), Some(at));
+        assert_eq!(expected_at("forecast", false, 172_800.0, at), None);
+        assert_eq!(expected_at("forecast", true, FOREVER_S, at), None);
+        assert_eq!(expected_at("value", true, 0.9, at), None);
     }
 }

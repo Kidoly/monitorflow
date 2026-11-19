@@ -16,7 +16,7 @@ use crate::source::ReadError;
 
 use super::sensors::wanted;
 use super::tree::{
-    Channel, Delivery, Kind, Limits, Maintenance, Notification, Object, Paused, Tree,
+    Channel, Delivery, Depends, Kind, Limits, Maintenance, Notification, Object, Paused, Tree,
 };
 
 /// Requests in flight at once, to keep the load on PRTG low.
@@ -65,14 +65,25 @@ fn text(row: &Value, field: &str) -> Option<String> {
     }
 }
 
-/// Paused or not, from PRTG's status code: 7 paused by a person, 8 by a
-/// dependency, 9 by a schedule, 12 paused until a time.
+/// Paused or not, from PRTG's status code: 7 paused by a person, 9 by a
+/// schedule, 12 paused until a time. 8, paused by a dependency, is the
+/// state of the moment: the dependency itself is read (ADR-0152).
 fn paused(status: Option<i64>) -> Option<Paused> {
     match status? {
         7 | 12 => Some(Paused::Indefinitely),
-        8 | 9 => Some(Paused::ByRule),
+        9 => Some(Paused::ByRule),
         _ => None,
     }
+}
+
+/// An object's dependency setting, when it is not "use parent".
+async fn depends(fetch: &dyn Fetch, id: i64) -> Result<Option<Depends>, ReadError> {
+    let kind = get_property(fetch, id, "dependencytype").await?;
+    let object = match kind.as_deref() {
+        Some("1") => get_property(fetch, id, "dependency").await?,
+        _ => None,
+    };
+    Ok(Depends::parse(kind.as_deref(), object.as_deref()))
 }
 
 /// The objects of one table.
@@ -293,6 +304,7 @@ async fn sensor_details(fetch: &dyn Fetch, mut sensor: Object) -> Result<Object,
     if with_channels {
         sensor.channels = channels(fetch, sensor.id).await?;
     }
+    sensor.depends = depends(fetch, sensor.id).await?;
     Ok(sensor)
 }
 
@@ -317,6 +329,9 @@ async fn maintenance(
         if let (Some(start), Some(end)) = (utc(start), utc(end)) {
             object.maintenance = Some(Maintenance { start, end });
         }
+    }
+    if object.kind != Kind::Probe {
+        object.depends = depends(fetch, object.id).await?;
     }
     Ok(object)
 }

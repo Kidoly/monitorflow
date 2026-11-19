@@ -153,6 +153,7 @@ db_tests! {
                 Column::SnmpCredentials,
                 Column::SensorConfigs,
                 Column::NetworkScans,
+                Column::VmwareCredentials,
             ]
         );
         let channels = "SELECT secret FROM notification_channels ORDER BY settings->>'url'";
@@ -183,6 +184,7 @@ db_tests! {
                 "server_settings.ai_api_key",
                 "snmp_credentials.secret",
                 "user_contacts.secret",
+                "vmware_credentials.secret",
             ]
         );
         let endpoint = stored(&pool, "SELECT secret FROM integration_endpoints").await;

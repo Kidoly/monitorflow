@@ -223,6 +223,16 @@ trigger "$db01" "Database CPU is high" 'min(/db-01/system.cpu.util,10m)>{$DB.CPU
 trigger "$db01" "Backup is old" 'last(/db-01/backup.age[pg])>1d' 2
 trigger "$web01" "Root file system is filling up" 'last(/web-01/vfs.fs.size[/,pused])>85' 2
 trigger "$web01" "SSH is down" 'last(/web-01/net.tcp.service[ssh])=0' 4
+# Richer triggers (ADR-0153): forecasts, windows, no data, a change, an
+# hourly trend and comparisons joined with and.
+trigger "$web01" "Root file system full in 3 days" 'timeleft(/web-01/vfs.fs.size[/,pused],1d,100)<3d' 4
+trigger "$web01" "Root file system above 95% within a day" 'forecast(/web-01/vfs.fs.size[/,pused],6h,1d)>95' 2
+trigger "$web01" "Load high for 15 minutes" 'avg(/web-01/system.cpu.load[all,avg1],15m)>4' 2
+trigger "$web01" "No processor data" 'nodata(/web-01/system.cpu.util,10m)=1' 4
+trigger "$db01" "Busy and loaded" 'last(/db-01/system.cpu.load[all,avg5])>8 and min(/db-01/system.cpu.util,10m)>90' 4
+trigger "$db01" "Load jumped" 'change(/db-01/system.cpu.load[all,avg1])>5' 2
+trigger "$db01" "Processor this hour" 'trendavg(/db-01/system.cpu.util,1h:now/h)>80' 2
+trigger "$db01" "PostgreSQL port check silent" 'nodata(/db-01/net.tcp.port[,5432],5m)=1' 4
 
 say "Web scenario"
 scenario_id="$(api httptest.get "{\"hostids\": \"$web01\", \"filter\": {\"name\": \"Shop home\"}, \"output\": [\"httptestid\"]}" | jq -r '.[0].httptestid // empty')"
@@ -233,7 +243,9 @@ if [[ -n "$scenario_id" ]]; then
 else
   api httptest.create "{\"hostid\": \"$web01\", \"name\": \"Shop home\", \"delay\": \"2m\", \"steps\": $steps}" >/dev/null
 fi
-trigger "$web01" "Shop home page fails" 'last(/web-01/web.test.fail[Shop home])<>0' 4
+trigger "$web01" "Shop home page fails" 'last(/web-01/web.test.fail[Shop home])<>0' 4 "" \
+  '[{"tag": "component", "value": "shop"}]'
+
 
 say "Maintenances"
 # A one-time window a week from now (whole hours), and a weekly one on
@@ -268,6 +280,40 @@ maintenance "Nightly backups" "$(jq -nc --arg s "$((now / 86400 * 86400))" --arg
   --arg h "$db01" '{name: "Nightly backups", maintenance_type: 1, active_since: $s, active_till: $e,
     hosts: [{hostid: $h}],
     timeperiods: [{timeperiod_type: 2, every: 1, start_time: 3600, period: 3600}]}')"
+
+if ((major >= 6)); then
+  say "Services and SLA"
+  # service NAME PARAMS_JSON: made or brought up to date, by name; prints
+  # its ID.
+  service() {
+    local id
+    id="$(id_of service "{\"name\": \"$1\"}" serviceid)"
+    if [[ -n "$id" ]]; then
+      api service.update "$(jq -c --arg id "$id" '. + {serviceid: $id}' <<<"$2")" >/dev/null
+    else
+      id="$(api service.create "$2" | jq -r '.serviceids[0]')"
+    fi
+    echo "$id"
+  }
+  # The database's PostgreSQL problems, and a shop of its home page and
+  # the database, up while all of them are; both on a gold SLA.
+  database="$(service "Database" '{"name": "Database", "algorithm": 2, "sortorder": 0,
+    "problem_tags": [{"tag": "service", "operator": 0, "value": "postgresql"}],
+    "tags": [{"tag": "sla", "value": "gold"}]}')"
+  shop_web="$(service "Shop web" '{"name": "Shop web", "algorithm": 2, "sortorder": 0,
+    "problem_tags": [{"tag": "component", "operator": 0, "value": "shop"}]}')"
+  service "Shop" "$(jq -nc --arg d "$database" --arg w "$shop_web" '{name: "Shop", algorithm: 2,
+    sortorder: 0, children: [{serviceid: $d}, {serviceid: $w}], tags: [{tag: "sla", value: "gold"}]}')" >/dev/null
+  sla_id="$(id_of sla '{"name": "Gold"}' slaid)"
+  sla="$(jq -nc --argjson d "$((now / 86400 * 86400))" '{name: "Gold", slo: "99.9", period: 2,
+    timezone: "UTC", effective_date: $d,
+    service_tags: [{tag: "sla", operator: 0, value: "gold"}]}')"
+  if [[ -n "$sla_id" ]]; then
+    api sla.update "$(jq -c --arg id "$sla_id" '. + {slaid: $id}' <<<"$sla")" >/dev/null
+  else
+    api sla.create "$sla" >/dev/null
+  fi
+fi
 
 say "Media types"
 email_id="$(upsert mediatype '{"name": "Ops mail"}' mediatypeid '{
