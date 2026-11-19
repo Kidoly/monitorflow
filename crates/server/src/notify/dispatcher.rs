@@ -11,6 +11,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use monitorflow_common::tls::PeerRole;
 use sqlx::PgPool;
 use tokio::task::JoinSet;
 use tokio::time::{interval, sleep, MissedTickBehavior};
@@ -26,6 +27,8 @@ use super::send::{deliver, http_client, public_http_client, SendError};
 use super::silence::{self, Budget};
 use super::{channels, record_outcome, Channel, Coverage, Destination, Service};
 use crate::api::one_time::OneTimeToken;
+use crate::dependencies::{self, store::Streams, Hold, Holds};
+use crate::grpc::Registry;
 
 /// Time between two looks at the outbox.
 pub const POLL: Duration = Duration::from_secs(5);
@@ -78,6 +81,8 @@ pub struct Dispatcher {
     /// [`WAIT`] and [`WINDOW`].
     wait: Duration,
     window: Duration,
+    /// Who has a stream, for dependencies (ADR-0152).
+    registry: Option<Registry>,
 }
 
 impl Dispatcher {
@@ -92,7 +97,15 @@ impl Dispatcher {
             status_dir: None,
             wait: WAIT,
             window: WINDOW,
+            registry: None,
         }
+    }
+
+    /// Reads who has a stream from `registry`, for dependencies; without
+    /// it, the last time each peer was heard from.
+    pub fn with_registry(mut self, registry: Registry) -> Self {
+        self.registry = Some(registry);
+        self
     }
 
     /// Without the grouping waits, for tests: each pass claims everything
@@ -166,9 +179,24 @@ impl Dispatcher {
     /// already written at a claim is due with it, for a claim that did not
     /// take everything. Events of no customer, and copies for one channel
     /// or person, are due at once.
-    async fn claim(&self) -> Result<(Vec<Event>, Targets), sqlx::Error> {
+    ///
+    /// Dependencies come first (ADR-0152): what a child opened behind a
+    /// parent that is down by now is never told ([`behind_parents`]), and
+    /// what it opened behind a parent in doubt waits.
+    async fn claim(&self) -> Result<(Vec<Event>, Targets, Holds), sqlx::Error> {
         let now = chrono::Utc::now();
         let mut tx = self.pool.begin().await?;
+        let live: Option<HashSet<(PeerRole, String)>> = self.registry.as_ref().map(|registry| {
+            registry
+                .live_all()
+                .into_iter()
+                .map(|p| (p.role, p.id))
+                .collect()
+        });
+        let streams = live.as_ref().map_or(Streams::LastSeen, Streams::Live);
+        let holds = dependencies::store::holds(&mut tx, streams).await?;
+        still_failing(&mut tx, &holds).await?;
+        let waiting = behind_parents(&mut tx, &holds).await?;
         let pending: Vec<Event> = sqlx::query_as(
             "WITH last AS (
                  SELECT customer_id, max(sent_at) AS at FROM notification_outbox
@@ -185,6 +213,7 @@ impl Dispatcher {
              LEFT JOIN last l ON l.customer_id = o.customer_id
              LEFT JOIN first f ON f.customer_id = o.customer_id
              WHERE o.sent_at IS NULL AND o.held_at IS NULL
+               AND NOT coalesce(o.details #>> '{incident,id}' = ANY($4), false)
                AND (o.customer_id IS NULL OR o.channel_id IS NOT NULL OR o.user_id IS NOT NULL
                     OR (l.at IS NOT NULL AND o.created_at <= l.at)
                     OR (l.at IS NULL AND f.at <= now() - make_interval(secs => $3)))
@@ -193,10 +222,12 @@ impl Dispatcher {
         .bind(BATCH)
         .bind(self.window.as_secs_f64())
         .bind(self.wait.as_secs_f64())
+        .bind(&waiting)
         .fetch_all(&mut *tx)
         .await?;
         let Some(oldest) = pending.iter().map(|e| e.created_at).min() else {
-            return Ok((Vec::new(), Targets::default()));
+            tx.commit().await?;
+            return Ok((Vec::new(), Targets::default(), holds));
         };
         let ids: Vec<i64> = pending.iter().map(|e| e.id).collect();
         let copies: Vec<(i64, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
@@ -241,7 +272,7 @@ impl Dispatcher {
             .collect();
         follow_up::start(&mut tx, &told, now).await?;
         tx.commit().await?;
-        Ok((events, targets))
+        Ok((events, targets, holds))
     }
 
     /// Claims and delivers pending events; returns how many were claimed.
@@ -250,7 +281,7 @@ impl Dispatcher {
     /// A release fits in the narrowest chat channel's pass, personal ones
     /// included.
     pub async fn pass(&self) -> Result<usize, sqlx::Error> {
-        let (events, targets) = self.claim().await?;
+        let (events, targets, holds) = self.claim().await?;
         let channels = channels(&self.pool).await?;
         let personal: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT kind FROM user_contacts WHERE kind IN ('slack', 'teams', 'discord')",
@@ -292,6 +323,7 @@ impl Dispatcher {
         if let Err(error) = count_behind_relays(&self.pool, &mut fresh).await {
             tracing::warn!(%error, "could not count the servers behind an offline relay");
         }
+        count_behind(&holds, &mut fresh);
         // A single company never reads "customer" (ADR-0104).
         let several = crate::api::customers::several(&self.pool).await?;
         // The person on call is whoever it is now, as this pass sends:
@@ -726,6 +758,119 @@ fn without_customer(event: &Event) -> Event {
         customer.remove("name");
     }
     event
+}
+
+/// Settles the pending events of incidents a child opened behind a parent
+/// (ADR-0152), before they are claimed. An incident whose opening is still
+/// pending while a parent is down is marked hidden by the parent's
+/// incident, and its events, now and later, are deleted unsaid. One whose
+/// parent is in doubt waits: its ID is returned, for the claim to leave.
+/// An incident whose opening was told before keeps being told.
+async fn behind_parents(
+    db: &mut sqlx::PgConnection,
+    holds: &Holds,
+) -> Result<Vec<String>, sqlx::Error> {
+    type Line = (Uuid, Uuid, String, String, bool, bool);
+    let pending: Vec<Line> = sqlx::query_as(
+        "SELECT i.id, i.server_id, i.metric, i.instance, i.hidden_by IS NOT NULL,
+                bool_or(o.event = 'incident.opened')
+         FROM notification_outbox o
+         JOIN incidents i ON i.id::text = o.details #>> '{incident,id}'
+         WHERE o.sent_at IS NULL AND o.held_at IS NULL
+           AND o.channel_id IS NULL AND o.user_id IS NULL
+           AND o.event LIKE 'incident.%' AND i.server_id IS NOT NULL
+         GROUP BY i.id",
+    )
+    .fetch_all(&mut *db)
+    .await?;
+    let mut unsaid: Vec<String> = Vec::new();
+    let mut waiting: Vec<String> = Vec::new();
+    for (id, server, metric, instance, hidden, opening) in pending {
+        if hidden {
+            unsaid.push(id.to_string());
+            continue;
+        }
+        if !opening {
+            continue;
+        }
+        match holds.series(server, &metric, &instance) {
+            Some(Hold::Unreachable { incident, .. }) if incident != id => {
+                sqlx::query(
+                    "UPDATE incidents SET hidden_by = $2 WHERE id = $1 AND hidden_by IS NULL",
+                )
+                .bind(id)
+                .bind(incident)
+                .execute(&mut *db)
+                .await?;
+                tracing::info!(%id, parent = %incident, "incident hidden by its parent's");
+                unsaid.push(id.to_string());
+            }
+            Some(Hold::Doubt) => waiting.push(id.to_string()),
+            _ => {}
+        }
+    }
+    if !unsaid.is_empty() {
+        sqlx::query(
+            "DELETE FROM notification_outbox
+             WHERE sent_at IS NULL AND held_at IS NULL AND channel_id IS NULL AND user_id IS NULL
+               AND details #>> '{incident,id}' = ANY($1)",
+        )
+        .bind(&unsaid)
+        .execute(&mut *db)
+        .await?;
+    }
+    Ok(waiting)
+}
+
+/// Incidents hidden by a parent's that are still open once nothing holds
+/// their child any more, the parent back for [`dependencies::SETTLE`]: the
+/// child still fails, so its incident is told now, as opened, with the
+/// reason `still_failing` (ADR-0152).
+async fn still_failing(db: &mut sqlx::PgConnection, holds: &Holds) -> Result<(), sqlx::Error> {
+    let hidden: Vec<(Uuid, Uuid, String, String)> = sqlx::query_as(
+        "SELECT id, server_id, metric, instance FROM incidents
+         WHERE state = 'open' AND hidden_by IS NOT NULL AND server_id IS NOT NULL",
+    )
+    .fetch_all(&mut *db)
+    .await?;
+    for (id, server, metric, instance) in hidden {
+        if holds.series(server, &metric, &instance).is_some() {
+            continue;
+        }
+        let told = sqlx::query(
+            "WITH shown AS (
+                 UPDATE incidents SET hidden_by = NULL
+                 WHERE id = $1 AND state = 'open' AND hidden_by IS NOT NULL
+                 RETURNING id, severity, last_value)
+             INSERT INTO incident_events (incident_id, occurred_at, kind, severity, value, details)
+             SELECT id, now(), 'opened', severity, last_value, '{\"reason\": \"still_failing\"}'
+             FROM shown",
+        )
+        .bind(id)
+        .execute(&mut *db)
+        .await?;
+        if told.rows_affected() > 0 {
+            tracing::info!(%id, "incident still open after its parent came back; told now");
+        }
+    }
+    Ok(())
+}
+
+/// Adds to each opened incident of a parent that is down how many servers,
+/// devices and checks are behind it, as `incident.behind` (ADR-0152).
+fn count_behind(holds: &Holds, events: &mut [Event]) {
+    for event in events.iter_mut().filter(|e| e.event == "incident.opened") {
+        let Some(id) = incident_id(event) else {
+            continue;
+        };
+        let behind = holds.behind_incident(id).len();
+        if behind == 0 {
+            continue;
+        }
+        if let Some(incident) = event.details["incident"].as_object_mut() {
+            incident.insert("behind".into(), behind.into());
+        }
+    }
 }
 
 /// Adds to each relay's offline incident how many servers are behind it,
