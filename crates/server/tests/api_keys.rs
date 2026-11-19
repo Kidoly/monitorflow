@@ -187,7 +187,21 @@ impl World {
 
     /// A write with `key` and `Idempotency-Key: value`.
     async fn once(&self, uri: &str, key: &str, value: &str, body: Value) -> Response {
-        let request = Request::post(uri)
+        self.once_as("POST", uri, key, value, body).await
+    }
+
+    /// [`Self::once`] with another method.
+    async fn once_as(
+        &self,
+        method: &str,
+        uri: &str,
+        key: &str,
+        value: &str,
+        body: Value,
+    ) -> Response {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
             .header("authorization", format!("Bearer {key}"))
             .header("idempotency-key", value)
             .header("content-type", "application/json")
@@ -485,6 +499,21 @@ db_tests! {
         let again = w.once("/api/v1/integrations", &key, "hook-1", endpoint).await;
         assert!(again.status() == StatusCode::CONFLICT && replayed(&again));
         let stored: Vec<Option<Vec<u8>>> = sqlx::query_scalar("SELECT body FROM api_idempotency WHERE value = 'hook-1'")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(stored, [None]);
+        assert!(!json_of(again).await.to_string().contains(&secret));
+
+        // Nor the new secret a new URL gets.
+        let id = sqlx::query_scalar::<_, Uuid>("SELECT id FROM integration_endpoints WHERE name = 'PSA'")
+            .fetch_one(&pool).await.unwrap();
+        let moved = json!({ "name": "PSA", "url": "https://psa.example.com/hook2" });
+        let uri = format!("/api/v1/integrations/{id}");
+        let first = w.once_as("PUT", &uri, &key, "hook-2", moved.clone()).await;
+        assert_eq!(first.status(), StatusCode::OK);
+        let secret = json_of(first).await["secret"].as_str().unwrap().to_owned();
+        let again = w.once_as("PUT", &uri, &key, "hook-2", moved).await;
+        assert!(again.status() == StatusCode::CONFLICT && replayed(&again));
+        let stored: Vec<Option<Vec<u8>>> = sqlx::query_scalar("SELECT body FROM api_idempotency WHERE value = 'hook-2'")
             .fetch_all(&pool).await.unwrap();
         assert_eq!(stored, [None]);
         assert!(!json_of(again).await.to_string().contains(&secret));
