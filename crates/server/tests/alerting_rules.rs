@@ -345,4 +345,34 @@ db_tests! {
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].kind, "window");
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_short_window_stays_precise_beside_a_long_forecast(pool: PgPool) {
+        let web = server(&pool, "web-1").await;
+        // A forecast learned over a day on the same metric: its buckets
+        // are 24 minutes wide, which must not blur the 3-minute window.
+        rule(&pool, web, json!({
+            "metric": "monitorflow_disk_used_ratio", "comparison": ">=", "warning": 259200.0,
+            "kind": "forecast", "window_s": 86400, "target": 1.0,
+        })).await;
+        rule(&pool, web, json!({
+            "metric": "monitorflow_disk_used_ratio", "instance": "/spike", "comparison": ">",
+            "critical": 0.5, "kind": "window", "function": "avg", "window_s": 180,
+        })).await;
+        let alerts = engine(&pool, None).await;
+        let t0 = now() - 20 * MIN;
+        let quiet: Vec<_> = (0..60).map(|i| ("disk_used_ratio", "/spike", t0 + i * 10 * S, 0.0)).collect();
+        feed(&alerts, &quiet).await;
+        // 0.9 from t0 + 10 min: the 3-minute average passes 0.5 after
+        // 100 s, whatever the other summary's buckets.
+        let held: Vec<_> = (60..80).map(|i| ("disk_used_ratio", "/spike", t0 + i * 10 * S, 0.9)).collect();
+        feed(&alerts, &held).await;
+        let opened: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT opened_at FROM incidents WHERE kind = 'window'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let after = opened.timestamp_millis() - (t0 + 60 * 10 * S);
+        assert!((90 * S..=120 * S).contains(&after), "opened {after} ms after the load");
+    }
 }

@@ -108,4 +108,40 @@ describe("AddDevice", () => {
     );
     expect(await screen.findByText("You cannot add devices to any site.")).toBeTruthy();
   });
+
+  it("adds a vCenter once its certificate is trusted", async () => {
+    const print = Array.from({ length: 32 }, () => "3F").join(":");
+    const fetchMock = stubFetch({
+      "GET /api/sites": { status: 200, body: { sites: [site] } },
+      "GET /api/sites/site-1/probes": { status: 200, body: probes },
+      "POST /api/devices/vmware/test": {
+        status: 200,
+        body: { answers: true, error: null, product: "VMware vCenter Server 8.0.2", version: "8.0.2", api_type: "VirtualCenter",
+                certificate: { fingerprint: print, trusted: false, by_roots: false, subject: "vcenter", not_after: null },
+                login: null, objects: {}, probe: "relay-paris" },
+      },
+      "POST /api/devices": { status: 201, body: { id: "d3" } },
+    });
+    render(
+      <As user={operator}>
+        <AddDevice />
+      </As>,
+    );
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/^Name/), "vcenter-1");
+    await user.type(screen.getByLabelText(/^Address/), "vcenter.example.test");
+    await user.click(screen.getByLabelText(/It is a vCenter or an ESXi host/));
+    await user.type(screen.getByLabelText(/^User/), "monitor@vsphere.local");
+    await user.type(screen.getByLabelText(/^Password/), "a password");
+    await user.click(screen.getByRole("button", { name: "Test the connection" }));
+    expect(await screen.findByText(print)).toBeTruthy();
+    // Not trusted yet: the password is not sent with the device.
+    await user.click(screen.getByRole("button", { name: "Add the device" }));
+    expect(screen.getByText(/Trust its certificate first/)).toBeTruthy();
+    await user.click(screen.getByLabelText(/trust this certificate/));
+    await user.click(screen.getByRole("button", { name: "Add the device" }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/servers/view/?id=d3"));
+    const body = JSON.parse(String(fetchMock.mock.calls.find(([url, init]) => String(url) === "/api/devices" && init?.method === "POST")?.[1]?.body));
+    expect(body.vmware).toEqual({ port: 443, user: "monitor@vsphere.local", password: "a password", fingerprint: print });
+  });
 });

@@ -83,6 +83,18 @@ pub const ORIGIN_KINDS: &[&str] = &[
 pub const NOTES: &[(&str, &str)] = &[
     // Shared: what the server's planner says.
     (
+        "dependency_whole_check",
+        "The whole check depends on it: in the source only {trigger} did.",
+    ),
+    (
+        "dependency_unmapped",
+        "It depends on {parent}, which is not moved.",
+    ),
+    (
+        "dependency_group",
+        "Group {group} depends on it in PRTG: each of its devices does.",
+    ),
+    (
         "builtin",
         "Every MonitorFlow server measures this already; nothing to add.",
     ),
@@ -239,6 +251,38 @@ pub const NOTES: &[(&str, &str)] = &[
         "SNMP credentials are not moved: set them on the device's page, and its SNMP checks start.",
     ),
     (
+        "vmware_password",
+        "The vCenter password is not moved: set the credentials on the device's page (a Read-only account is enough), and its check starts with the alerts that come with it.",
+    ),
+    (
+        "vmware_discovered",
+        "The source found it through its vCenter: it is listed on the vCenter's page, with the vCenter's alerts, and is not added again.",
+    ),
+    (
+        "vmware_every_datastore",
+        "MonitorFlow applies this to every datastore of the vCenter, not to one.",
+    ),
+    (
+        "vmware_wbem",
+        "MonitorFlow reads the host's hardware sensors through the vCenter API, not WBEM.",
+    ),
+    (
+        "vmware_of_agent",
+        "MonitorFlow reads a vCenter or an ESXi host as a device, and this host has an agent.",
+    ),
+    (
+        "hyperv_group",
+        "The agent's account must join Hyper-V Administrators on the host; then its Hyper-V check starts.",
+    ),
+    (
+        "hyperv_windows",
+        "Hyper-V is read by the agent of a Windows server.",
+    ),
+    (
+        "virtual_partial",
+        "MonitorFlow reads the state, processor, memory, storage and snapshots of each virtual machine; traffic per network adapter and storage latency are not measured.",
+    ),
+    (
         "builtin_net",
         "Every server measures the traffic of its network interfaces already.",
     ),
@@ -286,6 +330,42 @@ pub const NOTES: &[(&str, &str)] = &[
     (
         "zabbix_template_missing",
         "The template {template} is not among the uploaded files: export it too, or connect to the Zabbix API.",
+    ),
+    (
+        "zabbix_change",
+        "Zabbix compares the last two values; MonitorFlow compares the change over {seconds} seconds.",
+    ),
+    (
+        "zabbix_fit",
+        "Zabbix fits a {fit} trend; MonitorFlow fits a straight line.",
+    ),
+    (
+        "zabbix_trend",
+        "Zabbix averages its hourly trends; MonitorFlow averages the values themselves over the same {seconds} seconds.",
+    ),
+    (
+        "zabbix_values_window",
+        "Zabbix reads the last {count} values; MonitorFlow reads the last {seconds} seconds, the time they take.",
+    ),
+    (
+        "window_rounded",
+        "MonitorFlow reads windows of 1 minute to 1 day; this one is {seconds} seconds.",
+    ),
+    (
+        "prometheus_deriv",
+        "Prometheus fits a line to the samples (deriv); MonitorFlow divides the change by the time.",
+    ),
+    (
+        "prometheus_compare_window",
+        "Prometheus compares single values; MonitorFlow compares averages over 5 minutes.",
+    ),
+    (
+        "prometheus_absent",
+        "Prometheus alerts when no series at all is left (absent); MonitorFlow alerts on each series that stops.",
+    ),
+    (
+        "kind_taken",
+        "MonitorFlow keeps one rule of each kind per measure, and moves {kept} on it.",
     ),
     (
         "zabbix_partial",

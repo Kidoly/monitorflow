@@ -20,12 +20,18 @@ pub use writer::{Queue, RetrySettings, Sink, Stats, WriteError, Writer, WriterSe
 pub struct Ingest {
     pub metrics: Option<Queue<Series>>,
     pub events: Option<Queue<LogRecord>>,
+    /// Keeps the virtual machines, hosts and datastores the samples
+    /// describe (ADR-0156).
+    pub virt: Option<crate::virt::Sink>,
 }
 
 impl Ingest {
     /// Queues the valid series of a batch and counts the invalid ones.
     /// Returns how many series were dropped because the queue was full.
     pub fn samples(&self, checked: Checked) -> u64 {
+        if let Some(virt) = &self.virt {
+            virt.observe(&checked.series);
+        }
         let Some(queue) = &self.metrics else {
             return 0;
         };
