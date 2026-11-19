@@ -125,12 +125,7 @@ fn selector(sensors: &[&EffectiveSensor], target: &Target) -> String {
         names.join("|"),
         SUFFIXES.join("|")
     );
-    format!(
-        "{{__name__=~{},peer={},site={}}}",
-        quote(&pattern),
-        quote(&target.peer),
-        quote(&target.site)
-    )
+    format!("{{__name__=~{},{}}}", quote(&pattern), target.matchers())
 }
 
 /// Joins the values and times of the same series, keeping the newest per

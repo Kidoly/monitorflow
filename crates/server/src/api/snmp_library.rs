@@ -153,12 +153,21 @@ fn filter(params: &ListParams, scope: &Scope) -> Result<(), ApiError> {
     }
 }
 
-/// How many checks name each lookup, by reference.
-async fn usage(db: &mut PgConnection) -> Result<BTreeMap<String, i64>, sqlx::Error> {
+/// How many checks of devices in `sites` name each lookup, by reference.
+/// Built-in lookups are shared by every customer: a person counts only
+/// the checks they may read.
+async fn usage(db: &mut PgConnection, sites: &Scope) -> Result<BTreeMap<String, i64>, sqlx::Error> {
+    let (all, ids) = sites.bind();
     let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT p.value, count(*) FROM sensor_configs c, jsonb_each_text(c.params) p
-         WHERE c.kind = 'snmp_custom' AND p.key ~ '^lookup[0-9]+$' GROUP BY p.value",
+        "SELECT p.value, count(*)
+         FROM sensor_configs c LEFT JOIN servers s ON s.id = c.server_id,
+              jsonb_each_text(c.params) p
+         WHERE c.kind = 'snmp_custom' AND p.key ~ '^lookup[0-9]+$'
+           AND ($1 OR coalesce(c.site_id, s.site_id) = ANY($2))
+         GROUP BY p.value",
     )
+    .bind(all)
+    .bind(&ids)
     .fetch_all(&mut *db)
     .await?;
     Ok(rows.into_iter().collect())
@@ -220,7 +229,7 @@ pub async fn list_lookups(
     .bind(params.customer_id)
     .fetch_all(&mut *conn)
     .await?;
-    let used = usage(&mut conn).await?;
+    let used = usage(&mut conn, &user.readable_sites()).await?;
     let mut lookups = builtin_views(&used);
     lookups.extend(rows.into_iter().map(|r| own_view(&user, &used, r)));
     Ok(Json(LookupList { lookups }))
@@ -251,7 +260,7 @@ pub async fn get_lookup(
     Path(id): Path<String>,
 ) -> Result<Json<LookupView>, ApiError> {
     let mut conn = state.pool.acquire().await?;
-    let used = usage(&mut conn).await?;
+    let used = usage(&mut conn, &user.readable_sites()).await?;
     if id.starts_with("builtin:") {
         readable_customers(&mut conn, &user).await?;
         return builtin_views(&used)
@@ -391,7 +400,7 @@ pub async fn update_lookup(
         details,
     )
     .await?;
-    let used = usage(&mut tx).await?;
+    let used = usage(&mut tx, &user.readable_sites()).await?;
     tx.commit().await?;
     Ok(Json(own_view(&user, &used, row)))
 }
@@ -416,7 +425,7 @@ pub async fn delete_lookup(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    let used = usage(&mut tx)
+    let used = usage(&mut tx, &Scope::All)
         .await?
         .get(&id.to_string())
         .copied()

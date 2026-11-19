@@ -25,7 +25,7 @@ use super::{ApiError, ApiState};
 use crate::vm_query::{QueryError, VmQuery};
 
 /// Prefix of every metric the ingest writes (ADR-0013).
-pub const METRIC_PREFIX: &str = "monitorflow_";
+pub use crate::ingest::validate::METRIC_PREFIX;
 /// Longest range of a range query.
 pub const MAX_RANGE: Duration = Duration::days(31);
 /// Default range of a range query without `start`.
@@ -184,6 +184,11 @@ pub struct Target {
 }
 
 impl Target {
+    /// The `peer` and `site` matchers of a selector, without braces.
+    pub(super) fn matchers(&self) -> String {
+        format!("peer={},site={}", quote(&self.peer), quote(&self.site))
+    }
+
     /// `extra_label` parameters, which VictoriaMetrics adds to every
     /// selector of the query.
     pub(super) fn extra_labels(&self) -> [(&'static str, String); 2] {
@@ -235,11 +240,7 @@ pub fn build_query(
     rollup: Option<(Rollup, i64)>,
     agg: Option<Aggregation>,
 ) -> String {
-    let mut selector = format!(
-        "{metric}{{peer={},site={}",
-        quote(&target.peer),
-        quote(&target.site)
-    );
+    let mut selector = format!("{metric}{{{}", target.matchers());
     if let Some(instance) = instance {
         selector.push_str(&format!(",instance={}", quote(instance)));
     }
@@ -253,10 +254,21 @@ pub fn build_query(
     }
 }
 
-/// `(start, end, step)` of a range query, bounded.
-pub fn range(params: &RangeParams, now: DateTime<Utc>) -> Result<(i64, i64, i64), ApiError> {
-    let end = params.end.unwrap_or(now);
-    let start = params.start.unwrap_or(end - DEFAULT_RANGE);
+/// `(start, end)` of a query: `end` defaults to `now`, `start` to
+/// [`DEFAULT_RANGE`] before `end`, and they are at most [`MAX_RANGE`]
+/// apart. Shared with the logs (ADR-0091).
+pub(super) fn window(
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), ApiError> {
+    let end = end.unwrap_or(now);
+    let start = match start {
+        Some(start) => start,
+        None => end
+            .checked_sub_signed(DEFAULT_RANGE)
+            .ok_or_else(|| ApiError::Invalid("end is too far in the past".into()))?,
+    };
     if start >= end {
         return Err(ApiError::Invalid("start must be before end".into()));
     }
@@ -266,6 +278,12 @@ pub fn range(params: &RangeParams, now: DateTime<Utc>) -> Result<(i64, i64, i64)
             MAX_RANGE.num_days()
         )));
     }
+    Ok((start, end))
+}
+
+/// `(start, end, step)` of a range query, bounded.
+pub fn range(params: &RangeParams, now: DateTime<Utc>) -> Result<(i64, i64, i64), ApiError> {
+    let (start, end) = window(params.start, params.end, now)?;
     let seconds = (end - start).num_seconds().max(1);
     let step = params
         .step
@@ -305,12 +323,13 @@ fn query_params<T>(params: Result<Query<T>, QueryRejection>) -> Result<T, ApiErr
         .map_err(|rejection| ApiError::Invalid(rejection.body_text()))
 }
 
-/// The backend and the `peer`/`site` of `server` if the user may read it.
-async fn target(
+/// The `peer`/`site` of `server` if the user may read it. Shared with
+/// the logs (ADR-0091).
+pub(super) async fn server_target(
     state: &ApiState,
     user: &CurrentUser,
     server: Uuid,
-) -> Result<(VmQuery, Target), ApiError> {
+) -> Result<Target, ApiError> {
     let row: Option<(String, Uuid, String)> = sqlx::query_as(
         "SELECT s.peer_id, s.site_id, si.name FROM servers s
          JOIN sites si ON si.id = s.site_id WHERE s.id = $1",
@@ -320,11 +339,21 @@ async fn target(
     .await?;
     authorize(user, row.as_ref().map(|r| r.1), false)?;
     let (peer, _, site) = row.ok_or(ApiError::NotFound)?;
+    Ok(Target { peer, site })
+}
+
+/// The backend and the `peer`/`site` of `server` if the user may read it.
+async fn target(
+    state: &ApiState,
+    user: &CurrentUser,
+    server: Uuid,
+) -> Result<(VmQuery, Target), ApiError> {
+    let target = server_target(state, user, server).await?;
     let vm = state
         .metrics
         .clone()
         .ok_or_else(|| ApiError::MetricsUnavailable("no VictoriaMetrics configured".into()))?;
-    Ok((vm, Target { peer, site }))
+    Ok((vm, target))
 }
 
 pub(super) fn backend_error(error: QueryError) -> ApiError {
@@ -453,10 +482,9 @@ pub async fn discover(
     let (vm, target) = target(&state, &user, server).await?;
     let now = Utc::now();
     let matcher = format!(
-        "{{__name__=~{},peer={},site={}}}",
+        "{{__name__=~{},{}}}",
         quote(&format!("{METRIC_PREFIX}.+")),
-        quote(&target.peer),
-        quote(&target.site)
+        target.matchers()
     );
     let mut query = vec![
         ("match[]", matcher),
@@ -511,6 +539,22 @@ mod tests {
             peer: "agent-1".into(),
             site: "o\"brien\\paris".into(),
         }
+    }
+
+    #[test]
+    fn dates_at_the_edge_of_time_are_refused_not_a_panic() {
+        let end: DateTime<Utc> = serde_json::from_value(json!("-262143-01-01T00:00:00Z")).unwrap();
+        let params = RangeParams {
+            server_id: Uuid::nil(),
+            metric: "monitorflow_cpu".into(),
+            instance: None,
+            start: None,
+            end: Some(end),
+            step: None,
+            agg: None,
+            rollup: None,
+        };
+        assert!(range(&params, Utc::now()).is_err());
     }
 
     #[test]

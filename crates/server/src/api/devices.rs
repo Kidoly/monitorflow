@@ -518,13 +518,13 @@ pub(super) async fn probe_for(
     })
 }
 
-/// Runs `check` once from `by`: on this central server, or on the relay.
-pub(super) async fn run_once(
+/// Runs `check` once from `by`, with the probe's own error.
+async fn test_once(
     state: &ApiState,
     by: &RunBy,
     check: monitorflow_probe::Check,
-) -> Result<Vec<monitorflow_common::proto::v1::Sample>, ApiError> {
-    let outcome = match &state.probes {
+) -> Result<Vec<monitorflow_common::proto::v1::Sample>, crate::probes::TestError> {
+    match &state.probes {
         Some(probes) => probes.test(&state.registry, &by.key, check).await,
         None if by.probe == Some("central") => {
             monitorflow_probe::test_once(&monitorflow_probe::Builtin, &check)
@@ -537,8 +537,16 @@ pub(super) async fn run_once(
                 .map_err(crate::probes::TestError::Failed)
         }
         None => Err(crate::probes::TestError::NotConnected),
-    };
-    match outcome {
+    }
+}
+
+/// Runs `check` once from `by`: on this central server, or on the relay.
+pub(super) async fn run_once(
+    state: &ApiState,
+    by: &RunBy,
+    check: monitorflow_probe::Check,
+) -> Result<Vec<monitorflow_common::proto::v1::Sample>, ApiError> {
+    match test_once(state, by, check).await {
         Ok(samples) => Ok(samples),
         Err(crate::probes::TestError::NotConnected) => Err(ApiError::Conflict(format!(
             "the relay {} is not connected to this central server now; try again in a moment",
@@ -578,20 +586,7 @@ pub async fn detect(
         kind: monitorflow_snmp::KIND.into(),
         config,
     };
-    let outcome = match &state.probes {
-        Some(probes) => probes.test(&state.registry, &by.key, check).await,
-        None if by.probe == Some("central") => {
-            monitorflow_probe::test_once(&monitorflow_probe::Builtin, &check)
-                .await
-                .map(|s| {
-                    s.into_iter()
-                        .map(monitorflow_probe::sample_to_proto)
-                        .collect()
-                })
-                .map_err(crate::probes::TestError::Failed)
-        }
-        None => Err(crate::probes::TestError::NotConnected),
-    };
+    let outcome = test_once(&state, &by, check).await;
     let result = match outcome {
         Ok(samples) => detected(&samples, &by.key),
         Err(crate::probes::TestError::NotConnected) => {

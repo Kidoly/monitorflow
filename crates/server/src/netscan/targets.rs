@@ -76,6 +76,7 @@ fn expand_one(entry: &str, out: &mut BTreeSet<IpAddr>) -> Result<(), String> {
         if let Some(why) = refused(base) {
             return Err(format!("`{quoted}` is {why}, which is never scanned"));
         }
+        let mut block = Vec::new();
         match base {
             IpAddr::V4(v4) => {
                 let mask = if prefix == 0 {
@@ -87,12 +88,12 @@ fn expand_one(entry: &str, out: &mut BTreeSet<IpAddr>) -> Result<(), String> {
                 let count = 1u32 << size_bits;
                 // Network and broadcast addresses are not hosts.
                 let (from, to) = if prefix < 31 {
-                    (first + 1, first + count - 2)
+                    (first + 1, first + (count - 2))
                 } else {
-                    (first, first + count - 1)
+                    (first, first + (count - 1))
                 };
                 for n in from..=to {
-                    out.insert(IpAddr::V4(Ipv4Addr::from(n)));
+                    block.push(IpAddr::V4(Ipv4Addr::from(n)));
                 }
             }
             IpAddr::V6(v6) => {
@@ -103,10 +104,15 @@ fn expand_one(entry: &str, out: &mut BTreeSet<IpAddr>) -> Result<(), String> {
                 };
                 let first = u128::from(v6) & mask;
                 for n in 0..(1u128 << size_bits) {
-                    out.insert(IpAddr::V6(Ipv6Addr::from(first + n)));
+                    block.push(IpAddr::V6(Ipv6Addr::from(first + n)));
                 }
             }
         }
+        // The base alone is not enough: `0.0.0.1/31` holds 0.0.0.0.
+        if let Some(why) = block.iter().find_map(|ip| refused(*ip)) {
+            return Err(format!("`{quoted}` holds {why}, which is never scanned"));
+        }
+        out.extend(block);
         return Ok(());
     }
     if let Some((from, to)) = entry.split_once('-') {
@@ -256,6 +262,14 @@ mod tests {
     }
 
     #[test]
+    fn blocks_at_the_end_of_the_space() {
+        assert_eq!(
+            of(&["255.255.255.252/30"]).unwrap(),
+            [ip("255.255.255.253"), ip("255.255.255.254")]
+        );
+    }
+
+    #[test]
     fn what_is_refused() {
         for bad in [
             &[][..],
@@ -277,6 +291,11 @@ mod tests {
             &["::ffff:127.0.0.1"],
             &["255.255.255.255"],
             &["10.0.0.0/22", "10.1.0.0/24"],
+            // Blocks whose first address is fine but that hold others.
+            &["0.0.0.1/31"],
+            &["255.255.255.254/31"],
+            &["::2/126"],
+            &["::ffff:0.0.0.1/127"],
         ] {
             assert!(of(bad).is_err(), "{bad:?}");
         }

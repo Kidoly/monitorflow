@@ -278,7 +278,7 @@ fn cut(text: &str, max: usize) -> String {
 }
 
 /// The largest char boundary of `text` within `max` bytes.
-fn cut_at(text: &str, max: usize) -> usize {
+pub(crate) fn cut_at(text: &str, max: usize) -> usize {
     let mut end = text.len().min(max);
     while !text.is_char_boundary(end) {
         end -= 1;
