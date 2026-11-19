@@ -41,6 +41,7 @@ impl Targets {
         Self(Limits {
             targets: Some(targets),
             roots: None,
+            refuse_link_local: false,
         })
     }
 }

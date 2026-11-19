@@ -112,6 +112,22 @@ pub struct Limits {
     pub targets: Option<PortTargets>,
     /// `None`: [`certificate::roots`].
     pub roots: Option<Arc<rustls::RootCertStore>>,
+    /// Refuses link-local addresses, where clouds serve instance metadata
+    /// and credentials: set for the central server's checks, which people
+    /// of any customer may point at a URL.
+    pub refuse_link_local: bool,
+}
+
+/// Link-local addresses (169.254.0.0/16, fe80::/10, also inside IPv6) and
+/// the IPv6 instance metadata address of AWS, `fd00:ec2::254`.
+pub fn is_link_local(ip: IpAddr) -> bool {
+    match ip.to_canonical() {
+        IpAddr::V4(ip) => ip.is_link_local(),
+        IpAddr::V6(ip) => {
+            (ip.segments()[0] & 0xffc0) == 0xfe80
+                || ip == std::net::Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254)
+        }
+    }
 }
 
 impl Limits {
@@ -119,6 +135,17 @@ impl Limits {
     /// not. A name is allowed when listed, or when some range is listed
     /// for its port; its addresses are then checked one by one.
     pub fn check(&self, url: &Url) -> Result<(), String> {
+        let literal = match url.host() {
+            Some(Host::Ipv4(ip)) => Some(IpAddr::from(ip)),
+            Some(Host::Ipv6(ip)) => Some(IpAddr::from(ip)),
+            _ => None,
+        };
+        if self.refuse_link_local && literal.is_some_and(is_link_local) {
+            return Err(format!(
+                "{} is a link-local address, which the central server does not check",
+                url.host_str().unwrap_or_default()
+            ));
+        }
         let Some(targets) = &self.targets else {
             return Ok(());
         };
@@ -144,6 +171,9 @@ impl Limits {
 
     /// Whether `addr`, which `url`'s host resolved to, may be connected to.
     pub fn allows(&self, url: &Url, addr: SocketAddr) -> bool {
+        if self.refuse_link_local && is_link_local(addr.ip()) {
+            return false;
+        }
         let Some(targets) = &self.targets else {
             return true;
         };
@@ -199,7 +229,7 @@ async fn addresses(
     if allowed.is_empty() {
         tracing::warn!(
             host = url.host_str().unwrap_or_default(),
-            "website check: the host resolves only to addresses outside sensors.port_targets"
+            "website check: the host resolves only to addresses this check may not reach"
         );
         return Err(Failure::Refused);
     }
@@ -270,6 +300,14 @@ async fn tls(
     (result, recorder.take())
 }
 
+/// Whether the check's own headers go to `url`: the host the check points
+/// at, never over plain HTTP when it points at HTTPS. They may carry a
+/// token, which a redirect elsewhere must not receive.
+fn headers_go_to(spec: &Spec, url: &Url) -> bool {
+    url.host_str() == spec.url.host_str()
+        && !(spec.url.scheme() == "https" && url.scheme() != "https")
+}
+
 /// Scheme, host and port: credentials go only where the check points.
 fn same_origin(a: &Url, b: &Url) -> bool {
     a.scheme() == b.scheme()
@@ -310,8 +348,10 @@ fn request(
         .header("user-agent", USER_AGENT)
         .header("accept", "*/*")
         .header("connection", "close");
-    for (name, value) in &spec.headers {
-        builder = builder.header(name.as_str(), value.as_str());
+    if headers_go_to(spec, url) {
+        for (name, value) in &spec.headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
     }
     if credentials {
         if let Some(value) = authorization(spec) {
@@ -494,6 +534,52 @@ mod tests {
     }
 
     #[test]
+    fn link_local_addresses_are_refused_when_asked() {
+        let central = Limits {
+            refuse_link_local: true,
+            ..Limits::default()
+        };
+        let url = Url::parse("https://metadata.test/").unwrap();
+        for ip in [
+            "169.254.169.254",
+            "fe80::1",
+            "fd00:ec2::254",
+            "::ffff:169.254.0.1",
+        ] {
+            let addr = SocketAddr::new(ip.parse().unwrap(), 443);
+            assert!(!central.allows(&url, addr), "{ip}");
+            assert!(Limits::default().allows(&url, addr), "{ip}");
+        }
+        for ip in ["10.0.0.1", "127.0.0.1", "192.0.2.1", "fd00::1"] {
+            let addr = SocketAddr::new(ip.parse().unwrap(), 443);
+            assert!(central.allows(&url, addr), "{ip}");
+        }
+        assert!(central
+            .check(&Url::parse("http://169.254.169.254/").unwrap())
+            .is_err());
+        assert!(central
+            .check(&Url::parse("http://[fe80::1]/").unwrap())
+            .is_err());
+    }
+
+    #[test]
+    fn headers_go_only_to_the_host_checked() {
+        let s = spec(&[("url", "https://x.test/"), ("headers", "X-Token: t")]);
+        let to = |u: &str| request(&s, &Url::parse(u).unwrap(), Method::Get, false).unwrap();
+        assert_eq!(to("https://x.test:8443/b").headers()["x-token"], "t");
+        assert!(!to("https://y.test/").headers().contains_key("x-token"));
+        assert!(!to("http://x.test/").headers().contains_key("x-token"));
+        let plain = spec(&[("url", "http://x.test/"), ("headers", "X-Token: t")]);
+        let r = request(
+            &plain,
+            &Url::parse("https://x.test/").unwrap(),
+            Method::Get,
+            false,
+        );
+        assert_eq!(r.unwrap().headers()["x-token"], "t");
+    }
+
+    #[test]
     fn credentials_are_basic_or_bearer() {
         let basic = spec(&[("url", "https://x"), ("username", "u"), ("password", "p")]);
         assert_eq!(authorization(&basic).unwrap(), "Basic dTpw");
@@ -540,7 +626,7 @@ mod tests {
     fn limits_follow_port_targets() {
         let limits = Limits {
             targets: Some(PortTargets::parse(&["10.0.0.0/8:443", "web.test:80"]).unwrap()),
-            roots: None,
+            ..Limits::default()
         };
         let url = |s: &str| Url::parse(s).unwrap();
         assert!(limits.check(&url("https://10.1.2.3/")).is_ok());
@@ -556,7 +642,7 @@ mod tests {
         assert!(Limits::default().check(&url("http://anything/")).is_ok());
         let none = Limits {
             targets: Some(PortTargets::parse::<&str>(&[]).unwrap()),
-            roots: None,
+            ..Limits::default()
         };
         assert!(none.check(&url("http://10.0.0.1/")).is_err());
     }

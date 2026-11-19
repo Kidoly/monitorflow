@@ -70,7 +70,7 @@ impl SnmpSensor {
                     .table(client, mibs::IFX_TABLE)
                     .await
                     .unwrap_or_default();
-                let now = chrono_now_ms();
+                let now = monitorflow_sensors::now_unix_ms();
                 let mut kept = self.counters.lock().unwrap_or_else(|e| e.into_inner());
                 let (samples, counters) = mibs::interfaces(&if_table, &ifx_table, &kept, now);
                 *kept = counters;
@@ -167,12 +167,6 @@ impl SnmpSensor {
             }
         }
     }
-}
-
-fn chrono_now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 #[async_trait::async_trait]

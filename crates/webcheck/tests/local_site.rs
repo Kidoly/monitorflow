@@ -45,6 +45,13 @@ async fn page(request: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
             answer(200, "late")
         }
         "/moved" => redirect("/"),
+        "/metadata" => redirect("http://169.254.169.254/latest/meta-data/"),
+        "/other-host" => {
+            // The same server under another name.
+            let host = request.headers()["host"].to_str().unwrap();
+            let port = host.rsplit(':').next().unwrap();
+            redirect(&format!("http://localhost:{port}/headers"))
+        }
         "/away" => redirect("ftp://elsewhere/"),
         "/loop" => redirect("/loop"),
         "/private" => {
@@ -144,8 +151,8 @@ fn limits(ca: &Authority) -> Limits {
     let mut roots = RootCertStore::empty();
     roots.add(ca.der.clone()).unwrap();
     Limits {
-        targets: None,
         roots: Some(Arc::new(roots)),
+        ..Limits::default()
     }
 }
 
@@ -374,4 +381,42 @@ async fn passwords_go_only_to_a_trusted_certificate() {
     .await;
     assert_eq!(refused.failure, Some(Failure::Certificate));
     assert_eq!(refused.status, None, "no request was sent");
+}
+
+#[tokio::test]
+async fn headers_stay_with_the_host_checked() {
+    let addr = serve(None).await;
+    let url = |path: &str| format!("http://{addr}{path}");
+    let none = Limits::default();
+    let moved = check(
+        &none,
+        &[
+            ("url", &url("/other-host")),
+            ("headers", "X-Probe: token"),
+            ("contains", "probe=none"),
+        ],
+    )
+    .await;
+    assert_eq!((moved.failure, moved.redirects), (None, 1));
+}
+
+#[tokio::test]
+async fn the_central_server_never_reaches_link_local_addresses() {
+    let addr = serve(None).await;
+    let central = Limits {
+        refuse_link_local: true,
+        ..Limits::default()
+    };
+    let direct = check(&central, &[("url", "http://169.254.169.254/latest/")]).await;
+    assert_eq!(direct.failure, Some(Failure::Refused));
+    let mapped = check(&central, &[("url", "http://[::ffff:169.254.169.254]/")]).await;
+    assert_eq!(mapped.failure, Some(Failure::Refused));
+    let redirected = check(&central, &[("url", &format!("http://{addr}/metadata"))]).await;
+    assert_eq!(
+        (redirected.failure, redirected.redirects),
+        (Some(Failure::Refused), 1)
+    );
+    // Other addresses are checked as before.
+    let ok = check(&central, &[("url", &format!("http://{addr}/"))]).await;
+    assert_eq!(ok.failure, None);
 }

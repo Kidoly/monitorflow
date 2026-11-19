@@ -17,7 +17,6 @@ hyper.workspace = true
 hyper-util.workspace = true
 rustls.workspace = true
 rustls-native-certs.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
 tracing.workspace = true

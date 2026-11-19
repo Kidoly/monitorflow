@@ -314,3 +314,24 @@ async fn openai_is_asked_for_strict_tools() {
         .unwrap_err()
         .contains("OpenAI refused this API key"));
 }
+
+#[tokio::test]
+async fn an_endless_answer_is_not_read_whole() {
+    // Bigger than any answer is let to be: refused, never held in memory.
+    let huge = (200, "x".repeat(17 * 1024 * 1024), Duration::ZERO);
+    let (_, url) = serve(vec![huge.clone(), huge]).await;
+    match provider(&url, None).next_step(&request()).await {
+        Err(AiError::Malformed(message)) => assert!(message.contains("larger than"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    // An error answer is read only as far as its message needs.
+    let (_, url) = serve(vec![(400, "y".repeat(17 * 1024 * 1024), Duration::ZERO)]).await;
+    match provider(&url, None).next_step(&request()).await {
+        Err(AiError::Api {
+            status: 400,
+            message,
+            ..
+        }) => assert_eq!(message.len(), 512),
+        other => panic!("{other:?}"),
+    }
+}

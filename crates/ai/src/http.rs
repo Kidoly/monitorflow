@@ -1,16 +1,24 @@
 //! What every adapter does over HTTP: retries of transient failures and
 //! API errors read from the body, whichever shape the provider gives them.
 
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use serde_json::Value;
 
+use crate::openai::is_private;
 use crate::AiError;
 
 /// Longest wait between attempts, `retry-after` included.
 pub(crate) const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 /// Characters of an API error message kept in [`AiError::Api`].
 pub(crate) const MAX_ERROR_MESSAGE: usize = 512;
+/// Largest successful answer read: a step or a model list is far smaller.
+pub(crate) const MAX_ANSWER_BYTES: usize = 16 * 1024 * 1024;
+/// Bytes of an error answer read; the rest is not needed for the message.
+const MAX_ERROR_BYTES: usize = 64 * 1024;
 
 /// How a provider retries: attempts after the first on 408, 409, 429, 5xx
 /// and transport errors, and the first backoff without `retry-after`,
@@ -22,14 +30,40 @@ pub(crate) struct Retries {
 }
 
 /// A client with the provider's timeout, never following a redirect to
-/// another host with the key.
-pub(crate) fn client(timeout: Duration) -> Result<reqwest::Client, AiError> {
-    reqwest::Client::builder()
+/// another host with the key. With `private_only`, for a plain HTTP
+/// address, names resolve to their private addresses only and no proxy is
+/// used: the connection goes where [`crate::openai::ensure_reachable_safely`]
+/// looked, even when the name's answer changes in between.
+pub(crate) fn client(timeout: Duration, private_only: bool) -> Result<reqwest::Client, AiError> {
+    let mut builder = reqwest::Client::builder()
         .timeout(timeout)
         .connect_timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::none());
+    if private_only {
+        builder = builder.no_proxy().dns_resolver(Arc::new(PrivateResolver));
+    }
+    builder
         .build()
         .map_err(|e| AiError::Transport(e.without_url().to_string()))
+}
+
+/// Resolves names to their private addresses only.
+struct PrivateResolver;
+
+impl Resolve for PrivateResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        Box::pin(async move {
+            let host = name.as_str().to_owned();
+            let private: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .filter(|a| is_private(a.ip()))
+                .collect();
+            if private.is_empty() {
+                return Err(format!("{host} has no private address").into());
+            }
+            Ok(Box::new(private.into_iter()) as Addrs)
+        })
+    }
 }
 
 /// Sends what `request` builds, again for transient failures, and returns
@@ -65,14 +99,43 @@ pub(crate) async fn send(
     let response = request.send().await.map_err(transport)?;
     let status = response.status();
     let headers = response.headers().clone();
-    let bytes = response.bytes().await.map_err(transport)?;
     if status.is_success() {
-        return Ok(bytes.to_vec());
+        return match read_capped(response, MAX_ANSWER_BYTES)
+            .await
+            .map_err(transport)?
+        {
+            (bytes, false) => Ok(bytes),
+            (_, true) => Err((
+                AiError::Malformed(format!("answer larger than {MAX_ANSWER_BYTES} bytes")),
+                None,
+            )),
+        };
     }
+    let (bytes, _) = read_capped(response, MAX_ERROR_BYTES)
+        .await
+        .map_err(transport)?;
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
     let request_id = header("request-id").or_else(|| header("x-request-id"));
     let error = api_error(status.as_u16(), &bytes, request_id);
     Err((error, header("retry-after").and_then(parse_retry_after)))
+}
+
+/// At most `cap` bytes of the body, and whether there was more: an answer
+/// is never held whole in memory, whatever size the server sends.
+async fn read_capped(
+    mut response: reqwest::Response,
+    cap: usize,
+) -> Result<(Vec<u8>, bool), reqwest::Error> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        let room = cap - body.len();
+        if chunk.len() > room {
+            body.extend_from_slice(&chunk[..room]);
+            return Ok((body, true));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok((body, false))
 }
 
 pub(crate) fn backoff(base: Duration, attempt: u32) -> Duration {
@@ -82,7 +145,10 @@ pub(crate) fn backoff(base: Duration, attempt: u32) -> Duration {
 /// `retry-after` in seconds; the HTTP-date form is ignored.
 pub(crate) fn parse_retry_after(value: &str) -> Option<Duration> {
     let seconds: f64 = value.trim().parse().ok()?;
-    (seconds.is_finite() && seconds >= 0.0).then(|| Duration::from_secs_f64(seconds))
+    // Beyond what a `Duration` holds, `from_secs_f64` would panic; the
+    // wait is cut to [`MAX_RETRY_DELAY`] anyway.
+    (seconds.is_finite() && seconds >= 0.0)
+        .then(|| Duration::try_from_secs_f64(seconds).unwrap_or(MAX_RETRY_DELAY))
 }
 
 /// The error of a failed answer. Anthropic and OpenAI wrap it in `error`,
@@ -174,9 +240,26 @@ mod tests {
         assert_eq!(parse_retry_after(" 0.5 "), Some(Duration::from_millis(500)));
         assert_eq!(parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT"), None);
         assert_eq!(parse_retry_after("-1"), None);
+        assert_eq!(parse_retry_after("1e20"), Some(MAX_RETRY_DELAY));
+        assert_eq!(parse_retry_after("inf"), None);
         let base = Duration::from_secs(1);
         assert_eq!(backoff(base, 0), base);
         assert_eq!(backoff(base, 3), Duration::from_secs(8));
         assert!(backoff(base, 40) >= MAX_RETRY_DELAY);
+    }
+}
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn plain_http_connects_only_to_private_addresses() {
+        let resolve = |host: &'static str| PrivateResolver.resolve(host.parse().unwrap());
+        let found: Vec<SocketAddr> = resolve("localhost").await.unwrap().collect();
+        assert!(!found.is_empty() && found.iter().all(|a| is_private(a.ip())));
+        // A name that answers with a public address, as a rebound one
+        // would after the check, gets no address to connect to.
+        assert!(resolve("192.0.2.1").await.is_err());
     }
 }

@@ -249,10 +249,63 @@ fn bad_files_are_refused_within_limits() {
         "A DEFINITIONS ::= BEGIN x OBJECT-TYPE SYNTAX ::= { } END",
         "A DEFINITIONS ::= BEGIN T ::= INTEGER { a(",
         "'0A'H \"",
+        "A DEFINITIONS ::= BEGIN x INTEGER ::= '0A'\u{e9} END",
+        "'0A'\u{e9}",
         "A DEFINITIONS ::= BEGIN OBJECT-TYPE MACRO ::= BEGIN",
     ] {
         let _ = parse(&[file("j.mib", junk)], &none);
     }
+}
+
+#[test]
+fn resolved_oids_stay_within_128_arcs() {
+    let none = Known::default();
+    let chain = |n: usize| {
+        let mut text =
+            String::from("A DEFINITIONS ::= BEGIN\na0 OBJECT IDENTIFIER ::= { iso 1 }\n");
+        for i in 1..n {
+            text.push_str(&format!("a{i} OBJECT IDENTIFIER ::= {{ a{} 1 }}\n", i - 1));
+        }
+        text.push_str("END\n");
+        text
+    };
+    // `iso` and 127 more arcs: the longest OID there is.
+    let modules = parse(&[file("deep.mib", &chain(127))], &none).unwrap();
+    assert_eq!(object(&modules, "a126").oid.len(), 128);
+    let error = parse(&[file("deeper.mib", &chain(20_000))], &none)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("deeper.mib") && error.contains("128 arcs"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_long_chain_written_backwards_resolves_in_one_pass() {
+    // Names with no arc of their own, each defined before its parent:
+    // one round per link would take minutes.
+    let n = MAX_OBJECTS - 1;
+    let mut text = String::from("A DEFINITIONS ::= BEGIN\n");
+    for i in (1..n).rev() {
+        text.push_str(&format!("a{i} OBJECT IDENTIFIER ::= {{ a{} }}\n", i - 1));
+    }
+    text.push_str("a0 OBJECT IDENTIFIER ::= { iso 5 }\nEND\n");
+    let started = std::time::Instant::now();
+    let modules = parse(&[file("back.mib", &text)], &Known::default()).unwrap();
+    assert_eq!(object(&modules, &format!("a{}", n - 1)).oid, vec![1, 5]);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    // A long chain hanging off a missing name is reported, not walked
+    // again for each of its objects.
+    let orphan = text.replace("{ iso 5 }", "{ absent 5 }");
+    let started = std::time::Instant::now();
+    match parse(&[file("orphan.mib", &orphan)], &Known::default()) {
+        Err(MibError::Missing(missing)) => {
+            assert!(missing.values().any(|names| names.contains("absent")))
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
 }
 
 #[test]

@@ -142,7 +142,7 @@ impl ClaudeProvider {
             .map_err(|_| AiError::InvalidApiKey("not a valid HTTP header value"))?;
         api_key.set_sensitive(true);
         Ok(Self {
-            client: http::client(options.request_timeout)?,
+            client: http::client(options.request_timeout, false)?,
             url: format!("{}/v1/messages", options.base_url.trim_end_matches('/')),
             api_key,
             options,
