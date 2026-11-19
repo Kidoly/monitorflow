@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use monitorflow_sensors::port::PortTargets;
+use monitorflow_sensors::validate::label_value as label;
 use monitorflow_sensors::{BuildError, Sample, Sensor, SensorError};
 use tokio::time::Instant;
 
@@ -44,8 +45,6 @@ pub const KIND: &str = "http";
 /// Time kept before the deadline to report `up 0` rather than be
 /// cancelled with nothing, which could not alert.
 const MARGIN: Duration = Duration::from_millis(200);
-/// Longest label value the server keeps.
-const MAX_LABEL: usize = 256;
 
 /// Checks `params` and builds the check; `targets` is the agent's
 /// `sensors.port_targets`, when it sets one (ADR-0111). The server calls
@@ -88,14 +87,6 @@ impl WebCheck {
     pub fn new(spec: Spec, limits: Limits) -> Self {
         Self { spec, limits }
     }
-}
-
-fn label(text: &str) -> String {
-    let mut text: String = text.chars().filter(|c| !c.is_control()).collect();
-    while text.len() > MAX_LABEL {
-        text.pop();
-    }
-    text
 }
 
 fn bool(value: bool) -> f64 {

@@ -1825,7 +1825,6 @@ dependencies = [
  "rustix",
  "serde_json",
  "sqlx",
- "tempfile",
  "tokio",
  "tracing",
 ]
@@ -2076,7 +2075,6 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-native-certs",
- "thiserror",
  "time",
  "tokio",
  "tokio-rustls",

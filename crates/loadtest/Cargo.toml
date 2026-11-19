@@ -27,5 +27,3 @@ sqlx.workspace = true
 axum.workspace = true
 rustix = { workspace = true, features = ["process", "param"] }
 
-[dev-dependencies]
-tempfile.workspace = true
