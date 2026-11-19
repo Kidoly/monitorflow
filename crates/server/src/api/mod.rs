@@ -48,6 +48,12 @@
 //! | GET | `/api/devices/templates` | read | [`devices::TemplateList`]: the kinds of SNMP devices, their checks and thresholds (ADR-0149) |
 //! | POST | `/api/devices/detect` | modify | body [`devices::DetectRequest`]; 200 [`devices::Detected`]: what an address answers over SNMP, from its probe |
 //! | GET, PUT, DELETE | `/api/devices/{id}/snmp` | read, modify | [`crate::snmp::View`] without secrets; body [`crate::snmp::CredentialsRequest`]; audited |
+//! | GET | `/api/servers/{id}/virtualization` | read | [`virtualization::Virtualization`]: a vCenter, ESXi or Hyper-V source's hosts, clusters, virtual machines and datastores, and the virtual machine a server is (ADR-0156) |
+//! | POST | `/api/servers/{id}/hyperv` | modify | 200 [`virtualization::HypervWatch`]: the `hyperv` check of a Windows server, with its alerts; audited |
+//! | PUT | `/api/virtual-objects/{id}/server` | modify | body [`virtualization::LinkRequest`]; 200 [`virtualization::ObjectView`]: a virtual machine tied to a server by hand, to none, or back to matching; audited |
+//! | POST | `/api/virtual-objects/{id}/install-agent` | admin | 201 [`servers::ServerView`]: a server waiting for its agent, named after the virtual machine and tied to it; audited |
+//! | POST | `/api/devices/vmware/test` | modify | body [`devices::VmwareTestRequest`]; 200 [`devices::VmwareTested`]: what a vCenter or ESXi host answers, its certificate, and the login when it is trusted |
+//! | GET, PUT, DELETE | `/api/devices/{id}/vmware` | read, modify | [`crate::vmware::View`] without the password; body [`crate::vmware::CredentialsRequest`]; audited |
 //! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
 //! | GET | `/api/servers/{id}/recommendations` | read | [`recommendations::RecommendationList`]: checks recommended from what the agent saw (ADR-0134) |
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
@@ -93,6 +99,10 @@
 //! | POST | `/api/maintenance-windows` | modify the site | body [`maintenance_windows::WindowRequest`]; 201 [`maintenance_windows::WindowView`]; audited |
 //! | PUT | `/api/maintenance-windows/{id}` | modify the sites | the same body; [`maintenance_windows::WindowView`]; audited |
 //! | DELETE | `/api/maintenance-windows/{id}` | modify the site | 204; the running window ends; audited |
+//! | GET | `/api/dependencies` | any role | `server_id` or `relay_id`; [`dependencies::DependencyList`]: what is behind what (ADR-0152) |
+//! | POST | `/api/dependencies` | modify every end's site | body [`dependencies::DependencyRequest`]: children behind one parent, all or none; 201 [`dependencies::DependencyList`]; 409 on a loop or a duplicate; audited |
+//! | DELETE | `/api/dependencies/{id}` | modify both ends' sites | 204; audited |
+//! | GET | `/api/servers/{id}/dependencies`, `/api/relays/{id}/dependencies` | any role | [`dependencies::PageView`]: parents with automatic ones, children, what is behind, suggestions, and why it is unreachable |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
@@ -692,6 +702,7 @@ pub mod commands;
 pub mod customers;
 pub mod dashboard_data;
 pub mod dashboards;
+pub mod dependencies;
 pub mod devices;
 pub mod display;
 mod error;
@@ -719,6 +730,7 @@ pub mod openapi_campaigns;
 mod openapi_checks;
 pub mod openapi_core;
 mod openapi_dashboards;
+mod openapi_dependencies;
 mod openapi_devices;
 mod openapi_imports;
 mod openapi_maintenance;
@@ -728,6 +740,7 @@ mod openapi_settings;
 mod openapi_sso;
 mod openapi_system;
 mod openapi_users;
+mod openapi_virtualization;
 pub mod own_password;
 pub mod package_sources;
 pub mod packages;
@@ -763,6 +776,7 @@ pub mod tokens;
 pub mod user_admin;
 pub mod users;
 pub mod v1;
+pub mod virtualization;
 pub mod website_checks;
 
 use std::future::Future;
@@ -1107,6 +1121,19 @@ pub fn router(state: ApiState) -> Router {
             "/api/maintenance-windows/{id}",
             put(maintenance_windows::update).delete(maintenance_windows::remove),
         )
+        .route(
+            "/api/dependencies",
+            get(dependencies::list).post(dependencies::create),
+        )
+        .route("/api/dependencies/{id}", delete(dependencies::remove))
+        .route(
+            "/api/servers/{id}/dependencies",
+            get(dependencies::server_page),
+        )
+        .route(
+            "/api/relays/{id}/dependencies",
+            get(dependencies::relay_page),
+        )
         .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
         .route("/api/sites/{id}/check-interval", put(check_interval::site))
         .route(
@@ -1220,6 +1247,26 @@ pub fn router(state: ApiState) -> Router {
                 .delete(devices::delete_snmp),
         )
         .route("/api/sites/{id}/probes", get(devices::probes))
+        .route("/api/servers/{id}/virtualization", get(virtualization::get))
+        .route(
+            "/api/servers/{id}/hyperv",
+            post(virtualization::watch_hyperv),
+        )
+        .route("/api/devices/vmware/test", post(devices::test_vmware))
+        .route(
+            "/api/virtual-objects/{id}/server",
+            put(virtualization::link),
+        )
+        .route(
+            "/api/virtual-objects/{id}/install-agent",
+            post(virtualization::install_agent),
+        )
+        .route(
+            "/api/devices/{id}/vmware",
+            get(devices::vmware_view)
+                .put(devices::set_vmware)
+                .delete(devices::delete_vmware),
+        )
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route(
             "/api/servers/{id}/recommendations",

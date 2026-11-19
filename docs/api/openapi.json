@@ -5476,13 +5476,452 @@
         }
       }
     },
+    "/api/v1/dependencies": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "List dependencies",
+        "description": "What is behind what, among the servers, devices and relays the key reads. A dependency says that a child (a server, a device, or one of its checks) is behind a parent (a server, a device, a relay, or one check such as an uplink ping). While a parent is down, what is behind it opens no incident of its own and notifies nobody: it is unreachable, and the parent's incident speaks for it. Children are judged again 2 minutes after the parent's incident resolves.\n\nA parent is down while its offline incident is open (a server's agent, a relay), while a ping check of it has a critical incident open (a server or device), or, for a check, while that check has a critical incident open.\n\nThis lists the dependencies people set; the automatic ones (a server behind its relay, a check behind the relay that runs it) are in `GET /api/v1/servers/{id}/dependencies`.\n\n**Who**: any role. **Area**: `alerts`.\n\n**Filter**: `server_id` for those whose child or parent is that server or device or one of its checks, `relay_id` for those behind that relay. Unknown parameters are 400.",
+        "operationId": "list_dependencies",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Only those whose child or parent is this server or device, or one\nof its checks.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "relay_id",
+            "in": "query",
+            "description": "Only those behind this relay.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The dependencies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DependencyList"
+                },
+                "example": {
+                  "dependencies": [
+                    {
+                      "automatic": false,
+                      "can_change": true,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": "2026-11-18T09:30:00Z",
+                      "created_by": "alice",
+                      "id": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+                      "parent": {
+                        "check": null,
+                        "kind": "device",
+                        "name": "sw-core",
+                        "relay_id": null,
+                        "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server or relay of the filter does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Add dependencies",
+        "description": "Puts `children` behind `parent`: \"these servers are behind this switch\". Each end is a `server_id` (a server or device), with `check` for one of its checks instead of all of it; a parent may be a `relay_id` instead. All are added, or none.\n\nRefused: a child behind itself, a server behind one of its own checks (one check of a server may depend on another of its checks), a dependency that already exists (409), one that would put something behind itself through others (409, with the path in words: \"web-1 cannot depend on sw-core: sw-core already depends on web-1 (sw-core, then fw-1, then web-1)\"), and ends of two customers (400).\n\n**Who**: operator or above on the site of every end. **Area**: `alerts`. Audited as `dependency.create`, one entry per child. **Not safe to repeat**: a second time answers 409.",
+        "operationId": "create_dependencies",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DependencyRequest"
+              },
+              "example": {
+                "children": [
+                  {
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  },
+                  {
+                    "check": {
+                      "name": "https"
+                    },
+                    "server_id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a"
+                  }
+                ],
+                "parent": {
+                  "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The dependencies added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DependencyList"
+                },
+                "example": {
+                  "dependencies": [
+                    {
+                      "automatic": false,
+                      "can_change": true,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": "2026-11-18T09:30:00Z",
+                      "created_by": "alice",
+                      "id": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+                      "parent": {
+                        "check": null,
+                        "kind": "device",
+                        "name": "sw-core",
+                        "relay_id": null,
+                        "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No child or over 500, an end without `server_id` (or `relay_id` for the parent), a relay as a child, an unknown check, something behind itself, or two customers: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read one of the sites: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "An end does not exist, was removed, or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It exists already, or would close a loop: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dependencies/{id}": {
+      "delete": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Remove a dependency",
+        "description": "The child is no longer behind the parent: it opens its own incidents again at its next check that fails. Automatic dependencies have no ID and cannot be removed.\n\n**Who**: operator or above on the sites of both ends. **Area**: `alerts`. Audited as `dependency.remove`.",
+        "operationId": "remove_dependency",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The dependency",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read one of the sites: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such dependency, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/devices": {
       "post": {
         "tags": [
           "devices"
         ],
         "summary": "Add a device",
-        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
+        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\nWith `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes from the same probe, and its alerts; test the connection and confirm its certificate first with `POST /api/v1/devices/vmware/test`.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
         "operationId": "create_device",
         "parameters": [
           {
@@ -5536,6 +5975,18 @@
                       "version": "v3"
                     },
                     "template": "switch"
+                  }
+                },
+                "vmware": {
+                  "summary": "A vCenter, read every 5 minutes with a Read-only account (ADR-0156)",
+                  "value": {
+                    "address": "vcenter.example.test",
+                    "name": "vcenter-1",
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                    "vmware": {
+                      "password": "a password",
+                      "user": "monitor@vsphere.local"
+                    }
                   }
                 }
               }
@@ -5906,6 +6357,170 @@
           },
           "404": {
             "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/vmware/test": {
+      "post": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Test a vCenter or ESXi host",
+        "description": "Connects once from the probe that would check the address (or the one named) and says what answers, and the certificate it has: its SHA-256 fingerprint, subject and expiry, and whether the probe's roots trust it. It logs in, and counts what the account sees, only when the certificate is trusted, by the roots or by the `fingerprint` given: the password is never sent to a certificate that is not. For a self-signed vCenter, compare the fingerprint with the one the vCenter shows, then test again with it, and send it with the credentials (`POST /api/devices` or `PUT /api/devices/{id}/vmware`). Nothing is stored.\n\n**Who**: operator or above on the site. **Area**: `servers`.",
+        "operationId": "test_vmware",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VmwareTestRequest"
+              },
+              "example": {
+                "address": "vcenter.example.test",
+                "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                "vmware": {
+                  "fingerprint": "3F:9A:1C:44:0B:7E:D2:58:91:AA:6C:03:E5:2D:7B:19:C8:40:FE:61:2A:9D:B3:07:5E:8C:11:D4:6A:F0:27:B9",
+                  "password": "a password",
+                  "user": "monitor@vsphere.local"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What answered; also when nothing did: `answers` and `error` say so",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmwareTested"
+                },
+                "example": {
+                  "answers": true,
+                  "api_type": "VirtualCenter",
+                  "certificate": {
+                    "by_roots": false,
+                    "fingerprint": "3F:9A:1C:44:0B:7E:D2:58:91:AA:6C:03:E5:2D:7B:19:C8:40:FE:61:2A:9D:B3:07:5E:8C:11:D4:6A:F0:27:B9",
+                    "not_after": "2028-03-01T12:00:00Z",
+                    "subject": "vcenter.example.test",
+                    "trusted": true
+                  },
+                  "error": null,
+                  "login": true,
+                  "objects": {
+                    "cluster": 2,
+                    "datastore": 9,
+                    "host": 12,
+                    "vm": 412
+                  },
+                  "probe": "central",
+                  "product": "VMware vCenter Server 8.0.2 build-22385739",
+                  "version": "8.0.2"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An address, port or fingerprint that is not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The relay is held by another central server now: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
             "content": {
               "application/json": {
                 "schema": {
@@ -6395,6 +7010,391 @@
         "summary": "Remove a device's SNMP credentials",
         "description": "Its SNMP checks stop being sent to its probes until credentials are set again.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.snmp_delete`.",
         "operationId": "delete_device_snmp",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, none set, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/vmware": {
+      "get": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Read a device's vCenter credentials, without the password",
+        "description": "**Who**: any role on the device's site. **Area**: `servers`.",
+        "operationId": "device_vmware",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmwareCredentials"
+                },
+                "example": {
+                  "fingerprint": "3F:9A:1C:44:0B:7E:D2:58:91:AA:6C:03:E5:2D:7B:19:C8:40:FE:61:2A:9D:B3:07:5E:8C:11:D4:6A:F0:27:B9",
+                  "password_set": true,
+                  "port": 443,
+                  "updated_at": "2026-11-18T10:20:00Z",
+                  "user": "monitor@vsphere.local"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, none set, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Set a device's vCenter credentials",
+        "description": "Replaces them; what is left out is kept, so a new certificate's `fingerprint` is confirmed without typing the password again, and `\"fingerprint\": \"\"` goes back to the roots. A device without a `vmware` check gets one, from its site's default probe, with the alerts that come with it: the API stops answering, a host disconnected, a datastore under 10% free, a snapshot older than 7 days, a red alarm on a host or datastore, a hardware sensor not green. Its probe uses them within seconds. The account needs only vCenter's Read-only role.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.vmware_update`, without the password.",
+        "operationId": "set_device_vmware",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VmwareCredentialsRequest"
+              },
+              "example": {
+                "password": "a password",
+                "user": "monitor@vsphere.local"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The credentials, without the password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmwareCredentials"
+                },
+                "example": {
+                  "fingerprint": "3F:9A:1C:44:0B:7E:D2:58:91:AA:6C:03:E5:2D:7B:19:C8:40:FE:61:2A:9D:B3:07:5E:8C:11:D4:6A:F0:27:B9",
+                  "password_set": true,
+                  "port": 443,
+                  "updated_at": "2026-11-18T10:20:00Z",
+                  "user": "monitor@vsphere.local"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Credentials that are not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Remove a device's vCenter credentials",
+        "description": "Its `vmware` check stops being sent to its probe until credentials are set again.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.vmware_delete`.",
+        "operationId": "delete_device_vmware",
         "parameters": [
           {
             "name": "id",
@@ -19434,6 +20434,150 @@
         }
       }
     },
+    "/api/v1/relays/{id}/dependencies": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "What is behind a relay",
+        "description": "The servers behind a relay and the checks it runs, which are behind it without being set (`automatic: true`), and what people put behind it. A relay depends on nothing, so `parents` and `suggestions` are empty.\n\n**Who**: any role on its site. **Area**: `alerts`.",
+        "operationId": "relay_dependencies",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The relay",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What is behind it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dependencies"
+                },
+                "example": {
+                  "behind": [
+                    {
+                      "check": null,
+                      "kind": "server",
+                      "name": "web-1",
+                      "relay_id": null,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    }
+                  ],
+                  "can_change": true,
+                  "children": [
+                    {
+                      "automatic": true,
+                      "can_change": false,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": null,
+                      "created_by": null,
+                      "id": null,
+                      "parent": {
+                        "check": null,
+                        "kind": "relay",
+                        "name": "gw-1",
+                        "relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                        "server_id": null,
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    }
+                  ],
+                  "parents": [],
+                  "suggestions": [],
+                  "unreachable": null,
+                  "unreachable_checks": []
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such relay, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/relays/{id}/names": {
       "post": {
         "tags": [
@@ -23597,6 +24741,324 @@
         }
       }
     },
+    "/api/v1/servers/{id}/dependencies": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "A server's dependencies",
+        "description": "What a server's or device's page shows: what it and its checks depend on, automatic ones included (`automatic: true`, such as its relay); what depends directly on it (`children`); everything behind it, directly or through others (`behind`); parents that look obvious and are not set (`suggestions`: the Proxmox host its virtual machine or container runs on, when monitored, and the switches, routers and firewalls of its site), never added without a request; and, while a parent is down, which one and its incident (`unreachable`), for it or for some of its checks (`unreachable_checks`).\n\n**Who**: any role on its site. **Area**: `alerts`.",
+        "operationId": "server_dependencies",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server or device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Its dependencies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dependencies"
+                },
+                "example": {
+                  "behind": [],
+                  "can_change": true,
+                  "children": [],
+                  "parents": [
+                    {
+                      "automatic": false,
+                      "can_change": true,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": "2026-11-18T09:30:00Z",
+                      "created_by": "alice",
+                      "id": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+                      "parent": {
+                        "check": null,
+                        "kind": "device",
+                        "name": "sw-core",
+                        "relay_id": null,
+                        "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    },
+                    {
+                      "automatic": true,
+                      "can_change": false,
+                      "child": {
+                        "check": null,
+                        "kind": "server",
+                        "name": "web-1",
+                        "relay_id": null,
+                        "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "created_at": null,
+                      "created_by": null,
+                      "id": null,
+                      "parent": {
+                        "check": null,
+                        "kind": "relay",
+                        "name": "gw-1",
+                        "relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                        "server_id": null,
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      }
+                    }
+                  ],
+                  "suggestions": [
+                    {
+                      "parent": {
+                        "check": null,
+                        "kind": "device",
+                        "name": "fw-1",
+                        "relay_id": null,
+                        "server_id": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "reason": "network_device"
+                    }
+                  ],
+                  "unreachable": {
+                    "because": {
+                      "check": null,
+                      "kind": "device",
+                      "name": "sw-core",
+                      "relay_id": null,
+                      "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    },
+                    "incident_id": "4d3c2b1a-0f9e-4d8c-b7a6-5f4e3d2c1b0a",
+                    "since": "2026-11-18T10:02:00Z"
+                  },
+                  "unreachable_checks": []
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/hyperv": {
+      "post": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Watch Hyper-V on a Windows server",
+        "description": "Adds the `hyperv` check, run by the server's agent every 5 minutes, with its alerts: a warning when Hyper-V cannot be read for 15 minutes, for a checkpoint older than 7 days (`monitorflow_hyperv_vm_snapshot_age_seconds`), and on replication health (`monitorflow_hyperv_vm_replication_health`, warning at 1, critical at 2). Thresholds the server has already stay. The agent's account must be in the host's Hyper-V Administrators group, which only a person on the host can do: `Add-LocalGroupMember -Group \"Hyper-V Administrators\" -Member \"NT SERVICE\\MonitorFlowAgent\"`, then restart the agent. Until then the source reads `denied` with that sentence.\n\n**Who**: operator or above on the server's site. **Area**: `servers`. Audited as `server.hyperv_watch`.",
+        "operationId": "watch_hyperv",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A Windows server with the agent",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Watched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HypervWatch"
+                },
+                "example": {
+                  "added": true,
+                  "check": "hyperv"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a Windows server with the agent: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/logs": {
       "get": {
         "tags": [
@@ -27395,6 +28857,163 @@
                       "warning": 0.15
                     }
                   ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/virtualization": {
+      "get": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Read a server's virtualization",
+        "description": "For a vCenter, ESXi or Hyper-V source, whether its last collection worked and its hosts, clusters, virtual machines and datastores, with their numbers of that collection. For any server, the virtual machines it is (`guest_of`), from sources the caller can read. An object the source stopped listing is `stale` after 15 minutes and removed after a day. A matched server the caller cannot read is shown as `null`.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "operationId": "server_virtualization",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server or device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Its virtualization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Virtualization"
+                },
+                "example": {
+                  "guest_of": [],
+                  "objects": [
+                    {
+                      "collected_at": "2026-11-18T10:20:00Z",
+                      "details": {
+                        "addresses": "192.0.2.21",
+                        "guest_hostname": "web-1.example.test",
+                        "guest_os": "Debian GNU/Linux 12 (64-bit)",
+                        "host": "esx-02",
+                        "macs": "00:50:56:aa:bb:01",
+                        "power_state": "poweredOn",
+                        "uuid": "4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"
+                      },
+                      "id": "8a1f3c52-6b7d-4e9f-a0b1-c2d3e4f5a6b7",
+                      "key": "vm-42",
+                      "kind": "vm",
+                      "link_fixed": false,
+                      "matched_by": "uuid",
+                      "metrics": {
+                        "alarms_critical": 0.0,
+                        "alarms_warning": 0.0,
+                        "cpu_count": 2.0,
+                        "cpu_usage_ratio": 0.12,
+                        "memory_bytes": 4294967296.0,
+                        "memory_usage_ratio": 0.4,
+                        "powered_on": 1.0,
+                        "snapshot_age_seconds": 864000.0,
+                        "snapshots": 1.0,
+                        "status": 0.0,
+                        "storage_used_bytes": 21474836480.0
+                      },
+                      "name": "web-1",
+                      "seen_at": "2026-11-18T10:20:03Z",
+                      "server": {
+                        "awaiting_agent": false,
+                        "hostname": "web-1",
+                        "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "kind": "agent"
+                      },
+                      "stale": false
+                    }
+                  ],
+                  "source": {
+                    "details": {
+                      "api_type": "VirtualCenter",
+                      "product": "VMware vCenter Server 8.0.2",
+                      "version": "8.0.2"
+                    },
+                    "error": null,
+                    "reason": null,
+                    "seen_at": "2026-11-18T10:20:03Z",
+                    "up": true
+                  }
                 }
               }
             }
@@ -33758,6 +35377,355 @@
           }
         }
       }
+    },
+    "/api/v1/virtual-objects/{id}/install-agent": {
+      "post": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Install the agent on a virtual machine",
+        "description": "Adds a server waiting for its agent in the source's site, named after the virtual machine's guest host name (else its name), a Windows server when its guest system says so, and ties the virtual machine to it. Its page then shows the install command; the agent takes it over when it enrolls with that name (ADR-0146).\n\n**Who**: administrator of the source's customer, as for install keys. **Area**: `servers`. Audited as `virt.install_agent`.",
+        "operationId": "install_agent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The virtual machine",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The server waiting for its agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerView"
+                },
+                "example": {
+                  "agent_version": "0.9.2",
+                  "awaiting_agent": true,
+                  "cert_not_after": "2027-02-12T06:12:40Z",
+                  "command_kinds": {
+                    "apply_updates": "accepted",
+                    "self_update": "accepted",
+                    "shell": "off"
+                  },
+                  "connected_at": "2026-11-14T06:12:40Z",
+                  "created_at": "2026-09-01T08:00:00Z",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "acme",
+                  "hostname": "web-1",
+                  "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "last_heartbeat": "2026-11-14T09:29:55Z",
+                  "offline_alerts": true,
+                  "open_incidents": 1,
+                  "os_family": "debian",
+                  "os_version": "12",
+                  "package_updates": true,
+                  "peer_id": "web-1",
+                  "relay_id": null,
+                  "revoked_at": null,
+                  "silenced_until": null,
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "site_offline_alerts": true,
+                  "status": "waiting",
+                  "via_relay": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a virtual machine: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such virtual machine, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It is already a server: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/virtual-objects/{id}/server": {
+      "put": {
+        "tags": [
+          "virtualization"
+        ],
+        "summary": "Tie a virtual machine to a server by hand",
+        "description": "Says which server or device of the source's customer a virtual machine is, or that it is none (`\"server_id\": null`); matching then never changes it. `\"automatic\": true` hands it back to matching, which runs at once.\n\n**Who**: operator or above on the source's site, for a server they can read. **Area**: `servers`. Audited as `virt.link`, with the server before and after.",
+        "operationId": "link_virtual_machine",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The virtual machine, from `objects` or `guest_of`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkRequest"
+              },
+              "example": {
+                "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The virtual machine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectView"
+                },
+                "example": {
+                  "collected_at": "2026-11-18T10:20:00Z",
+                  "details": {
+                    "addresses": "192.0.2.21",
+                    "guest_hostname": "web-1.example.test",
+                    "guest_os": "Debian GNU/Linux 12 (64-bit)",
+                    "host": "esx-02",
+                    "macs": "00:50:56:aa:bb:01",
+                    "power_state": "poweredOn",
+                    "uuid": "4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"
+                  },
+                  "id": "8a1f3c52-6b7d-4e9f-a0b1-c2d3e4f5a6b7",
+                  "key": "vm-42",
+                  "kind": "vm",
+                  "link_fixed": true,
+                  "matched_by": "person",
+                  "metrics": {
+                    "alarms_critical": 0.0,
+                    "alarms_warning": 0.0,
+                    "cpu_count": 2.0,
+                    "cpu_usage_ratio": 0.12,
+                    "memory_bytes": 4294967296.0,
+                    "memory_usage_ratio": 0.4,
+                    "powered_on": 1.0,
+                    "snapshot_age_seconds": 864000.0,
+                    "snapshots": 1.0,
+                    "status": 0.0,
+                    "storage_used_bytes": 21474836480.0
+                  },
+                  "name": "web-1",
+                  "seen_at": "2026-11-18T10:20:03Z",
+                  "server": {
+                    "awaiting_agent": false,
+                    "hostname": "web-1",
+                    "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                    "kind": "agent"
+                  },
+                  "stale": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a virtual machine, or a server of another customer: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such virtual machine, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -37206,6 +39174,289 @@
           }
         }
       },
+      "Dependencies": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/dependencies` and\n`GET /api/relays/{id}/dependencies`: what its page shows.",
+        "required": [
+          "parents",
+          "children",
+          "behind",
+          "suggestions",
+          "unreachable_checks",
+          "can_change"
+        ],
+        "properties": {
+          "behind": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DependencyEnd"
+            },
+            "description": "Everything behind it, directly or through others."
+          },
+          "can_change": {
+            "type": "boolean",
+            "description": "Whether the caller may add and remove its dependencies."
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dependency"
+            },
+            "description": "What depends directly on it or one of its checks."
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dependency"
+            },
+            "description": "What it, or one of its checks, depends on, automatic ones included."
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DependencySuggestion"
+            },
+            "description": "Parents that look obvious and are not set."
+          },
+          "unreachable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Unreachable",
+                "description": "While a parent is down; `null` otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unreachable_checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnreachableCheck"
+            },
+            "description": "Its checks that are unreachable while it is not."
+          }
+        }
+      },
+      "Dependency": {
+        "type": "object",
+        "description": "A dependency: `child` is behind `parent`.",
+        "required": [
+          "automatic",
+          "child",
+          "parent",
+          "can_change"
+        ],
+        "properties": {
+          "automatic": {
+            "type": "boolean",
+            "description": "A server behind its relay, or a check behind the relay that runs it."
+          },
+          "can_change": {
+            "type": "boolean",
+            "description": "Whether the caller may remove it."
+          },
+          "child": {
+            "$ref": "#/components/schemas/DependencyEnd"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` for an automatic one."
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who added it; `null` for an automatic one, an import's without a\nperson, or once the account is removed."
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for an automatic one, which cannot be removed."
+          },
+          "parent": {
+            "$ref": "#/components/schemas/DependencyEnd"
+          }
+        }
+      },
+      "DependencyCheck": {
+        "type": "object",
+        "description": "A check of a server or device, by its name and what it watches.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "instance": {
+            "type": "string",
+            "description": "What it watches, `\"\"` (the default) for every instance."
+          },
+          "name": {
+            "type": "string",
+            "description": "The check's name, like `ping` or `service_nginx`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DependencyEnd": {
+        "type": "object",
+        "description": "One end of a dependency, named.",
+        "required": [
+          "kind",
+          "name",
+          "site_id"
+        ],
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DependencyCheck",
+                "description": "One of its checks; `null` for all of it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DependencyEndKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "Its host name, or the relay's name."
+          },
+          "relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The relay; `null` otherwise."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The server or device; `null` for a relay."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DependencyEndKind": {
+        "type": "string",
+        "description": "What an end is.",
+        "enum": [
+          "server",
+          "device",
+          "relay"
+        ]
+      },
+      "DependencyEndRequest": {
+        "type": "object",
+        "description": "One end of a dependency in a request: a server or device, one of its\nchecks, or (for a parent only) a relay.",
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DependencyCheck",
+                "description": "One check of `server_id` instead of all of it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A relay; a parent only."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A server or device."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DependencyList": {
+        "type": "object",
+        "description": "Body of `GET /api/dependencies` and `POST /api/dependencies`.",
+        "required": [
+          "dependencies"
+        ],
+        "properties": {
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dependency"
+            }
+          }
+        }
+      },
+      "DependencyRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/dependencies`: `children` are behind `parent`.",
+        "required": [
+          "parent",
+          "children"
+        ],
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DependencyEndRequest"
+            },
+            "description": "At most 500, all added or none."
+          },
+          "parent": {
+            "$ref": "#/components/schemas/DependencyEndRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DependencySuggestion": {
+        "type": "object",
+        "description": "A parent that looks obvious; never added without being asked.",
+        "required": [
+          "parent",
+          "reason"
+        ],
+        "properties": {
+          "parent": {
+            "$ref": "#/components/schemas/DependencyEnd"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/DependencySuggestionReason"
+          }
+        }
+      },
+      "DependencySuggestionReason": {
+        "type": "string",
+        "description": "Why a parent is suggested.",
+        "enum": [
+          "proxmox_host",
+          "network_device"
+        ]
+      },
       "DetectRequest": {
         "type": "object",
         "description": "Body of `POST /api/devices/detect`.",
@@ -37345,6 +39596,17 @@
               "null"
             ],
             "description": "The kind of device, whose SNMP checks and thresholds it gets, run\nfrom the same probe as its ping: `switch`, `router`, `firewall`,\n`printer`, `ups`, `nas` or `generic`. See\n`GET /api/devices/templates`, and `POST /api/devices/detect` for the\none that fits."
+          },
+          "vmware": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VmwareCredentialsRequest",
+                "description": "For a vCenter or a standalone ESXi host (ADR-0156): how its probe\nlogs in, with a Read-only account. The device then gets its\n`vmware` check every 5 minutes from the same probe as its ping,\nwith the alerts that come with it. Test it first with\n`POST /api/devices/vmware/test`. Stored sealed, never returned."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -38277,6 +40539,29 @@
           "lxc"
         ]
       },
+      "GuestOf": {
+        "type": "object",
+        "description": "A virtual machine a server is, with where it runs.",
+        "required": [
+          "object",
+          "source_id",
+          "source_name"
+        ],
+        "properties": {
+          "object": {
+            "$ref": "#/components/schemas/ObjectView",
+            "description": "The virtual machine."
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The vCenter, ESXi or Hyper-V host listing it."
+          },
+          "source_name": {
+            "type": "string"
+          }
+        }
+      },
       "HealthStatus": {
         "type": "object",
         "description": "Up or down, nothing more.",
@@ -38287,6 +40572,24 @@
           "status": {
             "type": "string",
             "description": "`ok` (live), `ready` or `unavailable` (ready)."
+          }
+        }
+      },
+      "HypervWatch": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/hyperv`.",
+        "required": [
+          "added",
+          "check"
+        ],
+        "properties": {
+          "added": {
+            "type": "boolean",
+            "description": "Whether the check was added now; `false` when it was there."
+          },
+          "check": {
+            "type": "string",
+            "description": "The check's name, so also its metrics' prefix: `hyperv`."
           }
         }
       },
@@ -38957,6 +41260,50 @@
           },
           {
             "type": "object",
+            "description": "A dependency (ADR-0152): the server, or one of its checks, is behind\nthe parent server or one of its checks.",
+            "required": [
+              "server",
+              "parent",
+              "object"
+            ],
+            "properties": {
+              "check": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SilencedCheck",
+                    "description": "One check of it; `null` for all of it."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "dependency"
+                ]
+              },
+              "parent": {
+                "type": "string"
+              },
+              "parent_check": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SilencedCheck"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "server": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A notification channel.",
             "required": [
               "kind",
@@ -39355,7 +41702,9 @@
             "type": "object",
             "required": [
               "events",
-              "notification_groups"
+              "notification_groups",
+              "hides",
+              "hidden"
             ],
             "properties": {
               "acknowledged_via": {
@@ -39382,6 +41731,21 @@
                     "type": "null"
                   }
                 ]
+              },
+              "hidden": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "The incidents it hid: opened by children a moment before it, never\ntold."
+              },
+              "hides": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DependencyEnd"
+                },
+                "description": "While it says a parent is down: everything behind that parent,\nunreachable meanwhile (ADR-0152)."
               },
               "notification_groups": {
                 "type": "array",
@@ -39469,6 +41833,14 @@
           "customer_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "hidden_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The parent's incident that speaks for it (ADR-0152): it opened a\nmoment before its parent went down and was never told; `null`\notherwise."
           },
           "hostname": {
             "type": "string",
@@ -40465,6 +42837,52 @@
           },
           "state": {
             "$ref": "#/components/schemas/LicenseState"
+          }
+        }
+      },
+      "LinkRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/virtual-objects/{id}/server`.",
+        "properties": {
+          "automatic": {
+            "type": "boolean",
+            "description": "`true` hands the virtual machine back to automatic matching;\n`server_id` is then ignored."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The server or device the virtual machine is, of the source's\ncustomer; `null` for none. Kept until changed: matching leaves it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "LinkedServer": {
+        "type": "object",
+        "description": "The server or device a virtual machine is.",
+        "required": [
+          "id",
+          "hostname",
+          "kind",
+          "awaiting_agent"
+        ],
+        "properties": {
+          "awaiting_agent": {
+            "type": "boolean",
+            "description": "Whether it is waiting for its agent."
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`agent` or `device`."
           }
         }
       },
@@ -41735,6 +44153,82 @@
           }
         }
       },
+      "ObjectView": {
+        "type": "object",
+        "description": "One host, cluster, virtual machine or datastore.",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "key",
+          "details",
+          "metrics",
+          "collected_at",
+          "seen_at",
+          "stale",
+          "link_fixed"
+        ],
+        "properties": {
+          "collected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {
+            "type": "object",
+            "description": "What it says of itself: for a virtual machine `uuid`, `host`,\n`power_state`, `guest_hostname`, `guest_os`, `addresses`, `macs`,\n`replication_mode`, `replication_state`; for a host `cluster`,\n`connection_state`, `maintenance`, `product`, `vendor`, `model`;\nfor a datastore `type`."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string",
+            "description": "Its ID at the source: a managed object ID, or Hyper-V's VM ID."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`vm`, `host`, `cluster` or `datastore`."
+          },
+          "link_fixed": {
+            "type": "boolean",
+            "description": "Whether a person decided its server, even none."
+          },
+          "matched_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`uuid`, `mac`, `address`, `name`, or `person` when someone tied\nit by hand; `null` without a server."
+          },
+          "metrics": {
+            "type": "object",
+            "description": "Its numbers at the last collection, by measure without the check's\nand kind's prefix: `powered_on`, `cpu_usage_ratio`,\n`memory_bytes`, `snapshots`, `snapshot_age_seconds`,\n`free_ratio`, `alarms_critical`, and so on."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name, as its series' `instance`."
+          },
+          "seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "server": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkedServer",
+                "description": "For a virtual machine, the server or device it is; `null` when\nnone is known, or when the viewer cannot read it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "Not seen for 15 minutes: the source stopped listing it."
+          }
+        }
+      },
       "OfflineAlerts": {
         "type": "object",
         "description": "Body of the request and of the answer.",
@@ -42524,6 +45018,7 @@
             "type": "object",
             "required": [
               "alerts",
+              "unreachable",
               "kind"
             ],
             "properties": {
@@ -42538,6 +45033,13 @@
                 "enum": [
                   "alerts"
                 ]
+              },
+              "unreachable": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/UnreachableServer"
+                },
+                "description": "Its servers behind a parent that is down (ADR-0152): they open\nno incident of their own meanwhile."
               }
             }
           },
@@ -45662,7 +48164,7 @@
       },
       "ServerState": {
         "type": "string",
-        "description": "The one status of a server on the fleet's pages, worst first\n(ADR-0130): a silence wins, then being offline, then the worst open\nincident nobody acknowledged; a server whose open incidents are all\nacknowledged is `acknowledged`, the rest `ok`.",
+        "description": "The one status of a server on the fleet's pages, worst first\n(ADR-0130): a silence wins, then being unreachable behind a parent that\nis down (ADR-0152), then being offline, then the worst open\nincident nobody acknowledged; a server whose open incidents are all\nacknowledged is `acknowledged`, the rest `ok`.",
         "enum": [
           "critical",
           "warning",
@@ -45670,7 +48172,8 @@
           "silenced",
           "offline",
           "ok",
-          "waiting"
+          "waiting",
+          "unreachable"
         ]
       },
       "ServerStatus": {
@@ -45692,6 +48195,7 @@
           "offline",
           "ok",
           "waiting",
+          "unreachable",
           "total"
         ],
         "properties": {
@@ -45723,6 +48227,12 @@
           "total": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          },
+          "unreachable": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Behind a parent that is down (ADR-0152).",
             "minimum": 0
           },
           "waiting": {
@@ -45960,6 +48470,17 @@
           },
           "status": {
             "$ref": "#/components/schemas/ServerStatus"
+          },
+          "unreachable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Unreachable",
+                "description": "While a parent it depends on is down (ADR-0152): which, and its\nincident; `null` otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "via_relay": {
             "type": [
@@ -46911,6 +49432,43 @@
           }
         }
       },
+      "SourceView": {
+        "type": "object",
+        "description": "Whether a source was read at its last collection.",
+        "required": [
+          "up",
+          "details",
+          "seen_at"
+        ],
+        "properties": {
+          "details": {
+            "type": "object",
+            "description": "What answered: `product`, `version`, `api_type`, `host`."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The message, in English, such as what to do about it."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not: `connect`, `tls`, `certificate`, `login`, `api` for a\nvCenter; `not_installed`, `denied`, `failed` for Hyper-V."
+          },
+          "seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "up": {
+            "type": "boolean",
+            "description": "Whether the last collection worked."
+          }
+        }
+      },
       "SourcesMode": {
         "type": "string",
         "description": "`replace` sets the host's other sources aside, `add` keeps them\n(ADR-0032).",
@@ -47154,6 +49712,41 @@
             "items": {
               "$ref": "#/components/schemas/SnmpTemplate"
             }
+          }
+        }
+      },
+      "TestedCertificate": {
+        "type": "object",
+        "description": "The certificate a test met.",
+        "required": [
+          "fingerprint",
+          "trusted",
+          "by_roots",
+          "subject"
+        ],
+        "properties": {
+          "by_roots": {
+            "type": "boolean",
+            "description": "Whether the probe's roots trust it without a fingerprint."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "`AB:CD:…`, to compare with the one the vCenter shows and send back\nas `fingerprint`."
+          },
+          "not_after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it expires; `null` when it does not read."
+          },
+          "subject": {
+            "type": "string"
+          },
+          "trusted": {
+            "type": "boolean",
+            "description": "Whether it is trusted: by the probe's roots, or by the fingerprint\ngiven."
           }
         }
       },
@@ -47515,6 +50108,73 @@
             "description": "In the metric's unit: a ratio from 0 to 1 for `_ratio` metrics."
           }
         }
+      },
+      "Unreachable": {
+        "type": "object",
+        "description": "Why something cannot be checked now.",
+        "required": [
+          "because",
+          "incident_id",
+          "since"
+        ],
+        "properties": {
+          "because": {
+            "$ref": "#/components/schemas/DependencyEnd",
+            "description": "The nearest parent that is down."
+          },
+          "incident_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Its incident, which speaks for what is behind it."
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UnreachableCheck": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Unreachable"
+          },
+          {
+            "type": "object",
+            "required": [
+              "check"
+            ],
+            "properties": {
+              "check": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              }
+            }
+          }
+        ],
+        "description": "A check of a page's server that is unreachable, while the server is not."
+      },
+      "UnreachableServer": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Unreachable"
+          },
+          {
+            "type": "object",
+            "required": [
+              "server_id",
+              "hostname"
+            ],
+            "properties": {
+              "hostname": {
+                "type": "string"
+              },
+              "server_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ],
+        "description": "A server of an alerts panel that is unreachable now."
       },
       "UpdateChannel": {
         "type": "string",
@@ -47961,6 +50621,244 @@
           }
         }
       },
+      "Virtualization": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/virtualization`.",
+        "required": [
+          "objects",
+          "guest_of"
+        ],
+        "properties": {
+          "guest_of": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuestOf"
+            },
+            "description": "The virtual machines this server is, from sources the viewer can\nread: usually none or one."
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObjectView"
+            },
+            "description": "When the server is a source: its objects, hosts first, then\nclusters, virtual machines and datastores, by name."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SourceView",
+                "description": "When the server is a source: its last collection; else `null`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "VirtualizationThreshold": {
+        "type": "object",
+        "description": "A threshold that comes by default.",
+        "required": [
+          "metric",
+          "comparison",
+          "duration_s"
+        ],
+        "properties": {
+          "comparison": {
+            "type": "string"
+          },
+          "critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "duration_s": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "warning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "VmwareCredentials": {
+        "type": "object",
+        "description": "What the API shows of a device's credentials: never the password.",
+        "required": [
+          "port",
+          "user",
+          "password_set",
+          "updated_at"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The certificate trusted by its fingerprint; `null` when the roots\nare trusted."
+          },
+          "password_set": {
+            "type": "boolean"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user": {
+            "type": "string"
+          }
+        }
+      },
+      "VmwareCredentialsRequest": {
+        "type": "object",
+        "description": "Body of a device's vCenter or ESXi credentials. On a change, a\npassword left out keeps the stored one.",
+        "properties": {
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The SHA-256 fingerprint of a certificate the central server's or\nrelay's roots do not trust, as `POST /api/devices/vmware/test`\nshows it; an empty string forgets it. Absent: kept."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its password. Secret."
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "443 by default.",
+            "minimum": 0
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A user with the Read-only role, like `monitor@vsphere.local`.\nRequired unless kept from the stored credentials."
+          }
+        },
+        "additionalProperties": false
+      },
+      "VmwareTestRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/devices/vmware/test`.",
+        "required": [
+          "site_id",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The vCenter's or ESXi host's IP address or DNS name."
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`central` or a relay of the site; absent: the site's default."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vmware": {
+            "$ref": "#/components/schemas/VmwareCredentialsRequest",
+            "description": "What to log in with; without a user and password, only what\nanswers and its certificate are shown."
+          }
+        },
+        "additionalProperties": false
+      },
+      "VmwareTested": {
+        "type": "object",
+        "description": "What a vCenter or ESXi host answered.",
+        "required": [
+          "answers",
+          "objects",
+          "probe"
+        ],
+        "properties": {
+          "answers": {
+            "type": "boolean",
+            "description": "Whether the vSphere API answered at the address."
+          },
+          "api_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`VirtualCenter` or `HostAgent` (a standalone ESXi host)."
+          },
+          "certificate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TestedCertificate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, or why the login failed, in words; `null` otherwise."
+          },
+          "login": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the login worked; `null` when it was not tried: no\ncredentials, or a certificate not trusted yet, as the password is\nnever sent then."
+          },
+          "objects": {
+            "type": "object",
+            "description": "Objects the account sees, by kind (`vm`, `host`, `cluster`,\n`datastore`), after a login."
+          },
+          "probe": {
+            "type": "string",
+            "description": "`central` or the relay that asked."
+          },
+          "product": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Like `VMware vCenter Server 8.0.2 build-22385739`."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "WebsiteCheck": {
         "type": "object",
         "description": "One website check and its last run.",
@@ -48356,6 +51254,10 @@
     {
       "name": "devices",
       "description": "Devices: switches, routers, printers, UPSs or any address watched without the agent, by network checks that run from the central server or from a relay of the device's site (a probe). A device is a server of kind `device`: it is listed, read, silenced, charted and removed with the server routes, its checks are `sensor_configs` rows with a `probe`, and its thresholds are a server's. It is never offline nor waiting for an agent: its checks say what is wrong. The same probe checks can watch a server that has the agent, from outside. Operators of the site add and change devices. Area `servers`."
+    },
+    {
+      "name": "virtualization",
+      "description": "VMware and Hyper-V: the hosts, clusters, virtual machines and datastores of a vCenter or ESXi host (a device with a `vmware` check, run from a probe) or of a Hyper-V host (a Windows server with a `hyperv` check), kept from what their checks last reported. Each virtual machine is matched to the server or device of the same customer it is, by its hardware ID, a network card, an address or its name. Area `servers`."
     }
   ]
 }
