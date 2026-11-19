@@ -22,6 +22,8 @@ import {
   thresholdRequest,
 } from "@/lib/alerts";
 import { formatSeconds } from "@/lib/format";
+import { type RuleErrors, type RuleForm, describeRule, formOfRule, kindOf, requestOf, ruleRequest } from "@/lib/rules";
+import type { RuleKind } from "@/lib/api";
 import { defaultTimeoutMs, every } from "@/lib/intervals";
 import {
   type ApplyTo,
@@ -50,6 +52,7 @@ import admin from "./AdminPages.module.css";
 import styles from "./SensorConfiguration.module.css";
 import { Field, SlowNote, TurnAlertOff } from "./MonitoringSettings";
 import { IntervalSelect } from "./IntervalSelect";
+import { ConditionFields, KindFields, KindSelect, RulePreview } from "./RuleEditor";
 
 /** What the sensor page read, for its Configuration card; null where it could not be read. */
 export interface ConfigurationData {
@@ -101,6 +104,7 @@ export function SensorConfiguration({
   }, [startEditing]);
   const { server, config, thresholds } = data;
   const rule = thresholds ? ruleOf(thresholds, metric, instance) : undefined;
+  const richer = thresholds ? richerOf(thresholds, metric, instance) : [];
   const sensors = config?.sensors ?? [];
   const shape = rule ? shapeFor(sensors, rule) : shapeOf(sensors, metric, instance || null);
   const place: RulePlace | null = sensor ? { serverId: server.id, siteId: server.site_id, sensor, instance } : null;
@@ -121,7 +125,12 @@ export function SensorConfiguration({
       <FactsBox
         title={t("sensors.config.title")}
         actions={actions}
-        facts={facts(data, sensor, instance, rule, shape, format)}
+        facts={[
+          ...facts(data, sensor, instance, rule, shape, format),
+          ...richer
+            .filter((r) => r.enabled)
+            .map((r) => ({ label: t("rules.sensor.also"), value: describeRule(shapeOf(sensors, metric, r.instance), r) })),
+        ]}
         details={[
           ...(rule ? [marginFact(rule, format)] : []),
           ...(sensor ? [setByFact(sensor, rule, perInstance(sensor, instance))] : []),
@@ -133,6 +142,8 @@ export function SensorConfiguration({
             hostname={server.hostname}
             siteName={server.site_name}
             rule={rule}
+            richer={richer}
+            metrics={thresholds ? [...new Set(thresholds.map((t) => t.metric))].sort() : []}
             shape={shape}
             metric={metric}
             hasOwn={overrides?.level !== null && overrides?.level !== undefined}
@@ -320,11 +331,29 @@ function timingOf(intervalMs: number, timeout: string): { interval_ms: number; t
   return { interval_ms: intervalMs, timeout_ms: Math.round(seconds * 1000) };
 }
 
+/**
+ * The rules of other kinds than the plain threshold on this series
+ * (ADR-0153), one per kind: the exact instance's wins over the one for
+ * every instance.
+ */
+function richerOf(thresholds: EffectiveThreshold[], metric: string, instance: string): EffectiveThreshold[] {
+  const found = new Map<RuleKind, EffectiveThreshold>();
+  for (const t of thresholds) {
+    const kind = kindOf(t);
+    if (kind === "value" || t.metric !== metric) continue;
+    if (t.instance === instance) found.set(kind, t);
+    else if (t.instance === null && !found.has(kind)) found.set(kind, t);
+  }
+  return [...found.values()];
+}
+
 function RuleEditor({
   place,
   hostname,
   siteName,
   rule,
+  richer,
+  metrics,
   shape,
   metric,
   hasOwn,
@@ -335,6 +364,10 @@ function RuleEditor({
   hostname: string;
   siteName: string;
   rule: EffectiveThreshold | undefined;
+  /** The rules of other kinds on this series (ADR-0153). */
+  richer: EffectiveThreshold[];
+  /** Metrics of the server, for conditions. */
+  metrics: string[];
   shape: Shape;
   metric: string;
   /** This server has its own rule, which a site default does not replace. */
@@ -356,6 +389,20 @@ function RuleEditor({
   const [busy, setBusy] = useState(false);
   const siteServers = useSiteServerCount(place.siteId);
   const id = useId();
+  // What the alert judges (ADR-0153): the plain threshold keeps its form.
+  const [kind, setKind] = useState<RuleKind>("value");
+  const ofKind = (k: RuleKind) => richer.find((r) => kindOf(r) === k);
+  const [rich, setRich] = useState<RuleForm>(() => formOfRule(shape, base, initialForm));
+  const [richErrors, setRichErrors] = useState<RuleErrors>({});
+  const richBase = ofKind(kind) ?? base;
+  const richResult = kind === "value" ? null : ruleRequest(shape, richBase, rich);
+  const chooseKind = (k: RuleKind) => {
+    setKind(k);
+    setRichErrors({});
+    const existing = ofKind(k);
+    setRich(formOfRule(shape, existing ?? base, formOf(shape, existing ?? base), k));
+  };
+  const setRichField = <K extends keyof RuleForm>(key: K, value: RuleForm[K]) => setRich((f) => ({ ...f, [key]: value }));
 
   async function write(change: RuleChange) {
     setBusy(true);
@@ -381,7 +428,12 @@ function RuleEditor({
     }
     // Only what changed is written where it applies, so the rest keeps following what it inherits.
     const formChanged = JSON.stringify(form) !== JSON.stringify(initialForm);
-    if (formChanged || (rule && !rule.enabled)) {
+    if (richResult) {
+      if ("errors" in richResult) {
+        setRichErrors(richResult.errors);
+        Object.assign(found, richResult.errors);
+      } else change.threshold = richResult.request;
+    } else if (formChanged || (rule && !rule.enabled)) {
       const result = thresholdRequest(shape, base, form);
       if ("errors" in result) Object.assign(found, result.errors);
       else change.threshold = result.request;
@@ -416,6 +468,12 @@ function RuleEditor({
           placeholder={t("sensors.edit.timeoutHint", { duration: formatSeconds(defaultTimeoutMs(intervalMs) / 1000) })}
         />
       </div>
+      <div className={styles.fields}>
+        <KindSelect shape={shape} value={kind} onChange={chooseKind} />
+        {kind !== "value" && <KindFields shape={shape} form={rich} set={setRichField} errors={richErrors} />}
+      </div>
+      {kind !== "value" && !ofKind(kind) && <p className={admin.fieldNote}>{t("rules.editor.addsAnother")}</p>}
+      {kind === "value" && (
       <div className={styles.fields}>
         {shape.type === "event" ? (
           <label className={admin.field}>
@@ -454,6 +512,29 @@ function RuleEditor({
           placeholder={t("sensors.edit.firstValue")}
         />
       </div>
+      )}
+      {kind !== "value" && kind !== "nodata" && (
+        <>
+          {kind !== "forecast" && (
+            <div className={styles.fields}>
+              <Field
+                label={t("sensors.edit.forAtLeast")}
+                unit="min"
+                value={rich.minutes}
+                onChange={(v) => setRichField("minutes", v)}
+                error={richErrors.minutes}
+                placeholder={t("sensors.edit.firstValue")}
+              />
+            </div>
+          )}
+          <ConditionFields
+            metrics={metrics}
+            conditions={rich.conditions}
+            onChange={(conditions) => setRichField("conditions", conditions)}
+            error={richErrors.conditions}
+          />
+        </>
+      )}
       {rule && !rule.enabled && <p className={admin.fieldNote}>{t("sensors.edit.offNote")}</p>}
       <SlowNote durationS={Math.max(0, Number(form.minutes) || 0) * 60} intervalS={intervalMs / 1000} />
       <fieldset className={styles.applyTo}>
@@ -483,6 +564,13 @@ function RuleEditor({
           <span className={admin.fieldNote}>{t("sensors.edit.timingAll", { noun: instanceNoun(sensor), host: hostname })}</span>
         )}
       </fieldset>
+      {kind !== "value" && (
+        <RulePreview
+          target={{ kind: "server", id: place.serverId }}
+          request={richResult && "request" in richResult ? richResult.request : null}
+          metric={metric}
+        />
+      )}
       <div className={styles.buttons}>
         <Button variant="k" type="submit" disabled={busy}>
           {busy ? t("sensors.edit.saving") : t("sensors.edit.save")}
@@ -495,7 +583,10 @@ function RuleEditor({
             {failure}
           </span>
         )}
-        {rule?.enabled && (
+        {kind !== "value" && ofKind(kind)?.enabled && (
+          <TurnAlertOff disabled={busy} onConfirm={() => write({ threshold: requestOf(ofKind(kind)!, false) })} />
+        )}
+        {kind === "value" && rule?.enabled && (
           <TurnAlertOff
             disabled={busy}
             onConfirm={() =>

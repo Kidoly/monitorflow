@@ -1,0 +1,73 @@
+# Trigger dependencies (ADR-0152), written by hand in the shape of a
+# Zabbix 7.0 hosts export: a switch watched by ping, a server behind it
+# whose triggers depend on the switch's, one on its own agent, two
+# triggers on one check, and one on a trigger that is not exported.
+zabbix_export:
+  version: '7.0'
+  host_groups:
+    - uuid: 6a1d0c2b3e4f45a6b7c8d9e0f1a2b3c4
+      name: Network
+  hosts:
+    - host: sw-core
+      name: sw-core
+      groups:
+        - name: Network
+      interfaces:
+        - ip: 192.0.2.2
+          interface_ref: if1
+      items:
+        - name: 'Switch answers ping'
+          type: SIMPLE
+          key: icmpping
+          delay: 1m
+          interface_ref: if1
+          triggers:
+            - expression: 'max(/sw-core/icmpping,3m)=0'
+              name: 'Switch is unreachable'
+              priority: HIGH
+    - host: app-01
+      name: app-01
+      groups:
+        - name: Network
+      interfaces:
+        - ip: 192.0.2.40
+          interface_ref: if1
+      items:
+        - name: 'Agent answers'
+          key: agent.ping
+          interface_ref: if1
+          triggers:
+            - expression: 'nodata(/app-01/agent.ping,5m)=1'
+              name: 'Agent is unavailable'
+              priority: HIGH
+              dependencies:
+                - name: 'Switch is unreachable'
+                  expression: 'max(/sw-core/icmpping,3m)=0'
+        - name: 'HTTPS port'
+          key: 'net.tcp.port[,443]'
+          interface_ref: if1
+          triggers:
+            - expression: 'max(/app-01/net.tcp.port[,443],3m)=0'
+              name: 'HTTPS is down'
+              priority: HIGH
+              dependencies:
+                - name: 'Agent is unavailable'
+                  expression: 'nodata(/app-01/agent.ping,5m)=1'
+            - expression: 'max(/app-01/net.tcp.port[,443],10m)=0'
+              name: 'HTTPS is down for long'
+              priority: DISASTER
+              dependencies:
+                - name: 'Switch is unreachable'
+                  expression: 'max(/sw-core/icmpping,3m)=0'
+        - name: 'Nginx service'
+          key: 'systemd.unit.info[nginx.service]'
+          value_type: TEXT
+          trends: '0'
+          interface_ref: if1
+          triggers:
+            - expression: 'last(/app-01/systemd.unit.info[nginx.service])<>"active"'
+              name: 'Nginx is not running'
+              priority: AVERAGE
+              dependencies:
+                - name: 'Uplink is down'
+                  expression: 'last(/edge-router/net.if.status[ge0])=0'

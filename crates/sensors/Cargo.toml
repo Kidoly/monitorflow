@@ -12,6 +12,9 @@ testing = []
 [dependencies]
 async-trait.workspace = true
 regex.workspace = true
+# The Hyper-V script prints JSON (ADR-0156).
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

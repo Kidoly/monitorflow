@@ -1530,6 +1530,40 @@ zabbix_export:
       value: '90'
     - macro: '{$VFS.FS.PUSED.MAX.WARN}'
       value: '80'
+  # The VMware template's items and datastore space triggers (ADR-0156),
+  # written from the template Zabbix 7.0 publishes rather than exported.
+  - template: VMware
+    name: VMware
+    items:
+    - name: VMware Full name
+      type: SIMPLE
+      key: vmware.fullname[{$VMWARE.URL}]
+      delay: 1h
+    - name: VMware Version
+      type: SIMPLE
+      key: vmware.version[{$VMWARE.URL}]
+      delay: 1h
+    discovery_rules:
+    - name: Discover VMware datastores
+      type: SIMPLE
+      key: vmware.datastore.discovery[{$VMWARE.URL}]
+      delay: 1h
+      item_prototypes:
+      - name: 'VMware: Free space in percentage on datastore {#DATASTORE}'
+        type: SIMPLE
+        key: vmware.datastore.size[{$VMWARE.URL},{#DATASTORE.UUID},pfree]
+        trigger_prototypes:
+        - expression: last(/VMware/vmware.datastore.size[{$VMWARE.URL},{#DATASTORE.UUID},pfree])<{$VMWARE.DATASTORE.SPACE.CRIT}
+          name: 'VMware: [{#DATASTORE}]: Free space is critically low'
+          priority: HIGH
+        - expression: last(/VMware/vmware.datastore.size[{$VMWARE.URL},{#DATASTORE.UUID},pfree])<{$VMWARE.DATASTORE.SPACE.WARN}
+          name: 'VMware: [{#DATASTORE}]: Free space is low'
+          priority: WARNING
+    macros:
+    - macro: '{$VMWARE.DATASTORE.SPACE.CRIT}'
+      value: '10'
+    - macro: '{$VMWARE.DATASTORE.SPACE.WARN}'
+      value: '20'
   triggers:
   - expression: last(/Linux by Zabbix agent/proc.num)/last(/Linux by Zabbix agent/kernel.maxproc)*100>80
     name: 'Linux: Getting closer to process limit'

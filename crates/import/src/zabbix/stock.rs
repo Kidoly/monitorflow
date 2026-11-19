@@ -30,6 +30,8 @@ const ALIASES: &[(&str, &str)] = &[
     ("Template OS Windows", "Windows by Zabbix agent"),
     ("Template Module ICMP Ping", "ICMP Ping"),
     ("Template ICMP Ping", "ICMP Ping"),
+    ("Template VM VMware", "VMware"),
+    ("VMware FQDN", "VMware"),
 ];
 
 fn all() -> &'static BTreeMap<String, Template> {
@@ -66,6 +68,7 @@ mod tests {
             "Windows by Zabbix agent",
             "Windows by Zabbix agent active",
             "ICMP Ping",
+            "VMware",
         ] {
             let template = template(name).unwrap_or_else(|| panic!("{name}"));
             assert!(!template.items.is_empty(), "{name}");

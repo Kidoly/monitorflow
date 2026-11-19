@@ -5,9 +5,10 @@ import type { ReactNode } from "react";
 
 import { t } from "@/i18n";
 import type { ChartLine, DashboardData, Panel, PanelAlert, PanelData } from "@/lib/api";
+import { endWords } from "@/lib/dependencies";
 import { formatNumber, unitOf } from "@/lib/format";
 import { incidentTitle } from "@/lib/incidents";
-import { incidentHref, sensorHref } from "@/lib/routes";
+import { incidentHref, sensorHref, serverHref } from "@/lib/routes";
 import { type Scope, scopedHref } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
 import { Label } from "@/components/ui/StatusLabel";
@@ -164,7 +165,7 @@ export function DashboardPanel({
       const now = new Date(window.at * 1000);
       return (
         <Frame panel={panel} note={missing}>
-          {data.alerts.length === 0 ? (
+          {data.alerts.length === 0 && !data.unreachable?.length ? (
             <p className={styles.muted}>{t("display.panel.noAlerts")}</p>
           ) : (
             <ul className={styles.rows}>
@@ -181,6 +182,13 @@ export function DashboardPanel({
                     {t("display.panel.since", { time: formatSince(new Date(alert.opened_at), now) })}
                   </span>
                   {alert.silenced_until && <span className={styles.muted}>{quiet(alert, now)}</span>}
+                </li>
+              ))}
+              {data.unreachable?.map((server) => (
+                <li key={server.server_id} className={styles.row}>
+                  <Label tone="neutral">{t("common.state.unreachable")}</Label>
+                  <Link href={scopedHref(serverHref(server.server_id), scope)}>{server.hostname}</Link>
+                  <span className={styles.muted}>{t("dependencies.fleet.because", { parent: endWords(server.because) })}</span>
                 </li>
               ))}
             </ul>

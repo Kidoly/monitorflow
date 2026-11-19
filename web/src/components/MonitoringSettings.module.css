@@ -158,3 +158,27 @@
   color: var(--muted);
   margin-bottom: 8px;
 }
+
+/* What a rule would have done (ADR-0153), under its fields. */
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.preview .row {
+  padding: 0;
+}
+
+.previewList {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+/* A rule MonitorFlow suggests, above the rules in force. */
+.recommended {
+  background: var(--hl);
+}
