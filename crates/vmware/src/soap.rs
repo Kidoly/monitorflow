@@ -7,7 +7,8 @@ use std::time::Duration;
 use crate::tls::{self, show_fingerprint, Trust, Verifier};
 use crate::xml::{self, escape, Element};
 
-/// Largest answer read; a vCenter of thousands of machines stays below.
+/// Most bytes of answers read for one call, or for all the pages of one
+/// collection; a vCenter of thousands of machines stays below.
 pub const MAX_ANSWER: usize = 64 << 20;
 /// Objects per page of `RetrievePropertiesEx`.
 pub const PAGE: usize = 1000;
@@ -16,6 +17,22 @@ const MAX_PAGES: usize = 200;
 /// The vim25 version the requests are written for; every vCenter and
 /// ESXi from 6.5 on answers it.
 const ACTION: &str = "urn:vim25/6.5";
+
+/// What the answers of one call, or of the pages of one collection, may
+/// still take: bytes read and elements parsed.
+struct Budget {
+    bytes: usize,
+    elements: usize,
+}
+
+impl Budget {
+    fn full() -> Self {
+        Self {
+            bytes: MAX_ANSWER,
+            elements: xml::MAX_ELEMENTS,
+        }
+    }
+}
 
 /// Why a call failed, as the `reason` of `up`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +215,11 @@ impl Client {
 
     /// Sends one call and returns the element inside the SOAP body.
     async fn call(&mut self, call: &str) -> Result<Element, Failure> {
+        self.call_within(call, &mut Budget::full()).await
+    }
+
+    /// [`Self::call`] within what `budget` has left, taking what it used.
+    async fn call_within(&mut self, call: &str, budget: &mut Budget) -> Result<Element, Failure> {
         let body = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body>{call}</soapenv:Body></soapenv:Envelope>"#
         );
@@ -243,13 +265,25 @@ impl Client {
             .await
             .map_err(|e| Failure::Connect(bounded(&error_chain(&e))))?
         {
-            if bytes.len() + chunk.len() > MAX_ANSWER {
+            if bytes.len() + chunk.len() > budget.bytes {
                 return Err(Failure::Api("the answer is too large".into()));
             }
             bytes.extend_from_slice(&chunk);
         }
-        let text = String::from_utf8_lossy(&bytes);
-        let root = xml::parse(&text).map_err(|e| {
+        budget.bytes -= bytes.len();
+        // Parsing tens of MiB is work for a blocking thread.
+        let elements = budget.elements;
+        let parsed = tokio::task::spawn_blocking(move || {
+            let mut left = elements;
+            xml::parse_within(&String::from_utf8_lossy(&bytes), &mut left).map(|root| (root, left))
+        })
+        .await
+        .map_err(|_| Failure::Api("the answer could not be read".into()))?;
+        let root = parsed.map(|(root, left)| {
+            budget.elements = left;
+            root
+        });
+        let mut root = root.map_err(|e| {
             Failure::Api(if status.is_success() || status.as_u16() == 500 {
                 format!("the answer does not read: {}", bounded(&e))
             } else {
@@ -257,13 +291,16 @@ impl Client {
             })
         })?;
         let body = root
-            .child("Body")
-            .and_then(|b| b.children.first())
+            .children
+            .iter_mut()
+            .find(|c| c.name == "Body")
+            .filter(|b| !b.children.is_empty())
+            .map(|b| b.children.swap_remove(0))
             .ok_or_else(|| Failure::Api("an empty answer".into()))?;
         if body.name == "Fault" {
-            return Err(fault(body));
+            return Err(fault(&body));
         }
-        Ok(body.clone())
+        Ok(body)
     }
 
     /// `RetrieveServiceContent`: needs no login, and tells what answers.
@@ -352,21 +389,31 @@ impl Client {
             escape(view),
             self.page
         );
-        let mut answer = self.call(&call).await?;
+        // Every page together stays within one budget (ADR-0156).
+        let mut budget = Budget::full();
+        let mut answer = self.call_within(&call, &mut budget).await?;
         let mut objects = Vec::new();
         for _ in 0..MAX_PAGES {
-            let Some(value) = answer.child("returnval") else {
+            let Some(value) = answer.children.iter_mut().find(|c| c.name == "returnval") else {
                 return Ok(objects);
             };
-            objects.extend(value.all("objects").cloned());
-            let Some(token) = value.text_of("token").filter(|t| !t.is_empty()) else {
+            let token = value
+                .text_of("token")
+                .filter(|t| !t.is_empty())
+                .map(str::to_owned);
+            objects.extend(
+                std::mem::take(&mut value.children)
+                    .into_iter()
+                    .filter(|c| c.name == "objects"),
+            );
+            let Some(token) = token else {
                 return Ok(objects);
             };
             let call = format!(
                 r#"<ContinueRetrievePropertiesEx xmlns="urn:vim25"><_this type="PropertyCollector">{collector}</_this><token>{}</token></ContinueRetrievePropertiesEx>"#,
-                escape(token)
+                escape(&token)
             );
-            answer = self.call(&call).await?;
+            answer = self.call_within(&call, &mut budget).await?;
         }
         Err(Failure::Api("too many pages of objects".into()))
     }

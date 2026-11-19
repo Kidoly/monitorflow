@@ -7,7 +7,7 @@
 //! built-in base ([`base`]), the modules given as [`Known`], and the other
 //! files of the same upload.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +27,8 @@ const MAX_TOKENS: usize = 1 << 20;
 const MAX_ENUM: usize = 1_000;
 /// Longest name of a module, an object or an enumeration item.
 const MAX_IDENT: usize = 128;
+/// Most arcs of an OID, as written and once resolved, as SNMP allows.
+const MAX_ARCS: usize = 128;
 
 /// Why files could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +205,12 @@ fn tokens(file: &str, text: &str) -> Result<Vec<Token>, MibError> {
                 while i < bytes.len() && bytes[i] != b'\'' {
                     i += 1;
                 }
-                i += 2;
+                // The closing quote, then the `H` or `B` if there is one:
+                // never into the middle of a multi-byte character.
+                i += 1;
+                if bytes.get(i).is_some_and(u8::is_ascii_alphabetic) {
+                    i += 1;
+                }
                 out.push(Token::Other);
             }
             b':' if text[i..].starts_with("::=") => {
@@ -474,7 +481,7 @@ impl<'a> Parser<'a> {
                 _ => return Err(self.err("an OID value does not read")),
             }
             first = false;
-            if arcs.len() > 128 {
+            if arcs.len() > MAX_ARCS {
                 return Err(self.err("an OID is too long"));
             }
         }
@@ -757,18 +764,32 @@ pub fn parse(files: &[(String, String)], known: &Known) -> Result<Vec<Module>, M
             );
         }
     }
-    // Then OIDs, over as many rounds as the longest chain of modules.
+    // Then OIDs, over as many rounds as the longest chain of modules. In
+    // a round, each object walks up its module's own names to one already
+    // known, so a long chain costs one pass, not one round per link.
     let mut done: Vec<BTreeMap<String, Vec<u32>>> = vec![BTreeMap::new(); parsed.len()];
     loop {
         let mut progress = false;
         for (i, module) in parsed.iter().enumerate() {
-            for raw in &module.raws {
-                if done[i].contains_key(&raw.name) {
+            let mut by_name: HashMap<&str, usize> = HashMap::new();
+            for (k, raw) in module.raws.iter().enumerate() {
+                by_name.entry(raw.name.as_str()).or_insert(k);
+            }
+            // Objects that cannot resolve in this round.
+            let mut stuck: HashSet<usize> = HashSet::new();
+            for (k, raw) in module.raws.iter().enumerate() {
+                if done[i].contains_key(&raw.name) || stuck.contains(&k) {
                     continue;
                 }
-                let start = match &raw.parent {
-                    None => Some(Vec::new()),
-                    Some(parent) => done[i]
+                // From this object up to the first name already known.
+                let mut chain = vec![k];
+                let mut seen: HashSet<usize> = HashSet::from([k]);
+                let start = loop {
+                    let current = &module.raws[chain[chain.len() - 1]];
+                    let Some(parent) = &current.parent else {
+                        break Some(Vec::new());
+                    };
+                    let known = done[i]
                         .get(parent)
                         .cloned()
                         .or_else(|| global_root.get(parent.as_str()).cloned())
@@ -776,15 +797,33 @@ pub fn parse(files: &[(String, String)], known: &Known) -> Result<Vec<Module>, M
                             let from = module.imports.get(parent)?;
                             nodes.get(from)?.get(parent).cloned()
                         })
-                        .or_else(|| nodes.get(&module.name)?.get(parent).cloned()),
+                        .or_else(|| nodes.get(&module.name)?.get(parent).cloned());
+                    if known.is_some() {
+                        break known;
+                    }
+                    match by_name.get(parent.as_str()) {
+                        Some(&j) if !stuck.contains(&j) && seen.insert(j) => chain.push(j),
+                        _ => break None,
+                    }
                 };
-                if let Some(mut oid) = start {
+                let Some(mut oid) = start else {
+                    stuck.extend(chain);
+                    continue;
+                };
+                for &j in chain.iter().rev() {
+                    let raw = &module.raws[j];
+                    if oid.len() + raw.arcs.len() > MAX_ARCS {
+                        return Err(invalid(
+                            &module.file,
+                            format!("the OID of {} is longer than {MAX_ARCS} arcs", raw.name),
+                        ));
+                    }
                     oid.extend(&raw.arcs);
                     done[i].insert(raw.name.clone(), oid.clone());
                     nodes
                         .entry(module.name.clone())
                         .or_default()
-                        .insert(raw.name.clone(), oid);
+                        .insert(raw.name.clone(), oid.clone());
                     progress = true;
                 }
             }
@@ -795,12 +834,13 @@ pub fn parse(files: &[(String, String)], known: &Known) -> Result<Vec<Module>, M
     }
     let mut missing: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (i, module) in parsed.iter().enumerate() {
+        let names: HashSet<&str> = module.raws.iter().map(|r| r.name.as_str()).collect();
         for raw in &module.raws {
             if done[i].contains_key(&raw.name) {
                 continue;
             }
             let Some(parent) = &raw.parent else { continue };
-            let defined_here = module.raws.iter().any(|r| &r.name == parent);
+            let defined_here = names.contains(parent.as_str());
             if !defined_here {
                 let from = module
                     .imports

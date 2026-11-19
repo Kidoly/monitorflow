@@ -78,8 +78,9 @@ upstream_url = "https://relay.example.com:7443"
 # port or port range; IPv6 with ports in brackets. A listed host name may
 # connect to whatever it resolves to; any other host name only to the
 # addresses it resolves to inside a range listed for its port. An empty
-# list disables port checks. The agent does not start with an unreadable
-# entry.
+# list disables port checks. Website checks and the requests of plugin
+# checks follow the same list. The agent does not start with an
+# unreadable entry.
 # port_targets = ["127.0.0.1", "10.0.0.0/8:22", "192.168.0.0/16:8000-8999",
 #                 "[fd00::/8]:443", "db.example.com:5432"]
 

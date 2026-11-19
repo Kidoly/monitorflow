@@ -86,6 +86,11 @@ impl Builtin {
         }
     }
 
+    /// The agent's `sensors.port_targets`, when it sets one.
+    pub fn port_targets(&self) -> Option<&PortTargets> {
+        self.local.port_targets.as_ref()
+    }
+
     pub fn with_plugins(mut self, plugins: Arc<PluginChecks>) -> Self {
         self.plugins = Some(plugins);
         self

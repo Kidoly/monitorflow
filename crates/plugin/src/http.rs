@@ -3,6 +3,8 @@
 //! checked here before any connection; [`Http`] sends it.
 
 use std::fmt;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::{Method, Url};
@@ -200,35 +202,101 @@ pub trait Http: Send + Sync {
     fn send(&self, request: Checked, timeout: Duration) -> Result<Response, String>;
 }
 
+/// Where the host may connect on a plugin's behalf, beyond its host
+/// rules: on an agent, what its `sensors.port_targets` allows (ADR-0111).
+pub trait Destinations: Send + Sync {
+    /// Whether `url`'s host and port may be asked at all; the reason when
+    /// not.
+    fn check(&self, url: &Url) -> Result<(), String>;
+    /// Whether `addr`, which `url`'s host name resolved to, may be
+    /// connected to.
+    fn allows(&self, url: &Url, addr: SocketAddr) -> bool;
+}
+
 /// [`Http`] on a reqwest client, run on a tokio runtime. The client must
 /// follow no redirects: a redirect would reach a host nobody checked.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ReqwestHttp {
     client: reqwest::Client,
     runtime: tokio::runtime::Handle,
+    destinations: Option<Arc<dyn Destinations>>,
+}
+
+impl fmt::Debug for ReqwestHttp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReqwestHttp")
+            .field("client", &self.client)
+            .field("bounded", &self.destinations.is_some())
+            .finish()
+    }
 }
 
 impl ReqwestHttp {
     pub fn new(client: reqwest::Client, runtime: tokio::runtime::Handle) -> Self {
-        Self { client, runtime }
+        Self {
+            client,
+            runtime,
+            destinations: None,
+        }
     }
 
-    /// A client following no redirects, for agents' checks.
-    pub fn default_client() -> reqwest::Client {
+    /// On [`Self::default_client`]'s settings, connecting only where
+    /// `destinations` allows: a host name is resolved first, and the
+    /// request goes, without a proxy, to the allowed addresses alone, so
+    /// neither DNS nor a proxy can take it elsewhere.
+    pub fn bounded(destinations: Arc<dyn Destinations>, runtime: tokio::runtime::Handle) -> Self {
+        Self {
+            destinations: Some(destinations),
+            ..Self::new(Self::default_client(), runtime)
+        }
+    }
+
+    fn builder() -> reqwest::ClientBuilder {
         reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(limits::HTTP_TIMEOUT)
             .user_agent(concat!("MonitorFlow-plugin/", env!("CARGO_PKG_VERSION")))
+    }
+
+    /// A client following no redirects, for agents' checks.
+    pub fn default_client() -> reqwest::Client {
+        Self::builder().build().unwrap_or_default()
+    }
+
+    /// The client for `url`: this one, or, when bounded, one that reaches
+    /// only the allowed addresses of its host.
+    async fn client_for(&self, url: &Url, timeout: Duration) -> Result<reqwest::Client, String> {
+        let Some(destinations) = &self.destinations else {
+            return Ok(self.client.clone());
+        };
+        destinations.check(url)?;
+        let port = url.port_or_known_default().ok_or("no port")?;
+        let name = match url.host() {
+            Some(url::Host::Domain(name)) => name,
+            // An address: `check` decided.
+            _ => return Self::builder().no_proxy().build().map_err(error_text),
+        };
+        let found = tokio::time::timeout(timeout, tokio::net::lookup_host((name, port)))
+            .await
+            .map_err(|_| "timed out".to_owned())?
+            .map_err(|e| format!("could not resolve {name}: {e}"))?;
+        let allowed: Vec<SocketAddr> = found.filter(|a| destinations.allows(url, *a)).collect();
+        if allowed.is_empty() {
+            return Err(format!(
+                "{name} resolves only to addresses outside this agent's sensors.port_targets"
+            ));
+        }
+        Self::builder()
+            .no_proxy()
+            .resolve_to_addrs(name, &allowed)
             .build()
-            .unwrap_or_default()
+            .map_err(error_text)
     }
 
     async fn send_async(&self, request: Checked, timeout: Duration) -> Result<Response, String> {
         let started = std::time::Instant::now();
-        let mut builder = self
-            .client
-            .request(request.method, request.url)
-            .timeout(timeout);
+        let client = self.client_for(&request.url, timeout).await?;
+        let mut builder = client.request(request.method, request.url).timeout(timeout);
         for (name, value) in request.headers {
             builder = builder.header(name, value);
         }
@@ -399,5 +467,71 @@ mod tests {
         }
         assert!(with(|r| r.headers.push(("X-A".into(), "a\r\nHost: b".into()))).is_err());
         assert!(with(|r| r.body = "x".repeat(limits::HTTP_REQUEST_BYTES + 1)).is_err());
+    }
+
+    /// Allows one address, and any host name until it resolves.
+    struct Only(std::net::IpAddr);
+
+    impl Destinations for Only {
+        fn check(&self, url: &Url) -> Result<(), String> {
+            match url.host() {
+                Some(url::Host::Domain(_)) => Ok(()),
+                Some(url::Host::Ipv4(ip)) if std::net::IpAddr::V4(ip) == self.0 => Ok(()),
+                _ => Err("not in sensors.port_targets".into()),
+            }
+        }
+
+        fn allows(&self, _: &Url, addr: SocketAddr) -> bool {
+            addr.ip() == self.0
+        }
+    }
+
+    #[test]
+    fn bounded_requests_reach_only_allowed_addresses() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let served = Arc::new(AtomicUsize::new(0));
+        let count = served.clone();
+        runtime.spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                    )
+                    .await;
+            }
+        });
+        let get = |http: &ReqwestHttp, url: &str| {
+            let rules = rules(&[&format!("localhost:{port}"), &format!("127.0.0.1:{port}")]);
+            http.send(check(request(url), &rules).unwrap(), Duration::from_secs(5))
+        };
+        let by_name = format!("http://localhost:{port}/");
+        let by_address = format!("http://127.0.0.1:{port}/");
+        let loopback = std::net::IpAddr::from([127, 0, 0, 1]);
+
+        let allowed = ReqwestHttp::bounded(Arc::new(Only(loopback)), runtime.handle().clone());
+        assert_eq!(get(&allowed, &by_name).unwrap().body, "ok");
+        assert_eq!(get(&allowed, &by_address).unwrap().body, "ok");
+        assert_eq!(served.load(Ordering::SeqCst), 2);
+
+        let elsewhere = std::net::IpAddr::from([192, 0, 2, 1]);
+        let refused = ReqwestHttp::bounded(Arc::new(Only(elsewhere)), runtime.handle().clone());
+        let error = get(&refused, &by_name).unwrap_err();
+        assert!(
+            error.contains("outside this agent's sensors.port_targets"),
+            "{error}"
+        );
+        let error = get(&refused, &by_address).unwrap_err();
+        assert!(error.contains("not in sensors.port_targets"), "{error}");
+        assert_eq!(served.load(Ordering::SeqCst), 2, "no connection was made");
     }
 }

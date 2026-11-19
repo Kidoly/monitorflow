@@ -345,7 +345,7 @@ async fn udp_check(addr: SocketAddr, query: UdpQuery, cutoff: Instant) -> (bool,
         tracing::debug!(%addr, %error, "UDP connect failed");
         return (false, None);
     }
-    let id = std::process::id() as u16 ^ (Instant::now().elapsed().subsec_nanos() as u16);
+    let id = query_id();
     let datagram = query.datagram(id);
     let started = Instant::now();
     let mut buf = vec![0u8; 1500];
@@ -376,6 +376,13 @@ async fn udp_check(addr: SocketAddr, query: UdpQuery, cutoff: Instant) -> (bool,
             return (query == UdpQuery::None, None);
         }
     }
+}
+
+/// A random identifier for a UDP query, so an answer cannot be guessed
+/// and forged by someone who only sees that a check runs.
+fn query_id() -> u16 {
+    use std::hash::BuildHasher;
+    std::collections::hash_map::RandomState::new().hash_one(Instant::now()) as u16
 }
 
 #[cfg(test)]
