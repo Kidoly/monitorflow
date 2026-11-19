@@ -267,64 +267,121 @@ struct Walk<'a> {
     busy: HashSet<Node>,
 }
 
+/// A node being decided by [`Walk::hold`]: what it waits on, in order (its
+/// parents, then its server when it is a check), and what it has so far.
+struct Frame {
+    node: Node,
+    waits_on: Vec<Node>,
+    parents: usize,
+    next: usize,
+    best: Option<Hold>,
+    heard: Option<DateTime<Utc>>,
+}
+
 impl Walk<'_> {
+    /// How `node` is held. Each node is decided once; a chain of parents
+    /// is walked with a stack of its own, not the thread's, so its length
+    /// is not limited by the thread's stack.
     fn hold(&mut self, node: &Node) -> Option<Hold> {
         if let Some(done) = self.held.get(node) {
             return done.clone();
         }
+        let mut stack = vec![self.start(node)?];
+        // What the last node waited on turned out to be.
+        let mut answer: Option<Option<Hold>> = None;
+        loop {
+            let frame = stack
+                .last_mut()
+                .expect("the walk ends when the stack is empty");
+            if let Some(found) = answer.take() {
+                self.take(frame, found);
+            }
+            let Some(next) = frame.waits_on.get(frame.next).cloned() else {
+                let Frame {
+                    node, best, heard, ..
+                } = stack.pop().expect("the frame just read");
+                self.busy.remove(&node);
+                self.held.insert(node.clone(), best.clone());
+                self.heard.insert(node, heard);
+                if stack.is_empty() {
+                    return best;
+                }
+                answer = Some(best);
+                continue;
+            };
+            frame.next += 1;
+            if let Some(done) = self.held.get(&next) {
+                answer = Some(done.clone());
+            } else if let Some(frame) = self.start(&next) {
+                stack.push(frame);
+            } else {
+                // Being decided further up: a loop that got in anyway.
+                answer = Some(None);
+            }
+        }
+    }
+
+    /// The frame of `node`, or `None` when it is already being decided.
+    fn start(&mut self, node: &Node) -> Option<Frame> {
         if !self.busy.insert(node.clone()) {
             return None;
         }
-        let mut best: Option<Hold> = None;
-        let mut heard: Option<DateTime<Utc>> = None;
-        let parents: Vec<Node> = self
+        let mut waits_on: Vec<Node> = self
             .by_child
             .get(node)
             .into_iter()
             .flatten()
             .map(|p| (*p).clone())
             .collect();
-        for parent in &parents {
-            let recovered = self.facts.recovered.get(parent).copied();
-            let candidate = if let Some(down) = self.facts.down.get(parent) {
-                Some(Hold::Unreachable {
-                    cause: parent.clone(),
-                    incident: down.incident,
-                })
-            } else if self.facts.doubt.contains(parent) {
-                Some(Hold::Doubt)
-            } else {
-                let settling = recovered
-                    .map(|at| at + SETTLE)
-                    .filter(|until| *until > self.now)
-                    .map(|until| Hold::Settling { until });
-                [self.hold(parent), settling]
-                    .into_iter()
-                    .flatten()
-                    .reduce(Hold::max)
-            };
-            best = [best, candidate].into_iter().flatten().reduce(Hold::max);
-            let above = self.heard_of(parent);
-            heard = [heard, recovered, above].into_iter().flatten().max();
-        }
+        let parents = waits_on.len();
         // A check is held when its server is.
         if let Node::Check(server, ..) = node {
-            let whole = Node::Server(*server);
-            best = [best, self.hold(&whole)]
+            waits_on.push(Node::Server(*server));
+        }
+        Some(Frame {
+            node: node.clone(),
+            waits_on,
+            parents,
+            next: 0,
+            best: None,
+            heard: None,
+        })
+    }
+
+    /// Takes into `frame` how the node it last waited on is held.
+    fn take(&self, frame: &mut Frame, found: Option<Hold>) {
+        let index = frame.next - 1;
+        let other = &frame.waits_on[index];
+        let above = self.heard.get(other).copied().flatten();
+        if index >= frame.parents {
+            frame.best = [frame.best.clone(), found]
                 .into_iter()
                 .flatten()
                 .reduce(Hold::max);
-            heard = [heard, self.heard_of(&whole)].into_iter().flatten().max();
+            frame.heard = [frame.heard, above].into_iter().flatten().max();
+            return;
         }
-        self.busy.remove(node);
-        self.held.insert(node.clone(), best.clone());
-        self.heard.insert(node.clone(), heard);
-        best
-    }
-
-    fn heard_of(&mut self, node: &Node) -> Option<DateTime<Utc>> {
-        self.hold(node);
-        self.heard.get(node).copied().flatten()
+        let parent = other;
+        let recovered = self.facts.recovered.get(parent).copied();
+        let candidate = if let Some(down) = self.facts.down.get(parent) {
+            Some(Hold::Unreachable {
+                cause: parent.clone(),
+                incident: down.incident,
+            })
+        } else if self.facts.doubt.contains(parent) {
+            Some(Hold::Doubt)
+        } else {
+            let settling = recovered
+                .map(|at| at + SETTLE)
+                .filter(|until| *until > self.now)
+                .map(|until| Hold::Settling { until });
+            [found, settling].into_iter().flatten().reduce(Hold::max)
+        };
+        frame.best = [frame.best.clone(), candidate]
+            .into_iter()
+            .flatten()
+            .reduce(Hold::max);
+        frame.heard = [frame.heard, recovered, above].into_iter().flatten().max();
     }
 }
 
@@ -519,6 +576,27 @@ mod tests {
         assert!(holds
             .series(Uuid::from_u128(3), "monitorflow_https_up", "")
             .is_some());
+    }
+
+    #[test]
+    fn a_long_chain_does_not_overflow_the_stack() {
+        // One check behind the next, as many as an operator may create:
+        // sorted, the walk starts from the far end of the chain.
+        let link = |n: usize| Node::Check(Uuid::from_u128(1), "cpu".into(), format!("{n:08}"));
+        let length = 50_000;
+        let edges: Vec<Edge> = (0..length).map(|n| edge(link(n), link(n + 1))).collect();
+        let facts = Facts {
+            down: HashMap::from([(link(length), down(1))]),
+            ..Facts::default()
+        };
+        let holds = Holds::new(&edges, facts, at(1));
+        for n in [0, length / 2, length - 1] {
+            assert_eq!(
+                holds.of(&link(n)).unwrap().unreachable().unwrap().0,
+                &link(length),
+                "{n}"
+            );
+        }
     }
 
     #[test]

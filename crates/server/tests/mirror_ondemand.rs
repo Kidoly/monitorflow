@@ -81,8 +81,9 @@ fn fill_upstream(dir: &Path, version: u32) {
     let line = |data: &[u8], path: &str| format!(" {} {} {path}\n", sha256(data), data.len());
     let release = format!(
         "Origin: Debian\nLabel: Debian\nSuite: oldstable\nCodename: bookworm\n\
-         Valid-Until: Mon, 23 Nov 2026 11:43:19 UTC\nAcquire-By-Hash: yes\n\
+         Valid-Until: {}\nAcquire-By-Hash: yes\n\
          Architectures: amd64 arm64\nComponents: main\nSHA256:\n{}{}{}{}",
+        (chrono::Utc::now() + chrono::TimeDelta::days(7)).format("%a, %d %b %Y %H:%M:%S UTC"),
         // Listed, not served: the next compression is taken.
         line(b"never served", "main/binary-amd64/Packages.xz"),
         line(packages.as_bytes(), "main/binary-amd64/Packages"),
@@ -283,6 +284,31 @@ db_tests! {
         let run = fx.run(&mirror, JobKind::Sync).await;
         assert_eq!(run.state, RunState::Failed);
         assert!(run.error.unwrap().contains("exit"), "gpg's failure is the error");
+        assert!(store::snapshots(&pool, mirror.id, 10).await.unwrap().is_empty());
+        assert!(!fx.root.join("ondemand-work/debian").exists());
+    }
+
+    #[sqlx::test]
+    async fn a_signed_release_of_another_suite_or_expired_publishes_nothing(pool: PgPool) {
+        let fx = Fixture::new(&pool).await;
+        let mirror = fx.create(&pool, Family::Apt).await;
+        let path = fx.upstream.join("debian/dists/bookworm/Release");
+        let release = std::fs::read_to_string(&path).unwrap();
+        let replay = |from: &str, to: &str| {
+            assert!(release.contains(from));
+            std::fs::write(&path, release.replacen(from, to, 1)).unwrap();
+        };
+        // Another suite of the same archive, signed by the same key.
+        replay("Codename: bookworm\n", "Codename: bookworm-proposed-updates\n");
+        let run = fx.run(&mirror, JobKind::Sync).await;
+        assert_eq!(run.state, RunState::Failed);
+        assert!(run.error.unwrap().contains("not of `bookworm`"));
+        // An old copy, past its Valid-Until.
+        let until = release.lines().find(|l| l.starts_with("Valid-Until: ")).unwrap();
+        replay(until, "Valid-Until: Sun, 15 Nov 2026 11:43:19 UTC");
+        let run = fx.run(&mirror, JobKind::Sync).await;
+        assert_eq!(run.state, RunState::Failed);
+        assert!(run.error.unwrap().contains("expired on"));
         assert!(store::snapshots(&pool, mirror.id, 10).await.unwrap().is_empty());
         assert!(!fx.root.join("ondemand-work/debian").exists());
     }

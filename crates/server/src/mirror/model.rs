@@ -16,7 +16,7 @@ pub const MAX_NAME_LEN: usize = 64;
 pub const MIN_SYNC_INTERVAL_S: i32 = 900;
 
 /// Name of the symlink to the newest published snapshot.
-pub const CURRENT: &str = "current";
+pub use monitorflow_common::mirror::CURRENT;
 
 /// Package family of a mirror, which decides the tools and the URL prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type, utoipa::ToSchema)]
@@ -136,12 +136,8 @@ fn invalid(message: impl Into<String>) -> Invalid {
 /// `[a-z0-9]` then up to 63 of `[a-z0-9._-]`: a URL segment, and `:`-free
 /// so aptly object names `mf:<mirror>:<component>` stay unambiguous.
 pub fn validate_mirror_name(name: &str) -> Result<(), Invalid> {
-    let mut chars = name.chars();
-    let first_ok = chars
-        .next()
-        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
-    let rest_ok = chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._-".contains(c));
-    (first_ok && rest_ok && name.len() <= MAX_NAME_LEN)
+    // The relays' listener checks names with the same rule.
+    monitorflow_common::mirror::is_mirror_name(name)
         .then_some(())
         .ok_or_else(|| {
             invalid("mirror names are 1 to 64 of a-z, 0-9, `.`, `_` and `-`, starting with a letter or digit")
@@ -151,12 +147,7 @@ pub fn validate_mirror_name(name: &str) -> Result<(), Invalid> {
 /// 1 to 64 of `[A-Za-z0-9._-]`, not starting with a dot (hidden from the
 /// HTTP listener) and not [`CURRENT`].
 pub fn validate_snapshot_name(name: &str) -> Result<(), Invalid> {
-    let valid = (1..=MAX_NAME_LEN).contains(&name.len())
-        && !name.starts_with('.')
-        && name != CURRENT
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    let valid = monitorflow_common::mirror::is_snapshot_name(name);
     valid.then_some(()).ok_or_else(|| {
         invalid("snapshot names are 1 to 64 of A-Z, a-z, 0-9, `.`, `_` and `-`, not starting with a dot, and not `current`")
     })

@@ -104,6 +104,35 @@ fn long_text_is_wrapped_and_cut() {
 }
 
 #[test]
+fn a_cut_is_the_longest_start_that_fits_however_long_the_text() {
+    // What popping one character at a time found, for every room.
+    let slow = |text: &str, room: f32| {
+        let mut cut = text.to_owned();
+        while !cut.is_empty() && width(&format!("{cut}..."), 10.0, false) > room {
+            cut.pop();
+        }
+        format!("{}...", cut.trim_end())
+    };
+    let text = "web-1, web-2, café-é, srv 3";
+    for room in (0..120).map(|r| r as f32 * 0.7) {
+        if width(text, 10.0, false) > room {
+            assert_eq!(fit(text, 10.0, false, room), slow(text, room), "{room}");
+        }
+    }
+    // The servers a site-wide maintenance covered, in one cell.
+    let names: Vec<String> = (0..20_000).map(|n| format!("server-{n:05}")).collect();
+    let covered = names.join(", ");
+    let started = std::time::Instant::now();
+    let cut = fit(&covered, BODY, false, 120.0);
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert!(
+        cut.starts_with("server-00000") && cut.ends_with("..."),
+        "{cut}"
+    );
+    assert!(width(&cut, BODY, false) <= 120.0);
+}
+
+#[test]
 fn periods_in_words() {
     let paris = chrono_tz::Europe::Paris;
     let october = (at("2026-09-30T22:00:00Z"), at("2026-10-31T23:00:00Z"));

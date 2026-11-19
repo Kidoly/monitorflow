@@ -24,7 +24,7 @@ use super::{ApiError, ApiState};
 use crate::availability::schedule::{latest, next, send_time, Frequency};
 use crate::availability::sender::{self, Stored};
 use crate::availability::words::Language;
-use crate::notify::{self, Coverage, Destination};
+use crate::notify::{self, Destination};
 
 /// Most recipients of one schedule.
 pub const MAX_RECIPIENTS: usize = 20;
@@ -208,12 +208,7 @@ async fn validate(
     if !matches!(channel.destination, Destination::Email(_)) {
         return Err(ApiError::Invalid("Choose an email channel.".into()));
     }
-    let fits = match (channel.coverage, request.customer_id) {
-        (Coverage::Everything, _) => true,
-        (Coverage::Customer(c), Some(customer)) => c == customer,
-        _ => false,
-    };
-    if !fits {
+    if !sender::channel_fits(channel.coverage, request.customer_id) {
         return Err(ApiError::Invalid(
             "Choose an email channel covering this customer as a whole, or everything.".into(),
         ));

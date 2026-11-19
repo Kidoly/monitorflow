@@ -291,6 +291,50 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_channel_that_moved_to_another_customer_gets_no_report(pool: PgPool) {
+        let (port, mails) = smtp_server().await;
+        let (acme, channel) = customer(&pool, "acme", 30, port).await;
+        let (globex, _) = customer(&pool, "globex", 90, port).await;
+        let root = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let (status, _, _) =
+            call(&pool, "POST", SCHEDULES, Some(&root), Some(schedule(acme, channel))).await;
+        assert_eq!(status, StatusCode::CREATED);
+        // Acme's channel now covers globex, whose administrators manage it.
+        sqlx::query("UPDATE notification_channels SET customer_id = $1 WHERE id = $2")
+            .bind(globex)
+            .bind(channel)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE report_schedules SET last_period_end = '2020-01-01T00:00:00Z'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sender::pass(&pool, Utc::now()).await.unwrap(), 0);
+        assert!(mails.lock().unwrap().is_empty(), "acme's report went to globex's channel");
+        let (_, list, _) = call(&pool, "GET", SCHEDULES, Some(&root), None).await;
+        let error = list["schedules"][0]["last_error"].as_str().unwrap();
+        assert!(error.contains("no longer covers this customer"), "{error}");
+    }
+
+    #[sqlx::test]
+    async fn a_period_sent_since_the_list_was_read_is_not_claimed(pool: PgPool) {
+        let (port, mails) = smtp_server().await;
+        let (acme, channel) = customer(&pool, "acme", 30, port).await;
+        let root = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        call(&pool, "POST", SCHEDULES, Some(&root), Some(schedule(acme, channel))).await;
+        sqlx::query("UPDATE report_schedules SET last_period_end = '2020-01-01T00:00:00Z'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Read before another server sent it: the claim must not take it.
+        let read: Vec<sender::Stored> = sqlx::query_as(sender::SELECT).fetch_all(&pool).await.unwrap();
+        assert_eq!(sender::pass(&pool, Utc::now()).await.unwrap(), 1);
+        assert!(!sender::claim(&pool, &read[0], Utc::now()).await.unwrap());
+        assert_eq!(mails.lock().unwrap().len(), 1);
+    }
+
+    #[sqlx::test]
     async fn claims_failures_and_send_now(pool: PgPool) {
         let (port, mails) = smtp_server().await;
         let (acme, channel) = customer(&pool, "acme", 30, port).await;

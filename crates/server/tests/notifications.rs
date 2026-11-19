@@ -302,6 +302,19 @@ async fn other_site(pool: &PgPool, customer: Uuid, name: &str) -> (Uuid, Uuid) {
     (site, server)
 }
 
+/// Another server on the site of `server`.
+async fn other_server(pool: &PgPool, server: Uuid) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+         SELECT 'other-web', site_id, 'other-web', 'debian' FROM servers WHERE id = $1
+         RETURNING id",
+    )
+    .bind(server)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 async fn site_of(pool: &PgPool, server: Uuid) -> Uuid {
     sqlx::query_scalar("SELECT site_id FROM servers WHERE id = $1")
         .bind(server)
@@ -536,6 +549,47 @@ db_tests! {
         .await
         .unwrap();
         assert!(sent.is_some() && error.is_none());
+    }
+
+    #[sqlx::test]
+    async fn a_channel_that_keeps_failing_gives_up_the_rest_of_its_pass(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let (acme, server, _) = place(&pool, "acme").await;
+        // Takes each connection and closes it without an answer.
+        let dead = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/hook", dead.local_addr().unwrap());
+        let tries = Arc::new(Mutex::new(0usize));
+        let count = tries.clone();
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = dead.accept().await.unwrap();
+                *count.lock().unwrap() += 1;
+                drop(stream);
+            }
+        });
+        let hook = Destination::Webhook(Webhook { url });
+        let channel = notify::insert(&pool, &hook, None, Coverage::Customer(acme), false).await.unwrap();
+        let kinds = [("opened", Some("warning")), ("escalated", Some("critical")), ("resolved", None)];
+        incident(&pool, server, &kinds).await;
+
+        // Its time spent, a failing channel gets nothing more this pass:
+        // the first event's two tries, not one more for each other event.
+        let dispatcher = fast(&pool).with_budget(Duration::ZERO);
+        assert_eq!(dispatcher.pass().await.unwrap(), 3);
+        assert_eq!(*tries.lock().unwrap(), 2);
+        let error: Option<String> =
+            sqlx::query_scalar("SELECT last_error FROM notification_channels WHERE id = $1")
+                .bind(channel)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(error.is_some());
+
+        // Within its time, each other event still gets its one try.
+        *tries.lock().unwrap() = 0;
+        incident(&pool, other_server(&pool, server).await, &kinds).await;
+        assert_eq!(fast(&pool).pass().await.unwrap(), 3);
+        assert_eq!(*tries.lock().unwrap(), 4);
     }
 
     #[sqlx::test]

@@ -5,7 +5,6 @@
 
 use std::future::Future;
 
-use axum::Router;
 use monitorflow_common::mirror::demand::OnDemand;
 use monitorflow_common::mirror::{serve, Served};
 use tokio::net::TcpListener;
@@ -25,12 +24,7 @@ pub fn served(layout: &Layout) -> Served {
     }
 }
 
-/// The routes over `layout`.
-pub fn router(layout: &Layout) -> Router {
-    serve::router(&served(layout))
-}
-
-/// Serves [`router`] on `listener` until `shutdown` resolves, fetching the
+/// Serves the mirror content of `layout` on `listener` until `shutdown` resolves, fetching the
 /// packages of on-demand snapshots with `ondemand` (ADR-0142). Downloads
 /// a stopped server left half done are removed first.
 pub async fn serve(
