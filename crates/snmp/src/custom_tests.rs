@@ -68,6 +68,10 @@ fn channels_are_read_with_their_defaults() {
         "channel1"
     );
     assert_eq!(one(&[("oid1", "1.3.6.1.2.1.1.3.0")]).name, "Channel 1");
+    assert_eq!(
+        one(&[("oid1", "1.3.6.1.2.1.1.3.0"), ("name1", "RAID state")]).key,
+        "raid"
+    );
 }
 
 #[test]

@@ -31,7 +31,7 @@ pub mod custom;
 pub mod library;
 pub mod mib;
 mod mibs;
-mod read;
+pub mod read;
 mod sensor;
 mod session;
 

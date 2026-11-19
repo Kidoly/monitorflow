@@ -29,8 +29,11 @@ pub enum Family {
     Dns,
     /// An NTP server answering.
     Ntp,
-    /// Another SNMP sensor: uptime, UPS, printer, temperature, custom.
+    /// Another SNMP sensor: uptime, UPS, printer, temperature.
     Snmp,
+    /// A custom SNMP sensor: of one OID, several, a text, a lookup or a
+    /// table (ADR-0157).
+    SnmpCustom,
     /// A VMware sensor over SOAP or WBEM: the device is a vCenter or an
     /// ESXi host (ADR-0156).
     Vmware,
@@ -49,6 +52,9 @@ pub fn family(sensor_type: &str) -> Family {
     }
     if has("hyperv") || has("hyper-v") {
         return Family::HyperV;
+    }
+    if t.starts_with("snmpcustom") || t == "snmplibrary" || t.starts_with("paessler.snmp.custom") {
+        return Family::SnmpCustom;
     }
     if t.starts_with("ping") {
         Family::Ping
@@ -107,6 +113,7 @@ pub fn wanted(sensor_type: &str) -> (&'static [&'static str], bool) {
         ),
         Family::Cpu | Family::Memory | Family::Disk => (&[], true),
         Family::Dns | Family::Ntp | Family::Snmp | Family::HyperV => (&[], false),
+        Family::SnmpCustom => (super::snmp::settings(), true),
         Family::Vmware => (&[], true),
         Family::Ping | Family::Traffic | Family::Other => (&[], false),
     }
@@ -233,6 +240,7 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
                 sensor,
             )
         }
+        Family::SnmpCustom => super::snmp::map(sensor, sensor_type),
         Family::Cpu => cpu(sensor),
         Family::Memory => memory(sensor),
         Family::Disk => disk(sensor),
@@ -318,7 +326,7 @@ fn probe_watch(watch: Watch, fidelity: Fidelity, sensor: &Object) -> Mapped {
 }
 
 /// The channels with limits that `used` does not take.
-fn lost(sensor: &Object, used: &[i64]) -> Vec<String> {
+pub(super) fn lost(sensor: &Object, used: &[i64]) -> Vec<String> {
     limited(sensor)
         .filter(|(c, _)| !used.contains(&c.id))
         .map(|(c, _)| c.name.clone())
@@ -790,6 +798,7 @@ mod tests {
                     min_error: Some(5.0),
                     min_warning: Some(15.0),
                 }),
+                ..Default::default()
             },
             crate::prtg::tree::Channel {
                 id: 2,
@@ -801,6 +810,7 @@ mod tests {
                     min_error: None,
                     min_warning: None,
                 }),
+                ..Default::default()
             },
         ];
         let Mapped::Watch {

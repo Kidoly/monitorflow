@@ -38,7 +38,29 @@ const SNMP_PRIMARY: Record<string, { suffix: string; own?: boolean }> = {
   printer: { suffix: "supply_level_ratio", own: true },
 };
 
+/** A channel name's metric suffix, as the probe makes it (ADR-0157): "RAID state" is `raid`. */
+export function channelKey(name: string): string {
+  let key = "";
+  for (const c of name.toLowerCase()) {
+    if (/[a-z0-9]/.test(c)) key += c;
+    else if (key && !key.endsWith("_")) key += "_";
+  }
+  key = key.replace(/_+$/, "");
+  if (/^[0-9]/.test(key)) key = `v${key}`;
+  key = key.slice(0, 32).replace(/_+$/, "");
+  if (key.endsWith("_state")) key = key.slice(0, -"_state".length);
+  return /^[a-z][a-z0-9_]*$/.test(key) ? key : "channel1";
+}
+
 export function primaryMetric(sensor: EffectiveSensor): { metric: string; instance?: string } {
+  // A custom SNMP check stands for its first channel, its state for a text or a lookup.
+  if (sensor.kind === "snmp_custom") {
+    const p = sensor.params;
+    const key = p.key1 || channelKey(p.name1 || "Channel 1");
+    const state = p.type1 === "text" || Boolean(p.lookup1);
+    const metric = `${METRIC_PREFIX}${sensor.name}_${key}${state ? "_state" : ""}`;
+    return p.table || !sensor.instance ? { metric } : { metric, instance: sensor.instance };
+  }
   if (sensor.kind === "snmp") {
     const group = SNMP_PRIMARY[sensor.params.what ?? "system"] ?? SNMP_PRIMARY.system!;
     const metric = `${METRIC_PREFIX}${sensor.name}_${group.suffix}`;

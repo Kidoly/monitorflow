@@ -185,6 +185,12 @@ struct Tenant {
     customer_dashboard: Uuid,
     /// A network scan of the site with a finished run (ADR-0154).
     scan: Uuid,
+    /// A lookup and an uploaded MIB of the customer (ADR-0157), whose one
+    /// object is `obja` or `objb`.
+    lookup: Uuid,
+    mib: Uuid,
+    object: &'static str,
+    object_oid: &'static str,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -486,7 +492,36 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .execute(pool)
     .await
     .unwrap();
+    let lookup = one("INSERT INTO snmp_lookups (customer_id, name, definition)
+         VALUES ($1, 'State', '{\"entries\": [{\"value\": 1, \"name\": \"OK\", \"state\": \"ok\"}]}') RETURNING id")
+    .bind(customer)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let mib = one("INSERT INTO snmp_mibs (customer_id, module, file_name) VALUES ($1, 'TEST-MIB', 'test.mib') RETURNING id")
+        .bind(customer)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let (object, object_oid) = if name == "a" {
+        ("obja", "1.3.6.1.4.1.99991")
+    } else {
+        ("objb", "1.3.6.1.4.1.99992")
+    };
+    sqlx::query(
+        "INSERT INTO snmp_mib_objects (mib_id, name, oid, kind) VALUES ($1, $2, $3, 'scalar')",
+    )
+    .bind(mib)
+    .bind(object)
+    .bind(object_oid)
+    .execute(pool)
+    .await
+    .unwrap();
     Tenant {
+        lookup,
+        mib,
+        object,
+        object_oid,
         scan,
         site_dashboard,
         customer_dashboard,
@@ -2092,6 +2127,66 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = path.replace("{id}", &b.window.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
+        // Lookups and MIBs (ADR-0157): B's are not listed, named or
+        // changed, and A cannot make one for B.
+        ("GET", "/api/snmp-lookups") | ("GET", "/api/snmp-mibs") => {
+            let body = ctx.call(method, path, None).await.1;
+            let (mine, theirs) = if path.ends_with("mibs") {
+                (a.mib, b.mib)
+            } else {
+                (a.lookup, b.lookup)
+            };
+            assert!(Ctx::mentions(&body, mine), "{body}");
+            assert!(!Ctx::mentions(&body, theirs), "{body}");
+            let uri = format!("{path}?customer_id={}", b.customer);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("POST", "/api/snmp-lookups") => {
+            let body = json!({"customer_id": b.customer, "name": "Mine", "entries": [{"value": 1, "name": "OK", "state": "ok"}]});
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("GET", "/api/snmp-lookups/{id}")
+        | ("DELETE", "/api/snmp-lookups/{id}")
+        | ("DELETE", "/api/snmp-mibs/{id}") => {
+            let id = if path.contains("mibs") {
+                b.mib
+            } else {
+                b.lookup
+            };
+            let uri = path.replace("{id}", &id.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("PUT", "/api/snmp-lookups/{id}") => {
+            let body =
+                json!({"name": "Mine", "entries": [{"value": 1, "name": "OK", "state": "ok"}]});
+            let uri = path.replace("{id}", &b.lookup.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, Some(body.clone())).await,
+                not_found
+            );
+            let mut moved = body;
+            moved["customer_id"] = json!(b.customer);
+            let uri = path.replace("{id}", &a.lookup.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, Some(moved)).await,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        ("POST", "/api/snmp-mibs") => {
+            let body = json!({"customer_id": b.customer, "files": [{"name": "x.mib", "text": "X DEFINITIONS ::= BEGIN END"}]});
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("GET", "/api/snmp-objects") => {
+            let body = ctx.call(method, &format!("{path}?q=obj"), None).await.1;
+            assert!(body.to_string().contains(a.object), "{body}");
+            assert!(!body.to_string().contains(b.object), "{body}");
+            let uri = format!("{path}?oids={},{}", a.object_oid, b.object_oid);
+            let body = ctx.call(method, &uri, None).await.1;
+            assert!(body.to_string().contains(a.object), "{body}");
+            assert!(!body.to_string().contains(b.object), "{body}");
+            let uri = format!("{path}?q=obj&customer_id={}", b.customer);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
         // Business services (ADR-0155): B's are not listed, and A cannot
         // make one of B's customer or with B's server.
         ("GET", "/api/business-services") => {
@@ -2283,6 +2378,28 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = path.replace("{id}", &b.server.to_string());
             let body = Some(json!({ "version": "v2c", "community": "c" }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
+        // Custom SNMP checks (ADR-0157): B's device does not exist for A.
+        ("GET", "/api/devices/{id}/snmp-checks")
+        | ("POST", "/api/devices/{id}/snmp-checks")
+        | ("PUT", "/api/devices/{id}/snmp-checks/{name}")
+        | ("DELETE", "/api/devices/{id}/snmp-checks/{name}")
+        | ("POST", "/api/devices/{id}/snmp/test")
+        | ("POST", "/api/devices/{id}/snmp/read") => {
+            let uri = path
+                .replace("{id}", &b.server.to_string())
+                .replace("{name}", "snmp_x");
+            let check = json!({"name": "snmp_x", "channels": [{"oid": "1.3.6.1.2.1.1.3.0", "name": "Uptime"}]});
+            let body = if path.ends_with("/read") {
+                json!({"oids": ["1.3.6.1.2.1.1.3.0"]})
+            } else {
+                check
+            };
+            assert_eq!(
+                ctx.status(method, &uri, Some(body)).await,
+                not_found,
+                "{uri}"
+            );
         }
         // Network scans (ADR-0154): another customer's scans are not
         // listed nor found, and none can be made in its site.

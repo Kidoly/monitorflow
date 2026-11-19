@@ -8179,6 +8179,1155 @@
         }
       }
     },
+    "/api/v1/devices/{id}/snmp-checks": {
+      "get": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "List a device's custom SNMP checks",
+        "description": "Each custom SNMP check of the device (kind `snmp_custom`), its channels as `POST /api/v1/devices/{id}/snmp-checks` takes them, each with its limits (the device's threshold on the channel's metric for every instance), the series it writes, and its last values: per row of a table, the value, the state (0 OK, 1 warning, 2 critical) and the text of a lookup or a text channel. Values are empty when VictoriaMetrics does not answer.\n\n**Who**: any role on the device's site. **Area**: `servers`.",
+        "operationId": "list_checks",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The checks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpCheckList"
+                },
+                "example": {
+                  "checks": [
+                    {
+                      "channels": [
+                        {
+                          "key": "sessions",
+                          "limits": {
+                            "comparison": ">",
+                            "critical": 8000.0,
+                            "duration_s": 300,
+                            "warning": 5000.0
+                          },
+                          "metric": "monitorflow_snmp_fw_sessions",
+                          "name": "Sessions",
+                          "oid": "1.3.6.1.4.1.12356.101.4.1.8.0",
+                          "state_metric": null,
+                          "unit": "sessions",
+                          "values": [
+                            {
+                              "at": "2026-11-19T10:00:00Z",
+                              "instance": "",
+                              "state": null,
+                              "text": null,
+                              "value": 1532.0
+                            }
+                          ]
+                        },
+                        {
+                          "key": "ha",
+                          "limits": null,
+                          "lookup": "builtin:ok_warning_failed",
+                          "metric": "monitorflow_snmp_fw_ha",
+                          "name": "HA state",
+                          "oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1",
+                          "state_metric": "monitorflow_snmp_fw_ha_state",
+                          "values": [
+                            {
+                              "at": "2026-11-19T10:00:00Z",
+                              "instance": "",
+                              "state": 0,
+                              "text": "OK",
+                              "value": 1.0
+                            }
+                          ]
+                        }
+                      ],
+                      "enabled": true,
+                      "entry_id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                      "instance": "central",
+                      "interval_ms": 60000,
+                      "name": "snmp_fw",
+                      "name_column": null,
+                      "probe": "central",
+                      "probe_relay_id": null,
+                      "table": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Add a custom SNMP check to a device",
+        "description": "Watches any objects of the device: 1 to 10 channels, each a numeric OID with its name, optional `key` (the metric suffix, from the name), `type` (`gauge` as read, `counter` for a rate per second from the second reading, or `text`), `unit`, `multiply` or `divide` (tenths of a degree: `divide` 10), `lookup` (`builtin:<name>` or a lookup of the customer, from `GET /api/v1/snmp-lookups`), and for a text `match` (`contains`, `not_contains`, `equals`, `not_equals`, `matches` with a regular expression, `not_matches`), `expect` and `severity` (`warning` or `critical`, the default). With `table` (a table or its entry) and `name_column`, each `oid` is a column, and every row of the table is an instance named by that column; new rows appear by themselves. A channel's `limits` become the device's threshold on its metric; a channel with a lookup or an expected text also gets a rule on its `_state` series, warning at 1 and critical at 2. The check runs from `probe` (the site's relay by default, else the central server) with the device's SNMP credentials, every `interval_ms` (a minute by default). Thresholds, richer rules, silences, dependencies and reports apply to these series like any other.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `snmp_check.create`. **Not safe to repeat**: send `Idempotency-Key` to retry.",
+        "operationId": "create_check",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnmpCheckRequest"
+              },
+              "example": {
+                "channels": [
+                  {
+                    "limits": {
+                      "comparison": ">",
+                      "critical": 8000,
+                      "duration_s": 300,
+                      "warning": 5000
+                    },
+                    "name": "Sessions",
+                    "oid": "1.3.6.1.4.1.12356.101.4.1.8.0",
+                    "unit": "sessions"
+                  },
+                  {
+                    "multiply": 8,
+                    "name": "Inbound",
+                    "oid": "1.3.6.1.2.1.2.2.1.10.1",
+                    "type": "counter",
+                    "unit": "bit/s"
+                  },
+                  {
+                    "expect": "^v7\\.",
+                    "match": "matches",
+                    "name": "Firmware",
+                    "oid": "1.3.6.1.4.1.12356.101.4.1.1.0",
+                    "severity": "warning",
+                    "type": "text"
+                  },
+                  {
+                    "lookup": "builtin:ok_warning_failed",
+                    "name": "HA state",
+                    "oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1"
+                  }
+                ],
+                "interval_ms": 60000,
+                "name": "snmp_fw",
+                "probe": "central"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpCheck"
+                },
+                "example": {
+                  "channels": [
+                    {
+                      "key": "sessions",
+                      "limits": {
+                        "comparison": ">",
+                        "critical": 8000.0,
+                        "duration_s": 300,
+                        "warning": 5000.0
+                      },
+                      "metric": "monitorflow_snmp_fw_sessions",
+                      "name": "Sessions",
+                      "oid": "1.3.6.1.4.1.12356.101.4.1.8.0",
+                      "state_metric": null,
+                      "unit": "sessions",
+                      "values": [
+                        {
+                          "at": "2026-11-19T10:00:00Z",
+                          "instance": "",
+                          "state": null,
+                          "text": null,
+                          "value": 1532.0
+                        }
+                      ]
+                    },
+                    {
+                      "key": "ha",
+                      "limits": null,
+                      "lookup": "builtin:ok_warning_failed",
+                      "metric": "monitorflow_snmp_fw_ha",
+                      "name": "HA state",
+                      "oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1",
+                      "state_metric": "monitorflow_snmp_fw_ha_state",
+                      "values": [
+                        {
+                          "at": "2026-11-19T10:00:00Z",
+                          "instance": "",
+                          "state": 0,
+                          "text": "OK",
+                          "value": 1.0
+                        }
+                      ]
+                    }
+                  ],
+                  "enabled": true,
+                  "entry_id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                  "instance": "central",
+                  "interval_ms": 60000,
+                  "name": "snmp_fw",
+                  "name_column": null,
+                  "probe": "central",
+                  "probe_relay_id": null,
+                  "table": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A channel that does not read (an OID that is not numeric, an unknown type, a scaling of 0, a text with limits or scaling, a counter with a lookup, a pattern that does not compile, a column outside `table`), a lookup of another customer, a name too long for its metrics, bad limits, a probe that is not the central server or a relay of the site: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The device has a check of that name: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/snmp-checks/{name}": {
+      "put": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Change a custom SNMP check",
+        "description": "Replaces the check's channels, probe and interval, as when adding one; the name stays the path's. Each channel's `limits` replace its rule for every instance (absent or `null`: none); rules of channels removed go too, and rules on one row or of the richer kinds stay.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `snmp_check.update`. Safe to repeat.",
+        "operationId": "update_check",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The check",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnmpCheckRequest"
+              },
+              "example": {
+                "channels": [
+                  {
+                    "limits": {
+                      "comparison": ">",
+                      "critical": 8000,
+                      "duration_s": 300,
+                      "warning": 5000
+                    },
+                    "name": "Sessions",
+                    "oid": "1.3.6.1.4.1.12356.101.4.1.8.0",
+                    "unit": "sessions"
+                  },
+                  {
+                    "multiply": 8,
+                    "name": "Inbound",
+                    "oid": "1.3.6.1.2.1.2.2.1.10.1",
+                    "type": "counter",
+                    "unit": "bit/s"
+                  },
+                  {
+                    "expect": "^v7\\.",
+                    "match": "matches",
+                    "name": "Firmware",
+                    "oid": "1.3.6.1.4.1.12356.101.4.1.1.0",
+                    "severity": "warning",
+                    "type": "text"
+                  },
+                  {
+                    "lookup": "builtin:ok_warning_failed",
+                    "name": "HA state",
+                    "oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1"
+                  }
+                ],
+                "interval_ms": 60000,
+                "name": "snmp_fw",
+                "probe": "central"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpCheck"
+                },
+                "example": {
+                  "channels": [
+                    {
+                      "key": "sessions",
+                      "limits": {
+                        "comparison": ">",
+                        "critical": 8000.0,
+                        "duration_s": 300,
+                        "warning": 5000.0
+                      },
+                      "metric": "monitorflow_snmp_fw_sessions",
+                      "name": "Sessions",
+                      "oid": "1.3.6.1.4.1.12356.101.4.1.8.0",
+                      "state_metric": null,
+                      "unit": "sessions",
+                      "values": [
+                        {
+                          "at": "2026-11-19T10:00:00Z",
+                          "instance": "",
+                          "state": null,
+                          "text": null,
+                          "value": 1532.0
+                        }
+                      ]
+                    },
+                    {
+                      "key": "ha",
+                      "limits": null,
+                      "lookup": "builtin:ok_warning_failed",
+                      "metric": "monitorflow_snmp_fw_ha",
+                      "name": "HA state",
+                      "oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1",
+                      "state_metric": "monitorflow_snmp_fw_ha_state",
+                      "values": [
+                        {
+                          "at": "2026-11-19T10:00:00Z",
+                          "instance": "",
+                          "state": 0,
+                          "text": "OK",
+                          "value": 1.0
+                        }
+                      ]
+                    }
+                  ],
+                  "enabled": true,
+                  "entry_id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                  "instance": "central",
+                  "interval_ms": 60000,
+                  "name": "snmp_fw",
+                  "name_column": null,
+                  "probe": "central",
+                  "probe_relay_id": null,
+                  "table": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As when adding one: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device or check, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Remove a custom SNMP check",
+        "description": "Removes the check and the rules of its channels for every instance; its history stays.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `snmp_check.delete`.",
+        "operationId": "delete_check",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The check",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device or check, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/snmp/read": {
+      "post": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Read or walk a device's objects",
+        "description": "\"Test\" and \"Browse\": reads up to 20 `oids`, or walks the subtree of `walk` (500 objects by default, `max` 2000 at most), from `probe` (the site's default when absent) with the device's SNMP credentials, and names what a MIB of the customer or the library knows. Each object has its SNMP `type` (`noSuchObject` when the device has none) and its `value` as text. Changes nothing.\n\n**Who**: operator or above on the device's site, as it sends the credentials to the probe. **Area**: `servers`. Not audited.",
+        "operationId": "read_device",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnmpReadRequest"
+              },
+              "example": {
+                "max": 100,
+                "walk": "1.3.6.1.4.1.12356.101.4.1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What answered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpRead"
+                },
+                "example": {
+                  "cut": false,
+                  "objects": [
+                    {
+                      "name": "fgSysVersion",
+                      "oid": "1.3.6.1.4.1.12356.101.4.1.1.0",
+                      "type": "OctetString",
+                      "value": "v7.2.5"
+                    },
+                    {
+                      "name": "fgSysSesCount",
+                      "oid": "1.3.6.1.4.1.12356.101.4.1.8.0",
+                      "type": "Gauge32",
+                      "value": "1532"
+                    }
+                  ],
+                  "probe": "central"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Neither or both of `oids` and `walk`, an OID that is not numeric, over 20 OIDs or a `max` over 2000, a device without SNMP credentials, or the device did not answer (the message says why): `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The relay is not connected to this central server now: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/snmp/test": {
+      "post": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Test a custom SNMP check before saving it",
+        "description": "Reads once what the check in the body would (its objects, or up to 50 rows of its table), from its probe, and says for each channel the SNMP type and raw value, and the value, state and text it would write with its scaling and lookup. A counter says its rate comes from the second reading. Changes nothing.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Not audited.",
+        "operationId": "test_check",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnmpCheckRequest"
+              },
+              "example": {
+                "channels": [
+                  {
+                    "limits": {
+                      "comparison": ">",
+                      "critical": 8000,
+                      "duration_s": 300,
+                      "warning": 5000
+                    },
+                    "name": "Sessions",
+                    "oid": "1.3.6.1.4.1.12356.101.4.1.8.0",
+                    "unit": "sessions"
+                  },
+                  {
+                    "multiply": 8,
+                    "name": "Inbound",
+                    "oid": "1.3.6.1.2.1.2.2.1.10.1",
+                    "type": "counter",
+                    "unit": "bit/s"
+                  },
+                  {
+                    "expect": "^v7\\.",
+                    "match": "matches",
+                    "name": "Firmware",
+                    "oid": "1.3.6.1.4.1.12356.101.4.1.1.0",
+                    "severity": "warning",
+                    "type": "text"
+                  },
+                  {
+                    "lookup": "builtin:ok_warning_failed",
+                    "name": "HA state",
+                    "oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1"
+                  }
+                ],
+                "interval_ms": 60000,
+                "name": "snmp_fw",
+                "probe": "central"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What each channel would write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpTested"
+                },
+                "example": {
+                  "cut": false,
+                  "probe": "central",
+                  "rows": [
+                    {
+                      "channels": [
+                        {
+                          "key": "sessions",
+                          "name": "Sessions",
+                          "note": null,
+                          "oid": "1.3.6.1.4.1.12356.101.4.1.8.0",
+                          "raw": "1532",
+                          "state": null,
+                          "text": null,
+                          "type": "Gauge32",
+                          "value": 1532.0
+                        },
+                        {
+                          "key": "ha",
+                          "name": "HA state",
+                          "note": null,
+                          "oid": "1.3.6.1.4.1.12356.101.13.2.1.1.15.1",
+                          "raw": "1",
+                          "state": 0,
+                          "text": "OK",
+                          "type": "Integer",
+                          "value": 1.0
+                        }
+                      ],
+                      "instance": ""
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As when adding a check, or the device did not answer: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The relay is not connected to this central server now: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/devices/{id}/vmware": {
       "get": {
         "tags": [
@@ -38033,6 +39182,1368 @@
         }
       }
     },
+    "/api/v1/snmp-lookups": {
+      "get": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "List lookups",
+        "description": "The built-in lookups first (`builtin:ok_warning_failed`, `builtin:truth_value`, `builtin:if_status`, `builtin:device_status`, `builtin:battery_status`, `builtin:enabled`), then the lookups of the customers the key reads a site of, by name, each with how many checks name it.\n\n**Who**: any role on a site of the customer. **Area**: `servers`. Unknown parameters are 400.",
+        "operationId": "list_lookups",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only those of this customer, and the built-in ones.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The lookups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpLookupList"
+                },
+                "example": {
+                  "lookups": [
+                    {
+                      "builtin": true,
+                      "can_change": false,
+                      "customer_id": null,
+                      "entries": [
+                        {
+                          "name": "True",
+                          "state": "ok",
+                          "value": 1
+                        },
+                        {
+                          "name": "False",
+                          "state": "critical",
+                          "value": 2
+                        }
+                      ],
+                      "id": "builtin:truth_value",
+                      "name": "True or false (TruthValue)",
+                      "otherwise": "warning",
+                      "updated_at": null,
+                      "used_by": 0
+                    },
+                    {
+                      "builtin": false,
+                      "can_change": true,
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "entries": [
+                        {
+                          "name": "Normal",
+                          "state": "ok",
+                          "value": 1
+                        },
+                        {
+                          "name": "Repairing",
+                          "state": "warning",
+                          "value": 2
+                        },
+                        {
+                          "name": "Degraded",
+                          "state": "critical",
+                          "value": 11
+                        },
+                        {
+                          "name": "Crashed",
+                          "state": "critical",
+                          "value": 12
+                        }
+                      ],
+                      "id": "3c1d8f2a-6b7e-4c90-a1d2-5e6f7a8b9c0d",
+                      "name": "RAID state",
+                      "otherwise": "warning",
+                      "updated_at": "2026-11-19T09:00:00Z",
+                      "used_by": 2
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer of the filter is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Create a lookup",
+        "description": "A lookup names the values of an enumerated object (a RAID state, an HA role, a power source) and gives each a state, which a custom check's channel writes as its `_state` series: 0 OK, 1 warning, 2 critical. An entry is an integer (`value`), a range (`value` and `max`) or an exact text (`text`), with a `name` of 1 to 64 characters and a `state`; `otherwise` is the state of a value no entry names (`warning` by default). 1 to 100 entries. `customer_id` may be left out when there is only one customer. Checks name it by its ID in `lookupN`.\n\n**Who**: operator or above on the whole customer. **Area**: `servers`. Audited as `snmp_lookup.create`. **Not safe to repeat**: send `Idempotency-Key` to retry.",
+        "operationId": "create_lookup",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnmpLookupRequest"
+              },
+              "example": {
+                "entries": [
+                  {
+                    "name": "Normal",
+                    "state": "ok",
+                    "value": 1
+                  },
+                  {
+                    "name": "Repairing",
+                    "state": "warning",
+                    "value": 2
+                  },
+                  {
+                    "name": "Degraded",
+                    "state": "critical",
+                    "value": 11
+                  },
+                  {
+                    "name": "Crashed",
+                    "state": "critical",
+                    "value": 12
+                  }
+                ],
+                "name": "RAID state"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new lookup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpLookup"
+                },
+                "example": {
+                  "builtin": false,
+                  "can_change": true,
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "entries": [
+                    {
+                      "name": "Normal",
+                      "state": "ok",
+                      "value": 1
+                    },
+                    {
+                      "name": "Repairing",
+                      "state": "warning",
+                      "value": 2
+                    },
+                    {
+                      "name": "Degraded",
+                      "state": "critical",
+                      "value": 11
+                    },
+                    {
+                      "name": "Crashed",
+                      "state": "critical",
+                      "value": 12
+                    }
+                  ],
+                  "id": "3c1d8f2a-6b7e-4c90-a1d2-5e6f7a8b9c0d",
+                  "name": "RAID state",
+                  "otherwise": "warning",
+                  "updated_at": "2026-11-19T09:00:00Z",
+                  "used_by": 2
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A name missing or over 64 characters, no entry or over 100, an entry that is not one value, one range or one text, a range that ends before it starts, an unknown state, or no customer named when there are several: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer, or has only some of its sites: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The customer has a lookup of that name: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snmp-lookups/{id}": {
+      "get": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Get a lookup",
+        "description": "One lookup, built in (`builtin:<name>`) or a customer's own.\n\n**Who**: any role on a site of the customer. **Area**: `servers`.",
+        "operationId": "get_lookup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "`builtin:<name>` or the lookup's ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The lookup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpLookup"
+                },
+                "example": {
+                  "builtin": false,
+                  "can_change": true,
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "entries": [
+                    {
+                      "name": "Normal",
+                      "state": "ok",
+                      "value": 1
+                    },
+                    {
+                      "name": "Repairing",
+                      "state": "warning",
+                      "value": 2
+                    },
+                    {
+                      "name": "Degraded",
+                      "state": "critical",
+                      "value": 11
+                    },
+                    {
+                      "name": "Crashed",
+                      "state": "critical",
+                      "value": 12
+                    }
+                  ],
+                  "id": "3c1d8f2a-6b7e-4c90-a1d2-5e6f7a8b9c0d",
+                  "name": "RAID state",
+                  "otherwise": "warning",
+                  "updated_at": "2026-11-19T09:00:00Z",
+                  "used_by": 2
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such lookup, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Change a lookup",
+        "description": "Replaces its name and entries; it stays with its customer. Probes running checks that name it get the change within seconds. A built-in lookup cannot change.\n\n**Who**: operator or above on the whole customer. **Area**: `servers`. Audited as `snmp_lookup.update`. Safe to repeat.",
+        "operationId": "update_lookup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The lookup",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnmpLookupRequest"
+              },
+              "example": {
+                "entries": [
+                  {
+                    "name": "Normal",
+                    "state": "ok",
+                    "value": 1
+                  },
+                  {
+                    "name": "Repairing",
+                    "state": "warning",
+                    "value": 2
+                  },
+                  {
+                    "name": "Degraded",
+                    "state": "critical",
+                    "value": 11
+                  },
+                  {
+                    "name": "Crashed",
+                    "state": "critical",
+                    "value": 12
+                  }
+                ],
+                "name": "RAID state"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpLookup"
+                },
+                "example": {
+                  "builtin": false,
+                  "can_change": true,
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "entries": [
+                    {
+                      "name": "Normal",
+                      "state": "ok",
+                      "value": 1
+                    },
+                    {
+                      "name": "Repairing",
+                      "state": "warning",
+                      "value": 2
+                    },
+                    {
+                      "name": "Degraded",
+                      "state": "critical",
+                      "value": 11
+                    },
+                    {
+                      "name": "Crashed",
+                      "state": "critical",
+                      "value": 12
+                    }
+                  ],
+                  "id": "3c1d8f2a-6b7e-4c90-a1d2-5e6f7a8b9c0d",
+                  "name": "RAID state",
+                  "otherwise": "warning",
+                  "updated_at": "2026-11-19T09:00:00Z",
+                  "used_by": 2
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As when creating one, a built-in lookup, or another customer: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such lookup, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The customer has another lookup of that name: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Remove a lookup",
+        "description": "Removes a lookup no check names; change those checks first.\n\n**Who**: operator or above on the whole customer. **Area**: `servers`. Audited as `snmp_lookup.delete`.",
+        "operationId": "delete_lookup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The lookup",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A built-in lookup: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such lookup, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Checks name it: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snmp-mibs": {
+      "get": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "List uploaded MIBs",
+        "description": "The MIB modules of the customers the key reads a site of, by module name, with the number of objects each names.\n\n**Who**: any role on a site of the customer. **Area**: `servers`.",
+        "operationId": "list_mibs",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only those of this customer, and the built-in ones.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The modules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpMibList"
+                },
+                "example": {
+                  "mibs": [
+                    {
+                      "can_change": true,
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "file_name": "TEST-NAS-MIB.txt",
+                      "id": "8e2f4a6c-1b3d-4e5f-9a7b-0c2d4e6f8a1b",
+                      "module": "TEST-NAS-MIB",
+                      "objects": 14,
+                      "uploaded_at": "2026-11-19T09:00:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer of the filter is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Upload MIB files",
+        "description": "Reads 1 to 20 MIB files (SMIv1 or SMIv2, at most 1 MiB and 20,000 objects each) and keeps what they name: each object's OID, kind, type, named values, units and the start of its description; the files themselves are not kept. The reader never fetches an imported module and runs nothing. Imports resolve against the standard modules MonitorFlow knows, the customer's modules uploaded before, and the other files of the same upload, in any order; a file that needs a module nobody uploaded is refused, and the answer names the modules to add. A module uploaded again replaces the one of the same name. The answer offers each object with named values as a lookup, its states guessed from the names, for `POST /api/v1/snmp-lookups`.\n\n**Who**: operator or above on the whole customer. **Area**: `servers`. Audited as `snmp_mib.upload`, one record per module. Safe to repeat.",
+        "operationId": "upload_mibs",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnmpMibUpload"
+              },
+              "example": {
+                "files": [
+                  {
+                    "name": "TEST-NAS-MIB.txt",
+                    "text": "TEST-NAS-MIB DEFINITIONS ::= BEGIN\nIMPORTS enterprises, OBJECT-TYPE FROM SNMPv2-SMI;\ntestNas OBJECT IDENTIFIER ::= { enterprises 99999 }\nsystemStatus OBJECT-TYPE\n  SYNTAX INTEGER { normal(1), failed(2) }\n  MAX-ACCESS read-only\n  STATUS current\n  DESCRIPTION \"Whether the system is well.\"\n  ::= { testNas 1 }\nEND\n"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "What was added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpMibUploaded"
+                },
+                "example": {
+                  "mibs": [
+                    {
+                      "can_change": true,
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "file_name": "TEST-NAS-MIB.txt",
+                      "id": "8e2f4a6c-1b3d-4e5f-9a7b-0c2d4e6f8a1b",
+                      "module": "TEST-NAS-MIB",
+                      "objects": 14,
+                      "uploaded_at": "2026-11-19T09:00:00Z"
+                    }
+                  ],
+                  "offered_lookups": [
+                    {
+                      "entries": [
+                        {
+                          "name": "normal",
+                          "state": "ok",
+                          "value": 1
+                        },
+                        {
+                          "name": "failed",
+                          "state": "critical",
+                          "value": 2
+                        }
+                      ],
+                      "module": "TEST-NAS-MIB",
+                      "name": "systemStatus"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No file or over 20, a file over 1 MiB or with over 20,000 objects, one that is not a MIB or does not read (the answer says which file and why), modules to upload too, or no customer named when there are several: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body is over the size of 20 files"
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snmp-mibs/{id}": {
+      "delete": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Remove an uploaded MIB",
+        "description": "Removes the module and the names it gave. Checks keep their OIDs and keep running; modules that imported it keep what they named.\n\n**Who**: operator or above on the whole customer. **Area**: `servers`. Audited as `snmp_mib.delete`.",
+        "operationId": "delete_mib",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The module",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such module, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snmp-objects": {
+      "get": {
+        "tags": [
+          "snmp"
+        ],
+        "summary": "Find or name SNMP objects",
+        "description": "With `q`: objects whose name contains it (without case) or whose OID starts with it, from the library of common vendor objects (net-snmp, Synology, APC, Fortinet, Cisco, IF-MIB) and the customers' MIBs, at most 200, each with the channel it suggests (kind, unit, scaling, a built-in lookup, and for a column its table and a column naming the rows). With `oids`: up to 50 OIDs, each named by the longest known OID it starts with, the rest as its instance (`ifInOctets.3`).\n\n**Who**: any role on a site of the customer. **Area**: `servers`.",
+        "operationId": "objects",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Names of this customer's MIBs, and the library; every readable\ncustomer's when left out.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "A part of a name (without case), or the start of an OID.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "oids",
+            "in": "query",
+            "description": "Up to 50 OIDs separated by commas, each named by the object it is\nor is an instance of (`ifInOctets` names `1.3.6.1.2.1.2.2.1.10.3`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The objects, or the names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnmpObjectList"
+                },
+                "example": {
+                  "names": {},
+                  "objects": [
+                    {
+                      "description": "Open sessions",
+                      "enumeration": [],
+                      "kind": "scalar",
+                      "module": "Fortinet (FORTINET-FORTIGATE-MIB)",
+                      "name": "fgSysSesCount.0",
+                      "oid": "1.3.6.1.4.1.12356.101.4.1.8.0",
+                      "source": "library",
+                      "suggestion": {
+                        "divide": 1.0,
+                        "lookup": null,
+                        "multiply": 1.0,
+                        "name_column": null,
+                        "table": null,
+                        "type": "gauge",
+                        "unit": "sessions"
+                      },
+                      "syntax": null,
+                      "units": "sessions"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Neither or both of `q` and `oids`, `q` over 128 characters, an OID that is not numeric, or over 50: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/thresholds/{id}": {
       "put": {
         "tags": [
@@ -45929,6 +48440,13 @@
               "kind": {
                 "type": "string"
               },
+              "lookups": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ImportLookup"
+                },
+                "description": "For a custom SNMP check (ADR-0157): lookups to make, or to take\nof the same name, for its channels."
+              },
               "name": {
                 "type": "string"
               },
@@ -46511,6 +49029,30 @@
           "approximated",
           "not_movable"
         ]
+      },
+      "ImportLookup": {
+        "type": "object",
+        "description": "A lookup an imported custom SNMP check comes with (ADR-0157).",
+        "required": [
+          "channel",
+          "name",
+          "definition"
+        ],
+        "properties": {
+          "channel": {
+            "type": "integer",
+            "description": "The channel it names the values of, from 1.",
+            "minimum": 0
+          },
+          "definition": {
+            "type": "object",
+            "description": "`{\"entries\": [...], \"otherwise\": \"warning\"}`, as lookups have it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name; one of the customer's of that name is taken as it is."
+          }
+        }
       },
       "ImportNote": {
         "type": "object",
@@ -55585,6 +58127,387 @@
         ],
         "description": "A snapshot and why it stays; `null` when the next pass of retention\nremoves it, or while it is created."
       },
+      "SnmpChannel": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SnmpChannelRequest"
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "metric",
+              "values"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "metric": {
+                "type": "string",
+                "description": "The series of its value, and of its state when it has one."
+              },
+              "state_metric": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SnmpChannelValue"
+                }
+              }
+            }
+          }
+        ],
+        "description": "One channel as stored, with its limits and last values."
+      },
+      "SnmpChannelLimits": {
+        "type": "object",
+        "description": "Limits of one channel: an ordinary threshold of the device (ADR-0017).",
+        "properties": {
+          "comparison": {
+            "type": "string",
+            "description": "`>` (the default), `>=`, `<` or `<=`: the alarm side."
+          },
+          "critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "duration_s": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Seconds past the limit before an incident opens, 0 by default.",
+            "minimum": 0
+          },
+          "warning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnmpChannelRequest": {
+        "type": "object",
+        "description": "One channel of a request.",
+        "required": [
+          "oid",
+          "name"
+        ],
+        "properties": {
+          "divide": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "expect": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The metric suffix; from the name when absent."
+          },
+          "limits": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SnmpChannelLimits",
+                "description": "The channel's limits on its value; absent or `null` for none. A\nchannel with a lookup or an expected text also alerts on its state."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lookup": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`builtin:<name>` or a lookup's ID."
+          },
+          "match": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a text: `contains`, `not_contains`, `equals`, `not_equals`,\n`matches` or `not_matches`, with `expect` and `severity`."
+          },
+          "multiply": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "name": {
+            "type": "string",
+            "description": "What people read: \"Sessions\"."
+          },
+          "oid": {
+            "type": "string",
+            "description": "A numeric OID: an object (`...8.0`), or a column of `table`."
+          },
+          "severity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`warning` or `critical` (the default)."
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`gauge` (the default), `counter` or `text`."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnmpChannelSuggestion": {
+        "type": "object",
+        "description": "What a channel reading an object should be.",
+        "required": [
+          "type",
+          "unit",
+          "multiply",
+          "divide"
+        ],
+        "properties": {
+          "divide": {
+            "type": "number",
+            "format": "double"
+          },
+          "lookup": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A built-in lookup, when one fits."
+          },
+          "multiply": {
+            "type": "number",
+            "format": "double"
+          },
+          "name_column": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "table": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a column: its table and the column naming the rows."
+          },
+          "type": {
+            "type": "string",
+            "description": "`gauge`, `counter` or `text`."
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "SnmpChannelValue": {
+        "type": "object",
+        "description": "One value a channel wrote, by row.",
+        "required": [
+          "instance"
+        ],
+        "properties": {
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "instance": {
+            "type": "string",
+            "description": "The table's row; `\"\"` for one object."
+          },
+          "state": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "0 OK, 1 warning, 2 critical, for a text or a lookup.",
+            "minimum": 0
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The value's name or the text."
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "SnmpCheck": {
+        "type": "object",
+        "description": "One custom check of a device.",
+        "required": [
+          "entry_id",
+          "name",
+          "instance",
+          "interval_ms",
+          "enabled",
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpChannel"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "entry_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "interval_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_column": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`central` or `relay`, with `probe_relay_id`."
+          },
+          "probe_relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "table": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SnmpCheckList": {
+        "type": "object",
+        "description": "Body of `GET /api/devices/{id}/snmp-checks`.",
+        "required": [
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpCheck"
+            }
+          }
+        }
+      },
+      "SnmpCheckRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/devices/{id}/snmp-checks` and of `PUT` and `test`.",
+        "required": [
+          "name",
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpChannelRequest"
+            },
+            "description": "1 to 10 channels."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "interval_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "60000 (a minute) by default.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "Lowercase letters, digits and `_`, like `snmp_fw`; a change keeps\nthe name of the path."
+          },
+          "name_column": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`central` or a relay of the site; absent: the site's default."
+          },
+          "table": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a table: its OID (the table or its entry), and the column whose\nvalues name the rows."
+          }
+        },
+        "additionalProperties": false
+      },
       "SnmpCredentials": {
         "type": "object",
         "description": "What the API shows of a device's credentials: never a secret.",
@@ -55705,6 +58628,441 @@
         },
         "additionalProperties": false
       },
+      "SnmpLookup": {
+        "type": "object",
+        "description": "One lookup: built in, or a customer's own.",
+        "required": [
+          "id",
+          "builtin",
+          "name",
+          "entries",
+          "otherwise",
+          "used_by",
+          "can_change"
+        ],
+        "properties": {
+          "builtin": {
+            "type": "boolean"
+          },
+          "can_change": {
+            "type": "boolean",
+            "description": "Whether this user may change or remove it."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for a built-in lookup."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "id": {
+            "type": "string",
+            "description": "`builtin:<name>`, or the lookup's ID."
+          },
+          "name": {
+            "type": "string"
+          },
+          "otherwise": {
+            "type": "string",
+            "description": "The state of a value no entry names: `ok`, `warning` or `critical`."
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "used_by": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many checks name it."
+          }
+        }
+      },
+      "SnmpLookupList": {
+        "type": "object",
+        "description": "Body of `GET /api/snmp-lookups`.",
+        "required": [
+          "lookups"
+        ],
+        "properties": {
+          "lookups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpLookup"
+            },
+            "description": "The built-in ones first, then by name."
+          }
+        }
+      },
+      "SnmpLookupRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/snmp-lookups` and `PUT /api/snmp-lookups/{id}`.",
+        "required": [
+          "name",
+          "entries"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "May be left out when there is only one customer; a change keeps it."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "1 to 100 entries, each `{\"value\": 1, \"name\": \"OK\", \"state\": \"ok\"}`,\na range `{\"value\": 10, \"max\": 19, ...}` or a text `{\"text\": \"on\", ...}`."
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 64 characters, unique per customer."
+          },
+          "otherwise": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`warning` by default."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnmpMib": {
+        "type": "object",
+        "description": "One uploaded MIB module.",
+        "required": [
+          "id",
+          "customer_id",
+          "module",
+          "file_name",
+          "objects",
+          "uploaded_at",
+          "can_change"
+        ],
+        "properties": {
+          "can_change": {
+            "type": "boolean"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "module": {
+            "type": "string",
+            "description": "Its module name, like `TEST-NAS-MIB`."
+          },
+          "objects": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "uploaded_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SnmpMibFile": {
+        "type": "object",
+        "description": "One file of an upload.",
+        "required": [
+          "name",
+          "text"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Its file name, for the list and errors."
+          },
+          "text": {
+            "type": "string",
+            "description": "The file's text, at most 1 MiB."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnmpMibList": {
+        "type": "object",
+        "description": "Body of `GET /api/snmp-mibs`.",
+        "required": [
+          "mibs"
+        ],
+        "properties": {
+          "mibs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpMib"
+            },
+            "description": "By module name."
+          }
+        }
+      },
+      "SnmpMibUpload": {
+        "type": "object",
+        "description": "Body of `POST /api/snmp-mibs`.",
+        "required": [
+          "files"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpMibFile"
+            },
+            "description": "1 to 20 files; modules that import one another may come together."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnmpMibUploaded": {
+        "type": "object",
+        "description": "What an upload added: each module, and the enumerations it offers as\nlookups.",
+        "required": [
+          "mibs",
+          "offered_lookups"
+        ],
+        "properties": {
+          "mibs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpMib"
+            }
+          },
+          "offered_lookups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpOfferedLookup"
+            },
+            "description": "For \"Make a lookup\": the objects with named values, with the states\ntheir names suggest."
+          }
+        }
+      },
+      "SnmpObject": {
+        "type": "object",
+        "description": "One named object.",
+        "required": [
+          "name",
+          "module",
+          "source",
+          "oid",
+          "kind",
+          "enumeration",
+          "description",
+          "suggestion"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "enumeration": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "`[[1, \"normal\"], [2, \"failed\"]]`."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`node`, `scalar`, `table`, `entry`, `column`, `notification`; the\nlibrary's objects are `scalar` or `column`."
+          },
+          "module": {
+            "type": "string",
+            "description": "The MIB module, or the vendor for the library."
+          },
+          "name": {
+            "type": "string"
+          },
+          "oid": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "`library` or `mib`."
+          },
+          "suggestion": {
+            "$ref": "#/components/schemas/SnmpChannelSuggestion"
+          },
+          "syntax": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "units": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SnmpObjectList": {
+        "type": "object",
+        "description": "Body of `GET /api/snmp-objects`.",
+        "required": [
+          "objects",
+          "names"
+        ],
+        "properties": {
+          "names": {
+            "type": "object",
+            "description": "For `oids`: the OID asked, then the name with the instance, like\n`ifInOctets.3`.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpObject"
+            },
+            "description": "For `q`: at most 200, the library first. For `oids`: one per OID\nnamed, keyed by the OID asked."
+          }
+        }
+      },
+      "SnmpOfferedLookup": {
+        "type": "object",
+        "required": [
+          "name",
+          "module",
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "module": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The object or type it comes from, like `raidStatus`."
+          }
+        }
+      },
+      "SnmpRead": {
+        "type": "object",
+        "description": "Body of the answer of a read.",
+        "required": [
+          "probe",
+          "objects",
+          "cut"
+        ],
+        "properties": {
+          "cut": {
+            "type": "boolean",
+            "description": "Whether a walk stopped at `max`."
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpReadObject"
+            }
+          },
+          "probe": {
+            "type": "string",
+            "description": "`central` or the relay that read."
+          }
+        }
+      },
+      "SnmpReadObject": {
+        "type": "object",
+        "description": "One object a device answered.",
+        "required": [
+          "oid",
+          "type",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What a MIB or the library calls it, like `ifInOctets.3`."
+          },
+          "oid": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "`Integer`, `OctetString`, `Counter64`, `TimeTicks`..., or\n`noSuchObject` when the device has none."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value as text: printable text, or hexadecimal bytes."
+          }
+        }
+      },
+      "SnmpReadRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/devices/{id}/snmp/read`.",
+        "properties": {
+          "max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "For a walk: 500 objects by default, 2000 at most.",
+            "minimum": 0
+          },
+          "oids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to 20 OIDs to read (\"Test\")."
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`central` or a relay of the site; absent: the site's default."
+          },
+          "walk": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Or an OID whose subtree to walk (\"Browse\")."
+          }
+        },
+        "additionalProperties": false
+      },
       "SnmpTemplate": {
         "type": "object",
         "description": "A kind of device: its groups and thresholds.",
@@ -55766,6 +59124,111 @@
               "null"
             ],
             "format": "double"
+          }
+        }
+      },
+      "SnmpTested": {
+        "type": "object",
+        "description": "Body of `POST /api/devices/{id}/snmp/test`.",
+        "required": [
+          "probe",
+          "rows",
+          "cut"
+        ],
+        "properties": {
+          "cut": {
+            "type": "boolean"
+          },
+          "probe": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpTestedRow"
+            },
+            "description": "At most 50 rows for a table."
+          }
+        }
+      },
+      "SnmpTestedChannel": {
+        "type": "object",
+        "description": "One channel of one row in a test.",
+        "required": [
+          "key",
+          "name",
+          "oid"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "In words, when there is nothing to write: \"A rate comes from the\nnext reading\", \"No such object\"."
+          },
+          "oid": {
+            "type": "string"
+          },
+          "raw": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The SNMP type and raw value read, or why none."
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "What the channel would write: its value, state and text."
+          }
+        }
+      },
+      "SnmpTestedRow": {
+        "type": "object",
+        "required": [
+          "instance",
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnmpTestedChannel"
+            }
+          },
+          "instance": {
+            "type": "string",
+            "description": "The table's row; `\"\"` for one object."
           }
         }
       },
@@ -57737,6 +61200,10 @@
     {
       "name": "virtualization",
       "description": "VMware and Hyper-V: the hosts, clusters, virtual machines and datastores of a vCenter or ESXi host (a device with a `vmware` check, run from a probe) or of a Hyper-V host (a Windows server with a `hyperv` check), kept from what their checks last reported. Each virtual machine is matched to the server or device of the same customer it is, by its hardware ID, a network card, an address or its name. Area `servers`."
+    },
+    {
+      "name": "snmp",
+      "description": "What custom SNMP checks of devices read (ADR-0157): lookups that name the values of an enumerated object and give each a state (`ok`, `warning`, `critical`), built in or a customer's own; MIB files a customer uploads to name the objects of its devices; and the names the library of common vendor objects and those MIBs give to OIDs. Lookups and MIBs belong to a customer: anyone who reads one of its sites reads them, and operators and above of the whole customer change them. Custom checks of a device, with their channels and limits, and Test and Browse from the device's probe, are under `/api/v1/devices/{id}/snmp-checks` and `/api/v1/devices/{id}/snmp`. Area `servers`."
     }
   ]
 }

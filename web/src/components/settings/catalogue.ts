@@ -18,6 +18,7 @@ import {
   SETTINGS_PATH,
   SIGN_IN_PATH,
   SITES_PATH,
+  SNMP_LIBRARY_PATH,
   TOKENS_PATH,
   USERS_PATH,
 } from "@/lib/routes";
@@ -33,6 +34,7 @@ export type SettingsId =
   | "certificate-authority"
   | "notifications"
   | "integrations"
+  | "snmp"
   | "users"
   | "sign-in"
   | "api-keys"
@@ -138,6 +140,14 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         href: NOTIFICATIONS_PATH,
         icon: "bell",
         keywords: "settings.notifications.keywords",
+      },
+      {
+        id: "snmp",
+        label: "settings.snmp.label",
+        description: text("settings.snmp.description"),
+        href: SNMP_LIBRARY_PATH,
+        icon: "reports",
+        keywords: "settings.snmp.keywords",
       },
       {
         id: "integrations",
