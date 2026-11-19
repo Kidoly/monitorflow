@@ -185,14 +185,7 @@ pub fn instances<'a>(
 /// `value` cut to [`MAX_LABEL`] bytes on a character boundary, control
 /// characters removed.
 pub fn cut(value: &str) -> String {
-    let mut out = String::new();
-    for c in value.chars().filter(|c| !c.is_control()) {
-        if out.len() + c.len_utf8() > MAX_LABEL {
-            break;
-        }
-        out.push(c);
-    }
-    out
+    crate::validate::label_value(value)
 }
 
 /// As many of `values` as fit one label, comma separated.
