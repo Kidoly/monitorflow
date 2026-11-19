@@ -482,7 +482,11 @@ pub fn detected(samples: &[monitorflow_common::proto::v1::Sample], probe: &str) 
 }
 
 /// Who runs a one-off test for `site`: `wanted`, or the site's default.
-async fn probe_for(state: &ApiState, site: Uuid, wanted: Option<&str>) -> Result<RunBy, ApiError> {
+pub(super) async fn probe_for(
+    state: &ApiState,
+    site: Uuid,
+    wanted: Option<&str>,
+) -> Result<RunBy, ApiError> {
     let mut conn = state.pool.acquire().await?;
     Ok(match wanted {
         None => default_probe(&mut *conn, site).await?,
@@ -515,7 +519,7 @@ async fn probe_for(state: &ApiState, site: Uuid, wanted: Option<&str>) -> Result
 }
 
 /// Runs `check` once from `by`: on this central server, or on the relay.
-async fn run_once(
+pub(super) async fn run_once(
     state: &ApiState,
     by: &RunBy,
     check: monitorflow_probe::Check,
@@ -611,7 +615,7 @@ pub async fn detect(
 }
 
 /// The device `id` locked, after checking the user's right on its site.
-async fn device_site(
+pub(super) async fn device_site(
     tx: &mut PgConnection,
     user: &CurrentUser,
     id: Uuid,

@@ -41,6 +41,17 @@ const values = (entries: [EffectiveSensor, Record<string, number | null> | strin
   );
 
 describe("sensor metrics", () => {
+  it("stands a custom SNMP check for its first channel, as the server does", () => {
+    const custom = (params: Record<string, string>, instance = "central") => ({ ...sensor("snmp_custom", "snmp_fw", instance), params });
+    expect(primaryMetric(custom({ oid1: "1.3.6.1.4.1.1.0", name1: "Sessions" }))).toEqual({ metric: "monitorflow_snmp_fw_sessions", instance: "central" });
+    expect(primaryMetric(custom({ oid1: "1.3.6.1.4.1.1.0", name1: "RAID state", lookup1: "builtin:if_status", table: "1.3.6.1.4.1.1" }))).toEqual({
+      metric: "monitorflow_snmp_fw_raid_state",
+    });
+    expect(primaryMetric(custom({ oid1: "1.3.6.1.4.1.1.0", name1: "Firmware", type1: "text" })).metric).toBe("monitorflow_snmp_fw_firmware_state");
+    expect(primaryMetric(custom({ oid1: "1.3.6.1.4.1.1.0", key1: "in_bits" })).metric).toBe("monitorflow_snmp_fw_in_bits");
+    expect(primaryMetric(custom({ oid1: "1.3.6.1.4.1.1.0", name1: "5 min load" })).metric).toBe("monitorflow_snmp_fw_v5_min_load");
+  });
+
   it("picks the metric that stands for each kind", () => {
     expect(primaryMetric(cpu)).toEqual({ metric: "monitorflow_cpu_usage_ratio", instance: "total" });
     expect(primaryMetric(disk)).toEqual({ metric: "monitorflow_disk_used_ratio" });

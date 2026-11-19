@@ -514,7 +514,12 @@ pub fn parse(params: &BTreeMap<String, String>) -> Result<Custom, String> {
         let key = match get(p("key")) {
             Some(key) => key,
             None => {
+                // "RAID state" is the channel `raid`, whose state series is
+                // `raid_state`.
                 let derived = key_of(&name);
+                let derived = derived
+                    .strip_suffix("_state")
+                    .map_or(derived.clone(), str::to_owned);
                 if valid_key(&derived) {
                     derived
                 } else {

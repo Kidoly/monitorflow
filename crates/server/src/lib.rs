@@ -35,6 +35,7 @@ pub mod renew;
 pub mod secrets;
 pub mod sensor_config;
 pub mod snmp;
+pub mod snmp_custom;
 pub mod sso;
 pub mod storage_tls;
 pub mod virt;

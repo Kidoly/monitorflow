@@ -245,7 +245,11 @@ async fn channel_limit(
     Ok(property(&body))
 }
 
-async fn channels(fetch: &dyn Fetch, sensor: i64) -> Result<Vec<Channel>, ReadError> {
+async fn channels(
+    fetch: &dyn Fetch,
+    sensor: i64,
+    custom_snmp: bool,
+) -> Result<Vec<Channel>, ReadError> {
     let body = fetch
         .get(
             "/api/table.json",
@@ -269,6 +273,7 @@ async fn channels(fetch: &dyn Fetch, sensor: i64) -> Result<Vec<Channel>, ReadEr
             name,
             unit: unit(display),
             limits: None,
+            ..Default::default()
         };
         if channel_limit(fetch, sensor, id, "limitmode")
             .await?
@@ -288,6 +293,21 @@ async fn channels(fetch: &dyn Fetch, sensor: i64) -> Result<Vec<Channel>, ReadEr
                 min_warning: get("limitminwarning").await?,
             });
         }
+        if custom_snmp {
+            let get = async |name| channel_limit(fetch, sensor, id, name).await;
+            channel.lookup = get("valuelookup")
+                .await?
+                .map(|v| v.trim().to_ascii_lowercase())
+                .filter(|v| !v.is_empty() && v != "none")
+                .map(|id| crate::model::SnmpLookup {
+                    name: id,
+                    builtin: None,
+                    entries: Vec::new(),
+                    otherwise: crate::model::SnmpState::Warning,
+                });
+            channel.factor_m = get("factorm").await?.as_deref().and_then(number);
+            channel.factor_d = get("factord").await?.as_deref().and_then(number);
+        }
         out.push(channel);
     }
     Ok(out)
@@ -295,14 +315,33 @@ async fn channels(fetch: &dyn Fetch, sensor: i64) -> Result<Vec<Channel>, ReadEr
 
 /// Fills a sensor's settings and channels.
 async fn sensor_details(fetch: &dyn Fetch, mut sensor: Object) -> Result<Object, ReadError> {
-    let (settings, with_channels) = wanted(sensor.sensor_type.as_deref().unwrap_or(""));
+    let sensor_type = sensor.sensor_type.clone().unwrap_or_default();
+    let (settings, with_channels) = wanted(&sensor_type);
+    let custom_snmp = super::sensors::family(&sensor_type) == super::sensors::Family::SnmpCustom;
     for name in settings {
+        // Numbered channels of a custom SNMP sensor are asked for only
+        // while they exist (ADR-0157).
+        if custom_snmp {
+            if let Some(n) = name
+                .strip_prefix("channel")
+                .or_else(|| name.strip_prefix("usechannel"))
+                .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|d| d.parse::<usize>().ok())
+            {
+                let known =
+                    |field: &str| sensor.settings.contains_key(&format!("channel{n}{field}"));
+                let first = name.ends_with("oid") || name.ends_with("column");
+                if !first && !known("oid") && !known("column") {
+                    continue;
+                }
+            }
+        }
         if let Some(value) = get_property(fetch, sensor.id, name).await? {
             sensor.settings.insert((*name).to_owned(), value);
         }
     }
     if with_channels {
-        sensor.channels = channels(fetch, sensor.id).await?;
+        sensor.channels = channels(fetch, sensor.id, custom_snmp).await?;
     }
     sensor.depends = depends(fetch, sensor.id).await?;
     Ok(sensor)

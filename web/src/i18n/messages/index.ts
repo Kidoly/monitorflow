@@ -41,6 +41,7 @@ import * as shell from "./shell";
 import * as signIn from "./signIn";
 import * as silences from "./silences";
 import * as sites from "./sites";
+import * as snmp from "./snmp";
 import * as ui from "./ui";
 import * as users from "./users";
 import * as virtualization from "./virtualization";
@@ -89,6 +90,7 @@ export const en = {
   signIn: signIn.en,
   silences: silences.en,
   sites: sites.en,
+  snmp: snmp.en,
   ui: ui.en,
   users: users.en,
   virtualization: virtualization.en,
@@ -136,6 +138,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   signIn: signIn.fr,
   silences: silences.fr,
   sites: sites.fr,
+  snmp: snmp.fr,
   ui: ui.fr,
   users: users.fr,
   virtualization: virtualization.fr,

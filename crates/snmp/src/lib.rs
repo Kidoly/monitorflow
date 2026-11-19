@@ -28,7 +28,10 @@
 //! never stored with the check nor shown.
 
 pub mod custom;
+pub mod library;
+pub mod mib;
 mod mibs;
+pub mod read;
 mod sensor;
 mod session;
 
@@ -37,6 +40,7 @@ use std::sync::Arc;
 
 pub use custom::CUSTOM_KIND;
 pub use mibs::{Group, Val, GROUPS};
+pub use read::{build_read, parse_read, Read, READ_KIND};
 pub use sensor::SnmpSensor;
 
 use monitorflow_sensors::Sensor;
