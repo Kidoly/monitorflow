@@ -578,6 +578,57 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn only_a_global_administrator_connects_to_private_addresses(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let (site_admin, _) = login(&pool, "bob", Role::Administrator, GrantScope::Site(paris)).await;
+        let (global, _) = login(&pool, "alice", Role::Administrator, GrantScope::Global).await;
+        // A stand-in on the central server's own loopback, counting the
+        // connections it gets.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let reached = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = reached.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            while let Ok((mut socket, _)) = listener.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = socket
+                    .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        let connect = |url: String| {
+            json!({"source": "prometheus", "site_id": paris, "connection": {"url": url}})
+        };
+        let private = [
+            format!("http://127.0.0.1:{port}"),
+            format!("127.0.0.1:{port}"),
+            format!("http://[::ffff:127.0.0.1]:{port}"),
+            format!("http://2130706433:{port}"),
+            format!("http://localhost:{port}"),
+        ];
+        for url in private {
+            let (status, body) =
+                call(&pool, "POST", "/api/imports", &site_admin, Some(connect(url.clone()))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{url}: {body}");
+            let error = body["error"].as_str().unwrap_or_default();
+            assert!(error.contains("private address"), "{url}: {error}");
+        }
+        let alertmanager = json!({"source": "prometheus", "site_id": paris, "connection": {
+            "url": "https://prometheus.example", "alertmanager_url": format!("http://10.0.0.1:{port}")}});
+        let (status, body) = call(&pool, "POST", "/api/imports", &site_admin, Some(alertmanager)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(reached.load(std::sync::atomic::Ordering::SeqCst), 0);
+        // A global administrator reaches it, as before.
+        let url = format!("http://127.0.0.1:{port}");
+        let (status, body) = call(&pool, "POST", "/api/imports", &global, Some(connect(url))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(reached.load(std::sync::atomic::Ordering::SeqCst) > 0, "{body}");
+        assert_eq!(count(&pool, "SELECT count(*) FROM import_runs").await, 0);
+    }
+
+    #[sqlx::test]
     async fn an_old_preview_cannot_be_confirmed(pool: PgPool) {
         monitorflow_server::secrets::install_for_tests();
         let paris = site(&pool, "paris").await;

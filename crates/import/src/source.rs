@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -96,6 +97,9 @@ pub struct Context {
     pub now: DateTime<Utc>,
     /// Timeout of each request of a connection.
     pub timeout: Duration,
+    /// Resolves the names a connection reaches, when the server limits
+    /// where it may go; the system's resolver otherwise.
+    pub resolver: Option<Resolver>,
 }
 
 impl Context {
@@ -103,7 +107,31 @@ impl Context {
         Self {
             now,
             timeout: Duration::from_secs(30),
+            resolver: None,
         }
+    }
+
+    /// The same, with connections resolving names through `resolver`.
+    pub fn with_resolver(mut self, resolver: Arc<dyn reqwest::dns::Resolve>) -> Self {
+        self.resolver = Some(Resolver(resolver));
+        self
+    }
+}
+
+/// A name resolver for connections, such as one that keeps only public
+/// addresses.
+#[derive(Clone)]
+pub struct Resolver(pub Arc<dyn reqwest::dns::Resolve>);
+
+impl fmt::Debug for Resolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Resolver")
+    }
+}
+
+impl reqwest::dns::Resolve for Resolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        self.0.resolve(name)
     }
 }
 

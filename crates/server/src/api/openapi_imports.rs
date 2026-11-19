@@ -28,8 +28,9 @@ out are left out too. Importing the same configuration again creates nothing twi
 undone: what it created goes, except servers an agent has taken over. Servers then only need the agent: \
 one that enrolls with a server's ID, or with an install key of its site from a host of that name, takes \
 it over with its checks. The other tool is only read, never changed, and can keep running. A connection's \
-token is used for the request and never stored. Administrators of the target site only; everything is in \
-the audit log. API keys need the `administration` area."))
+token is used for the request and never stored. A connection reaches public addresses only, unless a global \
+administrator makes it: a private one, a name that resolves to one, or the server itself is a 400 \
+`invalid`. Administrators of the target site only; everything is in the audit log. API keys need the `administration` area."))
 )]
 pub(super) struct Doc;
 

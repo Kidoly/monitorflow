@@ -23,7 +23,7 @@ Most people who try MonitorFlow already watch their servers with something else.
 
 **Who may.** An administrator of the target site. Channels cover everything when a global administrator imports, the site otherwise, as the channels page does (ADR-0078).
 
-**Connections.** Reading through another tool's API takes its URL and a token typed for this one request: it is never stored or logged. The server makes the requests, http or https, without following redirects, with a timeout and a cap on answers, and reads only.
+**Connections.** Reading through another tool's API takes its URL and a token typed for this one request: it is never stored or logged. The server makes the requests, http or https, without following redirects, with a timeout and a cap on answers, and reads only. Unless a global administrator connects, it reaches public addresses only, as channels and integrations saved by others do (ADR-0078, ADR-0102): an address written out as a private one is refused, and names resolve to their public addresses alone, so the administrator of one site cannot make the central server read its own network.
 
 **Everything through the public API.** Sources, preview (upload or connect), the run, confirm and undo are under `/api/v1/imports` and in the OpenAPI document; the web interface uses the same routes (ADR-0143).
 

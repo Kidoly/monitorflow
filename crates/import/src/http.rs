@@ -2,6 +2,8 @@
 //! timeout, and answers read up to a cap. Errors are sentences for the
 //! person who connected, without the token.
 
+use std::sync::Arc;
+
 use reqwest::header::HeaderMap;
 use reqwest::{Client, Method, Url};
 
@@ -11,12 +13,17 @@ use crate::source::{Context, ReadError};
 pub const MAX_ANSWER: usize = 64 * 1024 * 1024;
 
 /// A client for `context`. Redirects are not followed: a token sent to one
-/// address never goes to another.
+/// address never goes to another. With the context's resolver, names
+/// resolve through it and no proxy resolves them instead.
 pub fn client(context: &Context) -> Result<Client, ReadError> {
-    Client::builder()
+    let mut builder = Client::builder()
         .timeout(context.timeout)
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent(concat!("MonitorFlow-import/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("MonitorFlow-import/", env!("CARGO_PKG_VERSION")));
+    if let Some(resolver) = &context.resolver {
+        builder = builder.no_proxy().dns_resolver(Arc::new(resolver.clone()));
+    }
+    builder
         .build()
         .map_err(|e| ReadError::Connect(format!("Cannot prepare the connection: {e}")))
 }

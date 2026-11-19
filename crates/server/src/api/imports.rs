@@ -3,9 +3,13 @@
 //!
 //! Administrators of the target site only. Nothing but the run is written
 //! until the confirmation; a connection's token is used for the one
-//! request and never stored or logged.
+//! request and never stored or logged. A connection reaches only public
+//! addresses unless a global administrator makes it, as for channels and
+//! integrations (ADR-0078): the central server's own network is not for
+//! the administrators of one site.
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -27,6 +31,7 @@ use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
 use crate::import::store::{self, Outcome, Run, StoreError};
 use crate::import::{self, Item, List, PREVIEW_HOURS};
+use crate::notify::send::{refuse_private_address_in, PublicResolver};
 
 /// Largest request body of a preview: files up to 32 MB, in base64.
 pub const MAX_BODY: usize = 48 * 1024 * 1024;
@@ -361,6 +366,29 @@ fn input_of(request: PreviewRequest) -> Result<(Input, String), ApiError> {
     }
 }
 
+/// Refuses the addresses of `input` written as a private IP, which a
+/// resolver never sees: the fields named `url` or `…_url`, and any value
+/// that is a URL.
+fn refuse_private_literals(input: &Input) -> Result<(), ApiError> {
+    let Input::Connect(Connection(fields)) = input else {
+        return Ok(());
+    };
+    for (key, value) in fields {
+        let value = value.trim();
+        let address = key == "url" || key.ends_with("_url");
+        if value.is_empty() || !(address || value.contains("://")) {
+            continue;
+        }
+        let url = if value.contains("://") {
+            value.to_owned()
+        } else {
+            format!("https://{value}")
+        };
+        refuse_private_address_in(&url).map_err(|e| ApiError::Invalid(e.message))?;
+    }
+    Ok(())
+}
+
 /// `POST /api/imports`: reads the source and stores a preview; 201 with
 /// it. Creates nothing else.
 pub async fn preview(
@@ -370,6 +398,7 @@ pub async fn preview(
 ) -> Result<(StatusCode, Json<RunView>), ApiError> {
     let request = body(request)?;
     let site = site_of(&state, &user, request.site_id).await?;
+    let global = is_global_admin(&user);
     let zone: chrono_tz::Tz = match request.time_zone.as_deref() {
         None | Some("") => chrono_tz::Tz::UTC,
         Some(name) => name.parse().map_err(|_| {
@@ -383,10 +412,12 @@ pub async fn preview(
     let (input, shown) = input_of(request)?;
     source::check_input(&info, &input).map_err(read_error)?;
     let now = Utc::now();
-    let inventory = reader
-        .read(input, &Context::new(now))
-        .await
-        .map_err(read_error)?;
+    let mut context = Context::new(now);
+    if !global {
+        refuse_private_literals(&input)?;
+        context = context.with_resolver(Arc::new(PublicResolver));
+    }
+    let inventory = reader.read(input, &context).await.map_err(read_error)?;
     if inventory.hosts.len() > MAX_HOSTS {
         return Err(ApiError::Invalid(format!(
             "More than {MAX_HOSTS} hosts: import them in parts."
@@ -395,14 +426,7 @@ pub async fn preview(
     let administered = user.sites_with(Role::Administrator);
     let existing =
         store::existing(&state.pool, &inventory, site, |s| administered.contains(s)).await?;
-    let planned = import::plan_in(
-        &inventory,
-        site,
-        is_global_admin(&user),
-        &existing,
-        now,
-        zone,
-    );
+    let planned = import::plan_in(&inventory, site, global, &existing, now, zone);
     let id = store::create(
         &state.pool,
         source_id,
@@ -525,4 +549,47 @@ pub async fn undo(
     let (run, outcome) = store::undo(&state.pool, run.id, user.id).await?;
     tracing::info!(user = %user.id, import = %run.id, removed = ?outcome.removed, "import undone");
     Ok(Json(view(&state, run, true).await?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn connect(fields: &[(&str, &str)]) -> Input {
+        Input::Connect(Connection(
+            fields
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        ))
+    }
+
+    #[test]
+    fn private_addresses_written_out_are_refused() {
+        for url in [
+            "http://127.0.0.1:9090",
+            "10.1.2.3",
+            "https://[::1]/",
+            "http://[::ffff:192.168.1.1]",
+            "http://169.254.169.254/latest",
+            "http://2130706433/",
+        ] {
+            let refused = refuse_private_literals(&connect(&[("url", url)]));
+            assert!(matches!(refused, Err(ApiError::Invalid(_))), "{url}");
+        }
+        let other = connect(&[
+            ("url", "https://zabbix.example"),
+            ("alertmanager_url", "http://10.0.0.9"),
+        ]);
+        assert!(refuse_private_literals(&other).is_err());
+        // Names are for the resolver; tokens are not addresses.
+        let fine = connect(&[
+            ("url", "https://203.0.113.1.nip.io"),
+            ("token", "10.0.0.1"),
+            ("alertmanager_url", ""),
+        ]);
+        assert!(refuse_private_literals(&fine).is_ok());
+        assert!(refuse_private_literals(&connect(&[("url", "https://8.8.8.8")])).is_ok());
+        assert!(refuse_private_literals(&Input::Files(Vec::new())).is_ok());
+    }
 }
