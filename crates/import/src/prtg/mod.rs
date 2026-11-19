@@ -7,8 +7,10 @@
 pub mod api;
 pub mod discovery;
 pub mod export;
+pub mod lookups;
 pub mod mapping;
 pub mod sensors;
+pub mod snmp;
 pub mod tree;
 
 #[cfg(test)]
@@ -65,6 +67,42 @@ fn auth(connection: &Connection) -> Result<Vec<(&'static str, String)>, ReadErro
     }
 }
 
+/// Gives each custom SNMP sensor the lookups its channels and settings
+/// name, with their values from `lookups` when a file had them.
+pub fn attach_lookups(
+    tree: &mut tree::Tree,
+    lookups: &std::collections::BTreeMap<String, crate::model::SnmpLookup>,
+) {
+    for object in &mut tree.objects {
+        let custom = object
+            .sensor_type
+            .as_deref()
+            .is_some_and(|t| sensors::family(t) == sensors::Family::SnmpCustom);
+        if !custom {
+            continue;
+        }
+        let mut ids: Vec<String> = object
+            .settings
+            .iter()
+            .filter(|(k, _)| k.ends_with("valuelookup") || k.as_str() == "lookups")
+            .map(|(_, v)| v.trim().to_ascii_lowercase())
+            .collect();
+        for channel in &mut object.channels {
+            if let Some(lookup) = &mut channel.lookup {
+                ids.push(lookup.name.clone());
+                if let Some(found) = lookups.get(&lookup.name) {
+                    *lookup = found.clone();
+                }
+            }
+        }
+        for id in ids.into_iter().filter(|i| !i.is_empty() && i != "none") {
+            if let Some(found) = lookups.get(&id) {
+                object.lookups.insert(id, found.clone());
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl Source for Prtg {
     fn info(&self) -> SourceInfo {
@@ -77,8 +115,8 @@ impl Source for Prtg {
         SourceInfo {
             id: "prtg",
             name: "PRTG",
-            extensions: &["dat", "xml"],
-            many_files: false,
+            extensions: &["dat", "xml", "ovl"],
+            many_files: true,
             connect: vec![
                 field("url", false, false, "https://prtg.example.com"),
                 field("apitoken", true, true, ""),
@@ -91,14 +129,38 @@ impl Source for Prtg {
     async fn read(&self, input: Input, context: &Context) -> Result<Inventory, ReadError> {
         let tree = match input {
             Input::Files(files) => {
-                let file = files
-                    .first()
-                    .ok_or_else(|| ReadError::Input("Choose a file to read.".into()))?;
+                // The configuration file, and lookup files (`.ovl`) beside
+                // it for custom SNMP sensors (ADR-0157).
+                let is_lookup = |name: &str| name.to_ascii_lowercase().ends_with(".ovl");
+                let file = files.iter().find(|f| !is_lookup(&f.name)).ok_or_else(|| {
+                    ReadError::Input("Choose PRTG's configuration file to read.".into())
+                })?;
+                if files.iter().filter(|f| !is_lookup(&f.name)).count() > 1 {
+                    return Err(ReadError::Input(
+                        "Choose one configuration file, with lookup files (.ovl) if you have some."
+                            .into(),
+                    ));
+                }
                 let text = String::from_utf8_lossy(&file.content);
                 // The file does not say PRTG's time zone: read as UTC, and
                 // the windows say so.
                 let mut tree = export::read(&file.name, &text, Duration::zero())?;
                 tree.local_times = true;
+                let ovl: Vec<(String, String)> = files
+                    .iter()
+                    .filter(|f| is_lookup(&f.name))
+                    .map(|f| {
+                        (
+                            f.name.clone(),
+                            String::from_utf8_lossy(&f.content).into_owned(),
+                        )
+                    })
+                    .collect();
+                let (lookups, failed) = lookups::read_all(&ovl);
+                for (name, why) in failed {
+                    tracing::debug!(file = %name, %why, "a PRTG lookup file does not read");
+                }
+                attach_lookups(&mut tree, &lookups);
                 tree
             }
             Input::Connect(connection) => {
@@ -108,7 +170,10 @@ impl Source for Prtg {
                     base,
                     auth: auth(&connection)?,
                 };
-                api::read(Arc::new(fetch), context.now).await?
+                let mut tree = api::read(Arc::new(fetch), context.now).await?;
+                // The API has no lookup files: channels name theirs only.
+                attach_lookups(&mut tree, &Default::default());
+                tree
             }
         };
         Ok(mapping::inventory(&tree, context.now))

@@ -114,6 +114,19 @@ impl Richer {
     }
 }
 
+/// A lookup an imported custom SNMP check comes with (ADR-0157).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = ImportLookup)]
+pub struct ImportedLookup {
+    /// The channel it names the values of, from 1.
+    pub channel: usize,
+    /// Its name; one of the customer's of that name is taken as it is.
+    pub name: String,
+    /// `{"entries": [...], "otherwise": "warning"}`, as lookups have it.
+    #[schema(value_type = Object)]
+    pub definition: Value,
+}
+
 /// What an item creates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "object", rename_all = "snake_case")]
@@ -154,6 +167,10 @@ pub enum Create {
         /// central server, rather than the agent (ADR-0148).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         probe: bool,
+        /// For a custom SNMP check (ADR-0157): lookups to make, or to take
+        /// of the same name, for its channels.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        lookups: Vec<ImportedLookup>,
     },
     /// A threshold of a server, as `POST /thresholds` takes it.
     Threshold {

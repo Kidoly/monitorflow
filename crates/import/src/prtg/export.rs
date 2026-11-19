@@ -150,6 +150,18 @@ fn channel(element: &Element) -> Option<Channel> {
             .cloned()
             .unwrap_or_default(),
         limits,
+        lookup: settings
+            .get("valuelookup")
+            .map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty() && v != "none")
+            .map(|id| crate::model::SnmpLookup {
+                name: id,
+                builtin: None,
+                entries: Vec::new(),
+                otherwise: crate::model::SnmpState::Warning,
+            }),
+        factor_m: get("factorm"),
+        factor_d: get("factord"),
     })
 }
 
