@@ -172,6 +172,11 @@ impl Holds {
         self.held.get(node)
     }
 
+    /// The held checks of `server`.
+    pub fn checks_of(&self, server: Uuid) -> Vec<(CheckRef, Hold)> {
+        self.checks.get(&server).cloned().unwrap_or_default()
+    }
+
     /// The parent that is down with its incident, when `node` is.
     pub fn down(&self, node: &Node) -> Option<&Down> {
         self.down.get(node)

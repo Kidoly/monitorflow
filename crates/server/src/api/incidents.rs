@@ -116,6 +116,10 @@ pub struct IncidentView {
     pub in_maintenance: bool,
     /// Whether a silence ever held back a notification of it.
     pub silenced: bool,
+    /// The parent's incident that speaks for it (ADR-0152): it opened a
+    /// moment before its parent went down and was never told; `null`
+    /// otherwise.
+    pub hidden_by: Option<Uuid>,
     /// Who said they are on it, and when (ADR-0082); `null` until someone
     /// does. The name stays when the account is removed.
     pub acknowledged_by: Option<String>,
@@ -211,6 +215,12 @@ pub struct IncidentDetail {
     /// Who is told next if nobody acknowledges (ADR-0082); `null` when no
     /// follow-up started: a warning, or not sent yet.
     pub follow_up: Option<FollowUpView>,
+    /// While it says a parent is down: everything behind that parent,
+    /// unreachable meanwhile (ADR-0152).
+    pub hides: Vec<super::dependencies::EndView>,
+    /// The incidents it hid: opened by children a moment before it, never
+    /// told.
+    pub hidden: Vec<Uuid>,
 }
 
 /// The sort key `(open, opened_at, id)` of a page's last incident.
@@ -244,6 +254,7 @@ const SELECT: &str = "SELECT i.id, i.server_id, i.relay_id,
                                  WHERE x.window_id IS NOT NULL) AS in_maintenance,
                              EXISTS (SELECT 1 FROM incident_events e
                                      WHERE e.incident_id = i.id AND e.kind = 'silenced') AS silenced,
+                             i.hidden_by,
                              a.username AS acknowledged_by, a.acknowledged_at,
                              a.note AS acknowledged_note
                       FROM incidents i
@@ -383,12 +394,30 @@ pub async fn detail(
             .fetch_optional(&state.pool)
             .await?;
     let follow_up = follow_up_view(&state.pool, &incident).await?;
+    let hides = if incident.state == "open" {
+        super::dependencies::hides(&state, &user, id).await?
+    } else {
+        Vec::new()
+    };
+    let hidden = sqlx::query_scalar(
+        "SELECT i.id FROM incidents i
+         LEFT JOIN servers s ON s.id = i.server_id
+         WHERE i.hidden_by = $1 AND ($2 OR s.site_id = ANY($3))
+         ORDER BY i.opened_at, i.id",
+    )
+    .bind(id)
+    .bind(all_sites)
+    .bind(&sites)
+    .fetch_all(&state.pool)
+    .await?;
     Ok(Json(IncidentDetail {
         incident,
         events,
         notification_groups,
         acknowledged_via,
         follow_up,
+        hides,
+        hidden,
     }))
 }
 

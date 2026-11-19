@@ -13,7 +13,8 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use super::plan::{channel_key, Existing, ExistingServer};
-use super::{ChannelSecret, Create, Item, PREVIEW_HOURS};
+use super::{ChannelSecret, CheckRef, Create, Item, PREVIEW_HOURS};
+use crate::dependencies::{self, Node};
 use crate::enroll::identity::{self, Pending};
 use crate::enroll::install_key::peer_id_from_hostname;
 use crate::notify::maintenance::write;
@@ -558,6 +559,49 @@ async fn create_one(
             .await
             .map_err(db_error)
         }
+        Create::Dependency {
+            server: peer_id,
+            check,
+            parent,
+            parent_check,
+        } => {
+            let mut id_of = async |peer_id: &str| -> Result<Uuid, String> {
+                match server(peer_id, servers) {
+                    Some(id) => Ok(id),
+                    None => server_id(tx, peer_id)
+                        .await
+                        .map_err(db_error)?
+                        .ok_or_else(|| "its server is not there".to_owned()),
+                }
+            };
+            let child_id = id_of(peer_id).await?;
+            let parent_id = id_of(parent).await?;
+            let node = |id: Uuid, check: &Option<CheckRef>| match check {
+                Some(c) => Node::Check(id, c.name.clone(), c.instance.clone()),
+                None => Node::Server(id),
+            };
+            let (child, parent) = (node(child_id, check), node(parent_id, parent_check));
+            let edges = dependencies::store::edges(tx).await.map_err(db_error)?;
+            if dependencies::graph::cycle(&edges, &[(child.clone(), parent.clone())]).is_some() {
+                return Err("it would put something behind itself".into());
+            }
+            sqlx::query_scalar(
+                "INSERT INTO dependencies (server_id, check_name, check_instance, parent_server_id,
+                                           parent_check_name, parent_check_instance, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 ON CONFLICT ON CONSTRAINT dependencies_key DO NOTHING RETURNING id",
+            )
+            .bind(child_id)
+            .bind(check.as_ref().map(|c| c.name.as_str()))
+            .bind(check.as_ref().map_or("", |c| c.instance.as_str()))
+            .bind(parent_id)
+            .bind(parent_check.as_ref().map(|c| c.name.as_str()))
+            .bind(parent_check.as_ref().map_or("", |c| c.instance.as_str()))
+            .bind(user)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db_error)
+        }
         Create::Threshold {
             server: peer_id,
             metric,
@@ -932,6 +976,11 @@ pub async fn undo(pool: &PgPool, id: Uuid, user: Uuid) -> Result<(Run, Outcome),
     outcome.kept_servers = kept.into_iter().map(|k| k.1).collect();
     let mut removed = BTreeMap::new();
     for (object, sql) in [
+        (
+            "dependency",
+            "DELETE FROM dependencies WHERE id IN
+                 (SELECT object_id FROM import_created WHERE run_id = $1 AND object = 'dependency')",
+        ),
         (
             "check",
             "DELETE FROM sensor_configs WHERE id IN

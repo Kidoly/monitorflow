@@ -40,8 +40,9 @@ export function StatusStrip() {
       <ul className={styles.list}>
         {SERVER_STATES.map((state) => {
           const count = data[state] ?? 0;
-          // Only an import makes servers that wait for their agent (ADR-0146).
-          if (state === "waiting" && count === 0) return null;
+          // Only an import makes servers that wait for their agent (ADR-0146),
+          // and only a parent that is down makes them unreachable (ADR-0152).
+          if ((state === "waiting" || state === "unreachable") && count === 0) return null;
           const tone = STATE_TONES[state];
           const active = current === state;
           const tinted = count > 0 && state !== "ok";
