@@ -29,6 +29,12 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Round trip | Aller-retour | How long a ping took to come back, on average | RTT, latency (on screen) | `ping_rtt_seconds` |
 | SNMP | SNMP | How switches, printers and UPSs say what they measure. Name the version: "SNMP v2c", "SNMP v3" | | `snmp` |
 | Community | Communauté | The password of SNMP v2c, like `public`. Kept sealed and never shown again | community string | `community` |
+| Custom SNMP check | Contrôle SNMP personnalisé | A check of the objects a person picks on a device, by their OIDs, rather than a group of the common MIBs | custom sensor, OID item | `snmp_custom` |
+| Channel | Canal | One value a check reports, with its name, unit and limits: "Sessions", "RAID state". A custom SNMP check has up to 10 | metric (on screen), item, field | `oidN`, `nameN`, `keyN` |
+| OID | OID | The address of an SNMP object, like 1.3.6.1.2.1.1.3.0. Show its name beside it when a MIB knows it | object identifier (spelled out), path | `oid` |
+| MIB | MIB | A file from a device's maker that names its SNMP objects and their values. Uploading one names the objects in Browse and in checks | MIB module, compiled MIB | `snmp_mibs` |
+| Lookup | Table de correspondance | Names for the values of an object, each with its state: "1 = OK, 2 = Warning, 3 = Failed" | value map, enumeration, mapping | `snmp_lookups`, `lookupN` |
+| Browse | Parcourir | Listing what a device answers under an OID, to pick an object to watch | walk (on screen), MIB browser | `snmp/read`, `walk` |
 | Template | Modèle | The checks and alerts a kind of device gets when added: Switch, Router, Firewall, Printer, UPS, NAS or Generic | profile, preset | `template` |
 | Traffic | Trafic | What goes through a network interface, in and out, per second | bandwidth, throughput | `in_bytes_per_second`, `net_receive_bytes_per_second` |
 | Watches | Surveille | The disk, port or service a sensor measures | instance | `instance` |
