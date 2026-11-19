@@ -53,10 +53,14 @@ fn read() -> Result<Vec<(String, Counters)>, SensorError> {
     let table = Table(table);
     // SAFETY: a successful call returns NumEntries rows laid out after the
     // count, as the C declaration's flexible array; the slice lives no
-    // longer than `table`.
+    // longer than `table`. The rows are reached through a raw pointer to
+    // the field: a reference to the one-row array would not cover the rest.
     let rows = unsafe {
         let count = (*table.0).NumEntries as usize;
-        std::slice::from_raw_parts((*table.0).Table.as_ptr(), count)
+        std::slice::from_raw_parts(
+            std::ptr::addr_of!((*table.0).Table).cast::<MIB_IF_ROW2>(),
+            count,
+        )
     };
     let mut seen = BTreeSet::new();
     let mut interfaces = Vec::new();

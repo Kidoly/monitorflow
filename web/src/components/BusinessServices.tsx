@@ -98,7 +98,7 @@ function CheckPicker({ serverId, value, onChange, label }: { serverId: string; v
   return (
     <select className={fieldClass} aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} disabled={!serverId}>
       <option value="">{t("reports.service.wholeServer")}</option>
-      {!known && <option value={value}>{value.replace("\t", " ").trim()}</option>}
+      {!known && <option value={value}>{value.replaceAll("\t", " ").trim()}</option>}
       {checks.map((c) => (
         <option key={checkKey(c.name, c.instance)} value={checkKey(c.name, c.instance)}>
           {c.instance ? `${c.name} (${c.instance})` : c.name}
