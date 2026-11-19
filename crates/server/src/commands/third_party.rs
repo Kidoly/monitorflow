@@ -12,7 +12,9 @@ use sqlx::PgConnection;
 /// Apps kept per manager from one report.
 pub const MAX_APPS_PER_MANAGER: usize = 5_000;
 
-fn fits(s: &str, max: usize) -> bool {
+/// Whether `s` fits a text column of `max` bytes: PostgreSQL text takes
+/// no NUL.
+pub(super) fn fits(s: &str, max: usize) -> bool {
     s.len() <= max && !s.contains('\0')
 }
 

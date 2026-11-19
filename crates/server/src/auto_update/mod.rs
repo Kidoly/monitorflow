@@ -438,9 +438,7 @@ impl AutoUpdate {
 }
 
 /// This server's version, the ceiling of automatic updates.
-pub fn server_version() -> Version {
-    Version::from_str(monitorflow_common::VERSION).expect("the build version is a version")
-}
+pub use crate::release_check::running_version as server_version;
 
 #[cfg(test)]
 mod tests {

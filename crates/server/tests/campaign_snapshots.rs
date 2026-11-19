@@ -545,6 +545,31 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_stopped_campaign_with_nothing_to_restore_is_left_alone(pool: PgPool) {
+        let f = Fleet::new(&pool).await;
+        let runner = f.runner();
+        let now = Utc::now();
+        let id = f.start(&f.campaign(vec![WaveSpec::Size(1)])).await;
+        queued(runner.advance(id, now).await.unwrap());
+        assert_eq!(runner.due().await.unwrap(), [id]);
+        // Stopped before its configuration was sent: cancelled, and
+        // nothing to restore.
+        f.store.act(id, Action::Stop, USER).await.unwrap();
+        assert_eq!(kinds(&f.history(id, 0).await), [(CONFIGURE_SOURCES, State::Cancelled)]);
+        assert!(runner.due().await.unwrap().is_empty());
+
+        // Sent, then stopped: due until its restore is queued.
+        let id = f.start(&f.campaign(vec![WaveSpec::Size(1)])).await;
+        queued(runner.advance(id, now).await.unwrap());
+        f.finish_last(id, 0, CommandStatus::Succeeded).await;
+        f.store.act(id, Action::Stop, USER).await.unwrap();
+        assert_eq!(runner.due().await.unwrap(), [id]);
+        runner.tick(now).await;
+        assert_eq!(f.last(id, 0).await.1, REVERT_SOURCES);
+        assert!(runner.due().await.unwrap().is_empty());
+    }
+
+    #[sqlx::test]
     async fn unfinished_campaigns_publish_their_snapshots(pool: PgPool) {
         let f = Fleet::new(&pool).await;
         let runner = f.runner();
