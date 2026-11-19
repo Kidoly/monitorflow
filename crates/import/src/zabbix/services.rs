@@ -24,7 +24,8 @@ fn selects(filters: &[TagFilter], tags: &[(String, String)]) -> bool {
 }
 
 /// The members of `service`: its own problems' checks, then its
-/// children's, each once.
+/// children's, each once. Iterative, so a very deep tree of services from
+/// a Zabbix API cannot exhaust the stack.
 fn members(
     service: &ZabbixService,
     by_id: &HashMap<&str, &ZabbixService>,
@@ -32,26 +33,32 @@ fn members(
     seen: &mut HashSet<String>,
     out: &mut Vec<Member>,
 ) {
-    if !seen.insert(service.id.clone()) {
-        return;
-    }
-    if !service.problem_tags.is_empty() {
-        for (host, watches) in tagged {
-            for (tags, watch) in watches {
-                let member = Member {
-                    host: host.clone(),
-                    check: Some(watch.clone()),
-                };
-                if selects(&service.problem_tags, tags) && !out.contains(&member) {
-                    out.push(member);
+    let mut stack = vec![service];
+    while let Some(service) = stack.pop() {
+        if !seen.insert(service.id.clone()) {
+            continue;
+        }
+        if !service.problem_tags.is_empty() {
+            for (host, watches) in tagged {
+                for (tags, watch) in watches {
+                    let member = Member {
+                        host: host.clone(),
+                        check: Some(watch.clone()),
+                    };
+                    if selects(&service.problem_tags, tags) && !out.contains(&member) {
+                        out.push(member);
+                    }
                 }
             }
         }
-    }
-    for child in &service.children {
-        if let Some(child) = by_id.get(child.as_str()) {
-            members(child, by_id, tagged, seen, out);
-        }
+        let at = stack.len();
+        stack.extend(
+            service
+                .children
+                .iter()
+                .filter_map(|child| by_id.get(child.as_str()).copied()),
+        );
+        stack[at..].reverse();
     }
 }
 
@@ -256,6 +263,38 @@ mod tests {
             excluded: 0,
             service_tags: vec![filter("sla", "gold")],
         }
+    }
+
+    /// A long chain of services, as a Zabbix API may give, is walked
+    /// without recursion: a stack far smaller than a runtime worker's is
+    /// enough.
+    #[test]
+    fn a_deep_chain_of_services_does_not_exhaust_the_stack() {
+        let walked = std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(|| {
+                let (mut out, tagged) = inventory();
+                let depth = 1500;
+                let ids: Vec<String> = (0..=depth).map(|i| i.to_string()).collect();
+                let mut chain: Vec<ZabbixService> = (0..depth)
+                    .map(|i| service(&ids[i], &format!("s{i}"), vec![], &[ids[i + 1].as_str()]))
+                    .collect();
+                chain.push(service(
+                    &ids[depth],
+                    "SMTP",
+                    vec![filter("service", "smtp")],
+                    &["0"],
+                ));
+                let config = Config {
+                    services: chain,
+                    ..Config::default()
+                };
+                services(&config, &tagged, &mut out);
+                assert!(out.services.iter().any(|s| s.name == "s0"));
+            })
+            .unwrap()
+            .join();
+        assert!(walked.is_ok());
     }
 
     #[test]

@@ -164,3 +164,49 @@ async fn a_refused_token_says_so() {
     // The token is not in the message.
     assert!(!error.to_string().contains("wrong"));
 }
+
+/// Reading a file runs off the runtime: on a runtime of one thread,
+/// another task goes on while a large file is read, where it once waited
+/// for the whole reading.
+#[tokio::test(flavor = "current_thread")]
+async fn a_large_file_is_read_off_the_runtime() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut xml = String::from(
+        "<prtg><nodes><group id=\"0\"><data><name>Root</name></data><nodes>\
+         <probenode id=\"1\"><data><name>Probe</name></data><nodes>",
+    );
+    for i in 0..2000 {
+        xml.push_str(&format!(
+            "<device id=\"{}\"><data><name>d{i}</name><host>192.0.2.{}</host></data><nodes>\
+             <sensor id=\"{}\"><data><name>Ping</name><sensortype>ping</sensortype></data></sensor>\
+             </nodes></device>",
+            10_000 + i,
+            i % 250 + 1,
+            100_000 + i,
+        ));
+    }
+    xml.push_str("</nodes></probenode></nodes></group></nodes></prtg>");
+    let ticks = Arc::new(AtomicUsize::new(0));
+    let ticker = {
+        let ticks = ticks.clone();
+        tokio::spawn(async move {
+            loop {
+                ticks.fetch_add(1, Ordering::Relaxed);
+                tokio::task::yield_now().await;
+            }
+        })
+    };
+    let files = vec![monitorflow_import::source::File {
+        name: "PRTG Configuration.dat".into(),
+        content: xml.into_bytes(),
+    }];
+    let inventory = Prtg
+        .read(Input::Files(files), &Context::new(Utc::now()))
+        .await
+        .unwrap();
+    let during = ticks.load(Ordering::Relaxed);
+    ticker.abort();
+    assert_eq!(inventory.hosts.len(), 2000);
+    assert!(during > 0, "the runtime waited for the reading");
+}

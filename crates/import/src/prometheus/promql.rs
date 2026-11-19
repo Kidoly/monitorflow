@@ -32,6 +32,13 @@ pub enum Token {
 #[error("{0}")]
 pub struct SyntaxError(String);
 
+/// Most tokens in an expression. Far above a real alerting rule; it
+/// bounds the depth of the syntax tree, which is walked recursively, so a
+/// hostile rule file cannot exhaust the stack.
+const MAX_TOKENS: usize = 2048;
+/// Deepest nesting of parentheses, calls and unary operators.
+const MAX_NESTING: usize = 128;
+
 const OPS: &[&str] = &[
     "==", "!=", ">=", "<=", "=~", "!~", "+", "-", "*", "/", "%", "^", ">", "<", "=", "(", ")", "{",
     "}", ",", "@",
@@ -307,7 +314,14 @@ const AGGREGATIONS: &[&str] = &[
 /// Parses an expression.
 pub fn parse(text: &str) -> Result<Expr, SyntaxError> {
     let tokens = tokenize(text)?;
-    let mut parser = Parser { tokens, at: 0 };
+    if tokens.len() > MAX_TOKENS {
+        return Err(SyntaxError("the expression is too long".into()));
+    }
+    let mut parser = Parser {
+        tokens,
+        at: 0,
+        depth: 0,
+    };
     let expr = parser.expr(0)?;
     if parser.at != parser.tokens.len() {
         return Err(SyntaxError(format!(
@@ -321,9 +335,25 @@ pub fn parse(text: &str) -> Result<Expr, SyntaxError> {
 struct Parser {
     tokens: Vec<Token>,
     at: usize,
+    /// How deeply [`Parser::expr`] and [`Parser::unary`] are nested.
+    depth: usize,
 }
 
 impl Parser {
+    /// Runs `parse` one level deeper; refuses beyond [`MAX_NESTING`].
+    fn nested<T>(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<T, SyntaxError>,
+    ) -> Result<T, SyntaxError> {
+        if self.depth >= MAX_NESTING {
+            return Err(SyntaxError("the expression is nested too deeply".into()));
+        }
+        self.depth += 1;
+        let result = parse(self);
+        self.depth -= 1;
+        result
+    }
+
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.at)
     }
@@ -406,6 +436,10 @@ impl Parser {
     }
 
     fn expr(&mut self, min_power: u8) -> Result<Expr, SyntaxError> {
+        self.nested(|parser| parser.binary(min_power))
+    }
+
+    fn binary(&mut self, min_power: u8) -> Result<Expr, SyntaxError> {
         let mut lhs = self.unary()?;
         while let Some(op) = self.binary_op() {
             let power = op.power();
@@ -437,6 +471,10 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expr, SyntaxError> {
+        self.nested(Self::signed)
+    }
+
+    fn signed(&mut self) -> Result<Expr, SyntaxError> {
         if self.eat_op("-") {
             // `-a ^ b` is `-(a ^ b)`.
             let inner = self.power()?;
@@ -2008,5 +2046,36 @@ mod tests {
         assert!(read_compare("node_load1 / node_load1 > 2").is_none());
         // The offset alone still cannot be read.
         assert!(read("node_load1 offset 1h > 4").is_none());
+    }
+
+    /// A hostile rule file cannot exhaust the stack: nesting and length
+    /// are bounded, and what fits within the bounds is read and dropped on
+    /// a stack as small as a runtime worker's.
+    #[test]
+    fn hostile_expressions_are_refused_without_exhausting_the_stack() {
+        let deep = format!("{}1{}", "(".repeat(100_000), ")".repeat(100_000));
+        assert!(parse(&deep).is_err());
+        assert!(parse(&"-".repeat(100_000)).is_err());
+        assert!(parse(&format!("1{}", "^1".repeat(100_000))).is_err());
+        assert!(parse(&format!("1{}", " + 1".repeat(100_000))).is_err());
+        assert!(parse(&format!("up{}", "[5m:]".repeat(100_000))).is_err());
+
+        let within = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let nested = format!("{}node_load1{} > 1", "(".repeat(60), ")".repeat(60));
+                assert!(parse(&nested).is_ok());
+                let _ = read(&nested);
+                let chain = format!("node_load1{} > 1", " + node_load1".repeat(1000));
+                assert!(parse(&chain).is_ok());
+                let _ = read(&chain);
+                let _ = read_alternatives(&chain);
+                let powers = format!("2{} > 1", " ^ -2".repeat(60));
+                assert!(parse(&powers).is_ok());
+                let _ = read(&powers);
+            })
+            .unwrap()
+            .join();
+        assert!(within.is_ok());
     }
 }

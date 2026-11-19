@@ -3,12 +3,14 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+use crate::http::Guard;
 use crate::model::Inventory;
 
 /// Largest file a reader is given, in bytes.
@@ -96,6 +98,8 @@ pub struct Context {
     pub now: DateTime<Utc>,
     /// Timeout of each request of a connection.
     pub timeout: Duration,
+    /// What a connection may reach; `None` for any address.
+    pub guard: Option<Arc<dyn Guard>>,
 }
 
 impl Context {
@@ -103,7 +107,14 @@ impl Context {
         Self {
             now,
             timeout: Duration::from_secs(30),
+            guard: None,
         }
+    }
+
+    /// This context, its connections limited by `guard`.
+    pub fn with_guard(mut self, guard: Arc<dyn Guard>) -> Self {
+        self.guard = Some(guard);
+        self
     }
 }
 
@@ -132,6 +143,16 @@ impl ReadError {
             reason: reason.to_string(),
         }
     }
+}
+
+/// Runs `work`, a reading or a mapping that may take seconds for a large
+/// file, on the blocking pool rather than on the server's runtime.
+pub async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, ReadError> + Send + 'static,
+) -> Result<T, ReadError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| ReadError::Input("The import stopped unexpectedly: try again.".into()))?
 }
 
 /// A reader of one tool's configuration.

@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 
 use crate::model::{Inventory, Unmovable};
-use crate::source::{Context, Field, Input, ReadError, Source, SourceInfo, MAX_HOSTS};
+use crate::source::{blocking, Context, Field, Input, ReadError, Source, SourceInfo, MAX_HOSTS};
 
 pub mod alertmanager;
 pub mod api;
@@ -99,10 +99,10 @@ impl Source for Prometheus {
 
     async fn read(&self, input: Input, context: &Context) -> Result<Inventory, ReadError> {
         let collected = match input {
-            Input::Files(files) => files::collect(&files)?,
+            Input::Files(files) => blocking(move || files::collect(&files)).await?,
             Input::Connect(connection) => api::collect(&connection, context).await?,
         };
-        let inventory = collected.inventory();
+        let inventory = blocking(move || Ok(collected.inventory())).await?;
         if inventory.hosts.len() > MAX_HOSTS {
             return Err(ReadError::Input(format!(
                 "More than {MAX_HOSTS} hosts: import them in parts."

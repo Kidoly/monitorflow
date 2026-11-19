@@ -348,15 +348,32 @@ pub fn glob_matches(pattern: &str, name: &str) -> bool {
     let base = |s: &str| s.rsplit(['/', '\\']).next().unwrap_or_default().to_owned();
     let pattern: Vec<char> = base(pattern).chars().collect();
     let name: Vec<char> = base(name).chars().collect();
-    fn walk(p: &[char], n: &[char]) -> bool {
-        match p.first() {
-            None => n.is_empty(),
-            Some('*') => (0..=n.len()).any(|i| walk(&p[1..], &n[i..])),
-            Some('?') => !n.is_empty() && walk(&p[1..], &n[1..]),
-            Some(c) => n.first() == Some(c) && walk(&p[1..], &n[1..]),
+    // Greedy with one backtrack point, the last `*`: linear in practice
+    // and at worst quadratic, where trying every split of every `*` was
+    // exponential and hung on a hostile pattern.
+    let (mut p, mut n) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while n < name.len() {
+        match pattern.get(p) {
+            Some('*') => {
+                star = Some((p, n));
+                p += 1;
+            }
+            Some(&c) if c == '?' || c == name[n] => {
+                p += 1;
+                n += 1;
+            }
+            _ => match star {
+                Some((star_p, star_n)) => {
+                    p = star_p + 1;
+                    n = star_n + 1;
+                    star = Some((star_p, star_n + 1));
+                }
+                None => return false,
+            },
         }
     }
-    walk(&pattern, &name)
+    pattern[p..].iter().all(|c| *c == '*')
 }
 
 #[cfg(test)]
@@ -404,6 +421,48 @@ mod tests {
         assert!(!glob_matches("rules/*.yml", "node.yaml"));
         assert!(glob_matches("alerts.rules", "alerts.rules"));
         assert!(!glob_matches("alerts.rules", "other.rules"));
+    }
+
+    /// Every split of every `*`, as the matcher once did: the reference
+    /// the linear one must agree with.
+    fn reference(p: &[char], n: &[char]) -> bool {
+        match p.first() {
+            None => n.is_empty(),
+            Some('*') => (0..=n.len()).any(|i| reference(&p[1..], &n[i..])),
+            Some('?') => !n.is_empty() && reference(&p[1..], &n[1..]),
+            Some(c) => n.first() == Some(c) && reference(&p[1..], &n[1..]),
+        }
+    }
+
+    #[test]
+    fn globs_agree_with_trying_every_split() {
+        let words = ["", "a", "b", "ab", "ba", "aab", "abab", "a.yml", "b.yaml"];
+        let patterns = [
+            "", "*", "**", "?", "a", "a*", "*a", "*b*", "a?b", "*a*b", "?*?", "a**b", "*.yml",
+            "*.y?ml", "b*", "*ab*ab*",
+        ];
+        for pattern in patterns {
+            for word in words {
+                let p: Vec<char> = pattern.chars().collect();
+                let n: Vec<char> = word.chars().collect();
+                assert_eq!(
+                    glob_matches(pattern, word),
+                    reference(&p, &n),
+                    "{pattern} against {word}"
+                );
+            }
+        }
+    }
+
+    /// A pattern with many stars against a long name answers at once; it
+    /// used to try every split and hang the import.
+    #[test]
+    fn hostile_globs_answer_at_once() {
+        let started = std::time::Instant::now();
+        let pattern = "*a".repeat(40) + "b";
+        assert!(!glob_matches(&pattern, &"a".repeat(4000)));
+        assert!(glob_matches(&pattern, &("a".repeat(4000) + "b")));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

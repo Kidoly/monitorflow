@@ -30,7 +30,7 @@ pub mod web;
 use async_trait::async_trait;
 
 use crate::model::Inventory;
-use crate::source::{Context, Field, Input, ReadError, Source, SourceInfo};
+use crate::source::{blocking, Context, Field, Input, ReadError, Source, SourceInfo};
 
 /// The Zabbix reader.
 pub struct Zabbix;
@@ -62,7 +62,7 @@ impl Source for Zabbix {
 
     async fn read(&self, input: Input, context: &Context) -> Result<Inventory, ReadError> {
         let config = match input {
-            Input::Files(files) => export::read(&files)?,
+            Input::Files(files) => blocking(move || export::read(&files)).await?,
             Input::Connect(connection) => {
                 let mut api = api::Api::connect(&connection, context).await?;
                 api.read().await?
@@ -74,7 +74,8 @@ impl Source for Zabbix {
                 crate::source::MAX_HOSTS
             )));
         }
-        let inventory = map::inventory(&config, context.now);
+        let now = context.now;
+        let inventory = blocking(move || Ok(map::inventory(&config, now))).await?;
         if inventory.is_empty() {
             return Err(ReadError::Input(
                 "Nothing to import: the files or the Zabbix have no hosts, media types, maintenances or discovery rules."

@@ -3,6 +3,8 @@
 //! pauses and maintenance windows become silences, and notification
 //! templates become channels.
 
+use std::collections::{HashMap, HashSet};
+
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use monitorflow_common::redact::Secret;
 
@@ -15,7 +17,7 @@ use crate::model::{
 use crate::notes::Note;
 
 use super::sensors::{self, Family, Mapped};
-use super::tree::{Delivery, Depends, Kind, Object, Paused, Tree};
+use super::tree::{Delivery, Depends, Indexed, Kind, Object, Paused, Tree};
 
 /// Longest silence MonitorFlow keeps (ADR-0079).
 const MAX_SILENCE_DAYS: i64 = 30;
@@ -40,7 +42,7 @@ fn origin(object: &Object) -> Origin {
 
 /// The system of a device, from its sensors' types: WMI and Windows
 /// sensors run on Windows, SSH sensors on Unix.
-fn os(tree: &Tree, device: &Object) -> Os {
+fn os(tree: &Indexed, device: &Object) -> Os {
     let types: Vec<&str> = tree
         .children(device.id)
         .filter_map(|s| s.sensor_type.as_deref())
@@ -60,7 +62,7 @@ fn os(tree: &Tree, device: &Object) -> Os {
 /// A device PRTG watches over the network only, like a switch, a printer
 /// or an address it pings: none of its sensors needs the machine itself
 /// (WMI, SSH, its services or logs). It becomes a device (ADR-0148).
-fn network_device(tree: &Tree, device: &Object) -> bool {
+fn network_device(tree: &Indexed, device: &Object) -> bool {
     tree.children(device.id).all(|sensor| {
         let t = sensor
             .sensor_type
@@ -80,7 +82,7 @@ fn network_device(tree: &Tree, device: &Object) -> bool {
 
 /// The names of the groups above `id`, the probe's too when there are
 /// several probes.
-fn groups(tree: &Tree, id: i64, probes: usize) -> Vec<String> {
+fn groups(tree: &Indexed, id: i64, probes: usize) -> Vec<String> {
     let mut names = Vec::new();
     let mut current = tree
         .get(id)
@@ -104,16 +106,17 @@ fn groups(tree: &Tree, id: i64, probes: usize) -> Vec<String> {
 
 /// Builds the inventory of `tree` at `now`.
 pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
+    let tree = &Indexed::new(tree);
     let mut out = Inventory::default();
     let probes = tree
         .objects
         .iter()
         .filter(|o| o.kind == Kind::Probe)
         .count();
-    let mut hosts: Vec<i64> = Vec::new();
+    let mut hosts = Hosts::default();
     for device in tree.objects.iter().filter(|o| o.kind == Kind::Device) {
         let agentless = network_device(tree, device) && tree.children(device.id).next().is_some();
-        hosts.push(device.id);
+        hosts.insert(device.id, agentless);
         out.hosts.push(Host {
             key: host_key(device.id),
             name: device.name.trim().to_owned(),
@@ -147,9 +150,9 @@ pub fn inventory(tree: &Tree, now: DateTime<Utc>) -> Inventory {
 }
 
 /// The device and watch a sensor became, when it is moved.
-fn sensor_end(tree: &Tree, sensor: &Object, hosts: &[i64]) -> Option<(i64, Watch)> {
+fn sensor_end(tree: &Indexed, sensor: &Object, hosts: &Hosts) -> Option<(i64, Watch)> {
     let device = tree.ancestor(sensor.id, Kind::Device)?;
-    if !hosts.contains(&device.id) {
+    if !hosts.contains_key(&device.id) {
         return None;
     }
     match sensors::map(sensor, device.host.as_deref()) {
@@ -158,12 +161,60 @@ fn sensor_end(tree: &Tree, sensor: &Object, hosts: &[i64]) -> Option<(i64, Watch
     }
 }
 
-/// The devices below a group or probe, at any depth.
-fn devices_below(tree: &Tree, id: i64, hosts: &[i64], out: &mut Vec<i64>) {
-    for child in tree.children(id) {
+/// The devices an import moves, in the order read, and whether each is
+/// watched without an agent; looked up by ID for each sensor.
+#[derive(Default)]
+struct Hosts {
+    order: Vec<i64>,
+    agentless: HashMap<i64, bool>,
+}
+
+impl Hosts {
+    fn insert(&mut self, id: i64, agentless: bool) {
+        if self.agentless.insert(id, agentless).is_none() {
+            self.order.push(id);
+        }
+    }
+
+    fn contains_key(&self, id: &i64) -> bool {
+        self.agentless.contains_key(id)
+    }
+
+    fn agentless(&self, id: i64) -> bool {
+        self.agentless.get(&id) == Some(&true)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &i64> {
+        self.order.iter()
+    }
+}
+
+#[cfg(test)]
+impl<const N: usize> From<[i64; N]> for Hosts {
+    fn from(ids: [i64; N]) -> Self {
+        let mut hosts = Self::default();
+        for id in ids {
+            hosts.insert(id, false);
+        }
+        hosts
+    }
+}
+
+/// The devices below a group or probe, at any depth, in the order a walk
+/// down the tree meets them. Iterative and each group once, so a parent
+/// loop or a very deep tree from a PRTG API cannot exhaust the stack.
+fn devices_below(tree: &Indexed, id: i64, hosts: &Hosts, out: &mut Vec<i64>) {
+    let mut seen = HashSet::from([id]);
+    let mut stack: Vec<&Object> = tree.children(id).collect();
+    stack.reverse();
+    while let Some(child) = stack.pop() {
         match child.kind {
-            Kind::Device if hosts.contains(&child.id) => out.push(child.id),
-            Kind::Group | Kind::Probe => devices_below(tree, child.id, hosts, out),
+            Kind::Device if hosts.contains_key(&child.id) => out.push(child.id),
+            Kind::Group | Kind::Probe if seen.insert(child.id) => {
+                let at = stack.len();
+                stack.extend(tree.children(child.id));
+                stack[at..].reverse();
+            }
             _ => {}
         }
     }
@@ -174,7 +225,7 @@ fn devices_below(tree: &Tree, id: i64, hosts: &[i64], out: &mut Vec<i64>) {
 /// on its master sensor. A group's setting goes to each of its devices.
 /// "Use parent", the default, needs nothing: what a remote probe watches
 /// is checked from its relay, which is behind it already.
-fn dependencies(tree: &Tree, hosts: &[i64], out: &mut Inventory) {
+fn dependencies(tree: &Indexed, hosts: &Hosts, out: &mut Inventory) {
     let add = |out: &mut Inventory,
                child: DependencyEnd,
                parent: (DependencyEnd, Watch),
@@ -225,7 +276,7 @@ fn dependencies(tree: &Tree, hosts: &[i64], out: &mut Inventory) {
             Some(Depends::Object(target)) => {
                 // The parent, and the check it is when a sensor.
                 let parent = tree.get(target).and_then(|t| match t.kind {
-                    Kind::Device if hosts.contains(&t.id) => {
+                    Kind::Device if hosts.contains_key(&t.id) => {
                         Some((DependencyEnd::host(host_key(t.id)), Watch::Agent))
                     }
                     Kind::Sensor => sensor_end(tree, t, hosts).map(|(device, watch)| {
@@ -256,7 +307,7 @@ fn dependencies(tree: &Tree, hosts: &[i64], out: &mut Inventory) {
                     continue;
                 };
                 match object.kind {
-                    Kind::Device if hosts.contains(&object.id) => add(
+                    Kind::Device if hosts.contains_key(&object.id) => add(
                         out,
                         DependencyEnd::host(host_key(object.id)),
                         parent,
@@ -328,7 +379,7 @@ fn business_process(sensor: &Object) -> bool {
         .is_some_and(|t| t.replace([' ', '_', '-'], "").contains("businessprocess"))
 }
 
-fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory) {
+fn sensor_items(tree: &Indexed, sensor: &Object, hosts: &Hosts, out: &mut Inventory) {
     if business_process(sensor) {
         // Its channels' objects are not in the API nor the file: the
         // service is made by hand, from what the note lists.
@@ -357,7 +408,7 @@ fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory
         });
         return;
     };
-    if !hosts.contains(&device.id) {
+    if !hosts.contains_key(&device.id) {
         // Reported once, with the device.
         return;
     }
@@ -444,7 +495,7 @@ fn sensor_items(tree: &Tree, sensor: &Object, hosts: &[i64], out: &mut Inventory
         }
     }
     // A device's ports are checked from a probe, as PRTG did.
-    let fidelity = match (&fidelity, out.host(&key).is_some_and(|h| h.agentless)) {
+    let fidelity = match (&fidelity, hosts.agentless(device.id)) {
         (Fidelity::Approximated(n), true) if n.code == "prtg_from_server" => Fidelity::Exact,
         _ => fidelity,
     };
@@ -493,7 +544,7 @@ fn add_limits(
 }
 
 /// The hosts below `object`, or everything for the root.
-fn scope(tree: &Tree, object: &Object, hosts: &[i64]) -> SilenceScope {
+fn scope(tree: &Indexed, object: &Object, hosts: &Hosts) -> SilenceScope {
     if object.kind == Kind::Group && tree.ancestor(object.id, Kind::Probe).is_none() {
         return SilenceScope::Everything;
     }
@@ -524,12 +575,18 @@ fn scope(tree: &Tree, object: &Object, hosts: &[i64]) -> SilenceScope {
     SilenceScope::Hosts(covered)
 }
 
-fn silences(tree: &Tree, object: &Object, hosts: &[i64], now: DateTime<Utc>, out: &mut Inventory) {
+fn silences(
+    tree: &Indexed,
+    object: &Object,
+    hosts: &Hosts,
+    now: DateTime<Utc>,
+    out: &mut Inventory,
+) {
     let sensor = object.kind == Kind::Sensor;
     // A device that does not move is reported once, with nothing below it.
     if tree
         .ancestor(object.id, Kind::Device)
-        .is_some_and(|d| !hosts.contains(&d.id))
+        .is_some_and(|d| !hosts.contains_key(&d.id))
     {
         return;
     }
@@ -693,7 +750,7 @@ fn http_target(url: &str) -> Target {
     }
 }
 
-fn channels(tree: &Tree, out: &mut Inventory) {
+fn channels(tree: &Indexed, out: &mut Inventory) {
     for notification in &tree.notifications {
         let origin = Origin::new("notification", notification.name.clone());
         let not = |out: &mut Inventory, origin: Origin, why: Note| {
@@ -754,6 +811,80 @@ mod tests {
 
     use super::*;
     use crate::prtg::tree::{Maintenance, Notification};
+
+    /// Groups read from a PRTG API name their parents by ID; a loop, or a
+    /// group that is its own parent, ends instead of exhausting the stack.
+    #[test]
+    fn a_parent_loop_below_a_dependent_group_ends() {
+        let mut tree = Tree::default();
+        tree.objects
+            .push(Object::new(1, Kind::Probe, "probe", None));
+        let mut looped = Object::new(10, Kind::Group, "looped", Some(11));
+        looped.depends = Some(Depends::Object(30));
+        tree.objects.push(looped);
+        tree.objects
+            .push(Object::new(11, Kind::Group, "other", Some(10)));
+        tree.objects
+            .push(Object::new(12, Kind::Group, "itself", Some(12)));
+        let mut device = Object::new(20, Kind::Device, "web", Some(11));
+        device.host = Some("192.0.2.20".into());
+        tree.objects.push(device);
+        let mut router = Object::new(21, Kind::Device, "router", Some(1));
+        router.host = Some("192.0.2.1".into());
+        tree.objects.push(router);
+        tree.objects.push(sensor(30, 21, "ping"));
+        let mut devices = Vec::new();
+        devices_below(
+            &Indexed::new(&tree),
+            10,
+            &Hosts::from([20, 21]),
+            &mut devices,
+        );
+        assert_eq!(devices, vec![20]);
+        let mut devices = Vec::new();
+        devices_below(
+            &Indexed::new(&tree),
+            12,
+            &Hosts::from([20, 21]),
+            &mut devices,
+        );
+        assert!(devices.is_empty());
+        let inventory = inventory(&tree, now());
+        assert!(inventory
+            .dependencies
+            .iter()
+            .any(|d| d.origin.name == "looped"));
+    }
+
+    /// The order a walk down the tree meets devices, groups in between.
+    #[test]
+    fn devices_below_come_in_tree_order() {
+        let mut tree = Tree::default();
+        tree.objects
+            .push(Object::new(1, Kind::Probe, "probe", None));
+        tree.objects
+            .push(Object::new(20, Kind::Device, "a", Some(1)));
+        tree.objects
+            .push(Object::new(10, Kind::Group, "g", Some(1)));
+        tree.objects
+            .push(Object::new(21, Kind::Device, "b", Some(10)));
+        tree.objects
+            .push(Object::new(11, Kind::Group, "h", Some(10)));
+        tree.objects
+            .push(Object::new(22, Kind::Device, "c", Some(11)));
+        tree.objects
+            .push(Object::new(23, Kind::Device, "d", Some(10)));
+        tree.objects
+            .push(Object::new(24, Kind::Device, "e", Some(1)));
+        let mut devices = Vec::new();
+        devices_below(
+            &Indexed::new(&tree),
+            1,
+            &Hosts::from([20, 21, 22, 23, 24]),
+            &mut devices,
+        );
+        assert_eq!(devices, vec![20, 21, 22, 23, 24]);
+    }
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 11, 17, 12, 0, 0).unwrap()
