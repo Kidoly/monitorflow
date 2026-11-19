@@ -104,8 +104,8 @@ pub async fn existing(
         .iter()
         .map(|h| h.name.trim().to_ascii_lowercase())
         .collect();
-    let rows: Vec<(Uuid, String, String, Uuid)> = sqlx::query_as(
-        "SELECT id, peer_id, hostname, site_id FROM servers
+    let rows: Vec<(Uuid, String, String, Uuid, bool)> = sqlx::query_as(
+        "SELECT id, peer_id, hostname, site_id, kind = 'device' FROM servers
          WHERE revoked_at IS NULL
            AND (lower(peer_id) = ANY($1) OR lower(hostname) = ANY($2))",
     )
@@ -116,17 +116,20 @@ pub async fn existing(
     let mut existing = Existing::default();
     let server_ids: Vec<Uuid> = rows.iter().map(|r| r.0).collect();
     let mut peer_of: HashMap<Uuid, String> = HashMap::new();
-    for (id, peer_id, hostname, site) in rows {
+    for (id, peer_id, hostname, site, device) in rows {
         peer_of.insert(id, peer_id.to_ascii_lowercase());
         existing.servers.push(ExistingServer {
             peer_id,
             hostname,
             site_id: site,
             may_change: may_change(site),
+            device,
         });
     }
     let checks: Vec<(Uuid, String)> = sqlx::query_as(
-        "SELECT server_id, name FROM sensor_configs WHERE server_id = ANY($1) AND instance = ''",
+        // Any instance: a check run by a probe has the probe as its
+        // instance (ADR-0148), and is the same check.
+        "SELECT DISTINCT server_id, name FROM sensor_configs WHERE server_id = ANY($1)",
     )
     .bind(&server_ids)
     .fetch_all(pool)

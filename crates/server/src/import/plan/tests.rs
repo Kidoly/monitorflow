@@ -136,6 +136,7 @@ fn servers_monitorflow_has_are_present_and_keep_their_id() {
             hostname: "web-01".into(),
             site_id: site(),
             may_change: true,
+            device: false,
         }],
         checks: HashSet::from([("web-01".to_owned(), "port_22".to_owned())]),
         ..Existing::default()
@@ -934,6 +935,7 @@ fn servers_of_sites_one_does_not_administer_get_nothing() {
             hostname: "a".into(),
             site_id: Uuid::from_u128(2),
             may_change: false,
+            device: false,
         }],
         ..Existing::default()
     };
@@ -1617,4 +1619,71 @@ fn a_check_that_goes_silent_gets_a_no_data_rule_beside_its_alert() {
         ),
         ("monitorflow_port_443_up", ">", Some(600.0), 0, "nodata")
     );
+}
+
+#[test]
+fn a_second_rule_of_a_kind_on_a_measure_says_why_it_stays() {
+    let window = |name: &str, function, window_s| {
+        let mut t = threshold(&["1"], Measure::CpuUsage, Some(0.9), None, name);
+        t.judged = Judged::Window { function, window_s };
+        t.for_s = 0;
+        t
+    };
+    let inventory = Inventory {
+        hosts: vec![host("1", "web-01", Os::Linux)],
+        thresholds: vec![
+            window("Busy for 5 minutes", WindowFunction::Min, 300),
+            window("Busy this hour", WindowFunction::Avg, 3_600),
+            // The same rule again merges, as before.
+            window("Busy for 5 minutes, critical", WindowFunction::Min, 300),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let kept = by_id(
+        &planned,
+        "threshold:web-01:monitorflow_cpu_usage_ratio:total:window",
+    );
+    assert_eq!(
+        kept.origin.name,
+        "Busy for 5 minutes + Busy for 5 minutes, critical"
+    );
+    let left: Vec<&Item> = planned
+        .items
+        .iter()
+        .filter(|i| i.list == List::NotMovable)
+        .collect();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].origin.name, "Busy this hour");
+    assert_eq!(left[0].note.as_ref().unwrap().code, "kind_taken");
+}
+
+#[test]
+fn a_host_already_a_server_with_its_agent_stays_one() {
+    // The source watches db-01 by ping only, but MonitorFlow has it as a
+    // server with an agent: its ping names the host, as for any server.
+    let mut db = host("1", "db-01", Os::Linux);
+    db.agentless = true;
+    let inventory = Inventory {
+        hosts: vec![db],
+        checks: vec![check("1", Watch::Ping { address: None }, None)],
+        ..Inventory::default()
+    };
+    let existing = Existing {
+        servers: vec![ExistingServer {
+            peer_id: "db-01".into(),
+            hostname: "db-01".into(),
+            site_id: site(),
+            may_change: true,
+            device: false,
+        }],
+        ..Existing::default()
+    };
+    let planned = run(&inventory, &existing);
+    let ping = planned.items.iter().find(|i| i.kind == "check").unwrap();
+    let Some(Create::Check { params, probe, .. }) = &ping.create else {
+        panic!("{ping:?}")
+    };
+    assert!(*probe);
+    assert_eq!(params["host"], "10.0.0.5");
 }

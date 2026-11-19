@@ -320,6 +320,10 @@ pub const NOTES: &[(&str, &str)] = &[
         "Prometheus alerts when no series at all is left (absent); MonitorFlow alerts on each series that stops.",
     ),
     (
+        "kind_taken",
+        "MonitorFlow keeps one rule of each kind per measure, and moves {kept} on it.",
+    ),
+    (
         "zabbix_partial",
         "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
     ),

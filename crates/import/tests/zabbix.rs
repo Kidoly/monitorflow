@@ -438,9 +438,16 @@ async fn web_scenarios_and_http_agent_items_are_website_checks() {
     assert_eq!(api.headers, vec![("X-Monitor".into(), "zabbix".into())]);
     assert_eq!(api.timeout_s, Some(5));
     assert_eq!(check.fidelity, Fidelity::Exact);
-    // `nodata(..., 5m)=1`: a no-data rule on the check (ADR-0153).
+    // `nodata(..., 5m)=1`: a no-data rule on the check, carried by a copy
+    // of it beside its own alert (ADR-0153).
+    assert_eq!(check.alert, None);
+    let silent = inventory
+        .checks
+        .iter()
+        .find(|c| c.watch == check.watch && c.alert.as_ref().is_some_and(|a| a.no_data))
+        .expect("a no-data alert of API health");
     assert_eq!(
-        check.alert,
+        silent.alert,
         Some(Alert {
             severity: Severity::Critical,
             for_s: 300,

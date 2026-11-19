@@ -331,6 +331,9 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
     // Items: built-in groups by owner and measure, checks one by one.
     let mut groups: Groups = BTreeMap::new();
     let mut pending: Vec<Pending> = Vec::new();
+    // No-data alerts (ADR-0153) come beside a check's own alert, as copies
+    // of the check that carry only them.
+    let mut silent: Vec<Check> = Vec::new();
     for (item, owner) in &view.items {
         let origin = Origin::new("item", &item.name).with_detail(&item.key);
         match items::map(item, &view.macros) {
@@ -490,6 +493,15 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
                         .entry(key.clone())
                         .or_default()
                         .push((trigger.tags.clone(), target.check.watch.clone()));
+                    if no_data {
+                        silent.push(Check {
+                            alert: Some(alert.clone()),
+                            origin: origin.clone(),
+                            fidelity: fidelity([note.clone(), severity_note.clone()]),
+                            ..target.check.clone()
+                        });
+                        continue;
+                    }
                     let stronger = match &target.check.alert {
                         None => true,
                         Some(a) => {
@@ -514,6 +526,7 @@ fn map_host(config: &Config, host: &config::Host, out: &mut Inventory, tagged: &
     }
     out.checks
         .extend(builtins.into_iter().chain(pending).map(|p| p.check));
+    out.checks.extend(silent);
 }
 
 /// An item's key as written and with its macros expanded, which is how

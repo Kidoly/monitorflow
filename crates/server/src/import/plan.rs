@@ -36,6 +36,9 @@ pub struct ExistingServer {
     pub site_id: Uuid,
     /// Whether the person importing administers its site.
     pub may_change: bool,
+    /// A device watched from a probe (ADR-0148), not a server with an
+    /// agent.
+    pub device: bool,
 }
 
 /// What MonitorFlow has already, which the plan does not create again.
@@ -482,6 +485,9 @@ impl Planner<'_> {
                 continue;
             }
             let existing = self.existing.server(&peer_id, &host.name);
+            // What MonitorFlow has already decides: an imported host that
+            // exists as a server with its agent stays one.
+            let device = existing.map_or(host.agentless, |s| s.device);
             let id = self.unique_id(format!("server:{lower}"));
             let addresses = host.addresses.clone();
             // The first address a probe can reach, else the name.
@@ -535,7 +541,7 @@ impl Planner<'_> {
                 item: (!present).then_some(id),
                 os: host.os,
                 may_change,
-                device: address.clone().filter(|_| host.agentless),
+                device: address.clone().filter(|_| device),
                 address,
             };
             by_peer.insert(lower, server.clone());
@@ -851,6 +857,9 @@ impl Planner<'_> {
         if let Some(name) = self.checks.get(&same).cloned() {
             self.watch_names
                 .insert((lower.clone(), format!("{:?}", check.watch)), name.clone());
+            if let Some(alert) = &no_data {
+                self.alert(&server, kind, &name, alert, origin.clone());
+            }
             if let Some(alert) = &alert {
                 self.alert(&server, kind, &name, alert, origin);
             }
@@ -1155,6 +1164,17 @@ impl Planner<'_> {
                 };
                 let map_key = (lower, metric, instance, richer.kind().to_owned());
                 match self.thresholds.get_mut(&map_key) {
+                    // One rule of each kind per measure (ADR-0153): another
+                    // window or forecast cannot join this one.
+                    Some(merged) if merged.richer != richer => {
+                        let kept = merged.origins[0].name.clone();
+                        self.not_movable(
+                            "threshold",
+                            origin.clone(),
+                            vec![server.name.clone()],
+                            note("kind_taken", args! {"kept" => kept}),
+                        );
+                    }
                     Some(merged) => {
                         merged.warning = merged.warning.or(threshold.warning);
                         merged.critical = merged.critical.or(threshold.critical);

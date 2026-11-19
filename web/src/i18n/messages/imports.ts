@@ -105,6 +105,8 @@ export const en = {
     "Prometheus compares single values; MonitorFlow compares averages over 5 minutes.",
   "note.prometheus_absent":
     "Prometheus alerts when no series at all is left (absent); MonitorFlow alerts on each series that stops.",
+  "note.kind_taken":
+    "MonitorFlow keeps one rule of each kind per measure, and moves {kept} on it.",
   "note.zabbix_partial":
     "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
   "note.zabbix_no_measure":
@@ -400,6 +402,8 @@ export const fr: Translation<typeof en> = {
     "Prometheus compare des valeurs isolées, MonitorFlow des moyennes sur 5 minutes.",
   "note.prometheus_absent":
     "Prometheus alerte quand il ne reste aucune série (absent), MonitorFlow sur chaque série qui s’arrête.",
+  "note.kind_taken":
+    "MonitorFlow garde une règle de chaque sorte par mesure, et y reprend {kept}.",
   "note.zabbix_partial":
     "Seule la condition {kept} est reprise ; MonitorFlow ne vérifie pas le reste de l’expression.",
   "note.zabbix_no_measure":
