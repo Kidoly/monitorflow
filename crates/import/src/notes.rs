@@ -332,6 +332,42 @@ pub const NOTES: &[(&str, &str)] = &[
         "The template {template} is not among the uploaded files: export it too, or connect to the Zabbix API.",
     ),
     (
+        "zabbix_change",
+        "Zabbix compares the last two values; MonitorFlow compares the change over {seconds} seconds.",
+    ),
+    (
+        "zabbix_fit",
+        "Zabbix fits a {fit} trend; MonitorFlow fits a straight line.",
+    ),
+    (
+        "zabbix_trend",
+        "Zabbix averages its hourly trends; MonitorFlow averages the values themselves over the same {seconds} seconds.",
+    ),
+    (
+        "zabbix_values_window",
+        "Zabbix reads the last {count} values; MonitorFlow reads the last {seconds} seconds, the time they take.",
+    ),
+    (
+        "window_rounded",
+        "MonitorFlow reads windows of 1 minute to 1 day; this one is {seconds} seconds.",
+    ),
+    (
+        "prometheus_deriv",
+        "Prometheus fits a line to the samples (deriv); MonitorFlow divides the change by the time.",
+    ),
+    (
+        "prometheus_compare_window",
+        "Prometheus compares single values; MonitorFlow compares averages over 5 minutes.",
+    ),
+    (
+        "prometheus_absent",
+        "Prometheus alerts when no series at all is left (absent); MonitorFlow alerts on each series that stops.",
+    ),
+    (
+        "kind_taken",
+        "MonitorFlow keeps one rule of each kind per measure, and moves {kept} on it.",
+    ),
+    (
         "zabbix_partial",
         "Only the condition {kept} is moved; MonitorFlow does not check the rest of the expression.",
     ),

@@ -224,12 +224,14 @@ export function thresholdRequest(
 }
 
 /**
- * Writes `request` as `owner`'s own threshold for its metric and instance:
+ * Writes `request` as `owner`'s own threshold for its metric, instance and kind:
  * replaces the row it has, or adds one. Inherited values stay untouched.
  */
 export async function saveThreshold(owner: ConfigOwner, request: ThresholdRequest): Promise<void> {
   const { entries } = await api.thresholdRows(owner);
-  const row = entries.find((e) => e.metric === request.metric && e.instance === request.instance);
+  // One row per metric, instance and kind (ADR-0153).
+  const kind = request.kind ?? "value";
+  const row = entries.find((e) => e.metric === request.metric && e.instance === request.instance && (e.kind ?? "value") === kind);
   await (row ? api.updateThreshold(row.id, request) : api.createThreshold(owner, request));
 }
 

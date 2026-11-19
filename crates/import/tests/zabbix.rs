@@ -13,8 +13,8 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use monitorflow_import::model::{
-    Alert, Check, Direction, Fidelity, Inventory, Measure, Os, Severity, SilenceScope, Target,
-    Threshold, Watch, WebMethod, Website,
+    Alert, Check, Direction, Fidelity, Inventory, Judged, Measure, Os, Severity, SilenceScope,
+    Target, Threshold, Watch, WebMethod, Website, WindowFunction,
 };
 use monitorflow_import::source::{check_input, Connection, File};
 use monitorflow_import::zabbix::Zabbix;
@@ -244,9 +244,14 @@ fn linux_template(inventory: &Inventory, stock: bool) {
         .flat_map(|t| t.hosts.iter().map(|h| (h.as_str(), t.warning.unwrap())))
         .collect();
     assert_eq!(by_host, BTreeMap::from([("db-01", 0.9), ("web-01", 0.8)]));
-    assert!(cpu
-        .iter()
-        .all(|t| t.for_s == 300 && t.measure == Measure::CpuUsage));
+    // `min(..., 5m)`: the lowest value over 5 minutes (ADR-0153).
+    assert!(cpu.iter().all(|t| t.for_s == 0
+        && t.judged
+            == Judged::Window {
+                function: WindowFunction::Min,
+                window_s: 300
+            }
+        && t.measure == Measure::CpuUsage));
 
     // Memory: 95 on db-01 by a host macro, 90 elsewhere; Average is
     // mapped to a warning.
@@ -390,7 +395,8 @@ async fn web_scenarios_and_http_agent_items_are_website_checks() {
         check.alert,
         Some(Alert {
             severity: Severity::Critical,
-            for_s: 0
+            for_s: 0,
+            no_data: false,
         })
     );
     let slow = thresholds(&inventory, "Shop is slow");
@@ -432,11 +438,20 @@ async fn web_scenarios_and_http_agent_items_are_website_checks() {
     assert_eq!(api.headers, vec![("X-Monitor".into(), "zabbix".into())]);
     assert_eq!(api.timeout_s, Some(5));
     assert_eq!(check.fidelity, Fidelity::Exact);
+    // `nodata(..., 5m)=1`: a no-data rule on the check, carried by a copy
+    // of it beside its own alert (ADR-0153).
+    assert_eq!(check.alert, None);
+    let silent = inventory
+        .checks
+        .iter()
+        .find(|c| c.watch == check.watch && c.alert.as_ref().is_some_and(|a| a.no_data))
+        .expect("a no-data alert of API health");
     assert_eq!(
-        check.alert,
+        silent.alert,
         Some(Alert {
             severity: Severity::Critical,
-            for_s: 300
+            for_s: 300,
+            no_data: true,
         })
     );
     // A POST, with a password.

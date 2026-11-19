@@ -154,6 +154,8 @@
 //! | POST | `/api/sites/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
 //! | PUT | `/api/thresholds/{id}` | modify | body [`thresholds::EntryRequest`], replaces the row; 200 [`thresholds::Entry`] |
 //! | DELETE | `/api/thresholds/{id}` | modify | 204 |
+//! | POST | `/api/servers/{id}/thresholds/preview` | read | body [`threshold_preview::PreviewRequest`]; [`threshold_preview::ServerPreview`]: the rule replayed on the last days, nothing written (ADR-0153) |
+//! | POST | `/api/sites/{id}/thresholds/preview` | read | body [`threshold_preview::PreviewRequest`]; [`threshold_preview::SitePreview`] over up to 20 servers |
 //! | GET | `/api/servers/{id}/metrics` | read | [`metrics::MetricList`]: metric names and instances of the last day |
 //! | GET | `/api/metrics/query` | read | [`metrics::QueryResult`], see below |
 //! | GET | `/api/metrics/query_range` | read | [`metrics::QueryResult`], see below |
@@ -771,6 +773,7 @@ pub mod sites;
 pub mod sources;
 pub mod sso_login;
 pub mod third_party;
+pub mod threshold_preview;
 pub mod thresholds;
 pub mod tokens;
 pub mod user_admin;
@@ -1345,6 +1348,14 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/thresholds/{id}",
             put(thresholds::update).delete(thresholds::delete),
+        )
+        .route(
+            "/api/servers/{id}/thresholds/preview",
+            post(threshold_preview::server),
+        )
+        .route(
+            "/api/sites/{id}/thresholds/preview",
+            post(threshold_preview::site),
         )
         .route("/api/servers/{id}/packages", get(packages::list))
         .route("/api/servers/{id}/third-party", get(third_party::list))

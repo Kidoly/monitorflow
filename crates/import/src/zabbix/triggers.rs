@@ -10,7 +10,7 @@
 //! (reads or writes of a disk waiting too long).
 
 use crate::args;
-use crate::model::{Direction, Measure, Watch};
+use crate::model::{Condition, Direction, Judged, Measure, Watch, WindowFunction};
 use crate::notes::Note;
 use crate::text;
 
@@ -22,6 +22,11 @@ use super::macros::{Lookup, Macros};
 /// One threshold a trigger gives.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Level {
+    /// What is judged: the value, a window, a forecast, no data
+    /// (ADR-0153).
+    pub judged: Judged,
+    /// Other measures joined with "and".
+    pub conditions: Vec<Condition>,
     pub measure: Measure,
     pub direction: Direction,
     /// In MonitorFlow's unit: a ratio from 0 to 1, a load, seconds.
@@ -43,6 +48,8 @@ pub enum Outcome {
     Alert {
         key: String,
         for_s: u32,
+        /// The check sending nothing for `for_s` (`nodata`).
+        no_data: bool,
         note: Option<Note>,
     },
     Unmovable(Note),
@@ -88,6 +95,7 @@ enum Part {
     Alert {
         key: String,
         for_s: u32,
+        no_data: bool,
     },
     /// A guard such as `last(...)>0`, which only checks there is data.
     Guard,
@@ -104,12 +112,29 @@ fn combine(expr: &Expr, host: &impl Host) -> Outcome {
                 .iter()
                 .filter(|(_, p)| matches!(p, Part::Levels(_) | Part::Alert { .. }))
                 .collect();
+            let guarded = useful.len() < mapped.len();
             match useful.as_slice() {
                 [(kept, part)] => {
                     let note = Note::new("zabbix_partial", args! {"kept" => kept});
                     outcome(part, Some(note))
                 }
                 [] => Outcome::Unmovable(first_reason(&mapped)),
+                // Two or three comparisons on the host: one rule with the
+                // others as conditions (ADR-0153).
+                [first, rest @ ..] if rest.len() <= 2 => match joined(&first.1, rest) {
+                    Some(part) => {
+                        let note = guarded.then(|| {
+                            let kept = useful
+                                .iter()
+                                .map(|(e, _)| e.to_string())
+                                .collect::<Vec<_>>()
+                                .join(" and ");
+                            Note::new("zabbix_partial", args! {"kept" => kept})
+                        });
+                        outcome(&part, note)
+                    }
+                    None => Outcome::Unmovable(Note::plain("expression")),
+                },
                 _ => Outcome::Unmovable(Note::plain("expression")),
             }
         }
@@ -140,6 +165,56 @@ fn combine(expr: &Expr, host: &impl Host) -> Outcome {
     }
 }
 
+/// The first part with the others as its conditions, when each other part
+/// is one threshold on the latest value or a window.
+fn joined(first: &Part, rest: &[&(&Expr, Part)]) -> Option<Part> {
+    let Part::Levels(levels) = first else {
+        return None;
+    };
+    let mut conditions = Vec::new();
+    for (_, part) in rest {
+        let Part::Levels(other) = part else {
+            return None;
+        };
+        let [level] = other.as_slice() else {
+            return None;
+        };
+        if !level.conditions.is_empty() {
+            return None;
+        }
+        let window = match level.judged {
+            Judged::Value => None,
+            Judged::Window { function, window_s } => Some((function, window_s)),
+            _ => return None,
+        };
+        conditions.push(Condition {
+            measure: level.measure.clone(),
+            direction: level.direction,
+            value: level.value,
+            window,
+        });
+    }
+    if levels.iter().any(|l| l.judged == Judged::NoData) {
+        return None;
+    }
+    Some(Part::Levels(
+        levels
+            .iter()
+            .cloned()
+            .map(|mut l| {
+                l.conditions = conditions.clone();
+                l.note = l.note.or_else(|| {
+                    rest.iter().find_map(|(_, p)| match p {
+                        Part::Levels(o) => o[0].note.clone(),
+                        _ => None,
+                    })
+                });
+                l
+            })
+            .collect(),
+    ))
+}
+
 /// The most telling reason among parts that could not be read: a
 /// specific one before the generic `expression`.
 fn first_reason(parts: &[(&Expr, Part)]) -> Note {
@@ -167,9 +242,14 @@ fn outcome(part: &Part, partial: Option<Note>) -> Outcome {
                 })
                 .collect(),
         ),
-        Part::Alert { key, for_s } => Outcome::Alert {
+        Part::Alert {
+            key,
+            for_s,
+            no_data,
+        } => Outcome::Alert {
             key: key.clone(),
             for_s: *for_s,
+            no_data: *no_data,
             note: partial,
         },
         Part::Guard => Outcome::Unmovable(Note::plain("expression")),
@@ -313,10 +393,14 @@ fn period(call: &Call, macros: &Macros) -> Result<Period, Note> {
     let raw = macros
         .expand(raw)
         .map_err(|m| Note::new("unresolved_macro", args! {"macro" => m}))?;
-    // A time shift (`5m:now-1h`) compares the past: not a threshold.
-    if raw.contains(':') {
-        return Err(Note::plain("expression"));
-    }
+    // A time shift (`5m:now-1h`) compares the past: not a threshold;
+    // `trendavg(..., 1h:now/h)` averages the hour so far, read as its
+    // length.
+    let raw = match raw.split_once(':') {
+        Some((length, "now/h" | "now/d")) if call.name == "trendavg" => length.to_owned(),
+        Some(_) => return Err(Note::plain("expression")),
+        None => raw,
+    };
     if let Some(count) = raw.strip_prefix('#') {
         return count
             .parse()
@@ -395,8 +479,22 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
             Part::Fails(Note::plain("expression"))
         }
         // A vCenter's measures compare values, as a server's do (ADR-0156).
-        Mapped::Check(Watch::Vmware, _) => {
-            level(&comparison, &name, key, &period, seconds(&period), macros)
+        Mapped::Check(Watch::Vmware, _) => level(
+            &comparison,
+            &name,
+            key,
+            &period,
+            seconds(&period),
+            interval,
+            macros,
+        ),
+        // A check sending nothing: a no-data rule on it (ADR-0153).
+        Mapped::Check(..) if comparison.call.name == "nodata" && is_true(&comparison) => {
+            Part::Alert {
+                key: key.to_owned(),
+                for_s: seconds(&period),
+                no_data: true,
+            }
         }
         Mapped::Check(..) | Mapped::Agent(_) => {
             // A check failing, or the agent gone: the check's alert.
@@ -407,6 +505,7 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
             Part::Alert {
                 key: key.to_owned(),
                 for_s,
+                no_data: false,
             }
         }
         // An item that cannot be moved: its trigger neither.
@@ -418,8 +517,36 @@ fn part(expr: &Expr, host: &impl Host) -> Part {
         {
             Part::Fails(note)
         }
-        _ => level(&comparison, &name, key, &period, seconds(&period), macros),
+        _ => level(
+            &comparison,
+            &name,
+            key,
+            &period,
+            seconds(&period),
+            interval,
+            macros,
+        ),
     }
+}
+
+/// Whether a comparison reads "the function is true": `=1` or alone.
+fn is_true(comparison: &Comparison<'_>) -> bool {
+    matches!(
+        (comparison.op, &comparison.constant),
+        (Op::Eq, Constant::Number { value, .. }) if *value == 1.0
+    ) || matches!(
+        (comparison.op, &comparison.constant),
+        (Op::Ne, Constant::Number { value, .. }) if *value == 0.0
+    )
+}
+
+/// A window of `seconds`, in MonitorFlow's bounds, with a note when it
+/// had to move.
+fn window_of(seconds: u32) -> (u32, Option<Note>) {
+    let bounded = seconds.clamp(60, 86_400);
+    let note =
+        (bounded != seconds).then(|| Note::new("window_rounded", args! {"seconds" => seconds}));
+    (bounded, note)
 }
 
 /// What a trigger on a web scenario's own item becomes: the scenario
@@ -438,6 +565,7 @@ fn web_test(comparison: &Comparison<'_>, name: &str, key: &str, host: &impl Host
     let alert = Part::Alert {
         key: format!("web:{scenario}"),
         for_s: 0,
+        no_data: false,
     };
     match name {
         "web.test.fail" | "web.test.error" => Some(alert),
@@ -497,6 +625,8 @@ fn response_level(
     }
     let sustained = matches!(function, "min" | "avg");
     Part::Levels(vec![Level {
+        judged: Judged::Value,
+        conditions: Vec::new(),
         measure,
         direction: Direction::Above,
         value: round(*value),
@@ -569,6 +699,8 @@ fn certificate(expr: &Expr, host: &impl Host) -> Option<Part> {
         return Some(Part::Fails(Note::plain("web_no_check")));
     };
     Some(Part::Levels(vec![Level {
+        judged: Judged::Value,
+        conditions: Vec::new(),
         measure: Measure::CertificateDays { url },
         direction: Direction::Below,
         value: round(limit / factor / 86_400.0),
@@ -579,27 +711,38 @@ fn certificate(expr: &Expr, host: &impl Host) -> Option<Part> {
 }
 
 /// A threshold from a comparison on a measure every server has.
+#[allow(clippy::too_many_arguments)]
 fn level(
     comparison: &Comparison<'_>,
     name: &str,
     key: &str,
     period: &Period,
     period_s: u32,
+    interval: Option<u32>,
     macros: &Macros,
 ) -> Part {
     let Constant::Number { value, written } = &comparison.constant else {
         return Part::Fails(Note::plain("expression"));
     };
+    let function = comparison.call.name.as_str();
+    let nodata = function == "nodata";
+    if nodata && !is_true(comparison) {
+        return Part::Fails(Note::plain("expression"));
+    }
     let direction = match comparison.op {
+        _ if nodata => Direction::Above,
         Op::Gt | Op::Ge => Direction::Above,
         Op::Lt | Op::Le => Direction::Below,
         _ => return Part::Fails(Note::plain("expression")),
     };
-    if direction == Direction::Above && *value == 0.0 && !comparison.per_cpu {
+    let latest_like = matches!(function, "last" | "min" | "max" | "avg");
+    if latest_like && direction == Direction::Above && *value == 0.0 && !comparison.per_cpu {
         return Part::Guard;
     }
-    let function = comparison.call.name.as_str();
-    if !matches!(function, "last" | "min" | "max" | "avg") {
+    if !matches!(
+        function,
+        "last" | "min" | "max" | "avg" | "change" | "nodata" | "timeleft" | "forecast" | "trendavg"
+    ) {
         return Part::Fails(Note::plain("expression"));
     }
     if function == "last" && !matches!(period, Period::Latest) {
@@ -695,17 +838,131 @@ fn level(
         (Direction::Above, true) => Direction::Below,
         (Direction::Below, true) => Direction::Above,
     };
-    // How long the value must last: the window of `min` above or `max`
-    // below a value, or of an average.
-    let sustained = matches!(
-        (function, comparison.op),
-        ("min", Op::Gt | Op::Ge) | ("max", Op::Lt | Op::Le) | ("avg", _)
-    );
-    let for_s = if sustained { period_s } else { 0 };
+    let mut note = note;
+    // The side a measure is a problem on, for a forecast of when it gets
+    // there: little memory, much of the rest.
+    let natural = if measure == Measure::MemoryAvailable {
+        Direction::Below
+    } else {
+        Direction::Above
+    };
+    let arg = |n: usize| {
+        comparison
+            .call
+            .args
+            .get(n)
+            .map(|a| {
+                macros
+                    .expand(a.trim())
+                    .unwrap_or_else(|_| a.trim().to_owned())
+            })
+            .unwrap_or_default()
+    };
+    let fit_note = |fit: String| match fit.as_str() {
+        "" | "linear" => None,
+        other => Some(Note::new("zabbix_fit", args! {"fit" => other})),
+    };
+    let (judged, direction, threshold, for_s) = match function {
+        // Seconds without a value; the severity's level is the period.
+        "nodata" => (
+            Judged::NoData,
+            Direction::Above,
+            f64::from(period_s.max(60)),
+            0,
+        ),
+        // `timeleft(item, period, threshold) < T`: T seconds left.
+        "timeleft" => {
+            // Less time left than a value; the side is the measure's.
+            if !matches!(comparison.op, Op::Lt | Op::Le) {
+                return Part::Fails(Note::plain("expression"));
+            }
+            let Some(target) = text::number(&arg(1)) else {
+                return Part::Fails(Note::plain("expression"));
+            };
+            note = note.or(fit_note(arg(2)));
+            let window_s = period_s.clamp(3_600, 604_800);
+            let forecast = Judged::Forecast {
+                target: round(transform(target)),
+                window_s,
+            };
+            (forecast, natural, *value, 0)
+        }
+        // `forecast(item, period, time) > X`: X within `time`.
+        "forecast" => {
+            let Some(within) = text::seconds(&arg(1)) else {
+                return Part::Fails(Note::plain("expression"));
+            };
+            if !matches!(arg(3).as_str(), "" | "value") {
+                return Part::Fails(Note::plain("expression"));
+            }
+            note = note.or(fit_note(arg(2)));
+            let window_s = period_s.clamp(3_600, 604_800);
+            let forecast = Judged::Forecast {
+                target: round(transform(*value)),
+                window_s,
+            };
+            (forecast, direction, within as f64, 0)
+        }
+        "change" => {
+            let seconds = interval.map_or(120, |i| i.saturating_mul(2));
+            let (window_s, rounded) = window_of(seconds);
+            note = note.or(rounded).or(Some(Note::new(
+                "zabbix_change",
+                args! {"seconds" => window_s},
+            )));
+            let window = Judged::Window {
+                function: WindowFunction::Change,
+                window_s,
+            };
+            (window, direction, transform(*value) - transform(0.0), 0)
+        }
+        "trendavg" => {
+            let (window_s, rounded) = window_of(period_s);
+            note = note.or(rounded).or(Some(Note::new(
+                "zabbix_trend",
+                args! {"seconds" => window_s},
+            )));
+            let window = Judged::Window {
+                function: WindowFunction::Avg,
+                window_s,
+            };
+            (window, direction, transform(*value), 0)
+        }
+        "min" | "max" | "avg" if period_s > 0 => {
+            let (window_s, rounded) = window_of(period_s);
+            note = note.or(rounded);
+            if let Period::Values(count) = period {
+                note = note.or(Some(Note::new(
+                    "zabbix_values_window",
+                    args! {"count" => count, "seconds" => window_s},
+                )));
+            }
+            // The lowest free share is the highest share used.
+            let function = match (function, flip) {
+                ("min", false) | ("max", true) => WindowFunction::Min,
+                ("max", false) | ("min", true) => WindowFunction::Max,
+                _ => WindowFunction::Avg,
+            };
+            let window = Judged::Window { function, window_s };
+            (window, direction, transform(*value), 0)
+        }
+        // The latest value; `min`, `max` and `avg` of a count of values
+        // whose interval is unknown last as long as the period.
+        _ => {
+            let sustained = matches!(
+                (function, comparison.op),
+                ("min", Op::Gt | Op::Ge) | ("max", Op::Lt | Op::Le) | ("avg", _)
+            );
+            let for_s = if sustained { period_s } else { 0 };
+            (Judged::Value, direction, transform(*value), for_s)
+        }
+    };
     let base = Level {
+        judged: judged.clone(),
+        conditions: Vec::new(),
         measure: measure.clone(),
         direction,
-        value: round(transform(*value)),
+        value: round(threshold),
         for_s,
         recovery: None,
         note,
@@ -731,9 +988,13 @@ fn level(
                 },
                 _ => continue,
             };
+            let value = match base.judged {
+                Judged::Value | Judged::Window { .. } => round(transform(number)),
+                _ => continue,
+            };
             levels.push(Level {
                 measure,
-                value: round(transform(number)),
+                value,
                 ..base.clone()
             });
         }
@@ -847,12 +1108,27 @@ mod tests {
 
     fn level(measure: Measure, direction: Direction, value: f64, for_s: u32) -> Level {
         Level {
+            judged: Judged::Value,
+            conditions: Vec::new(),
             measure,
             direction,
             value,
             for_s,
             recovery: None,
             note: None,
+        }
+    }
+
+    /// `level` judged over a window of its `for_s`, as `min`, `max` and
+    /// `avg` of a period become (ADR-0153).
+    fn win(level: Level, function: WindowFunction) -> Level {
+        Level {
+            judged: Judged::Window {
+                function,
+                window_s: level.for_s,
+            },
+            for_s: 0,
+            ..level
         }
     }
 
@@ -871,7 +1147,10 @@ mod tests {
     fn processor() {
         assert_eq!(
             one("min(/Linux by Zabbix agent/system.cpu.util,5m)>{$CPU.UTIL.CRIT}"),
-            Outcome::Thresholds(vec![level(Measure::CpuUsage, Direction::Above, 0.8, 300)])
+            Outcome::Thresholds(vec![win(
+                level(Measure::CpuUsage, Direction::Above, 0.8, 300),
+                WindowFunction::Min
+            )])
         );
         assert_eq!(
             one("last(/h/system.cpu.util)>95"),
@@ -879,7 +1158,10 @@ mod tests {
         );
         assert_eq!(
             one("avg(/h/system.cpu.util[,idle],10m)<20"),
-            Outcome::Thresholds(vec![level(Measure::CpuUsage, Direction::Above, 0.8, 600)])
+            Outcome::Thresholds(vec![win(
+                level(Measure::CpuUsage, Direction::Above, 0.8, 600),
+                WindowFunction::Avg
+            )])
         );
         assert_eq!(
             one("{Template OS Linux:system.cpu.load[percpu,avg1].avg(5m)}>5"),
@@ -887,11 +1169,9 @@ mod tests {
         );
         assert_eq!(
             one("avg(/h/system.cpu.load[all,avg15],15m)>=4"),
-            Outcome::Thresholds(vec![level(
-                Measure::CpuLoad { minutes: 15 },
-                Direction::Above,
-                4.0,
-                900
+            Outcome::Thresholds(vec![win(
+                level(Measure::CpuLoad { minutes: 15 }, Direction::Above, 4.0, 900),
+                WindowFunction::Avg
             )])
         );
         // The stock trigger: per processor, with guards.
@@ -911,11 +1191,10 @@ mod tests {
     fn memory() {
         assert_eq!(
             one("min(/L/vm.memory.util,5m)>{$MEMORY.UTIL.MAX}"),
-            Outcome::Thresholds(vec![level(
-                Measure::MemoryAvailable,
-                Direction::Below,
-                0.1,
-                300
+            // The lowest share used is the highest share available.
+            Outcome::Thresholds(vec![win(
+                level(Measure::MemoryAvailable, Direction::Below, 0.1, 300),
+                WindowFunction::Max
             )])
         );
         assert_eq!(
@@ -966,11 +1245,14 @@ mod tests {
             Outcome::Thresholds(vec![free])
         );
         // A prototype, and the host's override for one mount.
-        let base = level(
-            Measure::DiskUsed { mount: None },
-            Direction::Above,
-            0.9,
-            300,
+        let base = win(
+            level(
+                Measure::DiskUsed { mount: None },
+                Direction::Above,
+                0.9,
+                300,
+            ),
+            WindowFunction::Min,
         );
         let mut postgres = base.clone();
         postgres.measure = Measure::DiskUsed {
@@ -981,11 +1263,14 @@ mod tests {
             one("min(/L/vfs.fs.dependent.size[{#FSNAME},pused],5m)>{$VFS.FS.PUSED.MAX.CRIT:\"{#FSNAME}\"}"),
             Outcome::Thresholds(vec![base, postgres])
         );
-        let mut wait = level(
-            Measure::DiskWait { device: None },
-            Direction::Above,
-            0.02,
-            900,
+        let mut wait = win(
+            level(
+                Measure::DiskWait { device: None },
+                Direction::Above,
+                0.02,
+                900,
+            ),
+            WindowFunction::Min,
         );
         wait.note = Some(Note::plain("disk_wait"));
         assert_eq!(
@@ -1005,6 +1290,7 @@ mod tests {
             Outcome::Alert {
                 key: "net.tcp.port[,5432]".into(),
                 for_s: 180,
+                no_data: false,
                 note: None
             }
         );
@@ -1013,6 +1299,7 @@ mod tests {
             Outcome::Alert {
                 key: "zabbix[host,agent,available]".into(),
                 for_s: 180,
+                no_data: false,
                 note: None
             }
         );
@@ -1021,6 +1308,7 @@ mod tests {
             Outcome::Alert {
                 key: "agent.ping".into(),
                 for_s: 300,
+                no_data: false,
                 note: None
             }
         );
@@ -1029,6 +1317,7 @@ mod tests {
             Outcome::Alert {
                 key: "web:Shop home".into(),
                 for_s: 0,
+                no_data: false,
                 note: None
             }
         );
@@ -1037,6 +1326,7 @@ mod tests {
             Outcome::Alert {
                 key: "log[/var/log/syslog,error]".into(),
                 for_s: 0,
+                no_data: false,
                 note: None
             }
         );
@@ -1048,6 +1338,7 @@ mod tests {
             Outcome::Alert {
                 key: r#"net.tcp.service[http,"localhost","80"]"#.into(),
                 for_s: 0,
+                no_data: false,
                 note: Some(Note::new("zabbix_partial", args! {"kept" => kept}))
             }
         );
@@ -1057,7 +1348,10 @@ mod tests {
     fn recovery_values() {
         let mut t = trigger("min(/db-01/system.cpu.util,10m)>90");
         t.recovery = Some("max(/db-01/system.cpu.util,5m)<70".into());
-        let mut expected = level(Measure::CpuUsage, Direction::Above, 0.9, 600);
+        let mut expected = win(
+            level(Measure::CpuUsage, Direction::Above, 0.9, 600),
+            WindowFunction::Min,
+        );
         expected.recovery = Some(0.7);
         assert_eq!(map(&t, &host()), Outcome::Thresholds(vec![expected]));
     }
@@ -1084,6 +1378,175 @@ mod tests {
         assert_eq!(
             map(&off, &host()),
             Outcome::Unmovable(Note::plain("disabled"))
+        );
+    }
+
+    fn levels(expression: &str) -> Vec<Level> {
+        match one(expression) {
+            Outcome::Thresholds(levels) => levels,
+            other => panic!("{expression}: thresholds expected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn richer_functions_map_to_richer_rules() {
+        // No data from a measure: seconds of silence.
+        let silent = &levels("nodata(/h/system.cpu.util,10m)=1")[0];
+        assert_eq!(
+            (&silent.judged, silent.value, silent.note.as_ref()),
+            (&Judged::NoData, 600.0, None)
+        );
+        assert_eq!(levels("nodata(/h/system.cpu.util,5m)")[0].value, 300.0);
+        assert_eq!(unmovable("nodata(/h/system.cpu.util,5m)=0"), "expression");
+        // No data from a check: a no-data rule on it.
+        assert_eq!(
+            one("nodata(/db-01/net.tcp.port[,5432],5m)=1"),
+            Outcome::Alert {
+                key: "net.tcp.port[,5432]".into(),
+                for_s: 300,
+                no_data: true,
+                note: None
+            }
+        );
+        // Time left until a disk is full, learned over a day.
+        let full = &levels("timeleft(/h/vfs.fs.size[/,pused],1d,100)<3d")[0];
+        assert_eq!(
+            (&full.judged, full.direction, full.value, &full.note),
+            (
+                &Judged::Forecast {
+                    target: 1.0,
+                    window_s: 86_400
+                },
+                Direction::Above,
+                259_200.0,
+                &None
+            )
+        );
+        // Free space reaching 0 is the same disk full.
+        let free = &levels("timeleft(/h/vfs.fs.size[/,pfree],1h,0)<1d")[0];
+        assert_eq!(
+            free.judged,
+            Judged::Forecast {
+                target: 1.0,
+                window_s: 3_600
+            }
+        );
+        // Another fit is approximated.
+        let fitted = &levels("timeleft(/h/vfs.fs.size[/,pused],1d,100,polynomial2)<3d")[0];
+        assert_eq!(
+            fitted.note.as_ref().map(|n| n.code.as_str()),
+            Some("zabbix_fit")
+        );
+        assert_eq!(
+            unmovable("timeleft(/h/vfs.fs.size[/,pused],1d,100)>3d"),
+            "expression"
+        );
+        // The value in a day above 90%: 90% within a day.
+        let soon = &levels("forecast(/h/vfs.fs.size[/,pused],6h,1d)>90")[0];
+        assert_eq!(
+            (&soon.judged, soon.direction, soon.value),
+            (
+                &Judged::Forecast {
+                    target: 0.9,
+                    window_s: 21_600
+                },
+                Direction::Above,
+                86_400.0
+            )
+        );
+        // Memory available forecast below 5%.
+        let memory = &levels("forecast(/h/vm.memory.size[pavailable],1d,12h)<5")[0];
+        assert_eq!(
+            (memory.direction, memory.value),
+            (Direction::Below, 43_200.0)
+        );
+        // The change between the last two values: over two intervals.
+        let load = &levels("change(/h/system.cpu.load[all,avg1])>2")[0];
+        assert_eq!(
+            (
+                &load.judged,
+                load.value,
+                load.note.as_ref().map(|n| n.code.as_str())
+            ),
+            (
+                &Judged::Window {
+                    function: WindowFunction::Change,
+                    window_s: 120
+                },
+                2.0,
+                Some("zabbix_change")
+            )
+        );
+        // Hourly trends: the average over the hour, approximated.
+        let trend = &levels("trendavg(/h/system.cpu.util,1h:now/h)>80")[0];
+        assert_eq!(
+            (
+                &trend.judged,
+                trend.value,
+                trend.note.as_ref().map(|n| n.code.as_str())
+            ),
+            (
+                &Judged::Window {
+                    function: WindowFunction::Avg,
+                    window_s: 3_600
+                },
+                0.8,
+                Some("zabbix_trend")
+            )
+        );
+        // A count of values: their time, at the item's interval.
+        assert_eq!(
+            unmovable("avg(/h/system.cpu.util,1h:now-1d)>80"),
+            "expression"
+        );
+        // A window shorter than a minute is rounded up, with a note.
+        let short = &levels("avg(/h/system.cpu.util,30s)>80")[0];
+        assert_eq!(
+            short.note.as_ref().map(|n| n.code.as_str()),
+            Some("window_rounded")
+        );
+    }
+
+    #[test]
+    fn comparisons_joined_with_and_become_conditions() {
+        let joined =
+            &levels("avg(/h/system.cpu.util,5m)>90 and last(/h/system.cpu.load[all,avg1])>8")[0];
+        assert_eq!(joined.measure, Measure::CpuUsage);
+        assert_eq!(
+            joined.conditions,
+            [Condition {
+                measure: Measure::CpuLoad { minutes: 1 },
+                direction: Direction::Above,
+                value: 8.0,
+                window: None,
+            }]
+        );
+        assert_eq!(joined.note, None);
+        // Three parts, one a window, and a guard dropped with a note.
+        let three = &levels("last(/h/vfs.fs.size[/,pused])>90 and min(/h/vm.memory.util,5m)>80 and last(/h/system.cpu.load[all,avg5])>4 and last(/h/vfs.fs.size[/,total])>0");
+        assert_eq!(three[0].conditions.len(), 2);
+        assert_eq!(
+            three[0].conditions[0].window,
+            Some((WindowFunction::Max, 300))
+        );
+        assert_eq!(
+            three[0].note.as_ref().map(|n| n.code.as_str()),
+            Some("zabbix_partial")
+        );
+        // Four parts, a forecast as a condition, or no data first: not movable.
+        assert_eq!(
+            unmovable("last(/h/system.cpu.util)>1 and last(/h/system.cpu.util)>2 and last(/h/system.cpu.util)>3 and last(/h/system.cpu.util)>4"),
+            "expression"
+        );
+        assert_eq!(
+            unmovable(
+                "last(/h/system.cpu.util)>90 and timeleft(/h/vfs.fs.size[/,pused],1d,100)<3d"
+            ),
+            "expression"
+        );
+        assert_eq!(
+            unmovable("nodata(/h/system.cpu.util,5m)=1 and last(/h/system.cpu.load[all,avg1])>8"),
+            "expression"
         );
     }
 }

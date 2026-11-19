@@ -171,6 +171,25 @@ fn incident_text(event: &str, details: &Value) -> String {
         };
     }
     let sensor = sensor(incident);
+    // Richer rules (ADR-0153) say what they judged in the incident's words:
+    // a time left, a silence, an average.
+    let kind = str_at(incident, &["kind"]).unwrap_or("value");
+    if let (true, Some(v)) = (
+        kind != "value",
+        incident.get("value").and_then(Value::as_f64),
+    ) {
+        if event != "incident.resolved" {
+            let metric = str_at(incident, &["metric"]).unwrap_or_default();
+            let threshold = incident.get("threshold").unwrap_or(&Value::Null);
+            let sentence = crate::alerting::reason::incident(metric, severity, true, v, threshold);
+            return match event {
+                "incident.escalated" => {
+                    format!("Escalated to {severity}: {sensor} on {place}: {sentence}")
+                }
+                _ => format!("{}: {sensor} on {place}: {sentence}", capitalized(severity)),
+            };
+        }
+    }
     match (event, value) {
         ("incident.resolved", _) => format!("Resolved: {sensor} on {place}"),
         ("incident.escalated", Some(v)) => {
@@ -796,6 +815,33 @@ mod tests {
         assert!(
             body.starts_with("a\\nb\n\nhttps://mf.example/x\\n\n\n- one\\ntwo\n"),
             "{body}"
+        );
+    }
+
+    #[test]
+    fn richer_rules_say_what_they_judged() {
+        let details = |event_kind: &str, value: f64| {
+            json!({
+                "server": {"name": "web-1"},
+                "incident": {
+                    "metric": "monitorflow_disk_used_ratio", "instance": "/", "severity": "warning",
+                    "value": value, "kind": event_kind,
+                    "threshold": {"kind": event_kind, "comparison": ">=", "target": 1.0,
+                                  "warning": 259200.0},
+                },
+            })
+        };
+        assert_eq!(
+            incident_text("incident.opened", &details("forecast", 2.0 * 86_400.0)),
+            "Warning: disk_used_ratio / on web-1: Expected to reach 100% in about 2 days"
+        );
+        assert_eq!(
+            incident_text("incident.opened", &details("nodata", 600.0)),
+            "Warning: disk_used_ratio / on web-1: No data for 10 minutes"
+        );
+        assert_eq!(
+            incident_text("incident.resolved", &details("forecast", 0.5)),
+            "Resolved: disk_used_ratio / on web-1"
         );
     }
 }

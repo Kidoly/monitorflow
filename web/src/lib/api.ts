@@ -801,11 +801,40 @@ export interface EffectiveThreshold {
   instance: string | null;
   /** False: muted by a disabled row, which the engine skips. */
   enabled: boolean;
+  /** What the rule judges (ADR-0153); absent from older servers: `value`. */
+  kind?: RuleKind;
   comparison: Comparison;
   warning: number | null;
   critical: number | null;
   duration_s: number;
   hysteresis: number;
+  function?: RuleFunction | null;
+  window_s?: number | null;
+  offset_s?: number | null;
+  target?: number | null;
+  conditions?: RuleCondition[];
+}
+
+/** What a threshold judges (ADR-0153). */
+export type RuleKind = "value" | "window" | "compare" | "forecast" | "nodata";
+/** A window's function, or how a comparison compares. */
+export type RuleFunction = "avg" | "min" | "max" | "change" | "rate" | "ratio" | "difference";
+
+/** A condition joined with "and" to a threshold, on the same server. */
+export interface RuleCondition {
+  metric: string;
+  /** Null: the instance of the series judged, else the one without. */
+  instance: string | null;
+  function: "value" | "avg" | "min" | "max" | "change" | "rate";
+  window_s?: number | null;
+  comparison: Comparison;
+  value: number;
+}
+
+/** A rule MonitorFlow suggests: post `rule` to add it, with `enabled: false` to decline it. */
+export interface RecommendedThreshold {
+  key: string;
+  rule: ThresholdRequest;
 }
 
 /** `GET /api/servers/{id}/thresholds/effective`. */
@@ -814,6 +843,43 @@ export interface EffectiveThresholds {
   site_id: string;
   revision: number;
   thresholds: EffectiveThreshold[];
+  recommended?: RecommendedThreshold[];
+}
+
+/** An incident a rule would have opened, in a preview. Unix milliseconds. */
+export interface PreviewIncident {
+  severity: "warning" | "critical";
+  opened_at: number;
+  resolved_at: number | null;
+  peak_value: number;
+}
+
+/** One series replayed by a preview. */
+export interface PreviewSeries {
+  instance: string;
+  /** `[Unix ms, judged value]`. */
+  points: [number, number][];
+  incidents: PreviewIncident[];
+}
+
+/** `POST /api/servers/{id}/thresholds/preview`. */
+export interface ServerPreview {
+  server_id: string;
+  from: number;
+  to: number;
+  days: number;
+  series: PreviewSeries[];
+  truncated: boolean;
+}
+
+/** `POST /api/sites/{id}/thresholds/preview`. */
+export interface SitePreview {
+  site_id: string;
+  from: number;
+  to: number;
+  days: number;
+  servers: { server_id: string; hostname: string; incidents: number; series: PreviewSeries[] }[];
+  more_servers: boolean;
 }
 
 /** `GET /api/sites/{id}/sensors`: the built-in defaults overlaid with the site's rows. */
@@ -826,6 +892,7 @@ export interface SiteSensors extends CheckIntervalOf {
 export interface SiteThresholds {
   site_id: string;
   thresholds: EffectiveThreshold[];
+  recommended?: RecommendedThreshold[];
 }
 
 /** Where a sensor or threshold row applies: every server of a site, or one server. */
@@ -923,12 +990,19 @@ export interface WebsiteCheckList {
 export interface ThresholdRequest {
   metric: string;
   instance: string | null;
+  /** `value` when absent. */
+  kind?: RuleKind;
   comparison: Comparison;
   warning: number | null;
   critical: number | null;
   duration_s: number;
   hysteresis: number;
   enabled: boolean;
+  function?: RuleFunction;
+  window_s?: number;
+  offset_s?: number;
+  target?: number;
+  conditions?: RuleCondition[];
 }
 
 /** One stored row of `thresholds`; exactly one of `site_id` and `server_id` is set. */
@@ -1198,6 +1272,13 @@ export interface ThresholdSnapshot {
   critical: number | null;
   duration_s: number;
   hysteresis: number;
+  /** Set for every kind but `value` (ADR-0153). */
+  kind?: RuleKind;
+  function?: RuleFunction | null;
+  window_s?: number | null;
+  offset_s?: number | null;
+  target?: number | null;
+  conditions?: RuleCondition[];
 }
 
 /** One incident of `GET /api/incidents`. Times are sample times. */
@@ -1232,6 +1313,10 @@ export interface Incident {
   in_maintenance?: boolean;
   /** Whether a silence ever held back a notification of it. */
   silenced?: boolean;
+  /** The kind of rule that opened it (ADR-0153); absent from older servers. */
+  kind?: RuleKind;
+  /** While a forecast is open, when it expects its target. */
+  expected_at?: string | null;
   /** The parent's incident that speaks for it: it opened a moment before its parent went down and was never told (ADR-0152). */
   hidden_by?: string | null;
   /** Who said they are on it, and when (ADR-0082); null until someone does. */
@@ -1653,6 +1738,13 @@ export type ImportCreate =
       critical: number | null;
       duration_s: number;
       hysteresis: number;
+      /** What a richer rule judges (ADR-0153); absent for a plain threshold. */
+      kind?: RuleKind;
+      function?: RuleFunction;
+      window_s?: number;
+      offset_s?: number;
+      target?: number;
+      conditions?: RuleCondition[];
     }
   | { object: "silence"; server: string | null; starts_at: string; ends_at: string; reason: string; checks?: SilencedCheck[] }
   | ({ object: "window"; servers: string[]; checks?: SilencedCheck[] } & Omit<MaintenanceWindowRequest, "site_id" | "server_ids" | "checks">)
@@ -4080,6 +4172,21 @@ export const api = {
     request<ThresholdEntry>(`/api/thresholds/${encodeURIComponent(id)}`, {
       method: "PUT",
       body,
+    }),
+
+  /** What a rule would have done over the last days (ADR-0153); writes nothing. */
+  previewServerThreshold: (serverId: string, rule: ThresholdRequest, days: number, signal?: AbortSignal) =>
+    request<ServerPreview>(`/api/servers/${encodeURIComponent(serverId)}/thresholds/preview`, {
+      method: "POST",
+      body: { rule, days },
+      signal,
+    }),
+
+  previewSiteThreshold: (siteId: string, rule: ThresholdRequest, days: number, signal?: AbortSignal) =>
+    request<SitePreview>(`/api/sites/${encodeURIComponent(siteId)}/thresholds/preview`, {
+      method: "POST",
+      body: { rule, days },
+      signal,
     }),
 
   deleteThreshold: (id: string) =>

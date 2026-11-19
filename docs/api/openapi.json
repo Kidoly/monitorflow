@@ -10903,10 +10903,12 @@
                       "acknowledged_by": null,
                       "can_acknowledge": true,
                       "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "expected_at": null,
                       "hostname": "web-1",
                       "id": "4d3c2b1a-0f9e-4d8c-b7a6-5f4e3d2c1b0a",
                       "in_maintenance": false,
                       "instance": "/var",
+                      "kind": "value",
                       "last_value": 0.97,
                       "last_value_at": "2026-11-14T09:29:00Z",
                       "metric": "monitorflow_disk_used_ratio",
@@ -11222,6 +11224,7 @@
                       "value": null
                     }
                   ],
+                  "expected_at": null,
                   "follow_up": {
                     "next": [
                       "carol"
@@ -11238,6 +11241,7 @@
                   "id": "4d3c2b1a-0f9e-4d8c-b7a6-5f4e3d2c1b0a",
                   "in_maintenance": false,
                   "instance": "/var",
+                  "kind": "value",
                   "last_value": 0.97,
                   "last_value_at": "2026-11-14T09:29:00Z",
                   "metric": "monitorflow_disk_used_ratio",
@@ -28507,18 +28511,24 @@
                   "entries": [
                     {
                       "comparison": "<",
+                      "conditions": [],
                       "created_at": "2026-11-02T10:20:00Z",
                       "critical": 0.98,
                       "duration_s": 600,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
                       "instance": "/var",
+                      "kind": "value",
                       "metric": "monitorflow_memory_available_ratio",
+                      "offset_s": null,
                       "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
                       "site_id": null,
+                      "target": null,
                       "updated_at": "2026-11-02T10:20:00Z",
-                      "warning": 0.9
+                      "warning": 0.9,
+                      "window_s": null
                     }
                   ]
                 }
@@ -28600,7 +28610,7 @@
           "thresholds"
         ],
         "summary": "Add a threshold row to a server",
-        "description": "Sets a threshold for one server, replacing for it the one of the same metric and instance that its site or the built-in thresholds give; with `enabled: false`, turns that threshold off for it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\n`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is wrong; a second row with the same `metric` and `instance` for the same site or server is 409.\n\nAudited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change within seconds; an open incident's `threshold` still shows the values it opened with.",
+        "description": "Sets a threshold for one server, replacing for it the one of the same metric and instance that its site or the built-in thresholds give; with `enabled: false`, turns that threshold off for it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\n`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is wrong; a second row with the same `metric`, `instance` and `kind` for the same site or server is 409.\n\n`kind` says what is judged (ADR-0153), with only the fields it uses: `value` (the default) the sample; `window` a `function` (`avg`, `min`, `max`, `change`, `rate` per second) over `window_s` (60 to 86400); `compare` the average over `window_s` (300 to 86400) against `offset_s` earlier (86400 or 604800), as a `ratio` or a `difference`; `forecast` the seconds left until the value reaches `target` on the side `comparison` names, learned over `window_s` (3600 to 604800), with `warning` and `critical` in seconds left (critical the shorter); `nodata` the seconds since the last sample arrived, with `warning` and `critical` in seconds (60 to 604800), no `duration_s` and no `comparison` but `>`. Up to two `conditions` joined with \"and\" read other metrics of the same server (not for `nodata`). Use `POST .../thresholds/preview` to see what a rule would have done.\n\nAudited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change within seconds; an open incident's `threshold` still shows the values it opened with.",
         "operationId": "create_server_threshold",
         "parameters": [
           {
@@ -28632,6 +28642,36 @@
                 "$ref": "#/components/schemas/ThresholdRequest"
               },
               "examples": {
+                "and": {
+                  "summary": "Processor over 90% while the load is over 8",
+                  "value": {
+                    "comparison": ">",
+                    "conditions": [
+                      {
+                        "comparison": ">",
+                        "metric": "monitorflow_cpu_load1",
+                        "value": 8
+                      }
+                    ],
+                    "duration_s": 300,
+                    "instance": "total",
+                    "metric": "monitorflow_cpu_usage_ratio",
+                    "warning": 0.9
+                  }
+                },
+                "compare": {
+                  "summary": "Twice last week's traffic",
+                  "value": {
+                    "comparison": ">",
+                    "function": "ratio",
+                    "instance": "eth0",
+                    "kind": "compare",
+                    "metric": "monitorflow_net_received_bytes_per_second",
+                    "offset_s": 604800,
+                    "warning": 2,
+                    "window_s": 3600
+                  }
+                },
                 "disk": {
                   "summary": "Warn later on a big volume",
                   "value": {
@@ -28644,6 +28684,29 @@
                     "warning": 0.9
                   }
                 },
+                "forecast": {
+                  "summary": "Warn 3 days before /var is full",
+                  "value": {
+                    "comparison": ">=",
+                    "critical": 86400,
+                    "hysteresis": 3600,
+                    "instance": "/var",
+                    "kind": "forecast",
+                    "metric": "monitorflow_disk_used_ratio",
+                    "target": 1,
+                    "warning": 259200,
+                    "window_s": 86400
+                  }
+                },
+                "nodata": {
+                  "summary": "Critical when the port check stops reporting for 10 minutes",
+                  "value": {
+                    "critical": 600,
+                    "instance": "",
+                    "kind": "nodata",
+                    "metric": "monitorflow_port_443_up"
+                  }
+                },
                 "off": {
                   "summary": "Turn the CPU threshold off for this server",
                   "value": {
@@ -28651,6 +28714,18 @@
                     "enabled": false,
                     "instance": "total",
                     "metric": "monitorflow_cpu_usage_ratio"
+                  }
+                },
+                "window": {
+                  "summary": "Warn on the load average over 15 minutes",
+                  "value": {
+                    "comparison": ">",
+                    "function": "avg",
+                    "instance": "",
+                    "kind": "window",
+                    "metric": "monitorflow_cpu_load1",
+                    "warning": 8,
+                    "window_s": 900
                   }
                 }
               }
@@ -28668,18 +28743,24 @@
                 },
                 "example": {
                   "comparison": "<",
+                  "conditions": [],
                   "created_at": "2026-11-02T10:20:00Z",
                   "critical": 0.98,
                   "duration_s": 600,
                   "enabled": true,
+                  "function": null,
                   "hysteresis": 0.02,
                   "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
                   "instance": "/var",
+                  "kind": "value",
                   "metric": "monitorflow_memory_available_ratio",
+                  "offset_s": null,
                   "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
                   "site_id": null,
+                  "target": null,
                   "updated_at": "2026-11-02T10:20:00Z",
-                  "warning": 0.9
+                  "warning": 0.9,
+                  "window_s": null
                 }
               }
             }
@@ -28781,7 +28862,7 @@
           "thresholds"
         ],
         "summary": "Get a server's effective thresholds",
-        "description": "The thresholds MonitorFlow checks the server's metrics against: the built-in ones overlaid with its site's rows, then its own, each with where it comes from. Muted ones are listed with `enabled: false`.\n\n**Who**: any role on the server's site. **Area**: `alerts`.",
+        "description": "The thresholds MonitorFlow checks the server's metrics against: the built-in ones overlaid with its site's rows, then its own, each with where it comes from. Muted ones are listed with `enabled: false`. One metric and instance can have one rule of each `kind`. `recommended` lists rules MonitorFlow suggests for the site that nobody added or declined yet: post one to the site's thresholds to add it, or the same with `enabled: false` to decline it.\n\n**Who**: any role on the server's site. **Area**: `alerts`.",
         "operationId": "server_thresholds_effective",
         "parameters": [
           {
@@ -28804,57 +28885,99 @@
                   "$ref": "#/components/schemas/EffectiveThresholds"
                 },
                 "example": {
+                  "recommended": [
+                    {
+                      "key": "disk_forecast",
+                      "rule": {
+                        "comparison": ">=",
+                        "critical": 86400.0,
+                        "duration_s": 0,
+                        "enabled": true,
+                        "hysteresis": 3600.0,
+                        "instance": null,
+                        "kind": "forecast",
+                        "metric": "monitorflow_disk_used_ratio",
+                        "target": 1.0,
+                        "warning": 259200.0,
+                        "window_s": 86400
+                      }
+                    }
+                  ],
                   "revision": 4,
                   "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
                   "thresholds": [
                     {
                       "comparison": ">",
+                      "conditions": [],
                       "critical": null,
                       "duration_s": 600,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "instance": "total",
+                      "kind": "value",
                       "metric": "monitorflow_cpu_usage_ratio",
+                      "offset_s": null,
                       "origin": "default",
+                      "target": null,
                       "threshold_id": null,
-                      "warning": 0.9
+                      "warning": 0.9,
+                      "window_s": null
                     },
                     {
                       "comparison": ">",
+                      "conditions": [],
                       "critical": 0.95,
                       "duration_s": 300,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "instance": null,
+                      "kind": "value",
                       "metric": "monitorflow_disk_used_ratio",
+                      "offset_s": null,
                       "origin": "default",
+                      "target": null,
                       "threshold_id": null,
-                      "warning": 0.85
+                      "warning": 0.85,
+                      "window_s": null
                     },
                     {
                       "comparison": ">",
+                      "conditions": [],
                       "critical": null,
                       "duration_s": 600,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "instance": null,
+                      "kind": "value",
                       "metric": "monitorflow_diskio_wait_seconds",
+                      "offset_s": null,
                       "origin": "default",
+                      "target": null,
                       "threshold_id": null,
-                      "warning": 0.2
+                      "warning": 0.2,
+                      "window_s": null
                     },
                     {
                       "comparison": "<",
+                      "conditions": [],
                       "critical": 0.05,
                       "duration_s": 600,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "instance": null,
+                      "kind": "value",
                       "metric": "monitorflow_memory_available_ratio",
+                      "offset_s": null,
                       "origin": "site",
+                      "target": null,
                       "threshold_id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
-                      "warning": 0.15
+                      "warning": 0.15,
+                      "window_s": null
                     }
                   ]
                 }
@@ -28921,6 +29044,201 @@
           },
           "500": {
             "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/thresholds/preview": {
+      "post": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Preview a threshold on a server",
+        "description": "What a rule would have done to the server over the last `days` (1 to 7, 3 by default): its history from the metrics store replayed through the same code MonitorFlow alerts with. For each series the rule judges (at most 20), the judged value (the sample, the window's value, the ratio, the seconds left or of silence; at most 300 points, the worst of each stretch) and the incidents it would have opened and resolved, with their times. The rule is checked as when it is saved, and nothing is written or audited.\n\n**Who**: any role on the server's site. **Area**: `alerts`.",
+        "operationId": "preview_server_threshold",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              },
+              "example": {
+                "days": 3,
+                "rule": {
+                  "comparison": ">",
+                  "function": "avg",
+                  "instance": "",
+                  "kind": "window",
+                  "metric": "monitorflow_cpu_load1",
+                  "warning": 4,
+                  "window_s": 900
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the rule would have done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerPreview"
+                },
+                "example": {
+                  "days": 3,
+                  "from": 1763280000000,
+                  "series": [
+                    {
+                      "incidents": [
+                        {
+                          "opened_at": 1763456400000,
+                          "peak_value": 4.6,
+                          "resolved_at": 1763460000000,
+                          "severity": "warning"
+                        }
+                      ],
+                      "instance": "",
+                      "points": [
+                        [
+                          1763452800000,
+                          2.1
+                        ],
+                        [
+                          1763456400000,
+                          4.6
+                        ]
+                      ]
+                    }
+                  ],
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "to": 1763539200000,
+                  "truncated": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The rule or `days` is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics store did not answer: `metrics_unavailable`",
             "content": {
               "application/json": {
                 "schema": {
@@ -33437,18 +33755,24 @@
                   "entries": [
                     {
                       "comparison": "<",
+                      "conditions": [],
                       "created_at": "2026-11-02T10:20:00Z",
                       "critical": 0.05,
                       "duration_s": 600,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
                       "instance": null,
+                      "kind": "value",
                       "metric": "monitorflow_memory_available_ratio",
+                      "offset_s": null,
                       "server_id": null,
                       "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "target": null,
                       "updated_at": "2026-11-02T10:20:00Z",
-                      "warning": 0.15
+                      "warning": 0.15,
+                      "window_s": null
                     }
                   ]
                 }
@@ -33530,7 +33854,7 @@
           "thresholds"
         ],
         "summary": "Add a threshold row to a site",
-        "description": "Sets a threshold for every server of the site, replacing the built-in one of the same metric and instance; with `enabled: false`, turns it off. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\n`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is wrong; a second row with the same `metric` and `instance` for the same site or server is 409.\n\nAudited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change within seconds; an open incident's `threshold` still shows the values it opened with.",
+        "description": "Sets a threshold for every server of the site, replacing the built-in one of the same metric and instance; with `enabled: false`, turns it off. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\n`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is wrong; a second row with the same `metric`, `instance` and `kind` for the same site or server is 409.\n\n`kind` says what is judged (ADR-0153), with only the fields it uses: `value` (the default) the sample; `window` a `function` (`avg`, `min`, `max`, `change`, `rate` per second) over `window_s` (60 to 86400); `compare` the average over `window_s` (300 to 86400) against `offset_s` earlier (86400 or 604800), as a `ratio` or a `difference`; `forecast` the seconds left until the value reaches `target` on the side `comparison` names, learned over `window_s` (3600 to 604800), with `warning` and `critical` in seconds left (critical the shorter); `nodata` the seconds since the last sample arrived, with `warning` and `critical` in seconds (60 to 604800), no `duration_s` and no `comparison` but `>`. Up to two `conditions` joined with \"and\" read other metrics of the same server (not for `nodata`). Use `POST .../thresholds/preview` to see what a rule would have done.\n\nAudited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change within seconds; an open incident's `threshold` still shows the values it opened with.",
         "operationId": "create_site_threshold",
         "parameters": [
           {
@@ -33583,18 +33907,24 @@
                 },
                 "example": {
                   "comparison": "<",
+                  "conditions": [],
                   "created_at": "2026-11-02T10:20:00Z",
                   "critical": 0.05,
                   "duration_s": 600,
                   "enabled": true,
+                  "function": null,
                   "hysteresis": 0.02,
                   "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
                   "instance": null,
+                  "kind": "value",
                   "metric": "monitorflow_memory_available_ratio",
+                  "offset_s": null,
                   "server_id": null,
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "target": null,
                   "updated_at": "2026-11-02T10:20:00Z",
-                  "warning": 0.15
+                  "warning": 0.15,
+                  "window_s": null
                 }
               }
             }
@@ -33719,55 +34049,97 @@
                   "$ref": "#/components/schemas/SiteThresholds"
                 },
                 "example": {
+                  "recommended": [
+                    {
+                      "key": "disk_forecast",
+                      "rule": {
+                        "comparison": ">=",
+                        "critical": 86400.0,
+                        "duration_s": 0,
+                        "enabled": true,
+                        "hysteresis": 3600.0,
+                        "instance": null,
+                        "kind": "forecast",
+                        "metric": "monitorflow_disk_used_ratio",
+                        "target": 1.0,
+                        "warning": 259200.0,
+                        "window_s": 86400
+                      }
+                    }
+                  ],
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
                   "thresholds": [
                     {
                       "comparison": ">",
+                      "conditions": [],
                       "critical": null,
                       "duration_s": 600,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "instance": "total",
+                      "kind": "value",
                       "metric": "monitorflow_cpu_usage_ratio",
+                      "offset_s": null,
                       "origin": "default",
+                      "target": null,
                       "threshold_id": null,
-                      "warning": 0.9
+                      "warning": 0.9,
+                      "window_s": null
                     },
                     {
                       "comparison": ">",
+                      "conditions": [],
                       "critical": 0.95,
                       "duration_s": 300,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "instance": null,
+                      "kind": "value",
                       "metric": "monitorflow_disk_used_ratio",
+                      "offset_s": null,
                       "origin": "default",
+                      "target": null,
                       "threshold_id": null,
-                      "warning": 0.85
+                      "warning": 0.85,
+                      "window_s": null
                     },
                     {
                       "comparison": ">",
+                      "conditions": [],
                       "critical": null,
                       "duration_s": 600,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "instance": null,
+                      "kind": "value",
                       "metric": "monitorflow_diskio_wait_seconds",
+                      "offset_s": null,
                       "origin": "default",
+                      "target": null,
                       "threshold_id": null,
-                      "warning": 0.2
+                      "warning": 0.2,
+                      "window_s": null
                     },
                     {
                       "comparison": "<",
+                      "conditions": [],
                       "critical": 0.05,
                       "duration_s": 600,
                       "enabled": true,
+                      "function": null,
                       "hysteresis": 0.02,
                       "instance": null,
+                      "kind": "value",
                       "metric": "monitorflow_memory_available_ratio",
+                      "offset_s": null,
                       "origin": "site",
+                      "target": null,
                       "threshold_id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
-                      "warning": 0.15
+                      "warning": 0.15,
+                      "window_s": null
                     }
                   ]
                 }
@@ -33845,13 +34217,205 @@
         }
       }
     },
+    "/api/v1/sites/{id}/thresholds/preview": {
+      "post": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Preview a threshold on a site",
+        "description": "The same preview over up to 20 servers of the site, by name, with how many incidents each would have had and when; `more_servers` says when the site has more. Points are left out. Nothing is written or audited.\n\n**Who**: any role on the site. **Area**: `alerts`.",
+        "operationId": "preview_site_threshold",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              },
+              "example": {
+                "rule": {
+                  "comparison": ">=",
+                  "critical": 86400,
+                  "kind": "forecast",
+                  "metric": "monitorflow_disk_used_ratio",
+                  "target": 1,
+                  "warning": 259200,
+                  "window_s": 86400
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the rule would have done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SitePreview"
+                },
+                "example": {
+                  "days": 3,
+                  "from": 1763280000000,
+                  "more_servers": false,
+                  "servers": [
+                    {
+                      "hostname": "web-1",
+                      "incidents": 1,
+                      "series": [
+                        {
+                          "incidents": [
+                            {
+                              "opened_at": 1763456400000,
+                              "peak_value": 201600.0,
+                              "resolved_at": null,
+                              "severity": "warning"
+                            }
+                          ],
+                          "instance": "/var",
+                          "points": []
+                        }
+                      ],
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                    }
+                  ],
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "to": 1763539200000
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The rule or `days` is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics store did not answer: `metrics_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/thresholds/{id}": {
       "put": {
         "tags": [
           "thresholds"
         ],
         "summary": "Replace a threshold row",
-        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\n`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is wrong; a second row with the same `metric` and `instance` for the same site or server is 409.\n\nAudited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change within seconds; an open incident's `threshold` still shows the values it opened with.",
+        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\n`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is wrong; a second row with the same `metric`, `instance` and `kind` for the same site or server is 409.\n\n`kind` says what is judged (ADR-0153), with only the fields it uses: `value` (the default) the sample; `window` a `function` (`avg`, `min`, `max`, `change`, `rate` per second) over `window_s` (60 to 86400); `compare` the average over `window_s` (300 to 86400) against `offset_s` earlier (86400 or 604800), as a `ratio` or a `difference`; `forecast` the seconds left until the value reaches `target` on the side `comparison` names, learned over `window_s` (3600 to 604800), with `warning` and `critical` in seconds left (critical the shorter); `nodata` the seconds since the last sample arrived, with `warning` and `critical` in seconds (60 to 604800), no `duration_s` and no `comparison` but `>`. Up to two `conditions` joined with \"and\" read other metrics of the same server (not for `nodata`). Use `POST .../thresholds/preview` to see what a rule would have done.\n\nAudited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change within seconds; an open incident's `threshold` still shows the values it opened with.",
         "operationId": "update_threshold",
         "parameters": [
           {
@@ -33904,18 +34468,24 @@
                 },
                 "example": {
                   "comparison": "<",
+                  "conditions": [],
                   "created_at": "2026-11-02T10:20:00Z",
                   "critical": 0.05,
                   "duration_s": 600,
                   "enabled": true,
+                  "function": null,
                   "hysteresis": 0.02,
                   "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
                   "instance": null,
+                  "kind": "value",
                   "metric": "monitorflow_memory_available_ratio",
+                  "offset_s": null,
                   "server_id": null,
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "target": null,
                   "updated_at": "2026-11-14T09:40:00Z",
-                  "warning": 0.2
+                  "warning": 0.2,
+                  "window_s": null
                 }
               }
             }
@@ -39796,14 +40366,22 @@
           "origin",
           "metric",
           "enabled",
+          "kind",
           "comparison",
           "duration_s",
-          "hysteresis"
+          "hysteresis",
+          "conditions"
         ],
         "properties": {
           "comparison": {
             "type": "string",
             "description": "`>`, `>=`, `<` or `<=`."
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThresholdCondition"
+            }
           },
           "critical": {
             "type": [
@@ -39822,10 +40400,17 @@
             "type": "boolean",
             "description": "`false`: muted by a disabled row, which the engine skips."
           },
+          "function": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`window` and `compare` only."
+          },
           "hysteresis": {
             "type": "number",
             "format": "double",
-            "description": "The recovery margin, in the metric's unit."
+            "description": "The recovery margin, in the unit of the limits."
           },
           "instance": {
             "type": [
@@ -39834,11 +40419,32 @@
             ],
             "description": "`null`: every instance."
           },
+          "kind": {
+            "type": "string",
+            "description": "`value`, `window`, `compare`, `forecast` or `nodata` (ADR-0153)."
+          },
           "metric": {
             "type": "string"
           },
+          "offset_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds; `compare` only.",
+            "minimum": 0
+          },
           "origin": {
             "$ref": "#/components/schemas/LayerOrigin"
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`forecast` only."
           },
           "threshold_id": {
             "type": [
@@ -39854,6 +40460,15 @@
               "null"
             ],
             "format": "double"
+          },
+          "window_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds; `window`, `compare` and `forecast` only.",
+            "minimum": 0
           }
         }
       },
@@ -39864,9 +40479,17 @@
           "server_id",
           "site_id",
           "revision",
-          "thresholds"
+          "thresholds",
+          "recommended"
         ],
         "properties": {
+          "recommended": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecommendedThreshold"
+            },
+            "description": "Suggestions for the site, which its servers would get."
+          },
           "revision": {
             "type": "integer",
             "format": "int64",
@@ -41050,63 +41673,79 @@
             }
           },
           {
-            "type": "object",
-            "description": "A threshold of a server.",
-            "required": [
-              "server",
-              "metric",
-              "comparison",
-              "duration_s",
-              "hysteresis",
-              "object"
-            ],
-            "properties": {
-              "comparison": {
-                "type": "string",
-                "description": "`>`, `>=`, `<` or `<=`."
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Richer",
+                "description": "What a richer rule judges (ADR-0153); empty for a plain\nthreshold."
               },
-              "critical": {
-                "type": [
-                  "number",
-                  "null"
+              {
+                "type": "object",
+                "required": [
+                  "server",
+                  "metric",
+                  "comparison",
+                  "duration_s",
+                  "hysteresis"
                 ],
-                "format": "double"
+                "properties": {
+                  "comparison": {
+                    "type": "string",
+                    "description": "`>`, `>=`, `<` or `<=`."
+                  },
+                  "critical": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "double"
+                  },
+                  "duration_s": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  },
+                  "hysteresis": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "instance": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "metric": {
+                    "type": "string"
+                  },
+                  "server": {
+                    "type": "string"
+                  },
+                  "warning": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "double"
+                  }
+                }
               },
-              "duration_s": {
-                "type": "integer",
-                "format": "int32",
-                "minimum": 0
-              },
-              "hysteresis": {
-                "type": "number",
-                "format": "double"
-              },
-              "instance": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "metric": {
-                "type": "string"
-              },
-              "object": {
-                "type": "string",
-                "enum": [
-                  "threshold"
-                ]
-              },
-              "server": {
-                "type": "string"
-              },
-              "warning": {
-                "type": [
-                  "number",
-                  "null"
+              {
+                "type": "object",
+                "description": "A threshold of a server, as `POST /thresholds` takes it.",
+                "required": [
+                  "object"
                 ],
-                "format": "double"
+                "properties": {
+                  "object": {
+                    "type": "string",
+                    "enum": [
+                      "threshold"
+                    ]
+                  }
+                }
               }
-            }
+            ],
+            "description": "A threshold of a server, as `POST /thresholds` takes it."
           },
           {
             "type": "object",
@@ -41801,6 +42440,7 @@
           "threshold",
           "in_maintenance",
           "silenced",
+          "kind",
           "can_acknowledge",
           "reason"
         ],
@@ -41834,6 +42474,14 @@
             "type": "string",
             "format": "uuid"
           },
+          "expected_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "While a `forecast` incident is open, when the value is expected to\nreach its target: the time of the last value plus the time left."
+          },
           "hidden_by": {
             "type": [
               "string",
@@ -41857,6 +42505,10 @@
           "instance": {
             "type": "string",
             "description": "`\"\"` for a series without an instance."
+          },
+          "kind": {
+            "type": "string",
+            "description": "The kind of rule that opened it (ADR-0153): `value`, `window`,\n`compare`, `forecast` or `nodata`; `value` for `offline`."
           },
           "last_value": {
             "type": "number",
@@ -45803,6 +46455,94 @@
           }
         }
       },
+      "PreviewIncident": {
+        "type": "object",
+        "description": "An incident the rule would have opened.",
+        "required": [
+          "severity",
+          "opened_at",
+          "peak_value"
+        ],
+        "properties": {
+          "opened_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix milliseconds."
+          },
+          "peak_value": {
+            "type": "number",
+            "format": "double",
+            "description": "The worst judged value while open."
+          },
+          "resolved_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix milliseconds; `null` when it would still be open."
+          },
+          "severity": {
+            "type": "string",
+            "description": "The highest severity it reached: `warning` or `critical`."
+          }
+        }
+      },
+      "PreviewRequest": {
+        "type": "object",
+        "description": "Body of both preview routes.",
+        "required": [
+          "rule"
+        ],
+        "properties": {
+          "days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Days back, 1 to 7, 3 by default.",
+            "minimum": 0
+          },
+          "rule": {
+            "$ref": "#/components/schemas/ThresholdRequest",
+            "description": "The rule as it would be saved."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PreviewSeries": {
+        "type": "object",
+        "description": "One series replayed.",
+        "required": [
+          "instance",
+          "points",
+          "incidents"
+        ],
+        "properties": {
+          "incidents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewIncident"
+            }
+          },
+          "instance": {
+            "type": "string",
+            "description": "`\"\"` for a series without an instance."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "description": "`[Unix ms, judged value]`, at most 300, the worst of each stretch:\nthe sample, the window's value, the ratio, the seconds left or of\nsilence."
+          }
+        }
+      },
       "Probe": {
         "type": "object",
         "description": "One place a site's checks can run from.",
@@ -46333,6 +47073,23 @@
           }
         ],
         "description": "A service check names its units; a port check its port and host."
+      },
+      "RecommendedThreshold": {
+        "type": "object",
+        "description": "A rule MonitorFlow suggests and nobody added or declined yet\n(ADR-0153): `POST` its `rule` to the site's thresholds to add it, or\nthe same with `enabled: false` to decline it.",
+        "required": [
+          "key",
+          "rule"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Stable name of the suggestion, like `disk_forecast`."
+          },
+          "rule": {
+            "$ref": "#/components/schemas/ThresholdRequest"
+          }
+        }
       },
       "RejectRequest": {
         "type": "object",
@@ -47550,6 +48307,54 @@
           }
         }
       },
+      "Richer": {
+        "type": "object",
+        "description": "The fields of a richer threshold (ADR-0153), as the threshold API takes\nthem; all absent for a plain one.",
+        "properties": {
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThresholdCondition"
+            }
+          },
+          "function": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`window`, `compare`, `forecast` or `nodata`; absent: `value`."
+          },
+          "offset_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "window_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "Role": {
         "type": "string",
         "description": "From least to most: `viewer` reads, `operator` also changes, `approver` also approves commands, `administrator` also manages.",
@@ -48093,6 +48898,49 @@
               "$ref": "#/components/schemas/ServerView"
             },
             "description": "By site name, hostname and name."
+          }
+        }
+      },
+      "ServerPreview": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/thresholds/preview`.",
+        "required": [
+          "server_id",
+          "from",
+          "to",
+          "days",
+          "series",
+          "truncated"
+        ],
+        "properties": {
+          "days": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "from": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix milliseconds: the range replayed."
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewSeries"
+            },
+            "description": "The series the rule judges, by instance, at most 20."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "to": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "More series matched than were replayed."
           }
         }
       },
@@ -48828,6 +49676,79 @@
           }
         }
       },
+      "SitePreview": {
+        "type": "object",
+        "description": "Body of `POST /api/sites/{id}/thresholds/preview`.",
+        "required": [
+          "site_id",
+          "from",
+          "to",
+          "days",
+          "servers",
+          "more_servers"
+        ],
+        "properties": {
+          "days": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "from": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "more_servers": {
+            "type": "boolean",
+            "description": "The site has more servers than were replayed."
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SitePreviewServer"
+            },
+            "description": "Up to 20 servers of the site, by name."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "to": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SitePreviewServer": {
+        "type": "object",
+        "description": "One server of a site preview.",
+        "required": [
+          "server_id",
+          "hostname",
+          "incidents",
+          "series"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "incidents": {
+            "type": "integer",
+            "description": "Incidents the rule would have opened on it, every series together.",
+            "minimum": 0
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewSeries"
+            },
+            "description": "Its series, without their points."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "SiteSensors": {
         "type": "object",
         "description": "Body of `GET /api/sites/{id}/sensors`: what the site's servers run\nunless they override it.",
@@ -48936,9 +49857,17 @@
         "description": "Body of `GET /api/sites/{id}/thresholds/effective`: what the site's\nservers get unless they override it.",
         "required": [
           "site_id",
-          "thresholds"
+          "thresholds",
+          "recommended"
         ],
         "properties": {
+          "recommended": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecommendedThreshold"
+            },
+            "description": "Suggestions for the site."
+          },
           "site_id": {
             "type": "string",
             "format": "uuid"
@@ -49909,6 +50838,8 @@
           "duration_s",
           "hysteresis",
           "enabled",
+          "kind",
+          "conditions",
           "created_at",
           "updated_at"
         ],
@@ -49916,6 +50847,13 @@
           "comparison": {
             "type": "string",
             "description": "`>`, `>=`, `<` or `<=`."
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThresholdCondition"
+            },
+            "description": "Conditions joined with \"and\"."
           },
           "created_at": {
             "type": "string",
@@ -49936,7 +50874,14 @@
           },
           "enabled": {
             "type": "boolean",
-            "description": "`false`: mutes the same metric and instance of the layers below."
+            "description": "`false`: mutes the same metric, instance and kind of the layers\nbelow."
+          },
+          "function": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`window` and `compare` only."
           },
           "hysteresis": {
             "type": "number",
@@ -49954,8 +50899,20 @@
             ],
             "description": "`null`: every instance."
           },
+          "kind": {
+            "type": "string",
+            "description": "`value`, `window`, `compare`, `forecast` or `nodata` (ADR-0153)."
+          },
           "metric": {
             "type": "string"
+          },
+          "offset_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds; `compare` only."
           },
           "server_id": {
             "type": [
@@ -49973,6 +50930,14 @@
             "format": "uuid",
             "description": "Set for a site's row, which its servers inherit."
           },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`forecast` only."
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -49984,8 +50949,61 @@
             ],
             "format": "double",
             "description": "`null`: no warning level."
+          },
+          "window_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds; `window`, `compare` and `forecast` only."
           }
         }
+      },
+      "ThresholdCondition": {
+        "type": "object",
+        "description": "A condition joined with \"and\" to a threshold (ADR-0153).",
+        "required": [
+          "metric",
+          "comparison",
+          "value"
+        ],
+        "properties": {
+          "comparison": {
+            "type": "string",
+            "description": "`>`, `>=`, `<` or `<=`."
+          },
+          "function": {
+            "type": "string",
+            "description": "`value` (the latest sample, the default), or `avg`, `min`, `max`,\n`change` or `rate` over `window_s`."
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` or absent: the instance of the series the threshold judges,\nelse the series without an instance."
+          },
+          "metric": {
+            "type": "string",
+            "description": "Full metric name of the same server."
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "The limit, in the metric's unit."
+          },
+          "window_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds, 60 to 86400, with a function other than `value`.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "ThresholdList": {
         "type": "object",
@@ -50006,13 +51024,22 @@
         "type": "object",
         "description": "Body of a create or an update. An update replaces every field.",
         "required": [
-          "metric",
-          "comparison"
+          "metric"
         ],
         "properties": {
           "comparison": {
-            "type": "string",
-            "description": "`>`, `>=`, `<` or `<=`: the alarm side of the values."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`>`, `>=`, `<` or `<=`: the alarm side of the values. For a\n`forecast`, the side of `target` the value is heading to (`>=` 1:\n\"reaches 100%\"). Optional for `nodata`, which alarms on a long\nsilence; required otherwise."
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThresholdCondition"
+            },
+            "description": "Up to two more conditions joined with \"and\", on the same server;\nnot for `nodata`."
           },
           "critical": {
             "type": [
@@ -50025,17 +51052,24 @@
           "duration_s": {
             "type": "integer",
             "format": "int32",
-            "description": "Seconds the value must stay past the threshold before an incident\nopens: 0 to 86400, 0 by default.",
+            "description": "Seconds the value must stay past the threshold before an incident\nopens: 0 to 86400, 0 by default; always 0 for `nodata`.",
             "minimum": 0
           },
           "enabled": {
             "type": "boolean",
-            "description": "`false` mutes the threshold of the same metric and instance from\nthe layers below, built-in defaults included."
+            "description": "`false` mutes the threshold of the same metric, instance and kind\nfrom the layers below, built-in defaults included."
+          },
+          "function": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`window`: `avg`, `min`, `max`, `change` or `rate` (per second);\n`compare`: `ratio` (now divided by then) or `difference` (now minus\nthen). Absent for other kinds."
           },
           "hysteresis": {
             "type": "number",
             "format": "double",
-            "description": "The recovery margin: how far back past the threshold the value\nmust go before the incident resolves, in the metric's unit; 0 or\nmore, 0 by default."
+            "description": "The recovery margin: how far back past the threshold the value\nmust go before the incident resolves, in the unit of the limits; 0\nor more, 0 by default."
           },
           "instance": {
             "type": [
@@ -50044,9 +51078,33 @@
             ],
             "description": "`null` or absent: every instance of the metric."
           },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the rule judges (ADR-0153): `value` (the default), `window`,\n`compare`, `forecast` or `nodata`. One metric and instance can have\none rule of each kind per site or server."
+          },
           "metric": {
             "type": "string",
             "description": "Full metric name, `monitorflow_<sensor metric>`."
+          },
+          "offset_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`compare` only: 86400 (yesterday) or 604800 (last week).",
+            "minimum": 0
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`forecast` only: the value it is about, in the metric's unit."
           },
           "warning": {
             "type": [
@@ -50054,7 +51112,16 @@
               "null"
             ],
             "format": "double",
-            "description": "The value that opens a warning incident, in the metric's unit (a\nratio from 0 to 1 for `_ratio` metrics); `null` for none."
+            "description": "The value that opens a warning incident, in the metric's unit (a\nratio from 0 to 1 for `_ratio` metrics); for a `forecast`, seconds\nleft; for `nodata`, seconds of silence; `null` for none."
+          },
+          "window_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds. `window`: 60 to 86400; `compare`: the average compared,\n300 to 86400; `forecast`: the time the trend is learned over, 3600\nto 604800. Absent for other kinds.",
+            "minimum": 0
           }
         },
         "additionalProperties": false

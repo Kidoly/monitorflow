@@ -6,8 +6,9 @@
 
 import { type MessageKey, t } from "@/i18n";
 
-import { checkTitle, describeThreshold, shapeOf } from "./alerts";
+import { checkTitle, shapeOf } from "./alerts";
 import { checkName, describeRule } from "./maintenance";
+import { describeRule as describeAlertRule } from "./rules";
 import type {
   EffectiveSensor,
   ImportItem,
@@ -107,8 +108,14 @@ export function itemTitle(item: ImportItem, items: ImportItem[]): string {
         critical: create.critical,
         duration_s: create.duration_s,
         hysteresis: create.hysteresis,
+        kind: create.kind,
+        function: create.function,
+        window_s: create.window_s,
+        offset_s: create.offset_s,
+        target: create.target,
+        conditions: create.conditions,
       } as const;
-      return describeThreshold(
+      return describeAlertRule(
         shapeOf(sensorsOf(items), create.metric, create.instance),
         rule,
       );

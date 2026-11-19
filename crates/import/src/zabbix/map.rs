@@ -372,6 +372,9 @@ fn map_host(
     // Items: built-in groups by owner and measure, checks one by one.
     let mut groups: Groups = BTreeMap::new();
     let mut pending: Vec<Pending> = Vec::new();
+    // No-data alerts (ADR-0153) come beside a check's own alert, as copies
+    // of the check that carry only them.
+    let mut silent: Vec<Check> = Vec::new();
     for (item, owner) in &view.items {
         let origin = Origin::new("item", &item.name).with_detail(&item.key);
         match items::map(item, &view.macros) {
@@ -493,6 +496,8 @@ fn map_host(
                         Severity::Critical => (None, Some(level.value)),
                     };
                     out.thresholds.push(Threshold {
+                        judged: level.judged,
+                        conditions: level.conditions,
                         hosts: vec![key.clone()],
                         measure: level.measure,
                         direction: level.direction,
@@ -508,9 +513,14 @@ fn map_host(
             Outcome::Alert {
                 key: item_key,
                 for_s,
+                no_data,
                 note,
             } => {
-                let alert = Alert { severity, for_s };
+                let alert = Alert {
+                    severity,
+                    for_s,
+                    no_data,
+                };
                 let targets: Vec<&mut Pending> = pending
                     .iter_mut()
                     .chain(
@@ -534,6 +544,15 @@ fn map_host(
                         .entry(key.clone())
                         .or_default()
                         .push((trigger.tags.clone(), target.check.watch.clone()));
+                    if no_data {
+                        silent.push(Check {
+                            alert: Some(alert.clone()),
+                            origin: origin.clone(),
+                            fidelity: fidelity([note.clone(), severity_note.clone()]),
+                            ..target.check.clone()
+                        });
+                        continue;
+                    }
                     let stronger = match &target.check.alert {
                         None => true,
                         Some(a) => {
@@ -558,6 +577,7 @@ fn map_host(
     }
     out.checks
         .extend(builtins.into_iter().chain(pending).map(|p| p.check));
+    out.checks.extend(silent);
 }
 
 /// The host of `https://vcenter.example.com/sdk`, without its port.

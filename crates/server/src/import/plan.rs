@@ -6,14 +6,14 @@ use chrono::{DateTime, SubsecRound, TimeDelta, Utc};
 use chrono_tz::Tz;
 use monitorflow_import::args;
 use monitorflow_import::model::{
-    Alert, Check, Direction, Fidelity, Inventory, Measure, Os, Repeat, Rule, Severity,
-    SilenceScope, Target, Watch,
+    Alert, Check, Direction, Fidelity, Inventory, Judged, Measure, Os, Repeat, Rule, Severity,
+    SilenceScope, Target, Watch, WindowFunction,
 };
 use monitorflow_import::Note;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use super::{ChannelSecret, CheckRef, Create, Item, List, NoteView, OriginView};
+use super::{ChannelSecret, CheckRef, Create, Item, List, NoteView, OriginView, Richer};
 use crate::api::{sensors, thresholds};
 use crate::enroll::install_key::peer_id_from_hostname;
 use crate::notify::maintenance::{self, Schedule};
@@ -36,6 +36,9 @@ pub struct ExistingServer {
     pub site_id: Uuid,
     /// Whether the person importing administers its site.
     pub may_change: bool,
+    /// A device watched from a probe (ADR-0148), not a server with an
+    /// agent.
+    pub device: bool,
 }
 
 /// What MonitorFlow has already, which the plan does not create again.
@@ -44,8 +47,9 @@ pub struct Existing {
     pub servers: Vec<ExistingServer>,
     /// Checks of servers by (lowercase peer ID, name), instance `""`.
     pub checks: HashSet<(String, String)>,
-    /// Thresholds of servers by (lowercase peer ID, metric, instance).
-    pub thresholds: HashSet<(String, String, Option<String>)>,
+    /// Thresholds of servers by (lowercase peer ID, metric, instance,
+    /// kind).
+    pub thresholds: HashSet<(String, String, Option<String>, String)>,
     /// Silences not over by (lowercase peer ID, or `None` for the site),
     /// end and reason.
     pub silences: HashSet<(Option<String>, DateTime<Utc>, String)>,
@@ -201,14 +205,16 @@ struct Server {
     address: Option<String>,
 }
 
-/// Thresholds merged by (server, metric, instance).
-type ThresholdKey = (String, String, Option<String>);
+/// Thresholds merged by (server, metric, instance, kind).
+type ThresholdKey = (String, String, Option<String>, String);
 
 /// A metric every server has, with its instance.
 type Fixed = Option<(String, Option<String>)>;
 
 struct Merged {
     server: Server,
+    /// What a richer rule judges (ADR-0153).
+    richer: Richer,
     comparison: &'static str,
     warning: Option<f64>,
     critical: Option<f64>,
@@ -483,6 +489,9 @@ impl Planner<'_> {
                 continue;
             }
             let existing = self.existing.server(&peer_id, &host.name);
+            // What MonitorFlow has already decides: an imported host that
+            // exists as a server with its agent stays one.
+            let device = existing.map_or(host.agentless, |s| s.device);
             let id = self.unique_id(format!("server:{lower}"));
             let addresses = host.addresses.clone();
             // The first address a probe can reach, else the name.
@@ -536,7 +545,7 @@ impl Planner<'_> {
                 item: (!present).then_some(id),
                 os: host.os,
                 may_change,
-                device: address.clone().filter(|_| host.agentless),
+                device: address.clone().filter(|_| device),
                 address,
             };
             by_peer.insert(lower, server.clone());
@@ -867,10 +876,13 @@ impl Planner<'_> {
             .map(|s| (u64::from(s) * 1000).min(interval_ms));
         // A website check comes with its alert, as the web interface adds
         // it, with the source's severity and wait when it has some.
-        let alert = check.alert.clone().or_else(|| {
+        // A no-data alert (ADR-0153) comes beside the check's own.
+        let no_data = check.alert.clone().filter(|a| a.no_data);
+        let alert = check.alert.clone().filter(|a| !a.no_data).or_else(|| {
             website.map(|_| Alert {
                 severity: Severity::Critical,
                 for_s: website::UP_FOR_S,
+                no_data: false,
             })
         });
         let lower = server.peer_id.to_ascii_lowercase();
@@ -884,6 +896,9 @@ impl Planner<'_> {
         if let Some(name) = self.checks.get(&same).cloned() {
             self.watch_names
                 .insert((lower.clone(), format!("{:?}", check.watch)), name.clone());
+            if let Some(alert) = &no_data {
+                self.alert(&server, kind, &name, alert, origin.clone());
+            }
             if let Some(alert) = &alert {
                 self.alert(&server, kind, &name, alert, origin);
             }
@@ -960,6 +975,9 @@ impl Planner<'_> {
                 .entry((lower, url))
                 .or_insert((name.clone(), id));
         }
+        if let Some(alert) = &no_data {
+            self.alert(&server, kind, &name, alert, origin.clone());
+        }
         if let Some(alert) = &alert {
             self.alert(&server, kind, &name, alert, origin);
         }
@@ -987,11 +1005,21 @@ impl Planner<'_> {
             _ => ("matches", ">", 0.0),
         };
         let metric = format!("monitorflow_{name}_{suffix}");
+        // No data from the check (ADR-0153): seconds of silence.
+        let (comparison, value, richer) = if alert.no_data {
+            let richer = Richer {
+                kind: Some("nodata".into()),
+                ..Richer::default()
+            };
+            (">", f64::from(alert.for_s.clamp(60, 604_800)), richer)
+        } else {
+            (comparison, value, Richer::default())
+        };
         let (warning, critical) = match alert.severity {
             Severity::Warning => (Some(value), None),
             Severity::Critical => (None, Some(value)),
         };
-        let key = format!("{lower}:{metric}");
+        let key = format!("{lower}:{metric}:{}", richer.kind());
         if let Some(&index) = self.alerts.get(&key) {
             // A second alert on the same check: the more severe one stays.
             if let Some(Item {
@@ -1010,14 +1038,20 @@ impl Planner<'_> {
             }
             return;
         }
-        let threshold_id = self.unique_id(format!("threshold:{lower}:{metric}"));
+        let threshold_id = self.unique_id(if alert.no_data {
+            format!("threshold:{lower}:{metric}:nodata")
+        } else {
+            format!("threshold:{lower}:{metric}")
+        });
         self.alerts.insert(key, self.out.items.len());
         let mut needs = vec![id];
         needs.extend(Self::needs(server));
-        let present = self
-            .existing
-            .thresholds
-            .contains(&(lower.clone(), metric.clone(), None));
+        let present = self.existing.thresholds.contains(&(
+            lower.clone(),
+            metric.clone(),
+            None,
+            richer.kind().to_owned(),
+        ));
         self.push(Item {
             id: threshold_id,
             kind: "threshold".into(),
@@ -1034,8 +1068,13 @@ impl Planner<'_> {
                 comparison: comparison.into(),
                 warning,
                 critical,
-                duration_s: alert.for_s.min(thresholds::MAX_DURATION_S),
+                duration_s: if alert.no_data {
+                    0
+                } else {
+                    alert.for_s.min(thresholds::MAX_DURATION_S)
+                },
                 hysteresis: 0.0,
+                richer,
             }),
         });
     }
@@ -1083,44 +1122,46 @@ impl Planner<'_> {
         for threshold in &self.inventory.thresholds {
             let origin: OriginView = (&threshold.origin).into();
             // A measure every server has, or one of a website check.
-            let (fixed, site): (Fixed, Option<(&str, &str)>) = match &threshold.measure {
-                Measure::CpuUsage => (
-                    Some((
-                        "monitorflow_cpu_usage_ratio".to_owned(),
-                        Some("total".to_owned()),
-                    )),
-                    None,
-                ),
-                Measure::CpuLoad { minutes } => {
-                    (Some((format!("monitorflow_cpu_load{minutes}"), None)), None)
-                }
-                Measure::MemoryAvailable => (
-                    Some(("monitorflow_memory_available_ratio".to_owned(), None)),
-                    None,
-                ),
-                Measure::DiskUsed { mount } => (
-                    Some(("monitorflow_disk_used_ratio".to_owned(), mount.clone())),
-                    None,
-                ),
-                Measure::DiskWait { device } => (
-                    Some(("monitorflow_diskio_wait_seconds".to_owned(), device.clone())),
-                    None,
-                ),
-                Measure::WebResponseTime { url } => (None, Some((url, "response_seconds"))),
-                Measure::CertificateDays { url } => (None, Some((url, "cert_days_left"))),
-                Measure::DatastoreFree => (
-                    Some(("monitorflow_vmware_datastore_free_ratio".to_owned(), None)),
-                    None,
-                ),
-            };
-            let comparison = match threshold.direction {
-                Direction::Above => ">",
-                Direction::Below => "<",
+            let (fixed, site) = measure_metric(&threshold.measure);
+            let (richer, comparison) = richer_of(&threshold.judged, threshold.direction);
+            let mut conditions = Vec::new();
+            let mut condition_failed = false;
+            for c in &threshold.conditions {
+                let (Some((metric, instance)), _) = measure_metric(&c.measure) else {
+                    condition_failed = true;
+                    continue;
+                };
+                conditions.push(thresholds::ThresholdCondition {
+                    metric,
+                    instance,
+                    function: c.window.map_or("value", |(f, _)| function_name(f)).into(),
+                    window_s: c.window.map(|(_, w)| w),
+                    comparison: match c.direction {
+                        Direction::Above => ">".into(),
+                        Direction::Below => "<".into(),
+                    },
+                    value: c.value,
+                });
+            }
+            if condition_failed {
+                self.not_movable(
+                    "threshold",
+                    origin.clone(),
+                    vec![],
+                    note("expression", args! {}),
+                );
+                continue;
+            }
+            let richer = Richer {
+                conditions,
+                ..richer
             };
             let (_, why) = list_of(&threshold.fidelity);
             let level = threshold.warning.or(threshold.critical);
-            let hysteresis = match (threshold.recovery, level) {
-                (Some(recovery), Some(level)) => (level - recovery).abs(),
+            let hysteresis = match (threshold.recovery, level, &threshold.judged) {
+                (Some(recovery), Some(level), Judged::Value | Judged::Window { .. }) => {
+                    (level - recovery).abs()
+                }
                 _ => 0.0,
             };
             for key in &threshold.hosts {
@@ -1160,8 +1201,19 @@ impl Planner<'_> {
                     }
                     (None, None) => continue,
                 };
-                let map_key = (lower, metric, instance);
+                let map_key = (lower, metric, instance, richer.kind().to_owned());
                 match self.thresholds.get_mut(&map_key) {
+                    // One rule of each kind per measure (ADR-0153): another
+                    // window or forecast cannot join this one.
+                    Some(merged) if merged.richer != richer => {
+                        let kept = merged.origins[0].name.clone();
+                        self.not_movable(
+                            "threshold",
+                            origin.clone(),
+                            vec![server.name.clone()],
+                            note("kind_taken", args! {"kept" => kept}),
+                        );
+                    }
                     Some(merged) => {
                         merged.warning = merged.warning.or(threshold.warning);
                         merged.critical = merged.critical.or(threshold.critical);
@@ -1179,6 +1231,7 @@ impl Planner<'_> {
                             map_key,
                             Merged {
                                 server,
+                                richer: richer.clone(),
                                 comparison,
                                 warning: threshold.warning,
                                 critical: threshold.critical,
@@ -1196,9 +1249,15 @@ impl Planner<'_> {
         // The alerts a website check comes with, where the source has no
         // threshold of its own on the same measure.
         for web in std::mem::take(&mut self.web_rules) {
-            let key = (web.server.peer_id.to_ascii_lowercase(), web.metric, None);
+            let key = (
+                web.server.peer_id.to_ascii_lowercase(),
+                web.metric,
+                None,
+                "value".to_owned(),
+            );
             self.thresholds.entry(key).or_insert(Merged {
                 server: web.server,
+                richer: Richer::default(),
                 comparison: web.rule.comparison,
                 warning: web.rule.warning,
                 critical: web.rule.critical,
@@ -1209,7 +1268,7 @@ impl Planner<'_> {
                 check: Some(web.check),
             });
         }
-        for ((lower, metric, instance), merged) in std::mem::take(&mut self.thresholds) {
+        for ((lower, metric, instance, kind), merged) in std::mem::take(&mut self.thresholds) {
             let mut origin = merged.origins[0].clone();
             if merged.origins.len() > 1 {
                 origin.name = merged
@@ -1221,27 +1280,36 @@ impl Planner<'_> {
                 origin.detail = None;
             }
             let (mut warning, critical) = (merged.warning, merged.critical);
-            // Critical must be past warning on the alarm side.
+            // Critical must be past warning on the alarm side: less time
+            // left for a forecast, a longer silence for no data.
             if let (Some(w), Some(c)) = (warning, critical) {
-                let above = merged.comparison == ">";
+                let above = match kind.as_str() {
+                    "forecast" => false,
+                    "nodata" => true,
+                    _ => merged.comparison.starts_with('>'),
+                };
                 if (above && c < w) || (!above && c > w) {
                     warning = None;
                 }
             }
             let mut note = merged.note;
-            let duration_s = merged.duration_s.min(thresholds::MAX_DURATION_S);
+            let duration_s = if kind == "nodata" {
+                0
+            } else {
+                merged.duration_s.min(thresholds::MAX_DURATION_S)
+            };
             if duration_s != merged.duration_s && note.is_none() {
                 note = self::note("duration_rounded", args! {"seconds" => duration_s});
             }
             let request = thresholds::EntryRequest {
                 metric: metric.clone(),
                 instance: instance.clone(),
-                comparison: merged.comparison.into(),
+                comparison: Some(merged.comparison.into()),
                 warning,
                 critical,
                 duration_s,
                 hysteresis: merged.hysteresis,
-                enabled: true,
+                ..entry_fields(&merged.richer)
             };
             if let Err(reason) = thresholds::validate_entry(request) {
                 self.not_movable(
@@ -1256,9 +1324,15 @@ impl Planner<'_> {
                 lower.clone(),
                 metric.clone(),
                 instance.clone(),
+                kind.clone(),
             ));
+            let suffix = if kind == "value" {
+                String::new()
+            } else {
+                format!(":{kind}")
+            };
             let id = self.unique_id(format!(
-                "threshold:{lower}:{metric}:{}",
+                "threshold:{lower}:{metric}:{}{suffix}",
                 instance.as_deref().unwrap_or("*")
             ));
             self.push(Item {
@@ -1288,6 +1362,7 @@ impl Planner<'_> {
                     critical,
                     duration_s,
                     hysteresis: merged.hysteresis,
+                    richer: merged.richer,
                 }),
             });
         }
@@ -1748,6 +1823,120 @@ impl Planner<'_> {
 }
 
 mod website;
+
+/// The metric and instance of a measure every server has, or the website
+/// check URL and metric suffix of one of a website's.
+fn measure_metric(measure: &Measure) -> (Fixed, Option<(&str, &'static str)>) {
+    match measure {
+        Measure::CpuUsage => (
+            Some((
+                "monitorflow_cpu_usage_ratio".to_owned(),
+                Some("total".to_owned()),
+            )),
+            None,
+        ),
+        Measure::CpuLoad { minutes } => {
+            (Some((format!("monitorflow_cpu_load{minutes}"), None)), None)
+        }
+        Measure::MemoryAvailable => (
+            Some(("monitorflow_memory_available_ratio".to_owned(), None)),
+            None,
+        ),
+        Measure::DiskUsed { mount } => (
+            Some(("monitorflow_disk_used_ratio".to_owned(), mount.clone())),
+            None,
+        ),
+        Measure::DiskWait { device } => (
+            Some(("monitorflow_diskio_wait_seconds".to_owned(), device.clone())),
+            None,
+        ),
+        Measure::WebResponseTime { url } => (None, Some((url, "response_seconds"))),
+        Measure::CertificateDays { url } => (None, Some((url, "cert_days_left"))),
+        Measure::DatastoreFree => (
+            Some(("monitorflow_vmware_datastore_free_ratio".to_owned(), None)),
+            None,
+        ),
+    }
+}
+
+fn function_name(function: WindowFunction) -> &'static str {
+    match function {
+        WindowFunction::Avg => "avg",
+        WindowFunction::Min => "min",
+        WindowFunction::Max => "max",
+        WindowFunction::Change => "change",
+        WindowFunction::Rate => "rate",
+    }
+}
+
+/// The fields of a richer threshold (ADR-0153) and its comparison: for a
+/// forecast the side of its target, for no data `>`.
+fn richer_of(judged: &Judged, direction: Direction) -> (Richer, &'static str) {
+    let side = match direction {
+        Direction::Above => ">",
+        Direction::Below => "<",
+    };
+    let kind = |k: &str| Some(k.to_owned());
+    match *judged {
+        Judged::Value => (Richer::default(), side),
+        Judged::Window { function, window_s } => (
+            Richer {
+                kind: kind("window"),
+                function: Some(function_name(function).into()),
+                window_s: Some(window_s),
+                ..Richer::default()
+            },
+            side,
+        ),
+        Judged::Compare {
+            ratio,
+            offset_s,
+            window_s,
+        } => (
+            Richer {
+                kind: kind("compare"),
+                function: Some(if ratio { "ratio" } else { "difference" }.into()),
+                window_s: Some(window_s),
+                offset_s: Some(offset_s),
+                ..Richer::default()
+            },
+            side,
+        ),
+        Judged::Forecast { target, window_s } => (
+            Richer {
+                kind: kind("forecast"),
+                window_s: Some(window_s),
+                target: Some(target),
+                ..Richer::default()
+            },
+            if direction == Direction::Above {
+                ">="
+            } else {
+                "<="
+            },
+        ),
+        Judged::NoData => (
+            Richer {
+                kind: kind("nodata"),
+                ..Richer::default()
+            },
+            ">",
+        ),
+    }
+}
+
+/// The threshold request fields of `richer`, everything else default.
+pub(super) fn entry_fields(richer: &Richer) -> thresholds::EntryRequest {
+    thresholds::EntryRequest {
+        kind: richer.kind.clone(),
+        function: richer.function.clone(),
+        window_s: richer.window_s,
+        offset_s: richer.offset_s,
+        target: richer.target,
+        conditions: richer.conditions.clone(),
+        ..thresholds::EntryRequest::default()
+    }
+}
 
 #[cfg(test)]
 mod tests;
