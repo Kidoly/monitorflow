@@ -29,11 +29,12 @@ import {
 import { updateAvailable } from "@/lib/agentVersion";
 import { certificateState } from "@/lib/certificates";
 import { formatDay, formatMinute, formatWhen } from "@/lib/clock";
-import { formatOs, formatValue, unitOf } from "@/lib/format";
+import { formatOs } from "@/lib/format";
+import { incidentTitle, isOffline } from "@/lib/incidents";
 import { relayAddress } from "@/lib/install";
 import { administersCustomer, administersEverything, multiCustomer } from "@/lib/me";
-import { metricTitle } from "@/lib/metrics";
 import { RELAYS_PATH, serverHref } from "@/lib/routes";
+import { incidentValue } from "@/lib/rules";
 import { usePolledData } from "@/lib/usePolledData";
 import { UUID } from "@/lib/uuid";
 
@@ -219,9 +220,8 @@ function Problem({ row, now }: { row: Row; now: Date }) {
     return (
       <>
         <StatusLabel kind="severity" value={worst.severity} />
-        &nbsp; {metricTitle(worst.metric)}
-        {worst.instance && ` ${worst.instance}`}{" "}
-        <span className={styles.dim}>{formatValue(worst.last_value, unitOf(worst.metric))}</span>
+        &nbsp; {incidentTitle(worst)}{" "}
+        {!isOffline(worst) && <span className={styles.dim}>{incidentValue(worst, worst.last_value)}</span>}
         {others.length > 0 && <span className={styles.dim}> · {t("relays.more", { count: others.length })}</span>}
       </>
     );
