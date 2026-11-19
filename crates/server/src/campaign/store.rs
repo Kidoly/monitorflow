@@ -155,10 +155,6 @@ impl CampaignStore {
         Self { pool }
     }
 
-    pub fn pool(&self) -> &PgPool {
-        &self.pool
-    }
-
     /// Validates `new`, freezes its targets into waves and stores it as a
     /// draft, audited as `campaign.create`.
     pub async fn create(

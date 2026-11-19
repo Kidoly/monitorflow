@@ -123,6 +123,13 @@ impl Support {
     }
 }
 
+/// The first 12 hex digits of `id`, which name its snapshots.
+pub(crate) fn short_id(id: Uuid) -> String {
+    let mut hex = id.simple().to_string();
+    hex.truncate(12);
+    hex
+}
+
 /// Name of a snapshot MonitorFlow takes: `mf-<12 hex>-<step>`, where the
 /// hex digits start the incident's UUID. At most 25 characters, within
 /// Proxmox's 40 and its `[A-Za-z][A-Za-z0-9_-]*` grammar.
@@ -133,8 +140,7 @@ pub struct SnapshotName(String);
 impl SnapshotName {
     /// The snapshot before step `step` of remediation incident `incident`.
     pub fn for_step(incident: Uuid, step: u32) -> Self {
-        let hex = incident.simple().to_string();
-        Self(format!("mf-{}-{step}", &hex[..12]))
+        Self(format!("mf-{}-{step}", short_id(incident)))
     }
 
     /// `name` if it has the shape [`for_step`](Self::for_step) produces.
