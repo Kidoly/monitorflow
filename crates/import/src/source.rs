@@ -218,6 +218,25 @@ pub fn check_input(info: &SourceInfo, input: &Input) -> Result<(), ReadError> {
 mod tests {
     use super::*;
 
+    /// The web interface labels each connection field with the catalog's
+    /// `imports.field.<key>`; without one it shows the bare key, as it did
+    /// for PRTG's `apitoken` and `passhash`.
+    #[test]
+    fn the_web_catalog_labels_every_connection_field() {
+        let catalog = include_str!("../../../web/src/i18n/messages/imports.ts");
+        for info in sources().iter().map(|s| s.info()) {
+            for field in &info.connect {
+                let key = format!("\"field.{}\"", field.key);
+                assert_eq!(
+                    catalog.matches(&key).count(),
+                    2,
+                    "{} field {key} should be in the English and the French catalog",
+                    info.id
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_reader_has_a_unique_plain_id() {
         let infos: Vec<_> = sources().iter().map(|s| s.info()).collect();

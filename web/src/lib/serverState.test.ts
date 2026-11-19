@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { ServerState } from "./api";
 import { isServerState, serverState, stateHref } from "./serverState";
 
 describe("serverState", () => {
@@ -14,6 +15,14 @@ describe("serverState", () => {
     expect(serverState({ ...base, status: "offline", open_incidents: 1 })).toBe("offline");
     expect(serverState({ ...base, open_incidents: 1 })).toBe("warning");
     expect(serverState(base)).toBe("ok");
+  });
+
+  it("guesses for a state this interface has no word for", () => {
+    // A newer central server may add states: never show one as a raw key.
+    const state = "draining" as ServerState;
+    expect(serverState({ ...base, state })).toBe("ok");
+    expect(serverState({ ...base, state, status: "offline" })).toBe("offline");
+    expect(serverState({ ...base, state, open_incidents: 2 })).toBe("warning");
   });
 
   it("reads states from the URL", () => {
