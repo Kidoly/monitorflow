@@ -305,10 +305,7 @@ async fn post_webhook(
             signature(secret.expose(), timestamp, &body),
         );
     }
-    let host = reqwest::Url::parse(&webhook.url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned))
-        .unwrap_or_else(|| webhook.url.clone());
+    let host = crate::integrations::host(&webhook.url);
     let response = request
         .body(body)
         .send()
@@ -319,7 +316,21 @@ async fn post_webhook(
         return Ok(());
     }
     let text = error_body(response).await;
-    Err(response_error(&host, status, &text))
+    Err(webhook_refusal(&webhook.url, status, &text))
+}
+
+/// A webhook's refusal in plain words, without what its URL holds should
+/// the answer repeat it: the path and query of a webhook are secret
+/// (ADR-0123), and the text is shown and logged.
+pub(crate) fn webhook_refusal(url: &str, status: reqwest::StatusCode, text: &str) -> SendError {
+    match reqwest::Url::parse(url) {
+        Ok(url) => response_error(
+            url.host_str().unwrap_or_default(),
+            status,
+            &without_url_secrets(text, &url),
+        ),
+        Err(_) => response_error("", status, text),
+    }
 }
 
 /// How long a rate limited answer asks to wait, within
@@ -403,7 +414,8 @@ fn chat_error(
 
 /// `text` without what makes `url` a credential, should an answer repeat
 /// it: the path of Slack and Discord, the query values of Teams (`sig`).
-/// Short values like `api-version=1` are not worth hiding.
+/// Short values like `api-version=1`, or a path like `/`, are not worth
+/// hiding.
 fn without_url_secrets(text: &str, url: &reqwest::Url) -> String {
     let raw = url.query().unwrap_or_default();
     let raw = raw.split('&').filter_map(|pair| pair.split_once('='));
@@ -412,7 +424,10 @@ fn without_url_secrets(text: &str, url: &reqwest::Url) -> String {
         .map(|(_, value)| value.to_owned())
         .chain(decoded.map(|(_, value)| value.into_owned()))
         .filter(|value| value.len() >= MIN_SECRET_VALUE);
-    let mut text = text.replace(url.path(), REDACTED);
+    let mut text = text.to_owned();
+    if url.path().len() >= MIN_SECRET_VALUE {
+        text = text.replace(url.path(), REDACTED);
+    }
     for value in values {
         text = text.replace(&value, REDACTED);
     }
@@ -772,6 +787,29 @@ mod tests {
         );
         assert_eq!(limited.retry_after, Some(Duration::from_secs(2)));
         assert!(limited.message.contains("Discord is limiting"));
+    }
+
+    #[test]
+    fn a_webhook_refusal_keeps_its_url_secrets_out() {
+        let status = reqwest::StatusCode::NOT_FOUND;
+        let url = "https://n8n.example.com/webhook/7f3c2a91-token?key=abcdefgh123";
+        let echoed = webhook_refusal(
+            url,
+            status,
+            "Cannot POST /webhook/7f3c2a91-token?key=abcdefgh123",
+        );
+        assert!(!echoed.message.contains("7f3c2a91"), "{echoed}");
+        assert!(!echoed.message.contains("abcdefgh123"), "{echoed}");
+        assert!(
+            echoed.message.starts_with("n8n.example.com answered 404"),
+            "{echoed}"
+        );
+        // A short path is no secret, and the text keeps its slashes.
+        let plain = webhook_refusal("https://example.com/", status, "see /docs/a");
+        assert_eq!(
+            plain.message,
+            "example.com answered 404 Not Found: see /docs/a"
+        );
     }
 
     #[test]

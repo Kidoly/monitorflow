@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::notify::send::{
     error_body, http_client, public_http_client, refuse_private_address_in, request_error,
-    response_error, signature, SendError, DELIVERY_HEADER, EVENT_HEADER, SIGNATURE_HEADER,
+    signature, webhook_refusal, SendError, DELIVERY_HEADER, EVENT_HEADER, SIGNATURE_HEADER,
     TIMESTAMP_HEADER,
 };
 use crate::notify::Coverage;
@@ -342,7 +342,7 @@ impl Clients {
         let text = error_body(response).await;
         Err(Failure {
             status: Some(status.as_u16()),
-            message: response_error(&host, status, &text).message,
+            message: webhook_refusal(&endpoint.url, status, &text).message,
         })
     }
 }
