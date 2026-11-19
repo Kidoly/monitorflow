@@ -296,6 +296,15 @@ db_tests! {
         let db_server = report.machines.iter().find(|m| m.id == p.db).unwrap();
         assert_eq!(db_server.numbers.down_seconds, 25.0 * 60.0);
         assert_eq!(db_server.outage_list[0].causes[0].kind, "unreachable");
+        // The switch is on a site this reader cannot read: not named, as
+        // the dependencies API does not name it to them either.
+        assert_eq!(db_server.outage_list[0].causes[0].via, None);
+        let both = Reach {
+            sites: Some(vec![p.site, other]),
+            services_of: Some(vec![]),
+        };
+        let report = build(&load(&mut db, &both, period, t(5000)).await.unwrap(), period, t(5000));
+        let db_server = report.machines.iter().find(|m| m.id == p.db).unwrap();
         assert_eq!(db_server.outage_list[0].causes[0].via.as_deref(), Some("sw-core"));
     }
 }

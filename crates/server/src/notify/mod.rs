@@ -247,9 +247,22 @@ fn normalize_email(email: Email) -> Result<Email, String> {
 }
 
 fn normalize_webhook(webhook: Webhook) -> Result<Webhook, String> {
-    let url = webhook.url.trim();
+    let url = http_url(
+        &webhook.url,
+        "Enter the URL to post to.",
+        "Put no password in the URL; use the signing secret instead.",
+    )?;
+    Ok(Webhook { url })
+}
+
+/// `url` trimmed and normalized: http or https with a host and without a
+/// user or password, which would be sent in the clear and shown. The
+/// errors are sentences for the form, `missing` and `password` the
+/// caller's own.
+pub(crate) fn http_url(url: &str, missing: &str, password: &str) -> Result<String, String> {
+    let url = url.trim();
     if url.is_empty() {
-        return Err("Enter the URL to post to.".into());
+        return Err(missing.into());
     }
     let parsed = reqwest::Url::parse(url)
         .map_err(|_| format!("`{url}` is not a URL; it starts with https://."))?;
@@ -257,11 +270,9 @@ fn normalize_webhook(webhook: Webhook) -> Result<Webhook, String> {
         return Err(format!("`{url}` is not an http or https URL."));
     }
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("Put no password in the URL; use the signing secret instead.".into());
+        return Err(password.into());
     }
-    Ok(Webhook {
-        url: parsed.to_string(),
-    })
+    Ok(parsed.to_string())
 }
 
 /// What a channel hears about: the `customer_id` and `site_id` columns,
