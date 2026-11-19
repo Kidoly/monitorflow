@@ -27,6 +27,8 @@ pub struct Inventory {
     /// Maintenance windows that come back (ADR-0151).
     pub windows: Vec<Window>,
     pub channels: Vec<Channel>,
+    /// What is behind what (ADR-0152).
+    pub dependencies: Vec<Dependency>,
     /// What the source has and MonitorFlow cannot do, with why.
     pub unmovable: Vec<Unmovable>,
 }
@@ -45,6 +47,7 @@ impl Inventory {
             && self.silences.is_empty()
             && self.windows.is_empty()
             && self.channels.is_empty()
+            && self.dependencies.is_empty()
             && self.unmovable.is_empty()
     }
 }
@@ -228,6 +231,12 @@ pub enum Watch {
     /// The traffic of the host's network interfaces: the built-in `net`
     /// check of a server, the SNMP interfaces of a device (ADR-0149).
     Traffic,
+    /// A vCenter or ESXi host read through its API from a probe: its hosts,
+    /// virtual machines and datastores (ADR-0156). The host is a device.
+    Vmware,
+    /// The virtual machines of a Hyper-V host, read by its Windows agent
+    /// (ADR-0156).
+    HyperV,
 }
 
 impl Watch {
@@ -394,6 +403,9 @@ pub enum Measure {
     WebResponseTime { url: String },
     /// Days until the certificate of the website check of `url` expires.
     CertificateDays { url: String },
+    /// Share of a vCenter's datastores' space that is free, 0 to 1, every
+    /// datastore (ADR-0156).
+    DatastoreFree,
 }
 
 impl Measure {
@@ -405,6 +417,7 @@ impl Measure {
             Self::MemoryAvailable => Watch::Memory,
             Self::DiskUsed { .. } => Watch::Disk,
             Self::DiskWait { .. } => Watch::DiskIo,
+            Self::DatastoreFree => Watch::Vmware,
             Self::WebResponseTime { url } | Self::CertificateDays { url } => checks
                 .into_iter()
                 .find_map(|c| match &c.watch {
@@ -620,6 +633,57 @@ pub struct Unmovable {
     pub hosts: Vec<String>,
     pub origin: Origin,
     pub why: Note,
+}
+
+/// One end of a dependency (ADR-0152): a host, or one of its checks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DependencyEnd {
+    pub host: String,
+    /// The check it is, by what it watches; `None` for all of the host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watch: Option<Watch>,
+}
+
+impl DependencyEnd {
+    pub fn host(host: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            watch: None,
+        }
+    }
+
+    /// One check of `host`; the agent answering is the host itself.
+    pub fn check(host: impl Into<String>, watch: Watch) -> Self {
+        Self {
+            host: host.into(),
+            watch: (watch != Watch::Agent).then_some(watch),
+        }
+    }
+}
+
+impl DependencyEnd {
+    /// The parent `parent` for `child`, where `watch` is what it is: a
+    /// host as a whole is behind its own checks only one check at a time,
+    /// so a check of a host that depends on that host's ping depends on
+    /// the ping check. `None` when a host would depend on itself.
+    pub fn parent_for(parent: Self, watch: &Watch, child: &Self) -> Option<Self> {
+        if parent.host != child.host || parent.watch.is_some() {
+            return (parent != *child).then_some(parent);
+        }
+        let own = Self::check(parent.host, watch.clone());
+        (child.watch.is_some() && own.watch.is_some() && own != *child).then_some(own)
+    }
+}
+
+/// `child` is behind `parent`: while the parent is down, the child opens
+/// no incident of its own (ADR-0152).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Dependency {
+    pub child: DependencyEnd,
+    pub parent: DependencyEnd,
+    pub origin: Origin,
+    #[serde(flatten)]
+    pub fidelity: Fidelity,
 }
 
 /// Arguments of a [`Note`], built with [`args!`](crate::args).
