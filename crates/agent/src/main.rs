@@ -410,17 +410,17 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     let (stream_end, sensors_end) = sensor_config::link();
     let uplink = Uplink::new(UploadSettings::default());
     let following = updates.clone();
+    let builtin = Builtin::from_config(&config.sensors, &config.data_dir)?;
     let plugin_checks = PluginChecks::new(
         identity.peer_id(),
         Arc::new(move || following.borrow().tls.ca_certs().to_vec()),
         config.plugins.clone(),
+        builtin.port_targets().cloned(),
     )
     .with_state(config.data_dir.join("plugin-grants"));
     let plugin_checks = Arc::new(plugin_checks);
     let sensors = Sensors::new(
-        Arc::new(
-            Builtin::from_config(&config.sensors, &config.data_dir)?.with_plugins(plugin_checks),
-        ),
+        Arc::new(builtin.with_plugins(plugin_checks)),
         ConfigFile::in_dir(&config.data_dir),
         uplink.clone(),
     );
