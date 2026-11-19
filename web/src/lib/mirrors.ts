@@ -4,6 +4,7 @@ import { t } from "@/i18n";
 import { activeLocale } from "@/i18n/locale";
 
 import type { Mirror, MirrorRunSummary } from "./api";
+import { formatHourMinute, formatMinute } from "./clock";
 
 /** `https://deb.debian.org/debian/` reads `deb.debian.org/debian`. */
 export function upstreamText(url: string): string {
@@ -66,7 +67,7 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 /** "20:30" today, "23 Oct 02:00" another day ("23 oct. 02:00" in French), in local time. */
 export function shortTime(date: Date, now: Date): string {
-  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const time = formatHourMinute(date);
   if (date.toDateString() === now.toDateString()) return time;
   // American English abbreviates every month to three letters; British English says "Sept".
   const locale = activeLocale() === "en" ? "en-US" : activeLocale();
@@ -76,8 +77,7 @@ export function shortTime(date: Date, now: Date): string {
 
 /** "2026-10-22 08:00", local. */
 export function minuteText(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return formatMinute(new Date(iso));
 }
 
 /** "42 s", "4 min 12 s", "9 min 02 s", "1 h 05 min". */

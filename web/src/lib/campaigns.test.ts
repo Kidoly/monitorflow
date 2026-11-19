@@ -123,6 +123,21 @@ describe("toRequest", () => {
     expect("site_id" in toRequest(emptyDraft("c1"))).toBe(false);
   });
 
+  it("sends a one-time window's local times as ISO times, empty when not given", () => {
+    const window = { kind: "once" as const, weekdays: [], start: "", end: "", timezone: "UTC" };
+    const windows = toRequest({
+      ...emptyDraft("c1"),
+      windows: [
+        { ...window, startsAt: "2026-11-07T22:00", endsAt: "nonsense" },
+        { ...window, startsAt: "", endsAt: "" },
+      ],
+    }).windows;
+    expect(windows).toEqual([
+      { kind: "once", starts_at: new Date(2026, 10, 7, 22, 0).toISOString(), ends_at: "" },
+      { kind: "once", starts_at: "", ends_at: "" },
+    ]);
+  });
+
   it("targets the customer's unrevoked servers of the site or the list, by hostname", () => {
     const servers = [
       server({ id: "b", hostname: "web-2" }),

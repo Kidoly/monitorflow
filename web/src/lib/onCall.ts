@@ -3,6 +3,8 @@ import { activeLocale, dateLocale } from "@/i18n/locale";
 
 import type { OnCallProblem, OnCallSchedule, OnCallTurn } from "./api";
 
+export { browserTimeZone, toLocalInput } from "./clock";
+
 /** ISO weekdays, 1 for Monday. */
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
@@ -75,17 +77,6 @@ export function formatWhen(date: Date): string {
 /** Who is on call in a turn, for a sentence: "alice", or "nobody" in a gap without a person. */
 export function who(turn: Pick<OnCallTurn, "username" | "user_id">): string {
   return turn.username ?? (turn.user_id ? t("onCall.removedUser") : t("onCall.nobody"));
-}
-
-/** A `datetime-local` value for `date`, in the browser's time zone. */
-export function toLocalInput(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-/** The browser's time zone, the default of a new schedule. */
-export function browserTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
 /** Time zones to choose from, with `current` and UTC always among them. */
