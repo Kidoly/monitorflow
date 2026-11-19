@@ -330,7 +330,7 @@ function ProviderForm({
               <input
                 className={fieldClass}
                 type="password"
-                autoComplete="off"
+                autoComplete="new-password"
                 value={person.password}
                 onChange={(e) => {
                   setPerson({ ...person, password: e.target.value });
