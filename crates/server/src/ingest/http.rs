@@ -36,10 +36,7 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<(), WriteError> {
         return Ok(());
     }
     let body = response.text().await.unwrap_or_default();
-    let mut end = body.len().min(MAX_ERROR_BODY);
-    while !body.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = super::journal::cut_at(&body, MAX_ERROR_BODY);
     let message = format!("HTTP {status}: {}", body[..end].trim());
     Err(classify(status, message))
 }
