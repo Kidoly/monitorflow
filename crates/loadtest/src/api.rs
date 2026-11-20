@@ -51,6 +51,17 @@ impl Api {
         Self::body(path, response).await
     }
 
+    pub async fn put(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let response = self
+            .client
+            .put(format!("{}{path}", self.base))
+            .header("X-MonitorFlow-CSRF", "1")
+            .json(body)
+            .send()
+            .await?;
+        Self::body(path, response).await
+    }
+
     async fn body(path: &str, response: reqwest::Response) -> anyhow::Result<Value> {
         let status = response.status();
         let text = response.text().await?;
@@ -97,6 +108,13 @@ impl Api {
                 None => return Ok(servers),
             }
         }
+    }
+
+    /// The servers with an agent, without devices.
+    pub async fn agents(&self) -> anyhow::Result<Vec<Value>> {
+        let mut servers = self.servers().await?;
+        servers.retain(|s| s["kind"] == "agent");
+        Ok(servers)
     }
 
     /// What the fleet overview loads: every server, and the open incidents.

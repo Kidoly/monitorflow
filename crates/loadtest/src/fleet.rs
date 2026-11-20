@@ -65,6 +65,8 @@ pub struct Shared {
     /// the latest Hello.
     first_batch_at: Vec<AtomicU64>,
     live: Vec<OnceLock<Live>>,
+    /// Per agent: sensors of the configuration it runs now.
+    running: Vec<AtomicU64>,
 }
 
 /// An agent past enrollment.
@@ -87,6 +89,7 @@ impl Shared {
             opened_at: (0..count).map(|_| AtomicU64::new(0)).collect(),
             first_batch_at: (0..count).map(|_| AtomicU64::new(0)).collect(),
             live: (0..count).map(|_| OnceLock::new()).collect(),
+            running: (0..count).map(|_| AtomicU64::new(0)).collect(),
         }
     }
 
@@ -117,6 +120,13 @@ impl Shared {
             .iter()
             .filter(|at| at.load(Ordering::Relaxed) > 0)
             .count()
+    }
+
+    /// Sensors the agents run now, summed, and the fewest one agent runs.
+    pub fn sensors_running(&self) -> (u64, u64) {
+        let counts = self.running.iter().map(|n| n.load(Ordering::Relaxed));
+        let min = counts.clone().min().unwrap_or(0);
+        (counts.sum(), min)
     }
 
     /// Samples queued and sent by every agent so far.
@@ -379,6 +389,7 @@ async fn sensors(
             continue;
         };
         running.abort_all();
+        shared.running[index].store(config.sensors.len() as u64, Ordering::Relaxed);
         for (n, spec) in config.sensors.into_iter().enumerate() {
             let every = Duration::from_millis(spec.interval_ms.max(1_000));
             let offset = every.mul_f64(spread(index * 31 + n));
@@ -511,5 +522,15 @@ mod tests {
             [(Some(50), Some(100)), (None, None), (None, None)]
         );
         assert_eq!(shared.connected_once(), 2);
+    }
+
+    #[test]
+    fn running_sensors_add_up_over_the_fleet() {
+        let shared = Shared::new(3);
+        shared.running[0].store(50, Ordering::Relaxed);
+        shared.running[1].store(48, Ordering::Relaxed);
+        assert_eq!(shared.sensors_running(), (98, 0));
+        shared.running[2].store(50, Ordering::Relaxed);
+        assert_eq!(shared.sensors_running(), (148, 48));
     }
 }

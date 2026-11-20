@@ -5,9 +5,12 @@
 //!
 //! Phases: enrollment and first connection, steady state, a command to
 //! every server, a certificate renewal of every agent, a server restart
-//! (reconnection storm) and an alert storm through notifications.
+//! (reconnection storm) and an alert storm through notifications. With
+//! checks to add (`--sensors-per-agent`, `--devices`), they go through the
+//! API between the first connection and the steady state.
 
 mod api;
+mod checks;
 mod fleet;
 mod hooks;
 mod measure;
@@ -28,6 +31,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
 use crate::api::Api;
+use crate::checks::Plan;
 use crate::fleet::{Fleet, Member};
 use crate::measure::{Snapshot, Spread, Watched};
 use crate::report::Phase;
@@ -61,6 +65,23 @@ struct Cli {
     /// Seconds a simulated command takes.
     #[arg(long, default_value_t = 2)]
     command_seconds: u64,
+    /// Sensors each agent runs, the 5 built-in ones included; the others
+    /// are services and ports added through the API with their alerts,
+    /// on the sites and on the servers themselves.
+    #[arg(long, default_value_t = 5)]
+    sensors_per_agent: usize,
+    /// Of the added sensors, how many each server has of its own rather
+    /// than from its site.
+    #[arg(long, default_value_t = 5)]
+    own_sensors: usize,
+    /// Devices without an agent, each with a ping and `--device-ports` port
+    /// checks, run by the central server or, for the share behind relays,
+    /// by the site's relay; their addresses are loopback addresses
+    /// 127.1.x.y, where the generator listens.
+    #[arg(long, default_value_t = 0)]
+    devices: usize,
+    #[arg(long, default_value_t = 4)]
+    device_ports: usize,
     /// Phases to run after the steady state, in this order.
     #[arg(
         long,
@@ -115,6 +136,11 @@ fn main() -> anyhow::Result<()> {
 /// Everything a phase needs.
 struct Run {
     cli: Cli,
+    plan: Plan,
+    /// What the devices' port checks connect to.
+    listeners: Option<tokio::task::JoinSet<()>>,
+    /// Sensors the server lists for the agents and for the devices.
+    sensors: Option<(usize, usize)>,
     server: Server,
     relays: Vec<Relay>,
     api: Api,
@@ -129,6 +155,13 @@ struct Run {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
+    let plan = Plan {
+        per_agent: cli.sensors_per_agent,
+        own: cli.own_sensors,
+        devices: cli.devices,
+        device_ports: cli.device_ports,
+    };
+    plan.check()?;
     let sibling = |name: &str| -> anyhow::Result<PathBuf> {
         Ok(std::env::current_exe()?.with_file_name(name))
     };
@@ -237,6 +270,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     );
     let mut run = Run {
         cli,
+        plan,
+        listeners: None,
+        sensors: None,
         server,
         relays,
         api,
@@ -283,8 +319,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         watched,
         phases,
         misses,
+        plan,
+        sensors,
+        listeners,
         ..
     } = run;
+    drop(listeners);
     fleet.stop().await;
     for mut relay in relays {
         let _ = relay.process.stop(Duration::from_secs(10)).await;
@@ -297,8 +337,29 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         snapshots.push(snapshot);
     }
 
-    let setup = vec![
+    let mut setup = vec![
         ("Agents".to_owned(), cli.agents.to_string()),
+        (
+            "Sensors per agent".to_owned(),
+            format!(
+                "{}: the {} built-in ones, {} of their site and {} of their own",
+                plan.per_agent,
+                checks::BUILTIN,
+                plan.site_checks().len(),
+                plan.own_checks().len()
+            ),
+        ),
+        (
+            "Devices".to_owned(),
+            format!(
+                "{}, each with a ping and {} port checks",
+                plan.devices, plan.device_ports
+            ),
+        ),
+        (
+            "Sensors planned".to_owned(),
+            plan.total(cli.agents).to_string(),
+        ),
         (
             "Through relays".to_owned(),
             format!("{behind_relays} over {} relays", cli.relays),
@@ -306,8 +367,24 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         ("Steady state".to_owned(), format!("{} s", cli.steady)),
         ("Host".to_owned(), host_description()),
     ];
+    if let Some((agents, devices)) = sensors {
+        setup.push((
+            "Sensors the server lists".to_owned(),
+            format!(
+                "{} ({agents} on the agents, {devices} on the devices)",
+                agents + devices
+            ),
+        ));
+    }
     let text = report::render(
-        &format!("Load test: {} agents", cli.agents),
+        &match sensors {
+            Some((agents, devices)) => format!(
+                "Load test: {} agents, {} sensors",
+                cli.agents,
+                agents + devices
+            ),
+            None => format!("Load test: {} agents", cli.agents),
+        },
         &setup,
         &phases,
         &snapshots,
@@ -335,7 +412,7 @@ async fn create_tokens(api: &Api, members: &mut [Member], sites: &[String]) -> a
             ("/api/tokens".to_owned(), body)
         })
         .collect();
-    for (member, created) in members.iter_mut().zip(post_all(api, requests).await?) {
+    for (member, created) in members.iter_mut().zip(post_all(api, requests).await?.0) {
         member.token = created["token"]
             .as_str()
             .context("token missing")?
@@ -344,27 +421,72 @@ async fn create_tokens(api: &Api, members: &mut [Member], sites: &[String]) -> a
     Ok(())
 }
 
-/// POSTs every request, 16 at a time; the responses in order.
+/// POSTs every request, 16 at a time, as a script on the API would; the
+/// responses in order, and each request's milliseconds.
 async fn post_all(
     api: &Api,
     requests: Vec<(String, serde_json::Value)>,
-) -> anyhow::Result<Vec<serde_json::Value>> {
+) -> anyhow::Result<(Vec<serde_json::Value>, Vec<f64>)> {
     let semaphore = Arc::new(tokio::sync::Semaphore::new(16));
     let mut set = tokio::task::JoinSet::new();
     for (index, (path, body)) in requests.into_iter().enumerate() {
         let (api, semaphore) = (api.clone(), semaphore.clone());
         set.spawn(async move {
             let _permit = semaphore.acquire().await;
-            (index, api.post(&path, &body).await)
+            let start = Instant::now();
+            let response = api.post(&path, &body).await;
+            (index, response, start.elapsed().as_secs_f64() * 1000.0)
         });
     }
     let mut responses = Vec::new();
+    let mut millis = Vec::new();
     while let Some(joined) = set.join_next().await {
-        let (index, response) = joined?;
+        let (index, response, ms) = joined?;
         responses.push((index, response?));
+        millis.push(ms);
     }
     responses.sort_by_key(|(index, _)| *index);
-    Ok(responses.into_iter().map(|(_, r)| r).collect())
+    Ok((responses.into_iter().map(|(_, r)| r).collect(), millis))
+}
+
+/// GETs every path, 16 at a time; the responses in order and each
+/// request's milliseconds.
+async fn get_all(
+    api: &Api,
+    paths: Vec<String>,
+) -> anyhow::Result<(Vec<serde_json::Value>, Vec<f64>)> {
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(16));
+    let mut set = tokio::task::JoinSet::new();
+    for (index, path) in paths.into_iter().enumerate() {
+        let (api, semaphore) = (api.clone(), semaphore.clone());
+        set.spawn(async move {
+            let _permit = semaphore.acquire().await;
+            let start = Instant::now();
+            let response = api.get(&path).await;
+            (index, response, start.elapsed().as_secs_f64() * 1000.0)
+        });
+    }
+    let mut responses = Vec::new();
+    let mut millis = Vec::new();
+    while let Some(joined) = set.join_next().await {
+        let (index, response, ms) = joined?;
+        responses.push((index, response?));
+        millis.push(ms);
+    }
+    responses.sort_by_key(|(index, _)| *index);
+    Ok((responses.into_iter().map(|(_, r)| r).collect(), millis))
+}
+
+/// Agents whose configuration acknowledged is the current one, and all.
+async fn agents_in_sync(pool: &PgPool) -> Result<(i64, i64), sqlx::Error> {
+    sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE s.sensor_revision_applied = si.sensor_revision + s.sensor_revision),
+                count(*)
+         FROM servers s JOIN sites si ON si.id = s.site_id
+         WHERE s.kind = 'agent' AND s.revoked_at IS NULL",
+    )
+    .fetch_one(pool)
+    .await
 }
 
 /// Empties `work`, except the server's data and the stores' certificate,
@@ -451,6 +573,9 @@ impl Run {
 
     async fn phases(&mut self) -> anyhow::Result<()> {
         self.connect().await?;
+        if self.plan.per_agent > checks::BUILTIN || self.plan.devices > 0 {
+            self.configure().await?;
+        }
         self.steady().await?;
         for name in self.cli.phases.clone() {
             match name.as_str() {
@@ -464,9 +589,9 @@ impl Run {
         Ok(())
     }
 
-    /// Servers the API shows online.
+    /// Agents the API shows online.
     async fn online(&self) -> anyhow::Result<usize> {
-        let servers = self.api.servers().await?;
+        let servers = self.api.agents().await?;
         Ok(servers.iter().filter(|s| s["status"] == "online").count())
     }
 
@@ -538,6 +663,225 @@ impl Run {
         self.end(phase).await
     }
 
+    /// Adds the checks of the plan through the API, as an operator or a
+    /// script would: each site's, each server's own, then the devices
+    /// with theirs, every check with its alert. Then waits until every
+    /// agent runs its new configuration, changes one site check to time a
+    /// push to a whole site, and counts the sensors the server lists.
+    async fn configure(&mut self) -> anyhow::Result<()> {
+        let mut phase = self.begin("Checks added through the API");
+        let start = Instant::now();
+        let mut millis = Vec::new();
+        let mut requests = 0usize;
+
+        // Each site's checks, with their alerts.
+        let site_checks = self.plan.site_checks();
+        let mut site_rows = Vec::new();
+        for site in &self.sites {
+            let batch = site_checks
+                .iter()
+                .flat_map(|c| {
+                    [
+                        (format!("/api/sites/{site}/sensor_configs"), c.sensor()),
+                        (format!("/api/sites/{site}/thresholds"), c.threshold()),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            requests += batch.len();
+            let (created, ms) = post_all(&self.api, batch).await?;
+            millis.extend(ms);
+            site_rows.extend(
+                created
+                    .iter()
+                    .step_by(2)
+                    .filter_map(|row| row["id"].as_str().map(str::to_owned)),
+            );
+        }
+
+        // Each server's own.
+        let own = self.plan.own_checks();
+        let agents = self.api.agents().await?;
+        let batch: Vec<_> = agents
+            .iter()
+            .filter_map(|s| s["id"].as_str())
+            .flat_map(|id| {
+                own.iter().flat_map(move |c| {
+                    [
+                        (format!("/api/servers/{id}/sensor_configs"), c.sensor()),
+                        (format!("/api/servers/{id}/thresholds"), c.threshold()),
+                    ]
+                })
+            })
+            .collect();
+        requests += batch.len();
+        let (_, ms) = post_all(&self.api, batch).await?;
+        millis.extend(ms);
+
+        // Devices: the share behind relays goes to the relays' sites,
+        // whose default probe is their relay; the others are pinged from
+        // the central server.
+        let mut devices = Vec::new();
+        if self.plan.devices > 0 {
+            self.listeners =
+                Some(checks::device_listeners(self.plan.devices, self.plan.device_ports).await?);
+            let behind = (self.plan.devices as f64 * self.cli.relay_share).round() as usize;
+            let batch: Vec<_> = (0..self.plan.devices)
+                .map(|n| {
+                    let site = if n < behind && self.sites.len() > 1 {
+                        &self.sites[1 + n % (self.sites.len() - 1)]
+                    } else {
+                        &self.sites[0]
+                    };
+                    let body = json!({
+                        "site_id": site,
+                        "name": format!("device-{n:05}"),
+                        "address": checks::device_address(n).to_string(),
+                    });
+                    ("/api/devices".to_owned(), body)
+                })
+                .collect();
+            requests += batch.len();
+            let (created, ms) = post_all(&self.api, batch).await?;
+            millis.extend(ms);
+            devices = created
+                .iter()
+                .filter_map(|d| d["id"].as_str().map(str::to_owned))
+                .collect();
+            let device_checks = self.plan.device_checks();
+            let batch: Vec<_> = devices
+                .iter()
+                .flat_map(|id| {
+                    device_checks.iter().flat_map(move |c| {
+                        [
+                            (format!("/api/servers/{id}/sensor_configs"), c.sensor()),
+                            (format!("/api/servers/{id}/thresholds"), c.threshold()),
+                        ]
+                    })
+                })
+                .collect();
+            requests += batch.len();
+            let (_, ms) = post_all(&self.api, batch).await?;
+            millis.extend(ms);
+        }
+        let added_in = start.elapsed().as_secs_f64();
+        phase.result(
+            "Requests",
+            format!(
+                "{requests} in {added_in:.0} s, {:.0} a second, 16 at a time",
+                requests as f64 / added_in.max(0.001)
+            ),
+        );
+        phase.millis("Each request", Spread::of(millis));
+
+        // Every agent runs its whole configuration.
+        let per_agent = self.plan.per_agent as u64;
+        let synced = Instant::now();
+        let (shared, pool) = (self.fleet.shared.clone(), self.pool.clone());
+        let done = self
+            .until(Duration::from_secs(600), || {
+                let (shared, pool) = (shared.clone(), pool.clone());
+                async move {
+                    let (_, fewest) = shared.sensors_running();
+                    let (in_sync, all) = agents_in_sync(&pool).await?;
+                    Ok((fewest == per_agent && in_sync == all).then_some(()))
+                }
+            })
+            .await?;
+        let (running, fewest) = self.fleet.shared.sensors_running();
+        phase.result(
+            "Every agent runs its configuration",
+            match done {
+                Some(()) => format!(
+                    "{:.0} s after the last request",
+                    synced.elapsed().as_secs_f64()
+                ),
+                None => format!("not after 600 s: the fewest sensors on one agent is {fewest}"),
+            },
+        );
+        if done.is_none() {
+            self.miss(&mut phase, "not every agent runs its configuration".into());
+        }
+        phase.result("Sensors the agents run", running);
+
+        // One site check changed: the push to every agent of the site.
+        if let Some(row) = site_rows.first() {
+            let mut body = site_checks[0].sensor();
+            body["timeout_ms"] = json!(5_000);
+            let changed = Instant::now();
+            self.api
+                .put(&format!("/api/sensor_configs/{row}"), &body)
+                .await?;
+            let pool = self.pool.clone();
+            let done = self
+                .until(Duration::from_secs(300), || {
+                    let pool = pool.clone();
+                    async move {
+                        let (in_sync, all) = agents_in_sync(&pool).await?;
+                        Ok((in_sync == all).then_some(()))
+                    }
+                })
+                .await?;
+            let direct = self.fleet.len()
+                - (self.fleet.len() as f64 * self.cli.relay_share).round() as usize;
+            phase.result(
+                "One site check changed: every agent of the site acknowledged",
+                match done {
+                    Some(()) => {
+                        format!("{:.0} s ({direct} agents)", changed.elapsed().as_secs_f64())
+                    }
+                    None => "not within 300 s".to_owned(),
+                },
+            );
+        }
+
+        // The sensors as the server lists them, one page per server.
+        let ids: Vec<String> = agents
+            .iter()
+            .filter_map(|s| s["id"].as_str().map(str::to_owned))
+            .collect();
+        let count = |pages: &[serde_json::Value]| -> usize {
+            pages
+                .iter()
+                .map(|p| p["sensors"].as_array().map_or(0, Vec::len))
+                .sum()
+        };
+        let paths = |ids: &[String]| -> Vec<String> {
+            ids.iter()
+                .map(|id| format!("/api/servers/{id}/sensors"))
+                .collect()
+        };
+        let (pages, mut ms) = get_all(&self.api, paths(&ids)).await?;
+        let on_agents = count(&pages);
+        let (pages, device_ms) = get_all(&self.api, paths(&devices)).await?;
+        let on_devices = count(&pages);
+        ms.extend(device_ms);
+        phase.millis(
+            "GET /api/servers/{id}/sensors, every server",
+            Spread::of(ms),
+        );
+        phase.result(
+            "Sensors the server lists",
+            format!(
+                "{} ({on_agents} on {} agents, {on_devices} on {} devices)",
+                on_agents + on_devices,
+                ids.len(),
+                devices.len()
+            ),
+        );
+        let planned = self.plan.total(self.fleet.len());
+        if on_agents + on_devices != planned {
+            self.miss(
+                &mut phase,
+                format!(
+                    "{} sensors listed, {planned} planned",
+                    on_agents + on_devices
+                ),
+            );
+        }
+        self.sensors = Some((on_agents, on_devices));
+        self.end(phase).await
+    }
+
     /// The fleet reporting at the real intervals; web pages timed at the end.
     async fn steady(&mut self) -> anyhow::Result<()> {
         let mut phase = self.begin("Steady state");
@@ -573,7 +917,7 @@ impl Run {
     /// `apply_updates` to every server, answered after `command_seconds`.
     async fn commands(&mut self) -> anyhow::Result<()> {
         let mut phase = self.begin("A command to every server");
-        let servers = self.api.servers().await?;
+        let servers = self.api.agents().await?;
         let ids: Vec<String> = servers
             .iter()
             .filter_map(|s| s["id"].as_str().map(str::to_owned))
@@ -691,11 +1035,11 @@ impl Run {
         };
         let all = self
             .until(limit, || async {
-                let servers = self.api.servers().await?;
+                let servers = self.api.agents().await?;
                 Ok((connected_after(&servers).len() == total).then_some(()))
             })
             .await?;
-        let servers = self.api.servers().await?;
+        let servers = self.api.agents().await?;
         phase.seconds(
             "Streams open again at the server",
             Spread::of(connected_after(&servers)),
