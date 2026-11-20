@@ -1,0 +1,14 @@
+# With LOADTEST_SERVER_CPUS or LOADTEST_SERVER_MEMORY, scripts/load-test.sh
+# adds this file: the stores run in the systemd slice that also holds the
+# server, limited together like a small machine (docs/load-test.md). Each
+# store also sees the machine's memory as its own limit, as it would on a
+# VM of that size: VictoriaMetrics and VictoriaLogs size their caches
+# from it.
+x-limited: &limited
+  cgroup_parent: ${LOADTEST_SLICE:?run scripts/load-test.sh}
+  mem_limit: ${LOADTEST_STORE_MEMORY:-0}
+
+services:
+  postgres: *limited
+  victoriametrics: *limited
+  victorialogs: *limited
