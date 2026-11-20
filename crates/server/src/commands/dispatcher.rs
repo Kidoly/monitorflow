@@ -8,8 +8,8 @@
 //! again: the agent answers a command it already ran from its journal
 //! (ADR-0031).
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use monitorflow_common::command;
@@ -24,9 +24,65 @@ use super::{CommandRow, CommandStore, PackageStore, State};
 use crate::ca::CertificateAuthority;
 use crate::grpc::Registry;
 
-/// Agents waiting to be looked at; more are dropped and the next poll
-/// covers them.
-const WAKE_QUEUE: usize = 1024;
+/// Agents waiting to be looked at, each at most once: a second wake of an
+/// agent already waiting adds nothing, so the queue never holds more than
+/// the fleet. It held 1,024 wakes before, and a command queued through
+/// the API wakes the dispatcher twice (the API, then its NOTIFY, ADR-0089):
+/// 2,000 commands queued at once overflowed it and the rest waited for the
+/// sweep (docs/load-test.md).
+#[derive(Debug, Clone)]
+struct WakeSender {
+    tx: mpsc::UnboundedSender<String>,
+    queued: Arc<Mutex<HashSet<String>>>,
+}
+
+struct WakeReceiver {
+    rx: mpsc::UnboundedReceiver<String>,
+    queued: Arc<Mutex<HashSet<String>>>,
+}
+
+fn wakes() -> (WakeSender, WakeReceiver) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let queued = Arc::new(Mutex::new(HashSet::new()));
+    (
+        WakeSender {
+            tx,
+            queued: queued.clone(),
+        },
+        WakeReceiver { rx, queued },
+    )
+}
+
+fn lock(queued: &Mutex<HashSet<String>>) -> std::sync::MutexGuard<'_, HashSet<String>> {
+    // Inserts and removes only: a panic leaves the set consistent.
+    queued.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+impl WakeSender {
+    /// Queues `peer_id` unless it is waiting already; `false` when it was,
+    /// or the dispatcher is gone.
+    fn push(&self, peer_id: &str) -> bool {
+        let mut queued = lock(&self.queued);
+        if !queued.insert(peer_id.to_owned()) {
+            return false;
+        }
+        if self.tx.send(peer_id.to_owned()).is_err() {
+            queued.remove(peer_id);
+            return false;
+        }
+        true
+    }
+}
+
+impl WakeReceiver {
+    /// The next agent; a wake arriving while it is looked at queues it
+    /// again. `None` once every sender is dropped.
+    async fn recv(&mut self) -> Option<String> {
+        let peer = self.rx.recv().await?;
+        lock(&self.queued).remove(&peer);
+        Some(peer)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DispatcherSettings {
@@ -57,7 +113,7 @@ impl Default for DispatcherSettings {
 pub struct Commands {
     store: CommandStore,
     packages: PackageStore,
-    wake: mpsc::Sender<String>,
+    wake: WakeSender,
 }
 
 impl Commands {
@@ -68,7 +124,7 @@ impl Commands {
         ca: Arc<CertificateAuthority>,
         settings: DispatcherSettings,
     ) -> Self {
-        let (wake, rx) = mpsc::channel(WAKE_QUEUE);
+        let (wake, rx) = wakes();
         let dispatcher = Dispatcher {
             store: store.clone(),
             registry,
@@ -93,12 +149,7 @@ impl Commands {
     /// Asks the dispatcher to look at the agent `peer_id`: its stream
     /// opened or a command was queued for it.
     pub fn dispatch(&self, peer_id: &str) {
-        if self.wake.try_send(peer_id.to_owned()).is_err() {
-            tracing::debug!(
-                agent_id = peer_id,
-                "dispatch queue full; the next poll sends it"
-            );
-        }
+        self.wake.push(peer_id);
     }
 
     /// Stores the package report of the agent `peer_id`. Failures are
@@ -153,7 +204,7 @@ struct Dispatcher {
     registry: Registry,
     ca: Arc<CertificateAuthority>,
     settings: DispatcherSettings,
-    wake: mpsc::Receiver<String>,
+    wake: WakeReceiver,
     /// The command last sent to each agent, and on which connection.
     delivered: HashMap<String, (u64, Uuid)>,
 }
@@ -280,5 +331,39 @@ impl Dispatcher {
                 false
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_fleet_of_wakes_is_kept_once_each() {
+        let (tx, mut rx) = wakes();
+        // 2,000 commands queued at once, each waking twice: the API, then
+        // the NOTIFY. The old queue of 1,024 dropped about half.
+        for round in 0..2 {
+            for n in 0..2_000 {
+                assert_eq!(tx.push(&format!("agent-{n}")), round == 0);
+            }
+        }
+        let mut seen = HashSet::new();
+        for _ in 0..2_000 {
+            assert!(seen.insert(rx.recv().await.unwrap()));
+        }
+        assert!(rx.rx.try_recv().is_err(), "each agent once");
+    }
+
+    #[tokio::test]
+    async fn a_wake_while_an_agent_is_looked_at_queues_it_again() {
+        let (tx, mut rx) = wakes();
+        assert!(tx.push("web-01"));
+        assert_eq!(rx.recv().await.as_deref(), Some("web-01"));
+        // Its command ended while the dispatcher was sending the last one.
+        assert!(tx.push("web-01"));
+        assert_eq!(rx.recv().await.as_deref(), Some("web-01"));
+        drop(tx);
+        assert_eq!(rx.recv().await, None);
     }
 }

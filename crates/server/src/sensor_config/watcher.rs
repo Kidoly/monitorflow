@@ -8,6 +8,7 @@
 //! Polling was preferred to LISTEN/NOTIFY: see ADR-0016.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use monitorflow_common::proto::v1::envelope::Payload;
@@ -18,9 +19,15 @@ use tokio::time::{interval, timeout, MissedTickBehavior};
 use super::{Resolved, SensorConfigStore};
 use crate::grpc::Registry;
 
-/// Acknowledgements queued towards the watcher; more are dropped, and the
-/// agent acknowledges again after its next Hello.
-const ACK_QUEUE: usize = 1024;
+/// Acknowledgements wait in a map, the latest revision per agent, so none
+/// is ever dropped and the map never holds more than the fleet: a queue of
+/// 1,024 dropped most of a 1,600-agent site's acknowledgements, and one of
+/// 16,384 those of a 20,000-agent site (docs/load-test.md). A channel of
+/// one wakes the watcher.
+type Acks = Arc<Mutex<HashMap<String, u64>>>;
+
+/// Most acknowledgements in one statement.
+const ACK_BATCH: usize = 2_000;
 
 #[derive(Debug, Clone)]
 pub struct WatcherSettings {
@@ -45,22 +52,25 @@ impl Default for WatcherSettings {
 #[derive(Debug, Clone)]
 pub struct SensorConfigs {
     store: SensorConfigStore,
-    acks: mpsc::Sender<(String, u64)>,
+    acks: Acks,
+    wake: mpsc::Sender<()>,
 }
 
 impl SensorConfigs {
     /// Starts the watcher task, which runs until every handle is dropped.
     pub fn spawn(store: SensorConfigStore, registry: Registry, settings: WatcherSettings) -> Self {
-        let (acks, rx) = mpsc::channel(ACK_QUEUE);
+        let (wake, woken) = mpsc::channel(1);
+        let acks = Acks::default();
         let watcher = Watcher {
             store: store.clone(),
             registry,
             settings,
-            acks: rx,
+            acks: acks.clone(),
+            woken,
             pending: HashMap::new(),
         };
         tokio::spawn(watcher.run());
-        Self { store, acks }
+        Self { store, acks, wake }
     }
 
     /// The effective configuration of the agent `peer_id`.
@@ -70,21 +80,23 @@ impl SensorConfigs {
 
     /// Queues the revision acknowledged by `peer_id` for writing.
     pub fn applied(&self, peer_id: &str, revision: u64) {
-        if self.acks.try_send((peer_id.to_owned(), revision)).is_err() {
-            tracing::debug!(
-                agent_id = peer_id,
-                revision,
-                "acknowledgement queue full; dropped"
-            );
-        }
+        lock(&self.acks).insert(peer_id.to_owned(), revision);
+        // Full: a wake is pending already, and takes this one too.
+        let _ = self.wake.try_send(());
     }
+}
+
+fn lock(acks: &Mutex<HashMap<String, u64>>) -> std::sync::MutexGuard<'_, HashMap<String, u64>> {
+    // Inserts and takes only: a panic leaves the map consistent.
+    acks.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 struct Watcher {
     store: SensorConfigStore,
     registry: Registry,
     settings: WatcherSettings,
-    acks: mpsc::Receiver<(String, u64)>,
+    acks: Acks,
+    woken: mpsc::Receiver<()>,
     /// Acknowledgements not written yet, latest per agent.
     pending: HashMap<String, u64>,
 }
@@ -95,9 +107,10 @@ impl Watcher {
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
-                ack = self.acks.recv() => match ack {
-                    Some((id, revision)) => {
-                        self.pending.insert(id, revision);
+                woken = self.woken.recv() => match woken {
+                    Some(()) => {
+                        let acks = std::mem::take(&mut *lock(&self.acks));
+                        self.pending.extend(acks);
                         self.record().await;
                     }
                     None => return,
@@ -111,10 +124,13 @@ impl Watcher {
     }
 
     async fn record(&mut self) {
-        for (id, revision) in std::mem::take(&mut self.pending) {
-            if let Err(error) = self.store.record_applied(&id, revision).await {
-                tracing::warn!(agent_id = %id, revision, %error, "could not record the applied sensor configuration; will retry");
-                self.pending.entry(id).or_insert(revision);
+        let pending: Vec<(String, u64)> = std::mem::take(&mut self.pending).into_iter().collect();
+        for batch in pending.chunks(ACK_BATCH) {
+            if let Err(error) = self.store.record_applied_many(batch).await {
+                tracing::warn!(agents = batch.len(), %error, "could not record the applied sensor configurations; will retry");
+                for (id, revision) in batch {
+                    self.pending.entry(id.clone()).or_insert(*revision);
+                }
             }
         }
     }
