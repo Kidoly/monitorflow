@@ -62,6 +62,7 @@ pub fn render(
     setup: &[(String, String)],
     phases: &[Phase],
     snapshots: &[Snapshot],
+    log: &[String],
 ) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "# {title}\n");
@@ -103,6 +104,9 @@ pub fn render(
                 let (mean, max) = mean_max(&during, value);
                 let _ = writeln!(out, "| {label} | {mean:.precision$} | {max:.precision$} |");
             }
+            for (label, mean, max) in cgroup_rows(&during) {
+                let _ = writeln!(out, "| {label} | {mean:.0} | {max:.0} |");
+            }
             out.push('\n');
         }
         for (label, value) in &phase.results {
@@ -126,6 +130,110 @@ pub fn render(
             }
         }
     }
+    if !log.is_empty() {
+        let _ = writeln!(out, "\n## Server log\n");
+        for line in log {
+            let _ = writeln!(out, "- {}", one_line(line, 300));
+        }
+    }
+    out
+}
+
+/// CPU and memory of each cgroup of a limited server side, in the order
+/// they were first seen: label, mean and maximum.
+fn cgroup_rows(during: &[&Snapshot]) -> Vec<(String, f64, f64)> {
+    let mut names: Vec<&str> = Vec::new();
+    for snapshot in during {
+        for (name, _, _) in &snapshot.cgroups {
+            if !names.contains(&name.as_str()) {
+                names.push(name);
+            }
+        }
+    }
+    let spread = |values: Vec<f64>| {
+        let mean = values.iter().sum::<f64>() / values.len().max(1) as f64;
+        (mean, values.iter().copied().fold(0.0, f64::max))
+    };
+    let mut rows = Vec::new();
+    for name in names {
+        let of = |pick: fn(&(String, f64, f64)) -> f64| -> Vec<f64> {
+            during
+                .iter()
+                .filter_map(|s| s.cgroups.iter().find(|c| c.0 == name).map(pick))
+                .collect()
+        };
+        let (mean, max) = spread(of(|c| c.1));
+        rows.push((format!("{name} CPU (% of a core)"), mean, max));
+        let (mean, max) = spread(of(|c| c.2));
+        rows.push((format!("{name} memory (MiB)"), mean, max));
+    }
+    rows
+}
+
+/// What a server log says beyond its routine: warnings and errors by
+/// target and message, most frequent first, without the incidents the
+/// threshold engine logs as warnings by design; then the last counters of
+/// the writers and the threshold engine, which count drops.
+pub fn log_summary(log: &str) -> Vec<String> {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    let mut counters: Vec<(String, String)> = Vec::new();
+    for line in log.lines() {
+        let Some(rest) = line
+            .split_once(" WARN ")
+            .or_else(|| line.split_once(" ERROR "))
+        else {
+            for key in [
+                "writer counters sink=\"victoriametrics\"",
+                "writer counters sink=\"victorialogs\"",
+                "threshold engine stats=",
+            ] {
+                if line.contains(key) {
+                    let text = line
+                        .split_once("INFO ")
+                        .map_or(line, |(_, t)| t)
+                        .trim()
+                        .to_owned();
+                    counters.retain(|(k, _)| k != key);
+                    counters.push((key.to_owned(), text));
+                }
+            }
+            continue;
+        };
+        let message = rest.1.trim();
+        if message.contains("incident changed") {
+            continue;
+        }
+        // The target and the message, without the fields that vary.
+        let head: String = message
+            .split_whitespace()
+            .take_while(|word| !word.contains('='))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let level = if line.contains(" ERROR ") {
+            "ERROR"
+        } else {
+            "WARN"
+        };
+        let key = format!("{level} {head}");
+        match counts.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((key, 1)),
+        }
+    }
+    counts.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    let mut out: Vec<String> = counts
+        .into_iter()
+        .take(12)
+        .map(|(key, n)| format!("{n} x {key}"))
+        .collect();
+    if out.is_empty() {
+        out.push("No warning or error besides incidents".to_owned());
+    }
+    out.extend(
+        counters
+            .into_iter()
+            .map(|(_, text)| format!("Last: {text}")),
+    );
     out
 }
 
@@ -142,6 +250,30 @@ fn one_line(query: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_server_log_is_summed_up() {
+        let log = "\
+2026-11-20T13:00:00Z  WARN monitorflow_server::alerting::engine: incident changed agent_id=a metric=m
+2026-11-20T13:00:01Z  WARN monitorflow_server::db: could not acquire a connection agent_id=a
+2026-11-20T13:00:02Z  WARN monitorflow_server::db: could not acquire a connection agent_id=b
+2026-11-20T13:00:03Z ERROR monitorflow_server::ingest::writer: write failed sink=victoriametrics
+2026-11-20T13:00:04Z  INFO monitorflow_server::ingest::writer: writer counters sink=\"victoriametrics\" now=Stats { dropped: 0 }
+2026-11-20T13:00:05Z  INFO monitorflow_server::ingest::writer: writer counters sink=\"victoriametrics\" now=Stats { dropped: 7 }
+";
+        assert_eq!(
+            log_summary(log),
+            [
+                "2 x WARN monitorflow_server::db: could not acquire a connection",
+                "1 x ERROR monitorflow_server::ingest::writer: write failed",
+                "Last: monitorflow_server::ingest::writer: writer counters sink=\"victoriametrics\" now=Stats { dropped: 7 }",
+            ]
+        );
+        assert_eq!(
+            log_summary("x  INFO started\n"),
+            ["No warning or error besides incidents"]
+        );
+    }
 
     #[test]
     fn spreads_show_the_tail() {
@@ -200,6 +332,11 @@ mod tests {
             &[("agents".into(), "3".into())],
             &[phase],
             &snapshots,
+            &["1 x WARN something".to_owned()],
+        );
+        assert!(
+            text.contains("## Server log\n\n- 1 x WARN something"),
+            "{text}"
         );
         assert!(
             text.contains("| Server CPU (% of a core) | 20 | 30 |"),
