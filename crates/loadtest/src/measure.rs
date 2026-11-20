@@ -156,6 +156,8 @@ pub async fn vm_rows(store: &Store) -> Option<f64> {
     Some(parse_vm_rows(&store.get("/metrics").await?))
 }
 
+const MIB: f64 = 1024.0 * 1024.0;
+
 /// One reading of everything.
 #[derive(Debug, Clone, Default)]
 pub struct Snapshot {
@@ -172,6 +174,9 @@ pub struct Snapshot {
     /// Rows a second VictoriaMetrics accepted since the previous snapshot.
     pub vm_rows_per_s: f64,
     pub grpc_connections: usize,
+    /// With a limited server side: name, percent of one core and MiB of
+    /// the slice in all and of each cgroup in it.
+    pub cgroups: Vec<(String, f64, f64)>,
 }
 
 /// Processes to watch; the server's PID changes when it restarts.
@@ -188,6 +193,7 @@ struct Previous {
     relays: Vec<ProcStats>,
     own: ProcStats,
     vm_rows: f64,
+    cgroups: Vec<crate::cgroups::Reading>,
 }
 
 /// Samples every `every` until the sender of `watched` is dropped.
@@ -197,6 +203,7 @@ pub async fn sample(
     pool: PgPool,
     victoriametrics: Store,
     grpc_port: u16,
+    mut slice: Option<crate::cgroups::Slice>,
     out: tokio::sync::mpsc::UnboundedSender<Snapshot>,
 ) {
     let start = Instant::now();
@@ -222,6 +229,10 @@ pub async fn sample(
         let own = proc_stats(std::process::id()).unwrap_or_default();
         let rows = vm_rows(&victoriametrics).await.unwrap_or_default();
         let (pg_connections, pg_active) = pg_connections(&pool).await.unwrap_or_default();
+        let cgroups = match &mut slice {
+            Some(slice) => slice.read().await,
+            None => Vec::new(),
+        };
         let mut snapshot = Snapshot {
             at: now.duration_since(start).as_secs_f64(),
             server_rss: server.map_or(0, |s| s.rss_bytes),
@@ -243,6 +254,18 @@ pub async fn sample(
             }
             snapshot.loadtest_cpu = percent(own.cpu_ticks, previous.own.cpu_ticks);
             snapshot.vm_rows_per_s = (rows - previous.vm_rows).max(0.0) / dt;
+            snapshot.cgroups = cgroups
+                .iter()
+                .map(|now| {
+                    let before = previous
+                        .cgroups
+                        .iter()
+                        .find(|b| b.name == now.name)
+                        .map_or(now.cpu_usec, |b| b.cpu_usec);
+                    let cpu = now.cpu_usec.saturating_sub(before) as f64 / 1e6 / dt * 100.0;
+                    (now.name.clone(), cpu, now.memory_bytes as f64 / MIB)
+                })
+                .collect();
             if out.send(snapshot).is_err() {
                 return;
             }
@@ -253,6 +276,7 @@ pub async fn sample(
             relays,
             own,
             vm_rows: rows,
+            cgroups,
         });
     }
 }
@@ -318,6 +342,7 @@ pub struct Spread {
     pub count: usize,
     pub p50: f64,
     pub p95: f64,
+    pub p99: f64,
     pub max: f64,
 }
 
@@ -332,6 +357,7 @@ impl Spread {
             count: values.len(),
             p50: at(0.5),
             p95: at(0.95),
+            p99: at(0.99),
             max: values[values.len() - 1],
         }
     }
@@ -383,8 +409,22 @@ mod tests {
         assert_eq!(spread.count, 100);
         assert_eq!(spread.p50, 51.0);
         assert_eq!(spread.p95, 95.0);
+        assert_eq!(spread.p99, 99.0);
         assert_eq!(spread.max, 100.0);
         assert_eq!(Spread::of(Vec::new()), Spread::default());
+        // A slow tail of 2 %: p99 sees it where p95 does not, max sees
+        // the worst. With exactly 1 % slow, p99 is the last fast value.
+        let mut tail: Vec<f64> = vec![10.0; 980];
+        tail.extend((0..20).map(|n| 1_000.0 + f64::from(n)));
+        let spread = Spread::of(tail);
+        assert_eq!(
+            (spread.p95, spread.p99, spread.max),
+            (10.0, 1_009.0, 1_019.0)
+        );
+        // Unsorted input, and one value.
+        assert_eq!(Spread::of(vec![3.0, 1.0, 2.0]).p99, 3.0);
+        let one = Spread::of(vec![7.0]);
+        assert_eq!((one.p50, one.p99, one.max, one.count), (7.0, 7.0, 7.0, 1));
     }
 
     #[test]

@@ -34,6 +34,12 @@ use crate::grpc::Registry;
 pub const POLL: Duration = Duration::from_secs(5);
 /// Events claimed per pass.
 const BATCH: i64 = 100;
+/// Passes in a row while each claims a full [`BATCH`]: what a claim left
+/// was due with it (ADR-0080), so it goes at once rather than 100 every
+/// [`POLL`], which held the last of 2,000 incidents opening together for
+/// 85 s (docs/load-test.md). Bounded, so the loop still looks at backups
+/// and the outbox's age.
+const PASSES_IN_A_ROW: usize = 50;
 /// Events older than this when claimed are dropped: after a long outage a
 /// flood of stale alerts helps no one.
 const MAX_AGE: chrono::TimeDelta = chrono::TimeDelta::hours(24);
@@ -168,7 +174,7 @@ impl Dispatcher {
                     tracing::warn!(%error, "could not record a failed backup; will retry");
                 }
             }
-            if let Err(error) = self.pass().await {
+            if let Err(error) = self.drain().await {
                 tracing::warn!(%error, "could not read the notification outbox; will retry");
             }
             passes += 1;
@@ -287,6 +293,20 @@ impl Dispatcher {
         follow_up::start(&mut tx, &told, now).await?;
         tx.commit().await?;
         Ok((events, targets, holds))
+    }
+
+    /// Passes until one claims less than a full batch, at most
+    /// [`PASSES_IN_A_ROW`]; returns how many events were claimed.
+    pub async fn drain(&self) -> Result<usize, sqlx::Error> {
+        let mut claimed = 0;
+        for _ in 0..PASSES_IN_A_ROW {
+            let now = self.pass().await?;
+            claimed += now;
+            if now < BATCH as usize {
+                break;
+            }
+        }
+        Ok(claimed)
     }
 
     /// Claims and delivers pending events; returns how many were claimed.
