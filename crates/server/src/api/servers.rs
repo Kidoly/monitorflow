@@ -487,6 +487,28 @@ struct Row {
     address: Option<String>,
 }
 
+/// The statement of [`list`]: `$1` all sites or `$2` the readable ones,
+/// the cursor's site name, hostname and peer ID in `$3` to `$5`, the
+/// limit in `$6`, a site in `$7`. The page's servers are picked first,
+/// then their incidents, silences and certificates are read: read for
+/// the whole site and sorted after, they cost every page as much as the
+/// site's every server, so listing a site of 2,240 servers took six times
+/// that (docs/load-test.md).
+pub fn list_query() -> String {
+    // SQL-safe: interpolates only the constant SELECT_SERVERS.
+    format!(
+        "{SELECT_SERVERS}
+         WHERE s.id = ANY(ARRAY(
+             SELECT p.id FROM servers p JOIN sites ps ON ps.id = p.site_id
+             WHERE ($1 OR p.site_id = ANY($2)) AND p.revoked_at IS NULL
+               AND ($3::text IS NULL OR (ps.name, p.hostname, p.peer_id) > ($3, $4, $5))
+               AND ($7::uuid IS NULL OR p.site_id = $7)
+             ORDER BY ps.name, p.hostname, p.peer_id
+             LIMIT $6))
+         ORDER BY si.name, s.hostname, s.peer_id"
+    )
+}
+
 /// `GET /api/servers`: one page of the servers of the sites the user may
 /// read, sorted by site name, hostname and peer ID, without removed ones
 /// (ADR-0062). Needs at least one role.
@@ -508,24 +530,16 @@ pub async fn list(
         }
         None => (None, None, None),
     };
-    // SQL-safe: interpolates only the constant SELECT_SERVERS.
-    let mut rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{SELECT_SERVERS}
-         WHERE ($1 OR s.site_id = ANY($2)) AND s.revoked_at IS NULL
-           AND ($3::text IS NULL OR (si.name, s.hostname, s.peer_id) > ($3, $4, $5))
-           AND ($7::uuid IS NULL OR s.site_id = $7)
-         ORDER BY si.name, s.hostname, s.peer_id
-         LIMIT $6"
-    )))
-    .bind(all_sites)
-    .bind(&sites)
-    .bind(after_site)
-    .bind(after_host)
-    .bind(after_peer)
-    .bind(i64::from(limit) + 1)
-    .bind(params.site_id)
-    .fetch_all(&state.pool)
-    .await?;
+    let mut rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(list_query()))
+        .bind(all_sites)
+        .bind(&sites)
+        .bind(after_site)
+        .bind(after_host)
+        .bind(after_peer)
+        .bind(i64::from(limit) + 1)
+        .bind(params.site_id)
+        .fetch_all(&state.pool)
+        .await?;
     let next_cursor = if rows.len() > limit as usize {
         rows.truncate(limit as usize);
         rows.last()

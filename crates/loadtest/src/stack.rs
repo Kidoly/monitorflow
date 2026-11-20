@@ -109,6 +109,33 @@ impl Process {
     }
 }
 
+/// `command` run by `wrapper`, its program and arguments after the
+/// wrapper's; its environment, without what the wrapper resets.
+pub fn wrapped(wrapper: &[String], command: Command) -> Command {
+    let Some((program, args)) = wrapper.split_first() else {
+        return command;
+    };
+    let inner = command.as_std();
+    let mut outer = Command::new(program);
+    outer
+        .args(args)
+        .arg(inner.get_program())
+        .args(inner.get_args());
+    for (key, value) in inner.get_envs() {
+        match value {
+            Some(value) => outer.env(key, value),
+            None => outer.env_remove(key),
+        };
+    }
+    outer
+}
+
+/// The first child of `pid`, from `/proc`.
+fn first_child(pid: u32) -> Option<u32> {
+    let children = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).ok()?;
+    children.split_whitespace().next()?.parse().ok()
+}
+
 /// The central server under test.
 pub struct Server {
     pub binary: PathBuf,
@@ -116,6 +143,9 @@ pub struct Server {
     pub ports: ServerPorts,
     pub log: PathBuf,
     pub process: Option<Process>,
+    /// Runs the server inside the cgroup of a limited server side, like
+    /// `sudo systemd-run --scope ...`; empty to run it directly.
+    pub wrapper: Vec<String>,
 }
 
 impl Server {
@@ -170,6 +200,7 @@ enabled = false
             ports,
             log: dir.join("server.log"),
             process: None,
+            wrapper: Vec::new(),
         })
     }
 
@@ -186,7 +217,7 @@ enabled = false
 
     /// Starts the server and waits until its API says it is ready.
     pub async fn start(&mut self) -> anyhow::Result<()> {
-        let process = Process::spawn("server", self.command(), &self.log)?;
+        let process = Process::spawn("server", wrapped(&self.wrapper, self.command()), &self.log)?;
         self.process = Some(process);
         let ready = format!("{}/api/health/ready", self.ports.api_url());
         let client = reqwest::Client::new();
@@ -214,8 +245,17 @@ enabled = false
         Ok(())
     }
 
+    /// The server's own process: under a wrapper, the last of the chain
+    /// of its first children.
     pub fn pid(&self) -> Option<u32> {
-        self.process.as_ref().and_then(Process::pid)
+        let mut pid = self.process.as_ref().and_then(Process::pid)?;
+        if self.wrapper.is_empty() {
+            return Some(pid);
+        }
+        while let Some(child) = first_child(pid) {
+            pid = child;
+        }
+        Some(pid)
     }
 
     /// `user add`: an administrator of everything, password on stdin.
@@ -307,5 +347,40 @@ mirror_listen_addr = "{mirror}"
 
     pub fn url(&self) -> String {
         format!("https://{}", self.listen)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wrapper_runs_the_command_after_its_own_arguments() {
+        let mut command = Command::new("/bin/server");
+        command.arg("--config").arg("s.toml").env("NO_COLOR", "1");
+        let wrapper: Vec<String> = ["sudo", "systemd-run", "--scope", "--"]
+            .map(String::from)
+            .to_vec();
+        let outer = wrapped(&wrapper, command);
+        let std = outer.as_std();
+        assert_eq!(std.get_program(), "sudo");
+        let args: Vec<_> = std.get_args().collect();
+        assert_eq!(
+            args,
+            [
+                "systemd-run",
+                "--scope",
+                "--",
+                "/bin/server",
+                "--config",
+                "s.toml"
+            ]
+        );
+        assert!(std
+            .get_envs()
+            .any(|(k, v)| k == "NO_COLOR" && v == Some("1".as_ref())));
+        // No wrapper: the command as it is.
+        let plain = wrapped(&[], Command::new("/bin/server"));
+        assert_eq!(plain.as_std().get_program(), "/bin/server");
     }
 }
