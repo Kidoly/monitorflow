@@ -1,12 +1,14 @@
-//! Synthetic sensor output, shaped like what the real `cpu`, `memory` and
-//! `disk` sensors send (`monitorflow-agent sensors probe`): the same
-//! metrics, instances and labels, so the server stores and evaluates the
-//! same series as for a real fleet. Values drift slowly per host; during an
-//! alert storm the total CPU usage of every host goes above 90 %.
+//! Synthetic sensor output, shaped like what the real sensors send
+//! (`monitorflow-agent sensors probe`): the built-in `cpu`, `memory`,
+//! `disk`, `diskio` and `net`, and the `systemd` and `port` checks the
+//! interface adds, with the same metrics, instances and labels, so the
+//! server stores and evaluates the same series as for a real fleet. Values
+//! drift slowly per host; during an alert storm the total CPU usage of
+//! every host goes above 90 %.
 
 use std::f64::consts::TAU;
 
-use monitorflow_common::proto::v1::Sample;
+use monitorflow_common::proto::v1::{Sample, SensorSpec};
 
 /// What a simulated host looks like.
 #[derive(Debug, Clone)]
@@ -37,20 +39,25 @@ impl Host {
         }
     }
 
-    /// One collection of a sensor of `kind` named `name`, at `at_ms`. Kinds
-    /// that need the host itself (`systemd`, `port`, `log`, `script`)
-    /// report one value that never alerts.
-    pub fn collect(&self, kind: &str, name: &str, at_ms: i64, breach: bool) -> Vec<Sample> {
+    /// One collection of the sensor `spec` at `at_ms`. Services are active
+    /// and ports open, so they never alert; other kinds report one value.
+    pub fn collect(&self, spec: &SensorSpec, at_ms: i64, breach: bool) -> Vec<Sample> {
         // A slow wave per host: one period every 30 minutes.
         let wave = (TAU * (at_ms as f64 / 1_800_000.0 + self.phase)).sin();
+        let name = &spec.name;
         let sample = |metric: &str, instance: &str, value: f64| Sample {
             sensor: format!("{name}_{metric}"),
-            instance: instance.to_owned(),
+            // The agent gives samples without one the sensor's instance.
+            instance: if instance.is_empty() {
+                spec.instance.clone()
+            } else {
+                instance.to_owned()
+            },
             timestamp_unix_ms: at_ms,
             value,
             labels: Default::default(),
         };
-        match kind {
+        match spec.kind.as_str() {
             "cpu" => {
                 let total = if breach { 0.97 } else { 0.25 + 0.1 * wave };
                 let mut samples: Vec<Sample> = (0..self.cores)
@@ -99,6 +106,69 @@ impl Host {
                     ]
                 })
                 .collect(),
+            "diskio" => self
+                .mounts
+                .iter()
+                .enumerate()
+                .flat_map(|(n, _)| {
+                    let device = ["sda", "sdb"][n.min(1)];
+                    let busy = 0.05 + 0.03 * wave;
+                    [
+                        ("reads_per_second", 40.0 * (1.0 + wave)),
+                        ("writes_per_second", 25.0),
+                        ("read_bytes_per_second", 1.6e6),
+                        ("written_bytes_per_second", 9.0e5),
+                        ("busy_ratio", busy),
+                        ("wait_seconds", 0.002),
+                        ("queue_depth", busy * 2.0),
+                    ]
+                    .map(|(metric, value)| sample(metric, device, value))
+                })
+                .collect(),
+            "net" => [
+                ("receive_bytes_per_second", 2.0e5 * (1.5 + wave)),
+                ("transmit_bytes_per_second", 1.0e5 * (1.5 + wave)),
+                ("receive_errors_per_second", 0.0),
+                ("transmit_errors_per_second", 0.0),
+                ("receive_drops_per_second", 0.0),
+                ("transmit_drops_per_second", 0.0),
+            ]
+            .map(|(metric, value)| sample(metric, "eth0", value))
+            .to_vec(),
+            "systemd" => spec
+                .params
+                .get("units")
+                .map(String::as_str)
+                .unwrap_or_default()
+                .split(',')
+                .filter(|unit| !unit.is_empty())
+                .flat_map(|unit| {
+                    let unit = if unit.contains('.') {
+                        unit.to_owned()
+                    } else {
+                        format!("{unit}.service")
+                    };
+                    [
+                        sample("loaded", &unit, 1.0),
+                        sample("active", &unit, 1.0),
+                        sample("failed", &unit, 0.0),
+                        sample("restarts", &unit, 0.0),
+                        sample("state_age_seconds", &unit, 86_400.0 + at_ms as f64 / 1e3),
+                    ]
+                })
+                .collect(),
+            "port" => {
+                let host = spec.params.get("host").map_or("127.0.0.1", String::as_str);
+                let port = spec.params.get("port").map_or("0", String::as_str);
+                let target = format!("{host}:{port}");
+                [("up", 1.0), ("connect_seconds", 0.000_2)]
+                    .map(|(metric, value)| {
+                        let mut s = sample(metric, "", value);
+                        s.labels.insert("target".into(), target.clone());
+                        s
+                    })
+                    .to_vec()
+            }
             _ => vec![sample("up", "", 1.0)],
         }
     }
@@ -107,6 +177,22 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spec(kind: &str, name: &str, params: &[(&str, &str)]) -> SensorSpec {
+        SensorSpec {
+            kind: kind.into(),
+            name: name.into(),
+            params: params
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            ..SensorSpec::default()
+        }
+    }
+
+    fn builtin(kind: &str) -> SensorSpec {
+        spec(kind, kind, &[])
+    }
 
     fn names(samples: &[Sample]) -> Vec<(&str, &str)> {
         samples
@@ -118,7 +204,7 @@ mod tests {
     #[test]
     fn cpu_has_one_ratio_per_core_a_total_and_the_load() {
         let host = Host::nth(0);
-        let samples = host.collect("cpu", "cpu", 1_000, false);
+        let samples = host.collect(&builtin("cpu"), 1_000, false);
         assert_eq!(samples.len(), host.cores as usize + 4);
         let names = names(&samples);
         assert!(names.contains(&("cpu_usage_ratio", "0")));
@@ -133,10 +219,10 @@ mod tests {
     #[test]
     fn a_breach_puts_every_host_above_the_cpu_threshold() {
         for n in 0..20 {
-            let samples = Host::nth(n).collect("cpu", "cpu", n as i64 * 77_000, true);
+            let samples = Host::nth(n).collect(&builtin("cpu"), n as i64 * 77_000, true);
             let total = samples.iter().find(|s| s.instance == "total").unwrap();
             assert!(total.value > 0.9, "{n}: {}", total.value);
-            let samples = Host::nth(n).collect("cpu", "cpu", n as i64 * 77_000, false);
+            let samples = Host::nth(n).collect(&builtin("cpu"), n as i64 * 77_000, false);
             let total = samples.iter().find(|s| s.instance == "total").unwrap();
             assert!(total.value < 0.9, "{n}: {}", total.value);
         }
@@ -144,19 +230,19 @@ mod tests {
 
     #[test]
     fn disk_reports_each_mount_with_its_labels() {
-        let samples = Host::nth(0).collect("disk", "disk", 0, false);
+        let samples = Host::nth(0).collect(&builtin("disk"), 0, false);
         assert_eq!(samples.len(), 12);
         let data = samples
             .iter()
             .find(|s| s.instance == "/var/lib/data" && s.sensor == "disk_used_ratio")
             .unwrap();
         assert_eq!(data.labels["fstype"], "xfs");
-        assert_eq!(Host::nth(1).collect("disk", "disk", 0, false).len(), 6);
+        assert_eq!(Host::nth(1).collect(&builtin("disk"), 0, false).len(), 6);
     }
 
     #[test]
     fn memory_stays_away_from_its_thresholds() {
-        let samples = Host::nth(3).collect("memory", "memory", 123_456, false);
+        let samples = Host::nth(3).collect(&builtin("memory"), 123_456, false);
         let ratio = samples
             .iter()
             .find(|s| s.sensor == "memory_available_ratio")
@@ -166,8 +252,48 @@ mod tests {
 
     #[test]
     fn other_kinds_send_one_value_named_after_the_sensor() {
-        let samples = Host::nth(0).collect("systemd", "nginx", 5, false);
-        assert_eq!(names(&samples), [("nginx_up", "")]);
+        let samples = Host::nth(0).collect(&spec("script", "backup", &[]), 5, false);
+        assert_eq!(names(&samples), [("backup_up", "")]);
         assert_eq!(samples[0].timestamp_unix_ms, 5);
+    }
+
+    #[test]
+    fn diskio_and_net_report_per_device_and_interface() {
+        let samples = Host::nth(0).collect(&builtin("diskio"), 0, false);
+        assert_eq!(samples.len(), 14);
+        assert!(names(&samples).contains(&("diskio_busy_ratio", "sdb")));
+        assert_eq!(Host::nth(1).collect(&builtin("diskio"), 0, false).len(), 7);
+        let samples = Host::nth(0).collect(&builtin("net"), 0, false);
+        assert_eq!(samples.len(), 6);
+        assert!(names(&samples).contains(&("net_receive_bytes_per_second", "eth0")));
+    }
+
+    #[test]
+    fn a_service_is_active_with_the_unit_as_instance() {
+        let check = spec("systemd", "service_app_01", &[("units", "app-01")]);
+        let samples = Host::nth(0).collect(&check, 0, false);
+        assert_eq!(samples.len(), 5);
+        let active = samples
+            .iter()
+            .find(|s| s.sensor == "service_app_01_active")
+            .unwrap();
+        assert_eq!(active.instance, "app-01.service");
+        assert_eq!(active.value, 1.0);
+    }
+
+    #[test]
+    fn a_port_is_up_with_its_target_and_the_sensor_instance() {
+        let mut check = spec("port", "port_10001", &[("port", "10001")]);
+        check.instance = "web".into();
+        let samples = Host::nth(0).collect(&check, 0, false);
+        assert_eq!(
+            names(&samples),
+            [
+                ("port_10001_up", "web"),
+                ("port_10001_connect_seconds", "web")
+            ]
+        );
+        assert_eq!(samples[0].labels["target"], "127.0.0.1:10001");
+        assert_eq!(samples[0].value, 1.0);
     }
 }

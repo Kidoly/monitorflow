@@ -29,10 +29,10 @@ trap cleanup EXIT
 
 if [[ $profile == release ]]; then
     cargo build --release -p monitorflow-server -p monitorflow-relay -p monitorflow-loadtest --bins
-    bin=target/release
+    bin=${CARGO_TARGET_DIR:-target}/release
 else
     cargo build -p monitorflow-server -p monitorflow-relay -p monitorflow-loadtest --bins
-    bin=target/debug
+    bin=${CARGO_TARGET_DIR:-target}/debug
 fi
 
 export LOADTEST_DATABASE_URL="postgres://monitorflow:monitorflow@127.0.0.1:${LOADTEST_POSTGRES_PORT}/monitorflow"

@@ -389,7 +389,7 @@ async fn sensors(
                 loop {
                     ticks.tick().await;
                     let breach = shared.breach.load(Ordering::Relaxed);
-                    for sample in host.collect(&spec.kind, &spec.name, unix_ms(), breach) {
+                    for sample in host.collect(&spec, unix_ms(), breach) {
                         uplink.push(sample);
                     }
                 }
