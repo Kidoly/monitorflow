@@ -1297,4 +1297,36 @@ db_tests! {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert!(body.to_string().contains("Enter the URL"), "{body}");
     }
+
+    #[sqlx::test]
+    async fn a_storm_of_due_events_goes_out_in_one_round(pool: PgPool) {
+        // 2,000 incidents opening together in the load test waited up to
+        // 85 s: each pass claimed 100, one pass every 5 s.
+        let customer: Uuid =
+            sqlx::query_scalar("INSERT INTO customers (name) VALUES ('storm') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO notification_outbox (event, details, customer_id, created_at)
+             SELECT 'update.available', '{}', $1, now() - interval '30 seconds'
+             FROM generate_series(1, 250)",
+        )
+        .bind(customer)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // With the grouping waits of production: all of them are due.
+        let dispatcher =
+            Dispatcher::new(pool.clone(), "https://mf.example").with_retries(vec![Duration::ZERO]);
+        assert_eq!(dispatcher.drain().await.unwrap(), 250);
+        let left: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM notification_outbox WHERE sent_at IS NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(left, 0);
+        // Nothing else is due: the next round claims nothing.
+        assert_eq!(dispatcher.drain().await.unwrap(), 0);
+    }
 }
