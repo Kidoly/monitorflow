@@ -198,6 +198,8 @@ impl Alerts {
             loaded_at: HashMap::new(),
             pasts: ByServer::default(),
             asked: ByServer::default(),
+            reloads: Default::default(),
+            reloading: Default::default(),
             history,
             out: Output {
                 store,
@@ -356,6 +358,10 @@ struct Engine {
     pasts: ByServer<PastKey, Past>,
     /// Pasts asked for and not answered yet.
     asked: ByServer<PastKey, ()>,
+    /// Agents whose thresholds moved, to reload between batches, and the
+    /// same as a set so each is queued once.
+    reloads: std::collections::VecDeque<String>,
+    reloading: std::collections::HashSet<String>,
     history: Option<History>,
     out: Output,
 }
@@ -404,6 +410,10 @@ impl Engine {
                         }
                         reported = stats;
                     }
+                }
+                // Last: only when nothing else waits.
+                _ = std::future::ready(()), if !self.reloads.is_empty() => {
+                    self.reload_next().await;
                 }
             }
         }
@@ -890,16 +900,36 @@ impl Engine {
                 return;
             }
         };
-        let changed: Vec<(String, Arc<ServerRules>)> = self
+        let changed: Vec<String> = self
             .rules
             .iter()
             .filter_map(|(peer, entry)| {
                 let server = entry.as_ref()?;
-                (current.get(&server.server_id) != Some(&server.revision))
-                    .then(|| (peer.clone(), server.clone()))
+                (current.get(&server.server_id) != Some(&server.revision)).then(|| peer.clone())
             })
             .collect();
-        for (peer, old) in changed {
+        for peer in changed {
+            if self.reloading.insert(peer.clone()) {
+                self.reloads.push_back(peer);
+            }
+        }
+    }
+
+    /// Reloads the thresholds of the next server [`poll`](Self::poll)
+    /// found changed. One at a time, between batches: a site change, or a
+    /// check added to every server, moves thousands of revisions at once,
+    /// and reloading them all in one poll held every batch back until the
+    /// queue overflowed (docs/load-test.md).
+    async fn reload_next(&mut self) {
+        let Some(peer) = self.reloads.pop_front() else {
+            return;
+        };
+        self.reloading.remove(&peer);
+        // Forgotten since: its next batch loads it afresh.
+        let Some(Some(old)) = self.rules.get(&peer).cloned() else {
+            return;
+        };
+        {
             match self.out.store.load_rules(&peer).await {
                 Ok(Some(server)) => {
                     tracing::info!(agent_id = %peer, revision = server.revision, "thresholds reloaded");
@@ -926,6 +956,7 @@ impl Engine {
                     self.drop_server(old.server_id);
                 }
                 Err(error) => {
+                    // The revision still differs: the next poll queues it again.
                     tracing::warn!(agent_id = %peer, %error, "could not reload thresholds; will retry");
                 }
             }
@@ -1113,6 +1144,8 @@ mod tests {
             loaded_at: HashMap::new(),
             pasts: Default::default(),
             asked: Default::default(),
+            reloads: Default::default(),
+            reloading: Default::default(),
             history: None,
             out: Output {
                 store: AlertStore::new(pool),
