@@ -12,7 +12,7 @@
 //! instance holding the stream evaluates it from what the previous one
 //! wrote, never from an old copy.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +21,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
 use uuid::Uuid;
 
+use super::by_server::ByServer;
 use super::history::{Answer, Backend, History, PastKey, Points, Request};
 use super::rules::{Kind, Rule};
 use super::state::{Evaluation, SeriesState, Transition};
@@ -192,11 +193,11 @@ impl Alerts {
         let engine = Engine {
             settings,
             rules: HashMap::new(),
-            series: HashMap::new(),
-            feeds: HashMap::new(),
+            series: ByServer::default(),
+            feeds: ByServer::default(),
             loaded_at: HashMap::new(),
-            pasts: HashMap::new(),
-            asked: HashSet::new(),
+            pasts: ByServer::default(),
+            asked: ByServer::default(),
             history,
             out: Output {
                 store,
@@ -346,15 +347,15 @@ struct Engine {
     settings: EngineSettings,
     /// Thresholds per agent ID; `None` for peers without a `servers` row.
     rules: HashMap<String, Option<Arc<ServerRules>>>,
-    series: HashMap<SeriesKey, Tracked>,
+    series: ByServer<SeriesKey, Tracked>,
     /// Series richer rules read, by server; `None` when nothing does.
-    feeds: HashMap<FeedKey, Option<Feed>>,
+    feeds: ByServer<FeedKey, Option<Feed>>,
     /// When each cached server was loaded, on the server clock: no data
     /// waits one rule's time from there.
     loaded_at: HashMap<Uuid, i64>,
-    pasts: HashMap<PastKey, Past>,
+    pasts: ByServer<PastKey, Past>,
     /// Pasts asked for and not answered yet.
-    asked: HashSet<PastKey>,
+    asked: ByServer<PastKey, ()>,
     history: Option<History>,
     out: Output,
 }
@@ -554,7 +555,7 @@ impl Engine {
             ),
             _ => (None, true),
         };
-        if renew && !self.asked.contains(&key) {
+        if renew && !self.asked.contains_key(&key) {
             let from_ms = then.div_euclid(PAST_STEP_MS) * PAST_STEP_MS;
             let request = Request::Past {
                 key: key.clone(),
@@ -564,7 +565,7 @@ impl Engine {
                 step_ms: PAST_STEP_MS,
             };
             if self.ask(request) {
-                self.asked.insert(key);
+                self.asked.insert(key, ());
             }
         }
         value
@@ -769,11 +770,9 @@ impl Engine {
                 .unwrap_or(now);
             let watched: Vec<(String, String, i64)> = self
                 .feeds
-                .iter()
-                .filter(|((id, metric, _), feed)| {
-                    *id == server.server_id
-                        && feed.is_some()
-                        && server.needs.get(metric).is_some_and(|n| n.arrival)
+                .of(server.server_id)
+                .filter(|((_, metric, _), feed)| {
+                    feed.is_some() && server.needs.get(metric).is_some_and(|n| n.arrival)
                 })
                 .filter_map(|((_, metric, instance), feed)| {
                     Some((metric.clone(), instance.clone(), feed.as_ref()?.arrived))
@@ -822,10 +821,10 @@ impl Engine {
 
     /// Forgets everything held of a server but its cached rules.
     fn drop_server(&mut self, server_id: Uuid) {
-        self.series.retain(|key, _| key.server_id != server_id);
-        self.feeds.retain(|key, _| key.0 != server_id);
-        self.pasts.retain(|key, _| key.server_id != server_id);
-        self.asked.retain(|key| key.server_id != server_id);
+        self.series.drop_server(server_id);
+        self.feeds.drop_server(server_id);
+        self.pasts.drop_server(server_id);
+        self.asked.drop_server(server_id);
         self.loaded_at.remove(&server_id);
     }
 
@@ -913,12 +912,11 @@ impl Engine {
                         .map(|(metric, _)| metric.clone())
                         .collect();
                     let id = server.server_id;
-                    self.feeds.retain(|(server_id, metric, _), _| {
-                        *server_id != id
-                            || (server.needs.contains_key(metric) && !moved.contains(metric))
+                    self.feeds.retain_server(id, |(_, metric, _), _| {
+                        server.needs.contains_key(metric) && !moved.contains(metric)
                     });
                     self.pasts
-                        .retain(|key, _| key.server_id != id || !moved.contains(&key.metric));
+                        .retain_server(id, |key, _| !moved.contains(&key.metric));
                     self.prepare(&server, &moved);
                     self.rules.insert(peer, Some(Arc::new(server)));
                 }
@@ -939,13 +937,13 @@ impl Engine {
     async fn drop_unmatched(&mut self, peer: &str, server: &ServerRules) {
         let gone: Vec<SeriesKey> = self
             .series
-            .keys()
+            .of(server.server_id)
+            .map(|(k, _)| k)
             .filter(|k| {
-                k.server_id == server.server_id
-                    && server
-                        .rules
-                        .lookup_kind(&k.metric, &k.instance, k.kind)
-                        .is_none()
+                server
+                    .rules
+                    .lookup_kind(&k.metric, &k.instance, k.kind)
+                    .is_none()
             })
             .cloned()
             .collect();
@@ -1102,19 +1100,19 @@ mod tests {
         assert_eq!(series_max_gap(u64::MAX, Some(MINUTE)), i64::MAX);
     }
 
-    #[tokio::test]
-    async fn only_series_a_rule_reads_are_fed() {
+    /// An engine without a database or history.
+    fn bare_engine() -> Engine {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://localhost/unused")
             .unwrap();
-        let mut engine = Engine {
+        Engine {
             settings: EngineSettings::default(),
             rules: HashMap::new(),
-            series: HashMap::new(),
-            feeds: HashMap::new(),
+            series: Default::default(),
+            feeds: Default::default(),
             loaded_at: HashMap::new(),
-            pasts: HashMap::new(),
-            asked: HashSet::new(),
+            pasts: Default::default(),
+            asked: Default::default(),
             history: None,
             out: Output {
                 store: AlertStore::new(pool),
@@ -1122,16 +1120,61 @@ mod tests {
                 counters: Arc::new(Counters::default()),
                 holds: Holds::default(),
             },
-        };
-        let server = ServerRules {
-            server_id: Uuid::from_u128(1),
-            peer: "web-1".into(),
+        }
+    }
+
+    fn server_rules(n: u128) -> ServerRules {
+        ServerRules {
+            server_id: Uuid::from_u128(n),
+            peer: format!("web-{n}"),
             site: "paris".into(),
             revision: 1,
             rules: Rules::default(),
             intervals: CheckIntervals::default(),
             needs: BTreeMap::new(),
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_server_touches_its_series_only() {
+        // 8,000 servers reloading their thresholds at once stopped the
+        // engine for half a minute in the load test, as forgetting or
+        // reloading one server scanned every server's series. A fleet's
+        // worth of reconnections must now cost about one pass.
+        const SERVERS: u128 = 8_000;
+        const SERIES: usize = 12;
+        let mut engine = bare_engine();
+        for n in 0..SERVERS {
+            let server = server_rules(n);
+            engine.series.extend((0..SERIES).map(|i| {
+                let key = SeriesKey {
+                    server_id: server.server_id,
+                    metric: format!("monitorflow_check_{i}_up"),
+                    instance: String::new(),
+                    kind: Kind::Value,
+                };
+                (key, Tracked::default())
+            }));
+            engine
+                .rules
+                .insert(server.peer.clone(), Some(Arc::new(server)));
+        }
+        assert_eq!(engine.series.len(), SERVERS as usize * SERIES);
+        let start = std::time::Instant::now();
+        for n in 0..SERVERS {
+            engine.forget(&format!("web-{n}"));
+        }
+        let took = start.elapsed();
+        assert_eq!(engine.series.len(), 0);
+        // 12 ms unoptimized on the load test's host; the flat map took
+        // 3.3 s.
+        assert!(took < Duration::from_secs(1), "{took:?}");
+    }
+
+    #[tokio::test]
+    async fn only_series_a_rule_reads_are_fed() {
+        let mut engine = bare_engine();
+        let server = server_rules(1);
         // An agent naming a new instance in every sample.
         for n in 0..1000 {
             let point = Point {
