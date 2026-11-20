@@ -293,8 +293,10 @@ db_tests! {
 
         // The load test's 1,600 agents of one site acknowledged a change
         // within a second; the watcher queued 1,024 and dropped the rest,
-        // which then showed out of sync until they reconnected.
-        const AGENTS: i64 = 3_000;
+        // which then showed out of sync until they reconnected. A queue of
+        // 16,384 dropped the same way at 20,000 agents: none is dropped
+        // now, whatever the fleet.
+        const AGENTS: i64 = 20_000;
         let paris = site(&pool, "paris").await;
         sqlx::query(
             "INSERT INTO servers (peer_id, site_id, hostname, os_family)
@@ -313,7 +315,7 @@ db_tests! {
         for n in 1..=AGENTS {
             configs.applied(&format!("agent-{n}"), 9);
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
             let recorded: i64 =
                 sqlx::query_scalar("SELECT count(*) FROM servers WHERE sensor_revision_applied = 9")
