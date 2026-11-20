@@ -1,6 +1,6 @@
 # Load test
 
-How the server behaves with 100, 500 and 1,000 agents, then with 100,000 sensors on 2,000 agents and 800 devices, what broke on the way, and how to run the test again. The decisions are in [ADR-0090](adr/0090-load-test.md).
+How the server behaves with 100, 500 and 1,000 agents, then with 100,000 sensors on 2,000 agents and 800 devices, how many agents a small all-in-one server takes (2 CPUs, 4 GB), what broke on the way, and how to run the test again. The decisions are in [ADR-0090](adr/0090-load-test.md).
 
 ## Running it
 
@@ -9,9 +9,13 @@ scripts/load-test.sh                                  # 1,000 agents, every phas
 scripts/load-test.sh --agents 100 --steady 60         # a quick look
 scripts/load-test.sh --agents 1000 --hold 900         # then look at the web interface for 15 minutes
 scripts/load-test.sh --agents 2000 --sensors-per-agent 48 --devices 800   # 100,000 sensors, about 30 minutes
+LOADTEST_SERVER_CPUS=10,11 LOADTEST_SERVER_MEMORY=4G scripts/load-test.sh --agents 8000 --relays 0 \
+    --sensors-per-agent 10 --own-sensors 2 --steady 120 --phases commands,restart,alerts   # a small server
 ```
 
 It needs Docker, the Rust toolchain and about 2 GB of memory. The script first issues the stores' certificate and password with `monitorflow-server storage-certs`, as the production compose's `storage-certs` service does (ADR-0087), then starts PostgreSQL 17, and VictoriaMetrics and VictoriaLogs over TLS with basic auth, at the production versions, in a compose project of their own (`monitorflow-loadtest`, loopback ports 25432, 28428 and 29428, set with `LOADTEST_POSTGRES_PORT`, `LOADTEST_VICTORIAMETRICS_PORT` and `LOADTEST_VICTORIALOGS_PORT`), builds the release server, relay and `monitorflow-loadtest`, runs them, prints the report, and removes the containers and their data. The report is also in `target/loadtest/report.md`, next to the server's and relays' logs, the agents' identities, and PostgreSQL's log in `target/load-test-postgres.log`. `monitorflow-loadtest --help` lists the options: number of agents, share behind relays, number of relays, ramp rate, length of the steady state, phases, the checks to add (below), and `--strict`, which fails the run when a goal is missed. With `CARGO_TARGET_DIR` set, the script runs the binaries from there.
+
+`LOADTEST_SERVER_CPUS` (a CPU list, like `10,11`) and `LOADTEST_SERVER_MEMORY` (like `4G`) make the server side a small machine: the server and the three stores run in one systemd slice (`mfloadtest.slice`, or `LOADTEST_SLICE`) with those limits and no swap, so they share the CPUs and the memory as on a VM. The stores join it through Docker's `cgroup_parent`, each also seeing that memory as its own limit, as it would on the VM (VictoriaMetrics and VictoriaLogs size their caches from it); the server through `systemd-run --scope`. The generator is pinned to the other CPUs. This needs sudo, asked once in a terminal, or through `SUDO_ASKPASS` elsewhere; the slice and its limits are removed at the end. The report then adds the CPU and memory of the slice and of each component, the slice's peak memory, processes killed for memory and swap used, and a summary of the server's log: its warnings and errors, and the last counters of the metric and log writers and of the threshold engine.
 
 CI runs 100 agents with a 30-second steady state, a command to each and a server restart, on debug builds, with `--strict` (the `load-test` job, about ten minutes, its report kept as an artifact).
 
@@ -27,7 +31,7 @@ Phases:
 
 1. **Enrollment and first connection** of the whole fleet.
 1. **Checks added through the API**, with checks to add: every site's, then every server's own, then the devices and theirs, 16 requests at a time; until every agent runs and acknowledged its configuration; then one site check changed, until every agent of the site acknowledged it.
-2. **Steady state**, 5 minutes by default; at its end the API calls of the fleet overview (every page of `/api/servers` and the open incidents) and of the incident list (sites, servers, the first 50 incidents and the open ones) are timed 20 times each, and so are a server's page (the server, its sensors and their values, its thresholds and open incidents) for 20 servers across the fleet.
+2. **Steady state**, 5 minutes by default; at its end the API calls of the fleet overview (every page of `/api/servers` and the open incidents) and of the incident list (sites, servers, the first 50 incidents and the open ones) are timed 100 times each, and so are a server's page (the server, its sensors and their values, its thresholds and open incidents) for 100 servers across the fleet. Every timing is reported as p50, p95, p99 and maximum, with its count.
 3. **A command to every server**: `apply_updates` through `POST /api/servers/{id}/commands`, until every result is recorded.
 4. **Certificate renewal of every agent** through `Renew`.
 5. **Server restart**: SIGTERM, start again at once; until the server shows every agent on a new stream (agents behind a relay keep their stream to it), and every direct agent sent a batch again.
@@ -146,6 +150,36 @@ Reading the table:
 - **The sensor pages and API** stay flat: the sensors of one server in 4 ms, a server's whole page in 36 ms at p50 (its sensor values are three VictoriaMetrics queries whatever the number of sensors). The fleet overview and the incident list fetch every server, 2,800 here, in six pages: half a second, linear in the fleet.
 - **PostgreSQL** ran at most 15 statements at once, while 16 clients added checks; in the steady state 0.1. The heaviest steady statements were the server list (30 ms a page of 500) and the probes' read of their checks (40 ms, below).
 
+### The slow tail
+
+A third run on top of the four fixes, the same command, reporting p99 next to p50, p95 and the maximum (`n` is the number of measures; the pages are timed 100 times).
+
+| Timing | p50 | p95 | p99 | Max | n |
+| --- | --- | --- | --- | --- | --- |
+| Checks added: each API request | 17 ms | 35 ms | 224 ms | 287 ms | 27,352 |
+| `GET /api/servers/{id}/sensors`, every server | 4 ms | 9 ms | 10 ms | 16 ms | 2,800 |
+| Fleet overview API calls, steady state | 482 ms | 512 ms | 516 ms | 530 ms | 100 |
+| Incident list API calls, steady state | 487 ms | 524 ms | 544 ms | 546 ms | 100 |
+| A server's page API calls, steady state | 34 ms | 43 ms | 77 ms | 122 ms | 100 |
+| Fleet overview API calls, after the storm | 480 ms | 514 ms | 523 ms | 534 ms | 100 |
+| Incident list API calls, after the storm | 474 ms | 509 ms | 519 ms | 521 ms | 100 |
+| A server's page API calls, after the storm | 35 ms | 66 ms | 190 ms | 285 ms | 100 |
+| A command: queued to result recorded | 5.4 s | 7.2 s | 7.4 s | 7.4 s | 2,000 |
+| Restart: stream open again at the server | 0.6 s | 1.3 s | 1.8 s | 2.1 s | 2,000 |
+| Restart: first batch of a direct agent | 10.6 s | 11.4 s | 12.0 s | 12.2 s | 1,600 |
+| Breach to the sample that opened each incident | 100 s | 169 s | 178 s | 180 s | 2,000 |
+| Opening notifications: outbox to sent | 9.1 s | 9.8 s | 10.0 s | 10.9 s | 2,000 |
+| Resolutions: outbox to sent | 30.2 s | 59.3 s | 60.0 s | 63.4 s | 2,000 |
+
+The other results of this run matched the second one: 100,000 sensors listed, 7,283 samples a second, every agent in sync at once and a site change acknowledged in 5 s, 2,000 commands in 11.8 s, 2,000 incidents open 188 s after the breach.
+
+Reading the tail:
+
+- **The pages have no slow tail of their own**: the fleet overview's p99 is 7 % over its p50, the sensors of a server 10 ms at p99. A server's page reached 190 ms at p99 after the storm, still far under a second.
+- **Adding checks** has a tail: 1 % of the 27,352 writes took over 224 ms, while 16 at a time bumped revisions and the watcher pushed configurations. A person adding checks one by one does not see it.
+- **The breach to the opening** is the threshold's design: up to 60 s for the next collection to see the breach, 60 s of duration, then the next collection and the 10 s flush, so 180 s at most.
+- **Notifications** vary from one run to the next with ADR-0080's window: here every opening came within one window (p99 10 s); in the second run they straddled two (p99 about 60 s). Resolutions straddled two in both. The bound is a minute after the window that opened.
+
 ### What it found, and what was fixed
 
 1. **Acknowledgements of sensor configurations were dropped.** A site change reaches its agents in one poll, and they all acknowledge within a second; the watcher queued 1,024 acknowledgements and wrote them one statement each, so at 1,600 agents the rest were lost, and those servers showed out of sync until they reconnected. The queue now holds 16,384 and the watcher writes whatever gathered in one statement. Test: `a_whole_site_acknowledging_at_once_is_recorded` (`crates/server/tests/sensor_config.rs`).
@@ -159,6 +193,56 @@ Checked and left as they are:
 - **The fleet overview and the incident list** take half a second at 2,800 servers, as the interface fetches every server in pages of 500. Linear, and measured once in a browser at 1,000; a summary per state, already in `GET /api/servers/summary`, is the way for much larger fleets, which is a change of the page, not of the API.
 - **The command dispatcher** sends about 250 commands a second, one task signing and writing each. 2,000 commands took 14 s; campaigns send in waves.
 - **Device creation** takes the one lock on agent, relay and device IDs, so no two get the same ID: with 16 requests at once, each waited 160 ms on average for it, 800 devices in about 15 s. Adding devices one by one does not see it.
+
+## Small server (2 CPUs, 4 GB)
+
+**Conclusion.** A small all-in-one server with 2 CPUs and 4 GB, its server and stores together, takes **up to 8,000 agents of 10 sensors each with room to spare, and up to about 14,000 at the edge.** Memory is what fills first: about 0.45 GB per 1,000 agents, 92 % of the 4 GB at 8,000 agents, all of it from 10,000 on (nothing killed, nothing swapped: the stores' page cache gives way). The first problem shows at 14,000: for a minute after a server restart, connections waited over 2 s for the database pool while 14,000 agents said Hello again, with nothing failing. The first failure comes at 17,000: the threshold engine fell behind and dropped batches after the restart and during an alert storm, so some samples were never judged. Sizing rule: plan 2 CPUs and 4 GB for up to 8,000 agents of this shape; above that, more memory first. The number of sensors per agent matters less than the number of agents: 8,000 agents of 30 sensors (240,000 sensors) stayed within every limit too, with the memory full.
+
+### Setup
+
+- The server, PostgreSQL, VictoriaMetrics and VictoriaLogs in one cgroup limited to 2 CPUs (one physical core and its second thread, like a 2-vCPU cloud VM) and 4 GB, with no swap: `LOADTEST_SERVER_CPUS=10,11 LOADTEST_SERVER_MEMORY=4G`. Each store sees 4 GB as its own limit, as on the VM; PostgreSQL with its default settings, as in the production compose. The generator ran on the 18 other threads of the same host, which other work shared.
+- No relay: every agent direct. 50 new agents a second. Steady state 120 s, then a command to every server, a server restart and an alert storm.
+- The shape of an agent: what a fresh agent runs (the 5 built-in sensors) plus 5 checks added through the API with their alerts, 3 of its site and 2 of its own: 10 sensors, about 1.08 samples a second. A heavier shape of 30 sensors (25 checks, 5 of its own), about 2.4 samples a second, was run at 4,000 and 8,000 agents.
+
+What counts as a problem: samples dropped or rejected, or not judged by the threshold engine; configurations not in sync; a server's page over 1 s at p99, the fleet overview over 3 s; notifications later than 2 minutes; agents back more than 60 s after a restart; the 2 CPUs used up for long; processes killed for memory or swap used; pool timeouts or errors in the server's log.
+
+### Results
+
+10 sensors per agent, with the fixes below (the runs up to 4,000 agents before them, which change nothing at that size). CPU in percent of one core, mean over the steady state and maximum in brackets; memory of the whole server side at its peak, then of the server, PostgreSQL and VictoriaMetrics in the steady state (PostgreSQL's includes the page cache of its files). Timings at p99.
+
+| Agents (sensors) | Samples a second | CPU, steady | Memory peak; server, PostgreSQL, VM | Fleet overview | A server's page | 1 command to each: all done (p99) | Restart: all back; first batch | Notifications, max | Problem |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 250 (2,500) | 269 | 8 (15) | 603 MiB; 67, 284, 92 MiB | 8 ms | 5 ms | 3.3 s (2.2 s) | 2.0 s; 31 s | 60 s | None |
+| 500 (5,000) | 539 | 11 (25) | 713 MiB; 93, 368, 99 MiB | 22 ms | 5 ms | 3.5 s (2.4 s) | 2.0 s; 31 s | 65 s | None |
+| 1,000 (10,000) | 1,076 | 16 (86) | 967 MiB; 147, 520, 118 MiB | 29 ms | 6 ms | 4.1 s (2.7 s) | 3.6 s; 31 s | 65 s | None |
+| 2,000 (20,000) | 2,152 | 25 (92) | 1,391 MiB; 258, 772, 152 MiB | 59 ms | 10 ms | 6.3 s (3.6 s) | 3.7 s; 31 s | 65 s | None |
+| 4,000 (40,000) | 4,301 | 40 (98) | 2,277 MiB; 487, 1,222, 240 MiB | 147 ms | 19 ms | 24 s (17 s) | 3.9 s; 22 s | 65 s | None |
+| 8,000 (80,000) | 8,603 | 65 (144) | 3,756 MiB; 951, 2,005, 433 MiB | 410 ms | 19 ms | 23 s (11 s) | 7.2 s; 24 s | 64 s | None; before the fixes, the threshold engine dropped 5,800 to 7,700 batches |
+| 10,000 (100,000) | 10,751 | 74 (110) | 4,096 MiB; 1,195, 2,171, 519 MiB | 550 ms | 23 ms | 28 s (17 s) | 6.6 s; 25 s | 65 s | Memory full, nothing killed |
+| 14,000 (140,000) | 15,053 | 89 (143) | 4,096 MiB; 1,660, 1,781, 534 MiB | 921 ms | 23 ms | 39 s (19 s) | 8.2 s; 26 s | 65 s | Pool waits over 2 s for a minute after the restart (11,488 warnings) |
+| 17,000 (170,000) | 18,275 | 97 (146) | 4,096 MiB; 2,041, 1,243, 612 MiB | 1.3 s | 33 ms | 46 s (23 s) | 8.4 s; 36 s | 64 s | The threshold engine dropped 367 batches after the restart and 1,171 in the alert storm; pool waits after the restart |
+| 20,000 (200,000) | 21,501 | 104 (164) | 4,103 MiB; 2,387, 840, 672 MiB | 1.9 s | 57 ms | 69 s (38 s) | 16 s; 24 s | 65 s | The engine dropped 9,877 batches; 33,652 pool waits; configurations not in sync (fixed since, see below) |
+
+30 sensors per agent: 4,000 agents (120,000 sensors) sent 9,773 samples a second, CPU 49 (107), memory peak 2,736 MiB, fleet overview 164 ms, a command to each in 11 s, no problem; 8,000 agents (240,000 sensors) sent 19,534 a second, CPU 79 (163), memory full at 4,096 MiB with nothing killed, fleet overview 442 ms, a server's page 39 ms, no problem.
+
+Reading the table:
+
+- **Memory goes first.** The server holds about 120 MiB per 1,000 agents (their streams, buffers and the threshold engine's state); PostgreSQL's share is mostly the page cache, which gives way when the server needs more: from 10,000 agents the 4 GB are full and PostgreSQL's share shrinks, with no process killed.
+- **CPU never ran out** in the steady state: 97 % of the 200 % at 17,000 agents. Bursts used it all: adding a check to every server (185 %), the reconnection after a restart (up to 171 %). PostgreSQL did most of the work of enrollment, commands and restarts, each a few statements per agent in turn.
+- **Ingestion never dropped a sample**: VictoriaMetrics took 21,500 samples a second at 20,000 agents on its share of the 2 CPUs. Nothing was rejected, the writers dropped nothing.
+- **The pages** grow with the fleet, as the fleet overview fetches every server: under 1 s up to 14,000 agents, 1.9 s at 20,000, within the 3 s goal. A server's page stays under 60 ms.
+- **Notifications** stayed within a minute after ADR-0080's window at every size.
+- **Commands** to every server at once take a while from 4,000 agents (24 s for all of them), as the dispatcher signs and writes them one by one; campaigns send in waves.
+
+### What it found, and what was fixed
+
+1. **Reloading thresholds held every batch back.** Adding a check to every server moves every server's revision; the threshold engine reloaded them all in one poll, three queries each, before it looked at the next batch. At 8,000 agents on 2 CPUs that took 34 s, and its queue of 10,000 batches overflowed: 5,843 to 7,698 batches dropped, whose samples were never judged. A poll now queues the servers that changed, each once, and the engine reloads the next only when no batch waits. Its state is also kept by server now, so reloading or forgetting one server no longer scans every server's series (8,000 forgotten: 3.3 s before, 12 ms now). Tests: `reloading_many_servers_does_not_hold_batches_back` (`crates/server/tests/alerting.rs`; 360 of 400 batches dropped before, none now) and `forgetting_a_server_touches_its_series_only` (`crates/server/src/alerting/engine.rs`).
+2. **Acknowledgements of configurations were dropped past 16,384.** The fix of the 100,000-sensor run raised the queue from 1,024 to 16,384; a site of 17,000 or 20,000 agents overflowed it again, and those servers showed out of sync. Acknowledgements now wait in a map, the latest per agent, so none is dropped and it never holds more than the fleet. Test: `a_whole_site_acknowledging_at_once_is_recorded` now with 20,000 agents ("16384 of 20000 recorded" before).
+
+Left as they are:
+
+- **The first batch of each agent after a restart loads its thresholds on the engine's task**, one agent after the other. At 17,000 agents it fell behind for a minute and dropped 367 batches; the alert storm's 17,000 incidents, each written in its own transaction on that task, dropped 1,171 more. That is the limit of a 2-CPU server; loading thresholds for many agents at once, and writing transitions in batches, are the next steps, larger than a fix.
+- **The pool waits after a restart** (14,000 agents and more): each Hello takes a few statements, and 14,000 within seconds wait for the 16 connections. They waited, none timed out. A larger pool would only move the queue to PostgreSQL on 2 CPUs.
 
 ## Limits and follow-ups
 
