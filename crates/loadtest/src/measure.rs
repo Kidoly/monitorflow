@@ -125,6 +125,33 @@ impl Store {
     }
 }
 
+/// The value of an instant query that gives one number, like a `count`.
+pub async fn vm_scalar(store: &Store, expr: &str) -> Option<f64> {
+    let path = format!("/api/v1/query?query={}", url_encode(expr));
+    let body: serde_json::Value = serde_json::from_str(&store.get(&path).await?).ok()?;
+    parse_scalar(&body)
+}
+
+/// The first value of an instant query's vector, 0 when it is empty.
+pub fn parse_scalar(body: &serde_json::Value) -> Option<f64> {
+    let result = body["data"]["result"].as_array()?;
+    match result.first() {
+        None => Some(0.0),
+        Some(first) => first["value"][1].as_str()?.parse().ok(),
+    }
+}
+
+fn url_encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 pub async fn vm_rows(store: &Store) -> Option<f64> {
     Some(parse_vm_rows(&store.get("/metrics").await?))
 }
@@ -358,5 +385,19 @@ mod tests {
         assert_eq!(spread.p95, 95.0);
         assert_eq!(spread.max, 100.0);
         assert_eq!(Spread::of(Vec::new()), Spread::default());
+    }
+
+    #[test]
+    fn instant_queries_give_one_number() {
+        let body = serde_json::json!({"status": "success", "data": {"resultType": "vector",
+            "result": [{"metric": {}, "value": [1700000000, "3200"]}]}});
+        assert_eq!(parse_scalar(&body), Some(3200.0));
+        let empty = serde_json::json!({"data": {"result": []}});
+        assert_eq!(parse_scalar(&empty), Some(0.0));
+        assert_eq!(parse_scalar(&serde_json::json!({})), None);
+        assert_eq!(
+            url_encode("count({a=~\"b.*\"})"),
+            "count%28%7Ba%3D~%22b.%2A%22%7D%29"
+        );
     }
 }

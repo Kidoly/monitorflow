@@ -137,6 +137,8 @@ fn main() -> anyhow::Result<()> {
 struct Run {
     cli: Cli,
     plan: Plan,
+    /// VictoriaMetrics, to count the series the checks wrote.
+    store: measure::Store,
     /// What the devices' port checks connect to.
     listeners: Option<tokio::task::JoinSet<()>>,
     /// Sensors the server lists for the agents and for the devices.
@@ -257,7 +259,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Duration::from_secs(5),
         watching,
         pool.clone(),
-        victoriametrics,
+        victoriametrics.clone(),
         server.ports.grpc.port(),
         snapshots_tx,
     ));
@@ -271,6 +273,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let mut run = Run {
         cli,
         plan,
+        store: victoriametrics,
         listeners: None,
         sensors: None,
         server,
@@ -897,6 +900,7 @@ impl Run {
             "Samples sent",
             format!("{:.0} a second", (sent_after - sent) as f64 / seconds),
         );
+        self.count_series(&mut phase).await;
         self.time_pages(&mut phase).await?;
         self.end(phase).await
     }
@@ -911,7 +915,42 @@ impl Run {
         }
         phase.millis("Fleet overview API calls", Spread::of(fleet));
         phase.millis("Incident list API calls", Spread::of(incidents));
+        // A server's page, for servers spread over the fleet, devices too.
+        let servers = self.api.servers().await?;
+        let step = (servers.len() / RUNS).max(1);
+        let mut pages = Vec::new();
+        for server in servers.iter().step_by(step).take(RUNS) {
+            if let Some(id) = server["id"].as_str() {
+                pages.push(self.api.server_page(id).await?.as_secs_f64() * 1000.0);
+            }
+        }
+        phase.millis("Server page API calls", Spread::of(pages));
         Ok(())
+    }
+
+    /// Series in VictoriaMetrics of the checks added, by kind.
+    async fn count_series(&self, phase: &mut Phase) {
+        let queries = [
+            (
+                "services",
+                r#"count({__name__=~"monitorflow_service_.*_active"})"#,
+            ),
+            ("ports", r#"count({__name__=~"monitorflow_port_.*_up"})"#),
+            ("pings", "count(monitorflow_ping_up)"),
+            (
+                "CPU totals",
+                r#"count(monitorflow_cpu_usage_ratio{instance="total"})"#,
+            ),
+        ];
+        let mut counts = Vec::new();
+        for (what, query) in queries {
+            let value = measure::vm_scalar(&self.store, query).await;
+            counts.push(format!(
+                "{what} {}",
+                value.map_or("unknown".to_owned(), |v| format!("{v:.0}"))
+            ));
+        }
+        phase.result("Series in VictoriaMetrics", counts.join(", "));
     }
 
     /// `apply_updates` to every server, answered after `command_seconds`.
