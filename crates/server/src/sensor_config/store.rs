@@ -265,12 +265,23 @@ impl SensorConfigStore {
 
     /// Records the revision the agent `peer_id` acknowledged.
     pub async fn record_applied(&self, peer_id: &str, revision: u64) -> Result<(), sqlx::Error> {
+        self.record_applied_many(&[(peer_id.to_owned(), revision)])
+            .await
+    }
+
+    /// Records what each agent acknowledged, in one statement.
+    pub async fn record_applied_many(&self, applied: &[(String, u64)]) -> Result<(), sqlx::Error> {
+        let (ids, revisions): (Vec<&str>, Vec<i64>) = applied
+            .iter()
+            .map(|(id, revision)| (id.as_str(), i64::try_from(*revision).unwrap_or(i64::MAX)))
+            .unzip();
         sqlx::query(
-            "UPDATE servers SET sensor_revision_applied = $2, sensor_applied_at = now()
-             WHERE peer_id = $1",
+            "UPDATE servers s SET sensor_revision_applied = a.revision, sensor_applied_at = now()
+             FROM unnest($1::text[], $2::bigint[]) AS a(peer_id, revision)
+             WHERE s.peer_id = a.peer_id",
         )
-        .bind(peer_id)
-        .bind(i64::try_from(revision).unwrap_or(i64::MAX))
+        .bind(&ids)
+        .bind(&revisions)
         .execute(&self.pool)
         .await?;
         Ok(())

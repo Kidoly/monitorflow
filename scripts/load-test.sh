@@ -6,6 +6,13 @@
 #
 #   scripts/load-test.sh                    # 1,000 agents, every phase
 #   scripts/load-test.sh --agents 100 --steady 60
+#   LOADTEST_SERVER_CPUS=10,11 LOADTEST_SERVER_MEMORY=4G scripts/load-test.sh --relays 0
+#                                           # the server side as a small machine
+#
+# LOADTEST_SERVER_CPUS (CPU list) and LOADTEST_SERVER_MEMORY (like 4G) put
+# the server and the three stores in one systemd slice with those limits
+# and no swap, as on a small VM, and keep the generator on the other CPUs.
+# That needs sudo: in a terminal it asks once, elsewhere set SUDO_ASKPASS.
 #
 # Arguments go to monitorflow-loadtest (`--help` lists them). Ports and the
 # project name come from LOADTEST_* variables, with free defaults.
@@ -21,9 +28,40 @@ work=$PWD/target/loadtest
 export LOADTEST_STORAGE_TLS_DIR=$work/storage-tls
 
 compose=(docker compose -p "$project" -f deploy/docker-compose.loadtest.yml)
+generator=()
+limited=${LOADTEST_SERVER_CPUS:-}${LOADTEST_SERVER_MEMORY:-}
+if [[ -n $limited ]]; then
+    export LOADTEST_SLICE=${LOADTEST_SLICE:-mfloadtest.slice}
+    sudo=(sudo)
+    [[ -n ${SUDO_ASKPASS:-} ]] && sudo=(sudo -A)
+    props=(MemorySwapMax=0)
+    [[ -n ${LOADTEST_SERVER_CPUS:-} ]] && props+=("AllowedCPUs=$LOADTEST_SERVER_CPUS")
+    [[ -n ${LOADTEST_SERVER_MEMORY:-} ]] && props+=("MemoryMax=$LOADTEST_SERVER_MEMORY")
+    "${sudo[@]}" systemctl set-property --runtime "$LOADTEST_SLICE" "${props[@]}"
+    export LOADTEST_STORE_MEMORY=${LOADTEST_SERVER_MEMORY:-0}
+    compose+=(-f deploy/docker-compose.loadtest-limited.yml)
+    export LOADTEST_CGROUP=/sys/fs/cgroup/$LOADTEST_SLICE
+    export LOADTEST_SERVER_WRAPPER="${sudo[*]} systemd-run --scope --quiet --slice=$LOADTEST_SLICE --unit=mfloadtest-server --uid=$(id -u) --gid=$(id -g) -- env NO_COLOR=1"
+    if [[ -n ${LOADTEST_SERVER_CPUS:-} ]]; then
+        # The generator on every other CPU.
+        others=$(python3 -c '
+import os, sys
+taken = set()
+for part in sys.argv[1].split(","):
+    a, _, b = part.partition("-")
+    taken.update(range(int(a), int(b or a) + 1))
+print(",".join(str(c) for c in sorted(os.sched_getaffinity(0) - taken)))
+' "$LOADTEST_SERVER_CPUS")
+        generator=(taskset -c "$others")
+    fi
+fi
 cleanup() {
     "${compose[@]}" logs --no-color postgres >target/load-test-postgres.log 2>&1 || true
     "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+    if [[ -n $limited ]]; then
+        "${sudo[@]}" systemctl stop "$LOADTEST_SLICE" >/dev/null 2>&1 || true
+        "${sudo[@]}" systemctl revert "$LOADTEST_SLICE" >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT
 
@@ -53,4 +91,4 @@ TOML
 "$bin/monitorflow-server" --config "$work/storage-certs.toml" storage-certs
 
 "${compose[@]}" up -d --wait
-"$bin/monitorflow-loadtest" --work-dir "$work" "$@"
+"${generator[@]}" "$bin/monitorflow-loadtest" --work-dir "$work" "$@"

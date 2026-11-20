@@ -574,6 +574,56 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_page_of_servers_reads_the_details_of_its_servers_only(pool: PgPool) {
+        // One site of 300 servers, a page of 21: the open incidents are
+        // read for the page, not for the whole site before the cut. The
+        // load test's site of 2,240 servers paid for all of them on each
+        // of its six pages.
+        let site: Uuid = sqlx::query_scalar("INSERT INTO sites (name) VALUES ('paris') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+             SELECT 'agent-' || n, $1, 'host-' || lpad(n::text, 4, '0'), 'debian'
+             FROM generate_series(1, 300) AS n",
+        )
+        .bind(site)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("ANALYZE servers").execute(&pool).await.unwrap();
+        let explain = format!(
+            "EXPLAIN (ANALYZE, FORMAT JSON) {}",
+            monitorflow_server::api::servers::list_query()
+        );
+        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(explain))
+            .bind(true)
+            .bind(Vec::<Uuid>::new())
+            .bind(None::<String>)
+            .bind(None::<String>)
+            .bind(None::<String>)
+            .bind(21_i64)
+            .bind(None::<Uuid>)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // Every scan of `incidents`, with how often it ran.
+        fn loops(node: &serde_json::Value, out: &mut Vec<i64>) {
+            if node["Relation Name"] == "incidents" {
+                out.push(node["Actual Loops"].as_i64().unwrap());
+            }
+            for child in node["Plans"].as_array().into_iter().flatten() {
+                loops(child, out);
+            }
+        }
+        let mut scans = Vec::new();
+        loops(&plan[0]["Plan"], &mut scans);
+        assert!(!scans.is_empty(), "{plan}");
+        assert!(scans.iter().all(|&n| n <= 21), "incidents read {scans:?} times");
+    }
+
+    #[sqlx::test]
     async fn servers_are_paginated_with_cursors(pool: PgPool) {
         let mut expected = Vec::new();
         let mut paris = Uuid::nil();

@@ -169,7 +169,80 @@ fn event(kind: &str, severity: Option<&str>) -> (String, Option<String>) {
     (kind.into(), severity.map(Into::into))
 }
 
+/// Submits one disk sample of `peer` without waiting for the engine;
+/// `false` when the engine's queue was full and dropped it.
+fn submit_one(alerts: &Alerts, peer: &str, at: i64) -> bool {
+    let identity = Identity {
+        peer: peer.into(),
+        site: "paris".into(),
+    };
+    let batch = SampleBatch {
+        samples: vec![Sample {
+            sensor: "disk_used_ratio".into(),
+            instance: "/".into(),
+            timestamp_unix_ms: at,
+            value: 0.1,
+            labels: Default::default(),
+        }],
+    };
+    let checked = check_batch(&identity, batch, chrono::Utc::now().timestamp_millis());
+    alerts.submit(&checked.series)
+}
+
 db_tests! {
+    #[sqlx::test]
+    async fn reloading_many_servers_does_not_hold_batches_back(pool: PgPool) {
+        // A check added to each of 8,000 servers moved every revision at
+        // once; on a 2-CPU machine the engine reloaded them all in one
+        // poll and dropped batches meanwhile (docs/load-test.md).
+        const SERVERS: i64 = 1_500;
+        let paris = site(&pool, "paris").await;
+        sqlx::query(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+             SELECT 'agent-' || n, $1, 'agent-' || n, 'debian' FROM generate_series(1, $2) AS n",
+        )
+        .bind(paris)
+        .bind(SERVERS)
+        .execute(&pool)
+        .await
+        .unwrap();
+        threshold(&pool, (Some(paris), None), None, Some(0.8), 0, true).await;
+        let settings = EngineSettings {
+            queue_capacity: 40,
+            ..settings()
+        };
+        let alerts = Alerts::start(AlertStore::new(pool.clone()), settings, Arc::new(Recorder::default()))
+            .await
+            .unwrap();
+        let t0 = base();
+        // Every server's thresholds cached, one batch each.
+        for n in 1..=SERVERS {
+            while !submit_one(&alerts, &format!("agent-{n}"), t0) {
+                alerts.flush().await;
+            }
+        }
+        alerts.flush().await;
+        let before = alerts.stats().dropped;
+
+        // Every revision moves at once, as a check added to each server.
+        sqlx::query("UPDATE servers SET threshold_revision = threshold_revision + 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        // Batches keep coming while the engine reloads.
+        let mut refused = 0;
+        for n in 0..400 {
+            if !submit_one(&alerts, &format!("agent-{}", n % SERVERS + 1), t0 + (n + 1) * S) {
+                refused += 1;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        alerts.flush().await;
+        assert_eq!(refused, 0, "batches dropped while reloading");
+        assert_eq!(alerts.stats().dropped, before);
+    }
+
     #[sqlx::test]
     async fn incidents_open_escalate_and_resolve(pool: PgPool) {
         let paris = site(&pool, "paris").await;

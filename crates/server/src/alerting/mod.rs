@@ -3,6 +3,7 @@
 //! hand their validated series to [`Alerts::submit`]. Offline incidents
 //! of servers and relays come from [`offline`] (ADR-0072).
 
+mod by_server;
 pub mod engine;
 pub mod history;
 pub mod offline;

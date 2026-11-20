@@ -145,4 +145,30 @@ impl Api {
         open?;
         Ok(start.elapsed())
     }
+
+    /// What a server's page loads: the server, its sensors and their
+    /// values, its thresholds and its open incidents.
+    pub async fn server_page(&self, id: &str) -> anyhow::Result<Duration> {
+        let paths = [
+            format!("/api/servers/{id}"),
+            format!("/api/servers/{id}/sensors"),
+            format!("/api/servers/{id}/sensor-values"),
+            format!("/api/servers/{id}/thresholds/effective"),
+            format!("/api/incidents?server_id={id}&state=open"),
+        ];
+        let start = Instant::now();
+        let (server, sensors, values, thresholds, incidents) = tokio::join!(
+            self.get(&paths[0]),
+            self.get(&paths[1]),
+            self.get(&paths[2]),
+            self.get(&paths[3]),
+            self.get(&paths[4]),
+        );
+        server?;
+        sensors?;
+        values?;
+        thresholds?;
+        incidents?;
+        Ok(start.elapsed())
+    }
 }

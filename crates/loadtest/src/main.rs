@@ -10,6 +10,7 @@
 //! API between the first connection and the steady state.
 
 mod api;
+mod cgroups;
 mod checks;
 mod fleet;
 mod hooks;
@@ -82,6 +83,16 @@ struct Cli {
     devices: usize,
     #[arg(long, default_value_t = 4)]
     device_ports: usize,
+    /// The cgroup that holds the server side, limited like a small
+    /// machine; its CPU and memory, and each cgroup's in it, are sampled.
+    /// Set by `scripts/load-test.sh` with `LOADTEST_SERVER_CPUS` or
+    /// `LOADTEST_SERVER_MEMORY`.
+    #[arg(long, env = "LOADTEST_CGROUP")]
+    cgroup: Option<PathBuf>,
+    /// A command, split on spaces, that runs the server inside that
+    /// cgroup, the server's command line after it.
+    #[arg(long, env = "LOADTEST_SERVER_WRAPPER")]
+    server_wrapper: Option<String>,
     /// Phases to run after the steady state, in this order.
     #[arg(
         long,
@@ -137,6 +148,8 @@ fn main() -> anyhow::Result<()> {
 struct Run {
     cli: Cli,
     plan: Plan,
+    /// VictoriaMetrics, to count the series the checks wrote.
+    store: measure::Store,
     /// What the devices' port checks connect to.
     listeners: Option<tokio::task::JoinSet<()>>,
     /// Sensors the server lists for the agents and for the devices.
@@ -195,6 +208,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         &cli.victorialogs_url,
         cli.storage_tls_dir.as_deref(),
     )?;
+    server.wrapper = cli
+        .server_wrapper
+        .as_deref()
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
     server.start().await?;
     let victoriametrics = match &cli.storage_tls_dir {
         Some(dir) => {
@@ -257,8 +277,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Duration::from_secs(5),
         watching,
         pool.clone(),
-        victoriametrics,
+        victoriametrics.clone(),
         server.ports.grpc.port(),
+        cli.cgroup.clone().map(cgroups::Slice::new),
         snapshots_tx,
     ));
     let started = Instant::now();
@@ -271,6 +292,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let mut run = Run {
         cli,
         plan,
+        store: victoriametrics,
         listeners: None,
         sensors: None,
         server,
@@ -376,6 +398,20 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ),
         ));
     }
+    if let Some(dir) = &cli.cgroup {
+        let (oom_kills, peak, swap) = cgroups::Slice::new(dir.clone()).memory_summary();
+        setup.push((
+            "Server side memory".to_owned(),
+            format!(
+                "peak {:.0} MiB, {oom_kills} processes killed for memory, {:.0} MiB of swap at the end",
+                peak as f64 / 1024.0 / 1024.0,
+                swap as f64 / 1024.0 / 1024.0
+            ),
+        ));
+    }
+    let log = std::fs::read_to_string(work.join("server.log"))
+        .map(|text| report::log_summary(&text))
+        .unwrap_or_default();
     let text = report::render(
         &match sensors {
             Some((agents, devices)) => format!(
@@ -388,6 +424,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         &setup,
         &phases,
         &snapshots,
+        &log,
     );
     let report_path = cli.report.clone().unwrap_or_else(|| work.join("report.md"));
     std::fs::write(&report_path, &text)?;
@@ -821,8 +858,14 @@ impl Run {
                     }
                 })
                 .await?;
-            let direct = self.fleet.len()
-                - (self.fleet.len() as f64 * self.cli.relay_share).round() as usize;
+            // The agents of the direct site; those behind relays are on
+            // the relays' sites.
+            let behind = if self.relays.is_empty() {
+                0
+            } else {
+                (self.fleet.len() as f64 * self.cli.relay_share).round() as usize
+            };
+            let direct = self.fleet.len() - behind;
             phase.result(
                 "One site check changed: every agent of the site acknowledged",
                 match done {
@@ -897,13 +940,15 @@ impl Run {
             "Samples sent",
             format!("{:.0} a second", (sent_after - sent) as f64 / seconds),
         );
+        self.count_series(&mut phase).await;
         self.time_pages(&mut phase).await?;
         self.end(phase).await
     }
 
     /// Times the API calls of the fleet overview and the incident list.
     async fn time_pages(&self, phase: &mut Phase) -> anyhow::Result<()> {
-        const RUNS: usize = 20;
+        // Enough for a p99 that is not just the maximum.
+        const RUNS: usize = 100;
         let (mut fleet, mut incidents) = (Vec::new(), Vec::new());
         for _ in 0..RUNS {
             fleet.push(self.api.fleet_page().await?.as_secs_f64() * 1000.0);
@@ -911,7 +956,42 @@ impl Run {
         }
         phase.millis("Fleet overview API calls", Spread::of(fleet));
         phase.millis("Incident list API calls", Spread::of(incidents));
+        // A server's page, for servers spread over the fleet, devices too.
+        let servers = self.api.servers().await?;
+        let step = (servers.len() / RUNS).max(1);
+        let mut pages = Vec::new();
+        for server in servers.iter().step_by(step).take(RUNS) {
+            if let Some(id) = server["id"].as_str() {
+                pages.push(self.api.server_page(id).await?.as_secs_f64() * 1000.0);
+            }
+        }
+        phase.millis("Server page API calls", Spread::of(pages));
         Ok(())
+    }
+
+    /// Series in VictoriaMetrics of the checks added, by kind.
+    async fn count_series(&self, phase: &mut Phase) {
+        let queries = [
+            (
+                "services",
+                r#"count({__name__=~"monitorflow_service_.*_active"})"#,
+            ),
+            ("ports", r#"count({__name__=~"monitorflow_port_.*_up"})"#),
+            ("pings", "count(monitorflow_ping_up)"),
+            (
+                "CPU totals",
+                r#"count(monitorflow_cpu_usage_ratio{instance="total"})"#,
+            ),
+        ];
+        let mut counts = Vec::new();
+        for (what, query) in queries {
+            let value = measure::vm_scalar(&self.store, query).await;
+            counts.push(format!(
+                "{what} {}",
+                value.map_or("unknown".to_owned(), |v| format!("{v:.0}"))
+            ));
+        }
+        phase.result("Series in VictoriaMetrics", counts.join(", "));
     }
 
     /// `apply_updates` to every server, answered after `command_seconds`.
@@ -1124,6 +1204,7 @@ impl Run {
         let total = self.fleet.len() as i64;
         let pool = self.pool.clone();
         let start = Instant::now();
+        let breached = chrono::Utc::now();
         self.fleet.shared.breach.store(true, Ordering::Relaxed);
         let opened = self
             .until(Duration::from_secs(400), || async {
@@ -1135,6 +1216,18 @@ impl Run {
         phase.result(
             "Incidents open",
             format!("{open} of {total}, {:.0} s after the breach started (sensors every 60 s, threshold 60 s)", start.elapsed().as_secs_f64()),
+        );
+        let each: Vec<f64> = sqlx::query_scalar(
+            "SELECT extract(epoch FROM opened_at - $2)::float8 FROM incidents
+             WHERE metric = $1 AND opened_at >= $2",
+        )
+        .bind(STORM_METRIC)
+        .bind(breached)
+        .fetch_all(&self.pool)
+        .await?;
+        phase.seconds(
+            "Breach to the sample that opened each incident",
+            Spread::of(each),
         );
         if opened.is_none() {
             self.miss(&mut phase, format!("{open} of {total} incidents opened"));
