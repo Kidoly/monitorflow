@@ -1185,7 +1185,7 @@ impl Run {
         .bind(breached)
         .fetch_all(&self.pool)
         .await?;
-        phase.seconds("Breach to each incident opened", Spread::of(each));
+        phase.seconds("Breach to the sample that opened each incident", Spread::of(each));
         if opened.is_none() {
             self.miss(&mut phase, format!("{open} of {total} incidents opened"));
         }

@@ -27,7 +27,7 @@ Phases:
 
 1. **Enrollment and first connection** of the whole fleet.
 1. **Checks added through the API**, with checks to add: every site's, then every server's own, then the devices and theirs, 16 requests at a time; until every agent runs and acknowledged its configuration; then one site check changed, until every agent of the site acknowledged it.
-2. **Steady state**, 5 minutes by default; at its end the API calls of the fleet overview (every page of `/api/servers` and the open incidents) and of the incident list (sites, servers, the first 50 incidents and the open ones) are timed 20 times each, and so are a server's page (the server, its sensors and their values, its thresholds and open incidents) for 20 servers across the fleet.
+2. **Steady state**, 5 minutes by default; at its end the API calls of the fleet overview (every page of `/api/servers` and the open incidents) and of the incident list (sites, servers, the first 50 incidents and the open ones) are timed 100 times each, and so are a server's page (the server, its sensors and their values, its thresholds and open incidents) for 100 servers across the fleet. Every timing is reported as p50, p95, p99 and maximum, with its count.
 3. **A command to every server**: `apply_updates` through `POST /api/servers/{id}/commands`, until every result is recorded.
 4. **Certificate renewal of every agent** through `Renew`.
 5. **Server restart**: SIGTERM, start again at once; until the server shows every agent on a new stream (agents behind a relay keep their stream to it), and every direct agent sent a batch again.
@@ -145,6 +145,36 @@ Reading the table:
 - **The configuration push** carried 100,000 sensors to 2,000 agents through the watcher's 10-second poll with no backlog: a site change reaches all its agents within one poll. The configuration a server loads at Hello and at each change took 1.6 ms in PostgreSQL with 43 rows.
 - **The sensor pages and API** stay flat: the sensors of one server in 4 ms, a server's whole page in 36 ms at p50 (its sensor values are three VictoriaMetrics queries whatever the number of sensors). The fleet overview and the incident list fetch every server, 2,800 here, in six pages: half a second, linear in the fleet.
 - **PostgreSQL** ran at most 15 statements at once, while 16 clients added checks; in the steady state 0.1. The heaviest steady statements were the server list (30 ms a page of 500) and the probes' read of their checks (40 ms, below).
+
+### The slow tail
+
+A third run on top of the four fixes, the same command, reporting p99 next to p50, p95 and the maximum (`n` is the number of measures; the pages are timed 100 times).
+
+| Timing | p50 | p95 | p99 | Max | n |
+| --- | --- | --- | --- | --- | --- |
+| Checks added: each API request | 17 ms | 35 ms | 224 ms | 287 ms | 27,352 |
+| `GET /api/servers/{id}/sensors`, every server | 4 ms | 9 ms | 10 ms | 16 ms | 2,800 |
+| Fleet overview API calls, steady state | 482 ms | 512 ms | 516 ms | 530 ms | 100 |
+| Incident list API calls, steady state | 487 ms | 524 ms | 544 ms | 546 ms | 100 |
+| A server's page API calls, steady state | 34 ms | 43 ms | 77 ms | 122 ms | 100 |
+| Fleet overview API calls, after the storm | 480 ms | 514 ms | 523 ms | 534 ms | 100 |
+| Incident list API calls, after the storm | 474 ms | 509 ms | 519 ms | 521 ms | 100 |
+| A server's page API calls, after the storm | 35 ms | 66 ms | 190 ms | 285 ms | 100 |
+| A command: queued to result recorded | 5.4 s | 7.2 s | 7.4 s | 7.4 s | 2,000 |
+| Restart: stream open again at the server | 0.6 s | 1.3 s | 1.8 s | 2.1 s | 2,000 |
+| Restart: first batch of a direct agent | 10.6 s | 11.4 s | 12.0 s | 12.2 s | 1,600 |
+| Breach to the sample that opened each incident | 100 s | 169 s | 178 s | 180 s | 2,000 |
+| Opening notifications: outbox to sent | 9.1 s | 9.8 s | 10.0 s | 10.9 s | 2,000 |
+| Resolutions: outbox to sent | 30.2 s | 59.3 s | 60.0 s | 63.4 s | 2,000 |
+
+The other results of this run matched the second one: 100,000 sensors listed, 7,283 samples a second, every agent in sync at once and a site change acknowledged in 5 s, 2,000 commands in 11.8 s, 2,000 incidents open 188 s after the breach.
+
+Reading the tail:
+
+- **The pages have no slow tail of their own**: the fleet overview's p99 is 7 % over its p50, the sensors of a server 10 ms at p99. A server's page reached 190 ms at p99 after the storm, still far under a second.
+- **Adding checks** has a tail: 1 % of the 27,352 writes took over 224 ms, while 16 at a time bumped revisions and the watcher pushed configurations. A person adding checks one by one does not see it.
+- **The breach to the opening** is the threshold's design: up to 60 s for the next collection to see the breach, 60 s of duration, then the next collection and the 10 s flush, so 180 s at most.
+- **Notifications** vary from one run to the next with ADR-0080's window: here every opening came within one window (p99 10 s); in the second run they straddled two (p99 about 60 s). Resolutions straddled two in both. The bound is a minute after the window that opened.
 
 ### What it found, and what was fixed
 
