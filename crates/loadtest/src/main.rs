@@ -907,7 +907,8 @@ impl Run {
 
     /// Times the API calls of the fleet overview and the incident list.
     async fn time_pages(&self, phase: &mut Phase) -> anyhow::Result<()> {
-        const RUNS: usize = 20;
+        // Enough for a p99 that is not just the maximum.
+        const RUNS: usize = 100;
         let (mut fleet, mut incidents) = (Vec::new(), Vec::new());
         for _ in 0..RUNS {
             fleet.push(self.api.fleet_page().await?.as_secs_f64() * 1000.0);
@@ -1163,6 +1164,7 @@ impl Run {
         let total = self.fleet.len() as i64;
         let pool = self.pool.clone();
         let start = Instant::now();
+        let breached = chrono::Utc::now();
         self.fleet.shared.breach.store(true, Ordering::Relaxed);
         let opened = self
             .until(Duration::from_secs(400), || async {
@@ -1175,6 +1177,15 @@ impl Run {
             "Incidents open",
             format!("{open} of {total}, {:.0} s after the breach started (sensors every 60 s, threshold 60 s)", start.elapsed().as_secs_f64()),
         );
+        let each: Vec<f64> = sqlx::query_scalar(
+            "SELECT extract(epoch FROM opened_at - $2)::float8 FROM incidents
+             WHERE metric = $1 AND opened_at >= $2",
+        )
+        .bind(STORM_METRIC)
+        .bind(breached)
+        .fetch_all(&self.pool)
+        .await?;
+        phase.seconds("Breach to each incident opened", Spread::of(each));
         if opened.is_none() {
             self.miss(&mut phase, format!("{open} of {total} incidents opened"));
         }

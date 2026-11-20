@@ -318,6 +318,7 @@ pub struct Spread {
     pub count: usize,
     pub p50: f64,
     pub p95: f64,
+    pub p99: f64,
     pub max: f64,
 }
 
@@ -332,6 +333,7 @@ impl Spread {
             count: values.len(),
             p50: at(0.5),
             p95: at(0.95),
+            p99: at(0.99),
             max: values[values.len() - 1],
         }
     }
@@ -383,8 +385,22 @@ mod tests {
         assert_eq!(spread.count, 100);
         assert_eq!(spread.p50, 51.0);
         assert_eq!(spread.p95, 95.0);
+        assert_eq!(spread.p99, 99.0);
         assert_eq!(spread.max, 100.0);
         assert_eq!(Spread::of(Vec::new()), Spread::default());
+        // A slow tail of 2 %: p99 sees it where p95 does not, max sees
+        // the worst. With exactly 1 % slow, p99 is the last fast value.
+        let mut tail: Vec<f64> = vec![10.0; 980];
+        tail.extend((0..20).map(|n| 1_000.0 + f64::from(n)));
+        let spread = Spread::of(tail);
+        assert_eq!(
+            (spread.p95, spread.p99, spread.max),
+            (10.0, 1_009.0, 1_019.0)
+        );
+        // Unsorted input, and one value.
+        assert_eq!(Spread::of(vec![3.0, 1.0, 2.0]).p99, 3.0);
+        let one = Spread::of(vec![7.0]);
+        assert_eq!((one.p50, one.p99, one.max, one.count), (7.0, 7.0, 7.0, 1));
     }
 
     #[test]

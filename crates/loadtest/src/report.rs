@@ -27,8 +27,8 @@ impl Phase {
         self.result(
             label,
             format!(
-                "p50 {:.1} s, p95 {:.1} s, max {:.1} s (n = {})",
-                spread.p50, spread.p95, spread.max, spread.count
+                "p50 {:.1} s, p95 {:.1} s, p99 {:.1} s, max {:.1} s (n = {})",
+                spread.p50, spread.p95, spread.p99, spread.max, spread.count
             ),
         );
     }
@@ -38,8 +38,8 @@ impl Phase {
         self.result(
             label,
             format!(
-                "p50 {:.0} ms, p95 {:.0} ms, max {:.0} ms (n = {})",
-                spread.p50, spread.p95, spread.max, spread.count
+                "p50 {:.0} ms, p95 {:.0} ms, p99 {:.0} ms, max {:.0} ms (n = {})",
+                spread.p50, spread.p95, spread.p99, spread.max, spread.count
             ),
         );
     }
@@ -142,6 +142,23 @@ fn one_line(query: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spreads_show_the_tail() {
+        let mut phase = Phase::default();
+        let mut values: Vec<f64> = (1..=100).map(f64::from).collect();
+        phase.millis("Calls", Spread::of(values.clone()));
+        values.iter_mut().for_each(|v| *v /= 10.0);
+        phase.seconds("Waits", Spread::of(values));
+        assert_eq!(
+            phase.results[0].1,
+            "p50 51 ms, p95 95 ms, p99 99 ms, max 100 ms (n = 100)"
+        );
+        assert_eq!(
+            phase.results[1].1,
+            "p50 5.1 s, p95 9.5 s, p99 9.9 s, max 10.0 s (n = 100)"
+        );
+    }
 
     #[test]
     fn statements_fit_on_one_table_line() {
