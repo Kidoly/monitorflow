@@ -19,8 +19,13 @@ use super::{Resolved, SensorConfigStore};
 use crate::grpc::Registry;
 
 /// Acknowledgements queued towards the watcher; more are dropped, and the
-/// agent acknowledges again after its next Hello.
-const ACK_QUEUE: usize = 1024;
+/// agent acknowledges again after its next Hello. A change to a site
+/// reaches all its agents within one poll, and they all acknowledge
+/// within a second: the queue holds that many, and the watcher writes
+/// whatever gathered in one statement (docs/load-test.md).
+const ACK_QUEUE: usize = 16_384;
+/// Most acknowledgements in one statement.
+const ACK_BATCH: usize = 2_000;
 
 #[derive(Debug, Clone)]
 pub struct WatcherSettings {
@@ -98,6 +103,9 @@ impl Watcher {
                 ack = self.acks.recv() => match ack {
                     Some((id, revision)) => {
                         self.pending.insert(id, revision);
+                        while let Ok((id, revision)) = self.acks.try_recv() {
+                            self.pending.insert(id, revision);
+                        }
                         self.record().await;
                     }
                     None => return,
@@ -111,10 +119,13 @@ impl Watcher {
     }
 
     async fn record(&mut self) {
-        for (id, revision) in std::mem::take(&mut self.pending) {
-            if let Err(error) = self.store.record_applied(&id, revision).await {
-                tracing::warn!(agent_id = %id, revision, %error, "could not record the applied sensor configuration; will retry");
-                self.pending.entry(id).or_insert(revision);
+        let pending: Vec<(String, u64)> = std::mem::take(&mut self.pending).into_iter().collect();
+        for batch in pending.chunks(ACK_BATCH) {
+            if let Err(error) = self.store.record_applied_many(batch).await {
+                tracing::warn!(agents = batch.len(), %error, "could not record the applied sensor configurations; will retry");
+                for (id, revision) in batch {
+                    self.pending.entry(id.clone()).or_insert(*revision);
+                }
             }
         }
     }

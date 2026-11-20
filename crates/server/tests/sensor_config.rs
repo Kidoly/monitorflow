@@ -272,6 +272,60 @@ db_tests! {
         assert!(at.is_some());
         // An unknown agent is not an error.
         store.record_applied("nobody", 1).await.unwrap();
+        // Several at once, in one statement.
+        server(&pool, "db-01", paris).await;
+        store
+            .record_applied_many(&[("web-01".into(), 8), ("db-01".into(), 3), ("nobody".into(), 2)])
+            .await
+            .unwrap();
+        let applied: Vec<(String, Option<i64>)> =
+            sqlx::query_as("SELECT peer_id, sensor_revision_applied FROM servers ORDER BY peer_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(applied, [("db-01".into(), Some(3)), ("web-01".into(), Some(8))]);
+    }
+
+    #[sqlx::test]
+    async fn a_whole_site_acknowledging_at_once_is_recorded(pool: PgPool) {
+        use monitorflow_server::grpc::Registry;
+        use monitorflow_server::sensor_config::{SensorConfigs, WatcherSettings};
+
+        // The load test's 1,600 agents of one site acknowledged a change
+        // within a second; the watcher queued 1,024 and dropped the rest,
+        // which then showed out of sync until they reconnected.
+        const AGENTS: i64 = 3_000;
+        let paris = site(&pool, "paris").await;
+        sqlx::query(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+             SELECT 'agent-' || n, $1, 'agent-' || n, 'debian' FROM generate_series(1, $2) AS n",
+        )
+        .bind(paris)
+        .bind(AGENTS)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let configs = SensorConfigs::spawn(
+            SensorConfigStore::new(pool.clone()),
+            Registry::default(),
+            WatcherSettings::default(),
+        );
+        for n in 1..=AGENTS {
+            configs.applied(&format!("agent-{n}"), 9);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let recorded: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM servers WHERE sensor_revision_applied = 9")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if recorded == AGENTS {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{recorded} of {AGENTS} recorded");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
     }
 
     #[sqlx::test]
