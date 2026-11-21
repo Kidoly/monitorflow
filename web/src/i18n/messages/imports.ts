@@ -356,6 +356,8 @@ export const en = {
   "field.username": "User name",
   "field.passhash": "Passhash",
   "field.password": "Password",
+  "field.proxy_user": "Proxy user",
+  "field.proxy_password": "Proxy password",
   "waiting.title": "Waiting for its agent",
   "waiting.note":
     "This server was imported. Install the agent on it: once it enrolls as {name}, it takes over the checks and alerts below.",
@@ -720,6 +722,8 @@ export const fr: Translation<typeof en> = {
   "field.apitoken": "Jeton d’API",
   "field.username": "Nom d’utilisateur",
   "field.passhash": "Passhash",
+  "field.proxy_user": "Utilisateur du proxy",
+  "field.proxy_password": "Mot de passe du proxy",
   "field.password": "Mot de passe",
   "waiting.title": "En attente de son agent",
   "waiting.note":

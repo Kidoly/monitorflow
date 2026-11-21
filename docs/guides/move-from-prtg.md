@@ -40,7 +40,9 @@ You need to be an administrator of the site the servers go to, and one of:
 - **A user name and its passhash.** In PRTG, open **Setup › Account Settings › My Account** and click **Show passhash**.
 - **The configuration file**, `PRTG Configuration.dat`, copied from `C:\ProgramData\Paessler\PRTG Network Monitor\` on the PRTG core server. It holds every setting, channel limits included; its maintenance times are read as UTC, since the file does not say PRTG's time zone.
 
-The token or passhash is used for this one reading only: MonitorFlow never stores it nor writes it to a log. Use an `https://` address so it does not travel in clear text.
+If PRTG sits behind a reverse proxy or a web application firewall that asks for a user and password (HTTP basic authentication) before PRTG's own login, fill in **Proxy user** and **Proxy password** too (`proxy_user` and `proxy_password` in the API). Both go with every request, beside the token or passhash.
+
+The token, passhash and proxy password are used for this one reading only: MonitorFlow never stores them nor writes them to a log. Use an `https://` address so it does not travel in clear text.
 
 ## Read and preview
 

@@ -318,6 +318,12 @@ async fn credentials_are_a_token_or_a_user_and_passhash() {
             ("passhash", "p"),
         ],
         &[("url", "https://prtg.example"), ("username", "u")],
+        // A proxy user without its password.
+        &[
+            ("url", "https://prtg.example"),
+            ("apitoken", "t"),
+            ("proxy_user", "u"),
+        ],
     ] {
         let error = Prtg.read(connect(pairs), &context).await.unwrap_err();
         assert!(matches!(error, ReadError::Input(_)), "{pairs:?}: {error}");
@@ -509,4 +515,27 @@ async fn a_missing_status_reads_windows_as_utc_but_a_refusal_stops() {
     let refused = NoStatus(recorded(), || ReadError::Refused("refused".into()));
     let error = api::read(Arc::new(refused), now()).await.unwrap_err();
     assert!(matches!(error, ReadError::Refused(_)), "{error}");
+}
+
+#[test]
+fn a_proxy_in_front_gets_basic_authentication() {
+    let connection = |pairs: &[(&str, &str)]| {
+        Connection(
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        )
+    };
+    let headers = super::proxy_auth(&connection(&[
+        ("proxy_user", "Aladdin"),
+        ("proxy_password", "open sesame"),
+    ]))
+    .unwrap();
+    let value = &headers[reqwest::header::AUTHORIZATION];
+    assert_eq!(value, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+    // Kept out of debug output.
+    assert!(value.is_sensitive());
+    assert!(super::proxy_auth(&connection(&[])).unwrap().is_empty());
+    assert!(super::proxy_auth(&connection(&[("proxy_password", "p")])).is_err());
 }

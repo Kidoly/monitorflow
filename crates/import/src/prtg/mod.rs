@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Duration;
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::{Method, Url};
 
 use crate::http;
@@ -32,11 +32,13 @@ use crate::source::{
 /// The PRTG reader.
 pub struct Prtg;
 
-/// The API, authenticated by query parameters as PRTG asks.
+/// The API, authenticated by query parameters as PRTG asks, and by HTTP
+/// basic authentication when a reverse proxy in front of PRTG asks too.
 struct HttpFetch {
     client: http::Client,
     base: Url,
     auth: Vec<(&'static str, String)>,
+    headers: HeaderMap,
 }
 
 #[async_trait]
@@ -46,7 +48,7 @@ impl api::Fetch for HttpFetch {
         url.query_pairs_mut()
             .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())))
             .extend_pairs(self.auth.iter().map(|(k, v)| (*k, v.as_str())));
-        let body = http::send(&self.client, Method::GET, url, HeaderMap::new(), None).await?;
+        let body = http::send(&self.client, Method::GET, url, self.headers.clone(), None).await?;
         Ok(String::from_utf8_lossy(&body).into_owned())
     }
 }
@@ -67,6 +69,35 @@ fn auth(connection: &Connection) -> Result<Vec<(&'static str, String)>, ReadErro
             "Fill in an API token, or a user and its passhash.".into(),
         )),
     }
+}
+
+/// The `Authorization` header of a reverse proxy in front of PRTG, like
+/// a web application firewall asking for HTTP basic authentication:
+/// none when neither `proxy_user` nor `proxy_password` is filled in.
+fn proxy_auth(connection: &Connection) -> Result<HeaderMap, ReadError> {
+    use base64::Engine as _;
+    let mut headers = HeaderMap::new();
+    match (
+        connection.get("proxy_user"),
+        connection.get("proxy_password"),
+    ) {
+        (None, None) => {}
+        (Some(user), Some(password)) => {
+            let encoded =
+                base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
+            let mut value = HeaderValue::from_str(&format!("Basic {encoded}")).map_err(|_| {
+                ReadError::Input("The proxy user cannot be sent as it is written.".into())
+            })?;
+            value.set_sensitive(true);
+            headers.insert(AUTHORIZATION, value);
+        }
+        _ => {
+            return Err(ReadError::Input(
+                "Fill in both the proxy user and its password, or neither.".into(),
+            ))
+        }
+    }
+    Ok(headers)
 }
 
 /// Gives each custom SNMP sensor the lookups its channels and settings
@@ -124,6 +155,9 @@ impl Source for Prtg {
                 field("apitoken", true, true, ""),
                 field("username", false, true, "prtgadmin"),
                 field("passhash", true, true, ""),
+                // A reverse proxy asking for HTTP basic authentication.
+                field("proxy_user", false, true, ""),
+                field("proxy_password", true, true, ""),
             ],
         }
     }
@@ -137,6 +171,7 @@ impl Source for Prtg {
                     client: http::client(context)?,
                     base,
                     auth: auth(&connection)?,
+                    headers: proxy_auth(&connection)?,
                 };
                 let mut tree = api::read(Arc::new(fetch), context.now).await?;
                 // The API has no lookup files: channels name theirs only.
