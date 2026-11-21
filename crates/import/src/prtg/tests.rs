@@ -345,6 +345,12 @@ fn values_as_prtg_writes_them() {
         api::property("<prtg><result>(Property not found)</result></prtg>"),
         None
     );
+    // A channel without a lookup, as PRTG 24.3 answers: once read as a
+    // lookup named "not found", missing from every file.
+    assert_eq!(
+        api::property("<prtg><version>24.3.98.1210</version><result>Not found</result></prtg>"),
+        None
+    );
     assert_eq!(api::unescape("&#233;t&#xE9; &bogus; &"), "été &bogus; &");
     let clock = api::clock("17.11.2026 13:00:00").unwrap();
     assert_eq!(

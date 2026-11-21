@@ -125,8 +125,12 @@ pub fn property(body: &str) -> Option<String> {
     let start = body.find("<result>")? + "<result>".len();
     let end = start + body[start..].find("</result>")?;
     let value = unescape(body[start..end].trim());
-    let missing =
-        value.is_empty() || value.starts_with("(Property not found)") || value == "(Not found)";
+    // PRTG 24 answers `Not found`, without parentheses, for a channel
+    // property the channel does not have, like `valuelookup`.
+    let missing = value.is_empty()
+        || value.starts_with("(Property not found)")
+        || value == "(Not found)"
+        || value == "Not found";
     (!missing).then_some(value)
 }
 
