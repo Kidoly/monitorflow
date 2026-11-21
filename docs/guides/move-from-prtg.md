@@ -22,6 +22,7 @@ Retyping hundreds of devices, sensors and limits is the hardest part of switchin
 | Disk free and volume sensors, with limits on a percent free channel | Disk space threshold for that drive or mount point | Approximated: read as space used |
 | Windows service sensor | Windows service check, critical when it stops | Exact |
 | Port sensor | Port check of the device's address | Approximated: checked by the server's own agent, not from a probe |
+| Remote Desktop, SMTP, IMAP and POP3 sensors | Port check of their port on the device's address | Approximated: MonitorFlow checks that the port accepts connections, without speaking the protocol |
 | HTTP and HTTP advanced sensors | Website check of the page: its method, the keyword it must or must not hold, custom headers and timeout, with the response time limits as a threshold | Exact; approximated for a POST, a keyword given as a regular expression or Windows authentication. A password is not imported: set it in the check afterwards |
 | SSL certificate sensor | Website check of its host and port, with its days limits on the days left. A page of the same site checked already takes them instead | Approximated: the check also requests the page, whatever it answers |
 | Event log sensors | Event log check of the same log, levels, sources and event IDs | Exact, or approximated when a message filter or a count limit cannot be moved |

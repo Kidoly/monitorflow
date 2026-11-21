@@ -56,6 +56,13 @@ pub fn family(sensor_type: &str) -> Family {
     if t.starts_with("snmpcustom") || t == "snmplibrary" || t.starts_with("paessler.snmp.custom") {
         return Family::SnmpCustom;
     }
+    // Newer sensors are typed like `paessler.dns.dns_v2.40`: by the name
+    // in third place.
+    let t = match t.strip_prefix("paessler.") {
+        Some(rest) => rest.split('.').nth(1).unwrap_or(rest).to_owned(),
+        None => t,
+    };
+    let has = |s: &str| t.contains(s);
     if t.starts_with("ping") {
         Family::Ping
     } else if t.starts_with("dns") {
@@ -68,7 +75,7 @@ pub fn family(sensor_type: &str) -> Family {
         Family::Certificate
     } else if matches!(t.as_str(), "http" | "httpadvanced" | "httpfull") {
         Family::Web
-    } else if t == "port" {
+    } else if t == "port" || protocol(&t).is_some() {
         Family::Port
     } else if has("eventlog") || has("logfile") {
         Family::EventLog
@@ -439,13 +446,40 @@ fn service(sensor: &Object) -> Mapped {
     }
 }
 
+/// The protocol and default port of a sensor type that speaks one to a
+/// port: MonitorFlow checks the port only.
+fn protocol(sensor_type: &str) -> Option<(&'static str, u16)> {
+    Some(match sensor_type {
+        "remotedesktop" => ("RDP", 3389),
+        "smtp" => ("SMTP", 25),
+        "imap" => ("IMAP", 143),
+        "pop3" => ("POP3", 110),
+        "ftp" => ("FTP", 21),
+        _ => return None,
+    })
+}
+
 fn port(sensor: &Object, host: Option<&str>) -> Mapped {
+    let sensor_type = sensor
+        .sensor_type
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let protocol = protocol(&sensor_type);
     let Some(port) = sensor
         .setting("port")
         .and_then(|p| p.parse::<u16>().ok())
         .filter(|p| *p > 0)
+        .or(protocol.map(|(_, p)| p))
     else {
         return Mapped::Not(Note::plain("prtg_no_setting"));
+    };
+    let fidelity = match protocol {
+        Some((name, _)) => approximated(
+            "prtg_port_only",
+            args! {"port" => port.to_string(), "protocol" => name},
+        ),
+        None => approximated("prtg_from_server", args! {}),
     };
     Mapped::Watch {
         watch: Watch::Port {
@@ -453,7 +487,7 @@ fn port(sensor: &Object, host: Option<&str>) -> Mapped {
             port,
         },
         alert: down(),
-        fidelity: approximated("prtg_from_server", args! {}),
+        fidelity,
         limits: Vec::new(),
         lost: lost(sensor, &[]),
     }
@@ -773,6 +807,52 @@ mod tests {
         assert_eq!(family("httpadvanced"), Family::Web);
         assert_eq!(family("httptransaction"), Family::Other);
         assert_eq!(family("wineventlog"), Family::EventLog);
+    }
+
+    /// Sensors speaking a protocol to a port check that port, and the
+    /// newer `paessler.*` types are known by their name, as seen on a
+    /// real PRTG 24.3.
+    #[test]
+    fn protocols_and_newer_types() {
+        assert_eq!(family("paessler.DNS.dns_v2.40"), Family::Dns);
+        assert_eq!(family("paessler.snmp.custom_table"), Family::SnmpCustom);
+        assert_eq!(family("paessler.paecloud.http_v2_sensor.41"), Family::Other);
+        let sensor = |t: &str, port: Option<&str>| {
+            let mut s = Object::new(1, Kind::Sensor, "s", Some(0));
+            s.sensor_type = Some(t.into());
+            if let Some(port) = port {
+                s.settings.insert("port".into(), port.into());
+            }
+            s
+        };
+        for (t, setting, port, protocol) in [
+            ("remotedesktop", Some("3389"), 3389, "RDP"),
+            ("smtp", Some("587"), 587, "SMTP"),
+            ("imap", None, 143, "IMAP"),
+            ("pop3", None, 110, "POP3"),
+        ] {
+            let Mapped::Watch {
+                watch, fidelity, ..
+            } = map(&sensor(t, setting), Some("192.0.2.1"))
+            else {
+                panic!("{t} moves");
+            };
+            assert_eq!(
+                watch,
+                Watch::Port {
+                    address: Some("192.0.2.1".into()),
+                    port
+                },
+                "{t}"
+            );
+            let Fidelity::Approximated(note) = fidelity else {
+                panic!("{t} only checks the port");
+            };
+            assert_eq!(note.code, "prtg_port_only");
+            assert_eq!(note.args["protocol"], protocol);
+        }
+        // A plain port sensor still needs its port.
+        assert!(matches!(map(&sensor("port", None), None), Mapped::Not(_)));
     }
 
     /// A vendor's hardware health is not the system group: once read as
