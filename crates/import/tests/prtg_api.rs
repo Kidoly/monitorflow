@@ -16,7 +16,7 @@ use tokio::net::TcpListener;
 const TOKEN: &str = "recorded-token";
 /// The only paths a reader may ask for.
 const READING: &[&str] = &[
-    "/api/getstatus.json",
+    "/api/status.json",
     "/api/table.json",
     "/api/getobjectproperty.htm",
     "/controls/editnotification.htm",
