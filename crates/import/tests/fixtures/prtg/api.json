@@ -79,9 +79,10 @@
  "/api/getobjectproperty.htm?id=52&name=maintend&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>2026-10-02-02-00-00</result></prtg>",
  "/api/getobjectproperty.htm?id=52&name=maintstart&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>2026-10-01-22-00-00</result></prtg>",
  "/api/getobjectproperty.htm?id=60&name=maintenable&show=nohtmlencode": "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><prtg><version>24.1.92.1554</version><result>0</result></prtg>",
- "/api/getstatus.json": {
+ "/api/status.json": {
   "Clock": "11/17/2026 1:00:00 PM",
-  "Version": "24.1.92.1554"
+  "Version": "24.1.92.1554",
+  "jsClock": 1794916800
  },
  "/api/table.json?content=channels&id=2102&columns=objid,name,lastvalue": {
   "channels": [
@@ -393,13 +394,15 @@
   "prtg-version": "24.1.92.1554",
   "treesize": 4
  },
- "/api/table.json?content=probenodes&columns=objid,name,status&count=*": {
+ "/api/table.json?content=probenodes&columns=objid,name,parentid,status&count=*&filter_parentid=0": {
   "probenodes": [
    {
     "name": "Local Probe",
     "name_raw": "Local Probe",
     "objid": 1,
     "objid_raw": 1,
+    "parentid": 0,
+    "parentid_raw": 0,
     "status": 3,
     "status_raw": 3
    },
@@ -408,6 +411,8 @@
     "name_raw": "Branch Probe",
     "objid": 60,
     "objid_raw": 60,
+    "parentid": 0,
+    "parentid_raw": 0,
     "status": 3,
     "status_raw": 3
    }
