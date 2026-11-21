@@ -28,7 +28,8 @@ out are left out too. Importing the same configuration again creates nothing twi
 undone: what it created goes, except servers an agent has taken over. Servers then only need the agent: \
 one that enrolls with a server's ID, or with an install key of its site from a host of that name, takes \
 it over with its checks. The other tool is only read, never changed, and can keep running. A connection's \
-token is used for the request and never stored. Administrators of the target site only; everything is in \
+token or password is used for the request and never stored. PRTG behind a reverse proxy asking for HTTP basic \
+authentication takes `proxy_user` and `proxy_password` beside its token or passhash. Administrators of the target site only; everything is in \
 the audit log. API keys need the `administration` area."))
 )]
 pub(super) struct Doc;

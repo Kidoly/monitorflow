@@ -40,7 +40,9 @@ Il faut être administrateur du site où vont les serveurs, et avoir l'un de ces
 - **Un nom d'utilisateur et son passhash.** Dans PRTG, ouvrez **Setup › Account Settings › My Account** et cliquez sur **Show passhash**.
 - **Le fichier de configuration**, `PRTG Configuration.dat`, copié depuis `C:\ProgramData\Paessler\PRTG Network Monitor\` sur le serveur central PRTG. Il contient tous les réglages, limites des canaux comprises ; ses heures de maintenance sont lues en UTC, car le fichier ne dit pas le fuseau horaire de PRTG.
 
-Le jeton ou le passhash ne sert qu'à cette lecture : MonitorFlow ne le garde jamais et ne l'écrit dans aucun journal. Utilisez une adresse `https://` pour qu'il ne circule pas en clair.
+Si PRTG est derrière un proxy inverse ou un pare-feu applicatif web qui demande un utilisateur et un mot de passe (authentification HTTP basique) avant la connexion de PRTG, remplissez aussi **Utilisateur du proxy** et **Mot de passe du proxy** (`proxy_user` et `proxy_password` dans l'API). Les deux accompagnent chaque requête, avec le jeton ou le passhash.
+
+Le jeton, le passhash et le mot de passe du proxy ne servent qu'à cette lecture : MonitorFlow ne les garde jamais et ne les écrit dans aucun journal. Utilisez une adresse `https://` pour qu'il ne circule pas en clair.
 
 ## Lire et voir l'aperçu
 
