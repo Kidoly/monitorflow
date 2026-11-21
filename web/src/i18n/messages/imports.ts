@@ -157,6 +157,7 @@ export const en = {
     "MonitorFlow sends every alert to every channel of its site; the source's routing by labels is not moved.",
 
   "note.prtg_from_server": "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
+  "note.prtg_port_only": "MonitorFlow checks that port {port} accepts connections; PRTG also spoke {protocol} to it.",
   "note.prtg_sensor_type": "MonitorFlow has no check like this PRTG sensor ({type}).",
   "note.prtg_no_setting": "The sensor's settings do not say what it checks.",
   "note.prtg_limit": "MonitorFlow has no threshold for the limits of the channel {channel}.",
@@ -519,6 +520,7 @@ export const fr: Translation<typeof en> = {
     "MonitorFlow envoie chaque alerte à chaque canal de son site ; le routage par étiquettes de la source n’est pas repris.",
 
   "note.prtg_from_server": "Vérifié par l’agent du serveur lui-même, pas depuis une sonde : un problème réseau entre les deux n’est pas vu.",
+  "note.prtg_port_only": "MonitorFlow vérifie que le port {port} accepte les connexions ; PRTG lui parlait aussi {protocol}.",
   "note.prtg_sensor_type": "MonitorFlow n’a pas de vérification comme ce capteur PRTG ({type}).",
   "note.prtg_no_setting": "Les réglages du capteur ne disent pas ce qu’il vérifie.",
   "note.prtg_limit": "MonitorFlow n’a pas de seuil pour les limites du canal {channel}.",
