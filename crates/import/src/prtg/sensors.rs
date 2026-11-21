@@ -221,7 +221,12 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
         Family::Snmp => {
             let t = sensor_type.to_ascii_lowercase();
             let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
-            let group = if has(&["uptime", "system"]) {
+            // A vendor's system health (Dell, HP, Cisco, NetApp: fans,
+            // power supplies, disks) is read from its own MIB, not from
+            // the system group, which only gives the uptime.
+            let group = if has(&["health"]) {
+                return Mapped::Not(Note::plain("snmp_object"));
+            } else if has(&["uptime", "system"]) {
                 "system"
             } else if has(&["ups"]) {
                 "ups"
@@ -768,6 +773,41 @@ mod tests {
         assert_eq!(family("httpadvanced"), Family::Web);
         assert_eq!(family("httptransaction"), Family::Other);
         assert_eq!(family("wineventlog"), Family::EventLog);
+    }
+
+    /// A vendor's hardware health is not the system group: once read as
+    /// the uptime, exact, because its type holds the word "system".
+    #[test]
+    fn hardware_health_is_not_the_uptime() {
+        let sensor = |t: &str| {
+            let mut s = Object::new(1, Kind::Sensor, "Health", Some(0));
+            s.sensor_type = Some(t.into());
+            s
+        };
+        for t in [
+            "snmpdellsystemhealth",
+            "snmphpsystemhealth",
+            "snmpciscosystemhealth",
+            "snmpnetappsystemhealth",
+        ] {
+            assert!(
+                matches!(map(&sensor(t), None), Mapped::Not(ref n) if n.code == "snmp_object"),
+                "{t}"
+            );
+        }
+        let Mapped::Watch {
+            watch, fidelity, ..
+        } = map(&sensor("snmpuptime"), None)
+        else {
+            panic!("the uptime moves");
+        };
+        assert_eq!(
+            watch,
+            Watch::Snmp {
+                group: "system".into()
+            }
+        );
+        assert_eq!(fidelity, Fidelity::Exact);
     }
 
     /// VMware and Hyper-V sensors (ADR-0156), by their raw types and the
