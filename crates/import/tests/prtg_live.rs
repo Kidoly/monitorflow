@@ -20,8 +20,9 @@
 //! cargo test -p monitorflow-import --test prtg_live -- --ignored --nocapture
 //! ```
 //!
-//! It writes `tree.json` (objects, whether their details were read) and
-//! `inventory.json` beside the cache, and prints counts only. Both hold
+//! It writes `tree.json` (objects, whether their details were read),
+//! `inventory.json` and `index.json` (the request each cached file
+//! answers) beside the cache, and prints counts only. Both hold
 //! the installation's names and addresses: keep them out of the
 //! repository, which the check refuses as a cache directory.
 
@@ -69,6 +70,7 @@ struct Live {
     spacing: Duration,
     next: tokio::sync::Mutex<Instant>,
     counts: Counts,
+    index: Mutex<BTreeMap<String, String>>,
 }
 
 impl Live {
@@ -106,6 +108,11 @@ impl Fetch for Live {
     async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<String, ReadError> {
         let key = Self::key(path, query);
         let file = self.file(&key);
+        // Which file answers which request, to look into one.
+        self.index.lock().unwrap().insert(
+            file.file_name().unwrap().to_string_lossy().into_owned(),
+            key.clone(),
+        );
         if let Ok(body) = std::fs::read_to_string(&file) {
             self.counts.cached.fetch_add(1, Ordering::Relaxed);
             return Ok(body);
@@ -184,6 +191,7 @@ async fn a_real_prtg_read_gently() {
         spacing: Duration::from_secs_f64(1.0 / rate),
         next: tokio::sync::Mutex::new(Instant::now()),
         counts: Counts::default(),
+        index: Mutex::default(),
     });
 
     let started = Instant::now();
@@ -270,6 +278,7 @@ async fn a_real_prtg_read_gently() {
         &json!({"objects": objects, "notifications": tree.notifications.len()}),
     );
     out("inventory.json", &serde_json::to_value(&inventory).unwrap());
+    out("index.json", &json!(*live.index.lock().unwrap()));
     let kinds = |kind: Kind| tree.objects.iter().filter(|o| o.kind == kind).count();
     println!(
         "probes {} groups {} devices {} sensors {}; detailed {}; requests live {} cached {} skipped {}; {:.1} s",
