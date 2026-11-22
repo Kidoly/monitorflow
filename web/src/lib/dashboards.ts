@@ -35,13 +35,21 @@ export function isRange(value: string | null): value is TimeRangeLabel {
   return value !== null && (RANGES as readonly string[]).includes(value);
 }
 
-export const PANEL_KINDS: readonly PanelKind[] = ["chart", "area", "columns", "figure", "gauge", "top", "bars", "alerts"];
+export const PANEL_KINDS: readonly PanelKind[] = ["chart", "area", "columns", "heatmap", "figure", "gauge", "top", "bars", "table", "alerts", "text"];
+
+/** Most rows of a table. */
+export const MAX_TABLE_ROWS = 50;
+/** Most columns of a table. */
+export const MAX_TABLE_COLUMNS = 6;
+/** Longest text of a text panel. */
+export const MAX_TEXT = 4000;
 
 /** The kind whose data a panel draws: area and columns a chart's, a gauge a figure's, bars a top list's. */
-export function baseKind(kind: PanelKind): "chart" | "figure" | "top" | "alerts" {
+export function baseKind(kind: PanelKind): "chart" | "figure" | "top" | "alerts" | "table" | "text" {
   switch (kind) {
     case "area":
     case "columns":
+    case "heatmap":
       return "chart";
     case "gauge":
       return "figure";
@@ -158,6 +166,26 @@ export function thresholdBands(panel: Panel, min: number, max: number): { from: 
   ];
 }
 
+/** A heatmap cell's colour: its threshold's past one, else the panel's, stronger as the value rises. */
+export function heatColor(panel: Panel, min: number, max: number): (value: number) => { background: string; opacity: number } {
+  return (value) => {
+    const level = levelOf(panel, value);
+    if (level === "critical" || level === "warning") return { background: levelColor(panel, value), opacity: 1 };
+    const share = Math.min(Math.max((value - min) / (max - min || 1), 0), 1);
+    return { background: panelColor(panel), opacity: 0.22 + 0.78 * (lowIsBad(panel.metric ?? "") ? 1 - share : share) };
+  };
+}
+
+/** Series worst first: the highest peak, or the lowest dip where low is bad. */
+export function worstFirst<T extends { points: [number, number | null][] }>(series: T[], metric: string): T[] {
+  const low = lowIsBad(metric);
+  const peak = (s: T) => {
+    const values = s.points.map((p) => p[1]).filter((v): v is number => v !== null);
+    return values.length ? (low ? -Math.min(...values) : Math.max(...values)) : -Infinity;
+  };
+  return [...series].sort((a, b) => peak(b) - peak(a));
+}
+
 /** A short random panel id, unique within a dashboard. */
 export function newPanelId(taken: Iterable<string> = []): string {
   const used = new Set(taken);
@@ -175,6 +203,8 @@ export function defaultInstance(instances: string[]): string | undefined {
 /** A title from a panel's choices: "CPU usage total, average", "Fullest: Disk used". */
 export function suggestedTitle(panel: Panel): string {
   if (baseKind(panel.kind) === "alerts") return t("dashboards.title.alerts");
+  if (panel.kind === "text") return t("dashboards.title.text");
+  if (panel.kind === "table") return t("dashboards.title.table");
   const metric = panel.metric ? metricTitle(panel.metric) : t("dashboards.title.metric");
   const what = panel.instance && panel.instance !== "total" ? `${metric} ${panel.instance}` : metric;
   if (baseKind(panel.kind) === "top") {
@@ -203,7 +233,7 @@ export function withKind(panel: Panel, kind: PanelKind): Panel {
   const instance = panel.instance !== undefined ? { instance: panel.instance } : {};
   // Display options follow the panel, except a legend, which only charts over time have.
   const options: Partial<Panel> =
-    kind === "alerts"
+    kind === "alerts" || kind === "table" || kind === "text"
       ? {}
       : {
           ...(panel.unit && { unit: panel.unit }),
@@ -211,8 +241,9 @@ export function withKind(panel: Panel, kind: PanelKind): Panel {
           ...(panel.max !== undefined && { max: panel.max }),
           ...(panel.thresholds && { thresholds: panel.thresholds }),
           ...(panel.color !== undefined && { color: panel.color }),
-          ...(panel.legend !== undefined && baseKind(kind) === "chart" && { legend: panel.legend }),
+          ...(panel.legend !== undefined && ["chart", "area", "columns"].includes(kind) && { legend: panel.legend }),
         };
+  if (kind === "heatmap") return { ...base, metric, ...instance, count: Math.min(panel.count ?? 10, 20), ...options };
   switch (baseKind(kind)) {
     case "chart":
       return {
@@ -240,7 +271,16 @@ export function withKind(panel: Panel, kind: PanelKind): Panel {
         ...options,
       };
     case "alerts":
-      return { ...base, count: panel.count ?? 10 };
+      return { ...base, count: Math.min(panel.count ?? 10, 20) };
+    case "table":
+      return {
+        ...base,
+        columns: panel.columns ?? [{ metric, ...instance }],
+        order: panel.order ?? (lowIsBad(metric) ? "lowest" : "highest"),
+        count: panel.count ?? 20,
+      };
+    case "text":
+      return { ...base, servers: { kind: "all" }, text: panel.text ?? t("dashboards.text.example") };
   }
 }
 

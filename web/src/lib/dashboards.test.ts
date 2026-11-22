@@ -164,6 +164,12 @@ describe("panel kinds and display options", () => {
     expect(gauge.legend).toBeUndefined();
     expect(withKind(withOptions, "area")).toMatchObject({ kind: "area", combine: "each", legend: false });
     expect(withKind(withOptions, "bars")).toMatchObject({ kind: "bars", order: "highest", count: 5 });
+    expect(withKind(withOptions, "heatmap")).toMatchObject({ kind: "heatmap", metric: chart.metric, count: 10, color: 2 });
+    expect(withKind(withOptions, "table")).toMatchObject({ kind: "table", columns: [{ metric: chart.metric, instance: "total" }], order: "highest", count: 20 });
+    const text = withKind({ ...withOptions, servers: { kind: "site", id: "x" } }, "text");
+    expect(text).toMatchObject({ kind: "text", servers: { kind: "all" } });
+    expect(text.text).toBeTruthy();
+    expect(text.metric).toBeUndefined();
     const alerts = withKind(withOptions, "alerts");
     expect(alerts.thresholds).toBeUndefined();
     expect(alerts.color).toBeUndefined();

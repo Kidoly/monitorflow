@@ -5,16 +5,19 @@ import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { t } from "@/i18n";
 import type { DashboardData, Panel, PanelData } from "@/lib/api";
 import { endWords } from "@/lib/dependencies";
-import { levelColor, panelAdditive, panelColor, panelFormat, panelScale, thresholdBands } from "@/lib/dashboards";
+import { heatColor, levelColor, panelAdditive, panelColor, panelFormat, panelScale, thresholdBands, worstFirst } from "@/lib/dashboards";
+import { formatSensorValue } from "@/lib/sensors";
 import { incidentTitle } from "@/lib/incidents";
 import { BarList } from "@/components/ui/BarList";
 import { ChartMarks, type ChartVariant, shapeSeries } from "@/components/ui/ChartMarks";
 import { niceTicks, timeTicks } from "@/components/ui/chartScale";
 import { Gauge } from "@/components/ui/Gauge";
+import { Heatmap } from "@/components/ui/Heatmap";
+import { Markdown } from "@/components/ui/Markdown";
 import { SkeletonLines } from "@/components/ui/PageState";
 import { formatSince } from "@/components/ui/time";
 
-import { chartBounds, chartThresholds, emptyReason, quiet, seriesLabel, variantOf } from "./DashboardPanel";
+import { chartBounds, chartThresholds, columnTitle, emptyReason, quiet, seriesLabel, variantOf } from "./DashboardPanel";
 import styles from "./Display.module.css";
 
 /** Chart text in SVG units; the drawing is scaled so it matches the panel's text. */
@@ -166,6 +169,13 @@ export function ScreenPanel({
   window: Pick<DashboardData, "start" | "end" | "step" | "at"> | undefined;
 }) {
   const format = panelFormat(panel);
+  if (panel.kind === "text") {
+    return (
+      <Frame panel={panel}>
+        <Markdown text={panel.text ?? ""} />
+      </Frame>
+    );
+  }
   if (!data || !window) {
     return (
       <Frame panel={panel}>
@@ -190,6 +200,26 @@ export function ScreenPanel({
   }
   switch (data.kind) {
     case "chart":
+      if (panel.kind === "heatmap") {
+        const { min, max } = panelScale(panel, data.series.flatMap((s) => s.points.map((p) => p[1])));
+        return (
+          <Frame panel={panel}>
+            {data.series.length === 0 ? (
+              <p className={styles.muted}>{t("display.screen.noData")}</p>
+            ) : (
+              <Heatmap
+                label={panel.title}
+                rows={worstFirst(data.series, panel.metric ?? "").map((s) => ({ key: s.label, name: s.label, label: s.label, points: s.points }))}
+                start={window.start}
+                end={window.end}
+                step={window.step}
+                format={format}
+                color={heatColor(panel, min, max)}
+              />
+            )}
+          </Frame>
+        );
+      }
       return (
         <Frame panel={panel}>
           {data.series.some((s) => s.points.some((p) => p[1] !== null)) ? (
@@ -273,6 +303,39 @@ export function ScreenPanel({
           )}
         </Frame>
       );
+    case "table": {
+      const columns = panel.columns ?? [];
+      return (
+        <Frame panel={panel}>
+          {data.rows.length === 0 ? (
+            <p className={styles.muted}>{t("display.screen.noValues")}</p>
+          ) : (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>{t("dashboards.table.server")}</th>
+                  {columns.map((c, i) => (
+                    <th key={i}>{columnTitle(c)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((row) => (
+                  <tr key={row.server_id}>
+                    <th>{row.hostname}</th>
+                    {columns.map((c, i) => (
+                      <td key={i}>{formatSensorValue(c.metric, row.values[i] ?? null)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Frame>
+      );
+    }
+    case "text":
+      return null;
     case "alerts": {
       const now = new Date(window.at * 1000);
       return (

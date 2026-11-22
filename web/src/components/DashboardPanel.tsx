@@ -6,13 +6,17 @@ import type { ReactNode } from "react";
 import { t } from "@/i18n";
 import type { ChartLine, DashboardData, Panel, PanelAlert, PanelData } from "@/lib/api";
 import { endWords } from "@/lib/dependencies";
-import { levelColor, panelAdditive, panelColor, panelFormat, panelScale, panelUnit, thresholdBands } from "@/lib/dashboards";
+import { heatColor, levelColor, panelAdditive, panelColor, panelFormat, panelScale, panelUnit, thresholdBands, worstFirst } from "@/lib/dashboards";
+import { metricTitle } from "@/lib/metrics";
+import { formatSensorValue } from "@/lib/sensors";
 import { incidentTitle } from "@/lib/incidents";
 import { incidentHref, sensorHref, serverHref } from "@/lib/routes";
 import { type Scope, scopedHref } from "@/lib/scope";
 import { BarList } from "@/components/ui/BarList";
 import { stacks } from "@/components/ui/ChartMarks";
 import { Gauge } from "@/components/ui/Gauge";
+import { Heatmap } from "@/components/ui/Heatmap";
+import { Markdown } from "@/components/ui/Markdown";
 import { Label } from "@/components/ui/StatusLabel";
 import { type Threshold, TimeChart } from "@/components/ui/TimeChart";
 import { formatDay, formatSince } from "@/components/ui/time";
@@ -57,8 +61,14 @@ export function quiet(alert: PanelAlert, now: Date): string {
   return alert.in_maintenance ? t("display.panel.inMaintenance", { when }) : t("display.panel.silenced", { when });
 }
 
+/** A table column's heading: the metric's title, and the instance it watches. */
+export function columnTitle(column: { metric: string; instance?: string }): string {
+  const title = metricTitle(column.metric);
+  return column.instance && column.instance !== "total" ? `${title} ${column.instance}` : title;
+}
+
 export function emptyReason(panel: Panel, data: PanelData): string | null {
-  if (data.servers > 0) return null;
+  if (data.servers > 0 || data.kind === "text") return null;
   if (data.unavailable > 0 || panel.servers.kind !== "all") {
     return t("display.panel.unavailable");
   }
@@ -97,6 +107,14 @@ export function DashboardPanel({
       ? t("display.panel.missing", { count: data.unavailable })
       : undefined;
 
+  // Text reads nothing: it shows without waiting for the data.
+  if (panel.kind === "text") {
+    return (
+      <Frame panel={panel}>
+        <Markdown text={panel.text ?? ""} />
+      </Frame>
+    );
+  }
   if (!data || !window) {
     return (
       <Frame panel={panel}>
@@ -124,6 +142,31 @@ export function DashboardPanel({
 
   switch (data.kind) {
     case "chart": {
+      if (panel.kind === "heatmap") {
+        const { min, max } = panelScale(panel, data.series.flatMap((s) => s.points.map((p) => p[1])));
+        return (
+          <Frame panel={panel} note={missing}>
+            {data.series.length === 0 ? (
+              <p className={styles.muted}>{t("display.panel.noData")}</p>
+            ) : (
+              <Heatmap
+                label={panel.title}
+                rows={worstFirst(data.series, metric).map((s) => ({
+                  key: s.label,
+                  name: s.label,
+                  points: s.points,
+                  label: s.server_id ? <Link href={scopedHref(serverHref(s.server_id), scope)}>{s.label}</Link> : s.label,
+                }))}
+                start={window.start}
+                end={window.end}
+                step={window.step}
+                format={format}
+                color={heatColor(panel, min, max)}
+              />
+            )}
+          </Frame>
+        );
+      }
       // "One line per server" draws the worst few: say how many of them.
       const drawn = new Set(data.series.flatMap((s) => (s.server_id ? [s.server_id] : []))).size;
       const subtitle =
@@ -221,6 +264,45 @@ export function DashboardPanel({
           )}
         </Frame>
       );
+    case "table": {
+      const columns = panel.columns ?? [];
+      return (
+        <Frame panel={panel} note={missing}>
+          {data.rows.length === 0 ? (
+            <p className={styles.muted}>{t("display.panel.noValues")}</p>
+          ) : (
+            <div className={styles.tableBox}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th scope="col">{t("dashboards.table.server")}</th>
+                    {columns.map((c, i) => (
+                      <th key={i} scope="col">
+                        {columnTitle(c)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((row) => (
+                    <tr key={row.server_id}>
+                      <th scope="row">
+                        <Link href={scopedHref(serverHref(row.server_id), scope)}>{row.hostname}</Link>
+                      </th>
+                      {columns.map((c, i) => (
+                        <td key={i}>{formatSensorValue(c.metric, row.values[i] ?? null)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Frame>
+      );
+    }
+    case "text":
+      return null;
     case "alerts": {
       const now = new Date(window.at * 1000);
       return (

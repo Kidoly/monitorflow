@@ -252,3 +252,34 @@
   max-width: 280px;
   margin: 0 auto;
 }
+
+/* A table panel scrolls sideways inside its box on a narrow screen. */
+.tableBox {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table thead th {
+  border-top: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.table th:first-child {
+  text-align: left;
+  font-weight: 500;
+}

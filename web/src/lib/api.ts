@@ -318,10 +318,21 @@ export type PanelServers =
   | { kind: "list"; ids: string[] };
 
 /**
- * How a panel is drawn (ADR-0166). `area` and `columns` draw a chart's
- * data, `gauge` a figure's, `bars` a top list's.
+ * How a panel is drawn (ADR-0166). `area`, `columns` and `heatmap` draw
+ * a chart's data, `gauge` a figure's, `bars` a top list's.
  */
-export type PanelKind = "chart" | "figure" | "top" | "alerts" | "gauge" | "bars" | "area" | "columns";
+export type PanelKind =
+  | "chart"
+  | "figure"
+  | "top"
+  | "alerts"
+  | "gauge"
+  | "bars"
+  | "area"
+  | "columns"
+  | "heatmap"
+  | "table"
+  | "text";
 
 /** How a panel writes values when the metric's name does not say it well. */
 export type PanelUnit = "ratio" | "bytes" | "bytes_per_second" | "bits_per_second" | "per_second" | "seconds" | "celsius" | "number";
@@ -351,6 +362,10 @@ export interface Panel {
   legend?: boolean;
   /** The first colour of the palette, 1 to 8. */
   color?: number;
+  /** A table's columns, sorted by the first. */
+  columns?: { metric: string; instance?: string }[];
+  /** A text panel's Markdown. */
+  text?: string;
 }
 
 export interface DashboardSpec {
@@ -401,6 +416,13 @@ export interface TopRow {
   value: number | null;
 }
 
+/** A row of a table panel: a value per column, null where not reported. */
+export interface TableRow {
+  server_id: string;
+  hostname: string;
+  values: (number | null)[];
+}
+
 export interface PanelAlert {
   id: string;
   server_id: string;
@@ -420,6 +442,8 @@ export type PanelData = { id: string; servers: number; unavailable: number } & (
   | { kind: "chart"; series: ChartLine[] }
   | { kind: "figure"; value: number | null }
   | { kind: "top"; rows: TopRow[] }
+  | { kind: "table"; rows: TableRow[] }
+  | { kind: "text" }
   /** `unreachable`: its servers behind a parent that is down (ADR-0152); absent before it. */
   | { kind: "alerts"; alerts: PanelAlert[]; unreachable?: (Unreachable & { server_id: string; hostname: string })[] }
   | { kind: "error"; error: string }

@@ -510,6 +510,21 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
             .slice(0, panel.count ?? 5);
           return { ...base, kind: "top", rows };
         }
+        case "text":
+          return { ...base, kind: "text" };
+        case "table": {
+          const columns = panel.columns ?? [];
+          const worst = (s: DemoServer, metric: string, instance?: string) => {
+            const values = latest(s, metric, instance).map((v) => v.value).filter((v): v is number => v !== null);
+            return values.length ? Math.max(...values) : null;
+          };
+          const rows = servers
+            .map((s) => ({ server_id: s.id, hostname: s.hostname, values: columns.map((c) => worst(s, c.metric, c.instance)) }))
+            .filter((r) => r.values[0] !== null)
+            .sort((a, b) => (panel.order === "lowest" ? a.values[0]! - b.values[0]! : b.values[0]! - a.values[0]!))
+            .slice(0, panel.count ?? 20);
+          return { ...base, kind: "table", rows };
+        }
         case "chart": {
           const lines = servers.flatMap((s) =>
             rangeSeries(s, metric, panel.instance, start, end, step).map((series) => ({
@@ -518,6 +533,7 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
               points: series.points,
             })),
           );
+          if (panel.kind === "heatmap") return { ...base, kind: "chart", series: lines.slice(0, panel.count ?? 10) };
           if ((panel.combine ?? "each") === "each") return { ...base, kind: "chart", series: lines };
           const points = lines[0]?.points.map(([t], i) => {
             const values = lines.map((l) => l.points[i]?.[1]).filter((v): v is number => typeof v === "number");

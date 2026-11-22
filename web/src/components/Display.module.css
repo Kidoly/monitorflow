@@ -275,3 +275,32 @@
   width: auto;
   max-width: 100%;
 }
+
+/* A table on a screen: no scrolling, rows that do not fit are cut. */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 0.15em 0.4em;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table thead th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.8em;
+}
+
+.table th:first-child {
+  max-width: 10em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-weight: 500;
+}

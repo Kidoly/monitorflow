@@ -239,6 +239,54 @@ describe("DashboardPanel", () => {
     expect(screen.getByText("2 KiB")).toBeInTheDocument();
   });
 
+  it("draws a table with a column per metric, and text without waiting for data", () => {
+    const { unmount } = render1(
+      {
+        id: "t",
+        title: "Servers",
+        kind: "table",
+        width: 3,
+        servers: { kind: "all" },
+        order: "highest",
+        count: 20,
+        columns: [{ metric: "monitorflow_cpu_usage_ratio", instance: "total" }, { metric: "monitorflow_disk_used_ratio", instance: "/var" }],
+      },
+      { id: "t", servers: 2, unavailable: 0, kind: "table", rows: [{ server_id: "s1", hostname: "db-1", values: [0.5, null] }] },
+    );
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Server", "CPU usage", "Disk used /var"]);
+    expect(screen.getByRole("link", { name: "db-1" })).toHaveAttribute("href", "/servers/view?id=s1");
+    expect(screen.getAllByRole("cell").map((c) => c.textContent)).toEqual(["50%", "–"]);
+    unmount();
+
+    render(
+      <DashboardPanel
+        panel={{ id: "x", title: "On call", kind: "text", width: 1, servers: { kind: "all" }, text: "Call **Bob**." }}
+        data={undefined}
+        window={undefined}
+        scope={NO_SCOPE}
+      />,
+    );
+    expect(screen.getByText("Bob").tagName).toBe("STRONG");
+  });
+
+  it("puts the worst servers of a heatmap first, linked to their page", () => {
+    render1(
+      { ...chart, kind: "heatmap", count: 5, combine: undefined },
+      {
+        id: "c",
+        servers: 2,
+        unavailable: 0,
+        kind: "chart",
+        series: [
+          { label: "web-1", server_id: "s1", points: [[1_800_000_000, 0.2]] },
+          { label: "web-2", server_id: "s2", points: [[1_800_000_000, 0.9]] },
+        ],
+      },
+    );
+    expect(screen.getAllByRole("rowheader").map((h) => h.textContent)).toEqual(["web-2", "web-1"]);
+    expect(screen.getByRole("link", { name: "web-2" })).toHaveAttribute("href", "/servers/view?id=s2");
+  });
+
   it("says how many servers of the panel its lines show", () => {
     const lines = Array.from({ length: 8 }, (_, i) => ({ label: `web-${i}`, server_id: `s${i}`, points: [[1_800_000_000, 0.5]] as [number, number][] }));
     render1(chart, { id: "c", servers: 16, unavailable: 0, kind: "chart", series: lines });
