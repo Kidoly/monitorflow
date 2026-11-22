@@ -41,6 +41,7 @@ import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, campaignHref, copyCampaignHref } from "@/lib/routes";
 import { UUID } from "@/lib/uuid";
 
+import { CampaignServerPicker } from "./CampaignServerPicker";
 import own from "./Campaigns.module.css";
 import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, ButtonLink, fieldClass } from "./ui/Button";
@@ -283,29 +284,14 @@ export function CampaignForm({
             </select>
           </label>
           <p className={own.note}>{t("campaigns.form.alsoServers")}</p>
-          <ul className={own.servers} aria-label={t("campaigns.form.servers")}>
-            {servers.map((s) => (
-              <li key={s.id}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={!noPackages(s) && (draft.serverIds.includes(s.id) || s.site_id === draft.siteId)}
-                    disabled={noPackages(s) || s.site_id === draft.siteId}
-                    onChange={(e) => set({ serverIds: toggle(draft.serverIds, s.id, e.target.checked) })}
-                  />
-                  {s.hostname}
-                  {(multiSite(me) || noPackages(s)) && (
-                    <>
-                      {" "}
-                      <span className={own.dim}>
-                        ({[multiSite(me) && s.site_name, noPackages(s) && t("campaigns.form.noPackages")].filter(Boolean).join(", ")})
-                      </span>
-                    </>
-                  )}
-                </label>
-              </li>
-            ))}
-          </ul>
+          <CampaignServerPicker
+            servers={servers}
+            siteId={draft.siteId}
+            selected={draft.serverIds}
+            onChange={(serverIds) => set({ serverIds })}
+            unavailable={(s) => (noPackages(s) ? t("campaigns.form.noPackages") : null)}
+            showSite={multiSite(me)}
+          />
           <p className={own.note} role="status">
             {t("campaigns.form.targeted", { count: targets.length })}
             {leftOut > 0 && ` ${t(appsOnly ? "campaigns.form.leftOutApps" : "campaigns.form.leftOut", { count: leftOut })}`}

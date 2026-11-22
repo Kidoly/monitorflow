@@ -83,12 +83,12 @@ describe("CampaignForm", () => {
     });
     const { unmount } = render(<CampaignForm me={customerAdmin} />);
     const list = await screen.findByRole("list", { name: "Servers" });
-    expect(list).toHaveTextContent(/web-1 \(paris\)web-2 \(paris, .+\)/);
+    expect(list).toHaveTextContent(/web-1 paris · Debian 12web-2 paris · Debian 12 · .+/);
     unmount();
     render(<CampaignForm me={{ ...customerAdmin, multi_site: false }} />);
     const alone = await screen.findByRole("list", { name: "Servers" });
     expect(alone).not.toHaveTextContent("paris");
-    expect(alone).toHaveTextContent(/^web-1web-2 \(.+\)$/);
+    expect(alone).toHaveTextContent(/^web-1 Debian 12web-2 Debian 12 · .+$/);
   });
 
   it("creates a campaign with a pilot wave and a window, then opens it", async () => {
@@ -236,5 +236,42 @@ describe("CampaignForm", () => {
       windows: [{ kind: "weekly", weekdays: [6], start: "22:00", end: "04:00", timezone: "Europe/Paris" }],
     });
     expect(push).toHaveBeenCalledWith(expect.stringContaining(`id=${CAMPAIGN_ID}`));
+  });
+
+  it("searches servers, pages through them, chooses all results and removes one", async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 120 }, (_, i) => {
+      const n = String(i).padStart(3, "0");
+      const windows = i % 2 === 1;
+      return server({
+        id: `s-${n}`,
+        peer_id: `host-${n}`,
+        hostname: `host-${n}`,
+        ...(windows && { os_family: "windows", os_version: "Windows Server 2022" }),
+      });
+    });
+    stubFetch({ ...inventory, "GET /api/servers": { status: 200, body: { servers: many, next_cursor: null } } });
+    render(<CampaignForm me={customerAdmin} />);
+    const list = await screen.findByRole("list", { name: "Servers" });
+    expect(within(list).getAllByRole("checkbox")).toHaveLength(50);
+    expect(screen.getByText("1–50 of 120")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("51–100 of 120")).toBeInTheDocument();
+    expect(within(list).getByText("host-050")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Search servers"), "windows 2022");
+    expect(screen.getByText("1–50 of 60")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Choose the 60 results" }));
+    expect(screen.getByRole("status")).toHaveTextContent("60 servers targeted.");
+    const chosen = screen.getByRole("group", { name: "60 servers chosen" });
+    await user.click(within(chosen).getByRole("button", { name: "Remove host-001" }));
+    expect(screen.getByRole("status")).toHaveTextContent("59 servers targeted.");
+    expect(screen.getByRole("button", { name: "Choose the 1 result" })).toBeEnabled();
+
+    await user.clear(screen.getByLabelText("Search servers"));
+    await user.type(screen.getByLabelText("Search servers"), "nothing-like-this");
+    expect(screen.getByText("No server matches.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove all" }));
+    expect(screen.getByRole("status")).toHaveTextContent("0 servers targeted.");
   });
 });

@@ -17,6 +17,7 @@ import {
   draftFromCampaign,
   emptyDraft,
   planWaves,
+  searchServers,
   shortWindow,
   toRequest,
   validateCampaign,
@@ -321,5 +322,21 @@ describe("editing and copying (ADR-0166)", () => {
   it("names a copy within the longest name", () => {
     expect(copyName("October")).toBe("Copy of October");
     expect([...copyName("x".repeat(64))]).toHaveLength(64);
+  });
+});
+
+describe("searchServers", () => {
+  it("matches every word in the name, OS or site, in any case", () => {
+    const servers = [
+      server({ id: "a", hostname: "web-1" }),
+      server({ id: "b", hostname: "db-1", os_family: "rhel", os_version: "rocky 9.4", site_name: "lyon" }),
+    ];
+    const ids = (query: string) => searchServers(servers, query).map((s) => s.id);
+    expect(ids("")).toEqual(["a", "b"]);
+    expect(ids("WEB")).toEqual(["a"]);
+    expect(ids("rocky")).toEqual(["b"]);
+    expect(ids("debian 12")).toEqual(["a"]);
+    expect(ids("lyon db")).toEqual(["b"]);
+    expect(ids("lyon web")).toEqual([]);
   });
 });

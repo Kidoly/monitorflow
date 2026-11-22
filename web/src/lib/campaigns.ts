@@ -23,7 +23,7 @@ import type {
   UpdateSpec,
   WaveSpec,
 } from "./api";
-import { formatDateTime } from "./format";
+import { formatDateTime, formatOs } from "./format";
 import { shortTime } from "./mirrors";
 
 /** Limits of `crates/server/src/campaign/model.rs` and the API. */
@@ -264,6 +264,19 @@ export function campaignTargets(
         ((siteId && s.site_id === siteId) || named.has(s.id)),
     )
     .sort((a, b) => cmp(a.hostname, b.hostname) || cmp(a.peer_id, b.peer_id));
+}
+
+/**
+ * The servers matching `query`: every word of it, in any case, is part of
+ * the host name, the OS or the site name. An empty query matches all.
+ */
+export function searchServers(servers: Server[], query: string): Server[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return servers;
+  return servers.filter((s) => {
+    const text = [s.hostname, formatOs(s.os_family, s.os_version), s.os_family, s.site_name].join(" ").toLowerCase();
+    return words.every((w) => text.includes(w));
+  });
 }
 
 function cmp(a: string, b: string): number {
