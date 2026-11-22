@@ -332,7 +332,10 @@ export type PanelKind =
   | "columns"
   | "heatmap"
   | "table"
-  | "text";
+  | "text"
+  | "states"
+  | "pie"
+  | "timeline";
 
 /** How a panel writes values when the metric's name does not say it well. */
 export type PanelUnit = "ratio" | "bytes" | "bytes_per_second" | "bits_per_second" | "per_second" | "seconds" | "celsius" | "number";
@@ -444,6 +447,12 @@ export type PanelData = { id: string; servers: number; unavailable: number } & (
   | { kind: "top"; rows: TopRow[] }
   | { kind: "table"; rows: TableRow[] }
   | { kind: "text" }
+  /** Worst first; `state` without a metric, `value` with one. */
+  | { kind: "states"; cells: { server_id: string; hostname: string; state?: ServerState; value?: number | null }[] }
+  /** A slice with neither `state` nor `server_id` is the other servers. */
+  | { kind: "pie"; slices: { label: string; state?: ServerState; server_id?: string; value: number }[] }
+  /** Stretches in unix seconds, from the range's start to `now`. */
+  | { kind: "timeline"; rows: { server_id: string; hostname: string; spans: { start: number; end: number; severity: "warning" | "critical" }[] }[] }
   /** `unreachable`: its servers behind a parent that is down (ADR-0152); absent before it. */
   | { kind: "alerts"; alerts: PanelAlert[]; unreachable?: (Unreachable & { server_id: string; hostname: string })[] }
   | { kind: "error"; error: string }

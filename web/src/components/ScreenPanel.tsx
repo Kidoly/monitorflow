@@ -12,12 +12,27 @@ import { BarList } from "@/components/ui/BarList";
 import { ChartMarks, type ChartVariant, shapeSeries } from "@/components/ui/ChartMarks";
 import { niceTicks, timeTicks } from "@/components/ui/chartScale";
 import { Gauge } from "@/components/ui/Gauge";
+import { Donut } from "@/components/ui/Donut";
 import { Heatmap } from "@/components/ui/Heatmap";
+import { StateGrid } from "@/components/ui/StateGrid";
+import { Timeline } from "@/components/ui/Timeline";
 import { Markdown } from "@/components/ui/Markdown";
 import { SkeletonLines } from "@/components/ui/PageState";
 import { formatSince } from "@/components/ui/time";
 
-import { chartBounds, chartThresholds, columnTitle, emptyReason, quiet, seriesLabel, variantOf } from "./DashboardPanel";
+import {
+  chartBounds,
+  chartThresholds,
+  clearShare,
+  columnTitle,
+  emptyReason,
+  pieSlices,
+  quiet,
+  seriesLabel,
+  stateSquares,
+  timelineTicks,
+  variantOf,
+} from "./DashboardPanel";
 import styles from "./Display.module.css";
 
 /** Chart text in SVG units; the drawing is scaled so it matches the panel's text. */
@@ -336,6 +351,41 @@ export function ScreenPanel({
     }
     case "text":
       return null;
+    case "states": {
+      const { squares, legend } = stateSquares(panel, data);
+      return (
+        <Frame panel={panel}>
+          <StateGrid label={panel.title} squares={squares} legend={legend} />
+        </Frame>
+      );
+    }
+    case "pie": {
+      const { slices, format: write, total } = pieSlices(panel, data);
+      return (
+        <Frame panel={panel}>
+          {slices.length === 0 ? (
+            <p className={styles.muted}>{t("display.screen.noValues")}</p>
+          ) : (
+            <Donut label={panel.title} slices={slices} total={total} format={write} />
+          )}
+        </Frame>
+      );
+    }
+    case "timeline": {
+      const end = Math.max(window.end, window.at);
+      return (
+        <Frame panel={panel}>
+          <Timeline
+            label={panel.title}
+            start={window.start}
+            end={end}
+            share={clearShare}
+            ticks={timelineTicks(window.start, end)}
+            rows={data.rows.map((row) => ({ key: row.server_id, label: row.hostname, spans: row.spans }))}
+          />
+        </Frame>
+      );
+    }
     case "alerts": {
       const now = new Date(window.at * 1000);
       return (

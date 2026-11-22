@@ -1,0 +1,51 @@
+/* A grid of servers (ADR-0166); sizes in em so a screen scales them. */
+.grid,
+.legend {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.item {
+  margin: 0 0.25em 0.25em 0;
+}
+
+.square {
+  display: block;
+  width: 1.45em;
+  height: 1.45em;
+  border-radius: 0.25em;
+}
+
+a.square:hover,
+a.square:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 0.5em;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.legend li {
+  margin-right: 1em;
+  white-space: nowrap;
+}
+
+.swatch {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-right: 0.35em;
+  border-radius: 0.15em;
+  vertical-align: -0.05em;
+}

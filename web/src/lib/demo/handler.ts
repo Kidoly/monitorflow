@@ -24,6 +24,7 @@ import {
   type RequestOptions,
   type Server,
   type ServerDetail,
+  type ServerState,
   type ServerSettings,
   type ServerUpdateView,
   type Site,
@@ -512,6 +513,35 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
         }
         case "text":
           return { ...base, kind: "text" };
+        case "states":
+          return {
+            ...base,
+            kind: "states",
+            cells: servers.map((s) => {
+              if (!panel.metric) return { server_id: s.id, hostname: s.hostname, state: demoState(s.id) };
+              const values = latest(s, metric, panel.instance).map((v) => v.value).filter((v): v is number => v !== null);
+              return { server_id: s.id, hostname: s.hostname, value: values.length ? Math.max(...values) : null };
+            }),
+          };
+        case "pie": {
+          const counts = new Map<ServerState, number>();
+          for (const s of servers) counts.set(demoState(s.id), (counts.get(demoState(s.id)) ?? 0) + 1);
+          return { ...base, kind: "pie", slices: [...counts].map(([state, value]) => ({ label: state, state, value })) };
+        }
+        case "timeline":
+          return {
+            ...base,
+            kind: "timeline",
+            rows: servers.slice(0, panel.count ?? 10).map((s) => ({
+              server_id: s.id,
+              hostname: s.hostname,
+              spans: INCIDENTS.filter((i) => i.server_id === s.id).map((i) => ({
+                start: Math.max(start, Math.floor(Date.parse(i.opened_at) / 1000)),
+                end: i.resolved_at ? Math.floor(Date.parse(i.resolved_at) / 1000) : now,
+                severity: i.severity,
+              })).filter((x) => x.end > x.start),
+            })),
+          };
         case "table": {
           const columns = panel.columns ?? [];
           const worst = (s: DemoServer, metric: string, instance?: string) => {
@@ -544,6 +574,12 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
       }
     }),
   };
+}
+
+/** A demo server's state: its worst open incident, else OK. */
+function demoState(serverId: string): ServerState {
+  const open = INCIDENTS.filter((i) => i.state === "open" && i.server_id === serverId);
+  return open.some((i) => i.severity === "critical") ? "critical" : open.length ? "warning" : "ok";
 }
 
 function combine(values: number[], how: string): number | null {

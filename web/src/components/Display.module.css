@@ -100,6 +100,8 @@
 }
 
 .title {
+  /* A tall panel never squeezes its title away. */
+  flex: none;
   margin: 0 0 0.3em;
   font-size: 1em;
   font-weight: 600;

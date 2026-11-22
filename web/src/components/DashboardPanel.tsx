@@ -6,7 +6,18 @@ import type { ReactNode } from "react";
 import { t } from "@/i18n";
 import type { ChartLine, DashboardData, Panel, PanelAlert, PanelData } from "@/lib/api";
 import { endWords } from "@/lib/dependencies";
-import { heatColor, levelColor, panelAdditive, panelColor, panelFormat, panelScale, panelUnit, thresholdBands, worstFirst } from "@/lib/dashboards";
+import {
+  heatColor,
+  levelColor, panelAdditive,
+  panelColor,
+  panelFormat,
+  panelScale,
+  panelUnit,
+  stateColor,
+  thresholdBands,
+  worstFirst,
+} from "@/lib/dashboards";
+import { formatValue } from "@/lib/format";
 import { metricTitle } from "@/lib/metrics";
 import { formatSensorValue } from "@/lib/sensors";
 import { incidentTitle } from "@/lib/incidents";
@@ -15,11 +26,14 @@ import { type Scope, scopedHref } from "@/lib/scope";
 import { BarList } from "@/components/ui/BarList";
 import { stacks } from "@/components/ui/ChartMarks";
 import { Gauge } from "@/components/ui/Gauge";
+import { Donut } from "@/components/ui/Donut";
 import { Heatmap } from "@/components/ui/Heatmap";
+import { StateGrid } from "@/components/ui/StateGrid";
+import { Timeline } from "@/components/ui/Timeline";
 import { Markdown } from "@/components/ui/Markdown";
 import { Label } from "@/components/ui/StatusLabel";
 import { type Threshold, TimeChart } from "@/components/ui/TimeChart";
-import { formatDay, formatSince } from "@/components/ui/time";
+import { formatClock, formatDay, formatSince } from "@/components/ui/time";
 
 import styles from "./Dashboards.module.css";
 
@@ -60,6 +74,72 @@ export function quiet(alert: PanelAlert, now: Date): string {
   const when = formatDay(new Date(alert.silenced_until ?? 0), now);
   return alert.in_maintenance ? t("display.panel.inMaintenance", { when }) : t("display.panel.silenced", { when });
 }
+
+type Data<K extends PanelData["kind"]> = Extract<PanelData, { kind: K }>;
+
+/** What a states panel's squares and key show, on a page or a screen. */
+export function stateSquares(panel: Panel, data: Data<"states">, href?: (serverId: string) => string) {
+  const format = panelFormat(panel);
+  if (panel.metric) {
+    const { min, max } = panelScale(panel, data.cells.map((c) => c.value ?? null));
+    const colour = heatColor(panel, min, max);
+    return {
+      squares: data.cells.map((c) => {
+        const value = c.value ?? null;
+        const shade = value === null ? { background: "var(--border)", opacity: 1 } : colour(value);
+        return {
+          key: c.server_id,
+          name: `${c.hostname}: ${value === null ? t("display.panel.noValue") : format(value)}`,
+          color: shade.background,
+          opacity: shade.opacity,
+          href: href?.(c.server_id),
+        };
+      }),
+      legend: [],
+    };
+  }
+  const counts = new Map<string, number>();
+  for (const c of data.cells) if (c.state) counts.set(c.state, (counts.get(c.state) ?? 0) + 1);
+  return {
+    squares: data.cells.map((c) => ({
+      key: c.server_id,
+      name: `${c.hostname}: ${c.state ? t(`common.state.${c.state}`) : ""}`,
+      color: c.state ? stateColor(c.state) : "var(--border)",
+      href: href?.(c.server_id),
+    })),
+    legend: [...counts].map(([state, count]) => ({
+      key: state,
+      label: `${count} ${t(`common.state.${state as NonNullable<(typeof data.cells)[number]["state"]>}`)}`,
+      color: stateColor(state as NonNullable<(typeof data.cells)[number]["state"]>),
+    })),
+  };
+}
+
+/** A pie's slices, coloured by state or along the panel's palette, and the text in its middle. */
+export function pieSlices(panel: Panel, data: Data<"pie">) {
+  const format = panel.metric ? panelFormat(panel) : (v: number) => String(v);
+  const slices = data.slices.map((s, i) => ({
+    key: s.state ?? s.server_id ?? "other",
+    label: s.state ? t(`common.state.${s.state}`) : s.server_id ? s.label : t("dashboards.pie.other"),
+    value: s.value,
+    color: s.state ? stateColor(s.state) : s.server_id ? panelColor(panel, i) : "var(--border-strong)",
+  }));
+  const sum = data.slices.reduce((a, s) => a + s.value, 0);
+  return { slices, format, total: panel.metric ? format(sum) : String(sum) };
+}
+
+/** The ticks under a timeline: its start, middle and end. */
+export function timelineTicks(start: number, end: number): [string, string, string] {
+  const label = (t: number) => {
+    const d = new Date(t * 1000);
+    return end - start > 86_400 ? formatDay(d, new Date(end * 1000)) : formatClock(d).slice(0, 5);
+  };
+  return [label(start), label((start + end) / 2), label(end)];
+}
+
+/** "99.2 % without alerts". */
+export const clearShare = (share: number) =>
+  t("dashboards.timeline.clear", { share: formatValue(share, "ratio") });
 
 /** A table column's heading: the metric's title, and the instance it watches. */
 export function columnTitle(column: { metric: string; instance?: string }): string {
@@ -303,6 +383,49 @@ export function DashboardPanel({
     }
     case "text":
       return null;
+    case "states": {
+      const { squares, legend } = stateSquares(panel, data, (id) => scopedHref(serverHref(id), scope));
+      return (
+        <Frame panel={panel} note={missing}>
+          {squares.length === 0 ? (
+            <p className={styles.muted}>{t("display.panel.noValues")}</p>
+          ) : (
+            <StateGrid label={panel.title} squares={squares} legend={legend} />
+          )}
+        </Frame>
+      );
+    }
+    case "pie": {
+      const { slices, format: write, total } = pieSlices(panel, data);
+      return (
+        <Frame panel={panel} note={missing}>
+          {slices.length === 0 ? (
+            <p className={styles.muted}>{t("display.panel.noValues")}</p>
+          ) : (
+            <Donut label={panel.title} slices={slices} total={total} format={write} />
+          )}
+        </Frame>
+      );
+    }
+    case "timeline": {
+      const end = Math.max(window.end, window.at);
+      return (
+        <Frame panel={panel} note={missing}>
+          <Timeline
+            label={panel.title}
+            start={window.start}
+            end={end}
+            share={clearShare}
+            ticks={timelineTicks(window.start, end)}
+            rows={data.rows.map((row) => ({
+              key: row.server_id,
+              label: <Link href={scopedHref(serverHref(row.server_id), scope)}>{row.hostname}</Link>,
+              spans: row.spans,
+            }))}
+          />
+        </Frame>
+      );
+    }
     case "alerts": {
       const now = new Date(window.at * 1000);
       return (

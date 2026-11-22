@@ -1,5 +1,6 @@
 import type {
   Combine,
+  ServerState,
   DashboardSpec,
   Panel,
   PanelKind,
@@ -35,7 +36,40 @@ export function isRange(value: string | null): value is TimeRangeLabel {
   return value !== null && (RANGES as readonly string[]).includes(value);
 }
 
-export const PANEL_KINDS: readonly PanelKind[] = ["chart", "area", "columns", "heatmap", "figure", "gauge", "top", "bars", "table", "alerts", "text"];
+export const PANEL_KINDS: readonly PanelKind[] = [
+  "chart",
+  "area",
+  "columns",
+  "heatmap",
+  "figure",
+  "gauge",
+  "top",
+  "bars",
+  "table",
+  "states",
+  "pie",
+  "timeline",
+  "alerts",
+  "text",
+];
+
+/** The colour of a server's state on dashboards: alarming ones loud, quiet ones grey. */
+export function stateColor(state: ServerState): string {
+  switch (state) {
+    case "critical":
+      return "var(--threshold-crit)";
+    case "warning":
+      return "var(--threshold-warn)";
+    case "acknowledged":
+      return "var(--series-1)";
+    case "ok":
+      return "var(--series-3)";
+    case "offline":
+      return "var(--muted)";
+    default:
+      return "var(--border-strong)";
+  }
+}
 
 /** Most rows of a table. */
 export const MAX_TABLE_ROWS = 50;
@@ -45,7 +79,7 @@ export const MAX_TABLE_COLUMNS = 6;
 export const MAX_TEXT = 4000;
 
 /** The kind whose data a panel draws: area and columns a chart's, a gauge a figure's, bars a top list's. */
-export function baseKind(kind: PanelKind): "chart" | "figure" | "top" | "alerts" | "table" | "text" {
+export function baseKind(kind: PanelKind): "chart" | "figure" | "top" | "alerts" | "table" | "text" | "states" | "pie" | "timeline" {
   switch (kind) {
     case "area":
     case "columns":
@@ -205,6 +239,9 @@ export function suggestedTitle(panel: Panel): string {
   if (baseKind(panel.kind) === "alerts") return t("dashboards.title.alerts");
   if (panel.kind === "text") return t("dashboards.title.text");
   if (panel.kind === "table") return t("dashboards.title.table");
+  if (panel.kind === "timeline") return t("dashboards.title.timeline");
+  if (panel.kind === "states" && !panel.metric) return t("dashboards.title.states");
+  if (panel.kind === "pie" && !panel.metric) return t("dashboards.title.pie");
   const metric = panel.metric ? metricTitle(panel.metric) : t("dashboards.title.metric");
   const what = panel.instance && panel.instance !== "total" ? `${metric} ${panel.instance}` : metric;
   if (baseKind(panel.kind) === "top") {
@@ -233,7 +270,7 @@ export function withKind(panel: Panel, kind: PanelKind): Panel {
   const instance = panel.instance !== undefined ? { instance: panel.instance } : {};
   // Display options follow the panel, except a legend, which only charts over time have.
   const options: Partial<Panel> =
-    kind === "alerts" || kind === "table" || kind === "text"
+    kind === "alerts" || kind === "table" || kind === "text" || kind === "timeline" || (!panel.metric && (kind === "states" || kind === "pie"))
       ? {}
       : {
           ...(panel.unit && { unit: panel.unit }),
@@ -243,6 +280,9 @@ export function withKind(panel: Panel, kind: PanelKind): Panel {
           ...(panel.color !== undefined && { color: panel.color }),
           ...(panel.legend !== undefined && ["chart", "area", "columns"].includes(kind) && { legend: panel.legend }),
         };
+  // States and pies show the servers' states, or a metric when the panel has one.
+  if (kind === "states" || kind === "pie") return panel.metric ? { ...base, metric: panel.metric, ...instance, ...options } : base;
+  if (kind === "timeline") return { ...base, count: Math.min(panel.count ?? 10, 20) };
   if (kind === "heatmap") return { ...base, metric, ...instance, count: Math.min(panel.count ?? 10, 20), ...options };
   switch (baseKind(kind)) {
     case "chart":
@@ -281,6 +321,11 @@ export function withKind(panel: Panel, kind: PanelKind): Panel {
       };
     case "text":
       return { ...base, servers: { kind: "all" }, text: panel.text ?? t("dashboards.text.example") };
+    // Handled above.
+    case "states":
+    case "pie":
+    case "timeline":
+      return base;
   }
 }
 

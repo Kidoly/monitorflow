@@ -287,6 +287,71 @@ describe("DashboardPanel", () => {
     expect(screen.getByRole("link", { name: "web-2" })).toHaveAttribute("href", "/servers/view?id=s2");
   });
 
+  it("draws the servers' states as squares and a pie, and their alerts over time", () => {
+    const states: Panel = { id: "s", title: "Server states", kind: "states", width: 1, servers: { kind: "all" } };
+    const first = render1(states, {
+      id: "s",
+      servers: 3,
+      unavailable: 0,
+      kind: "states",
+      cells: [
+        { server_id: "s1", hostname: "db-1", state: "critical" },
+        { server_id: "s2", hostname: "web-1", state: "ok" },
+        { server_id: "s3", hostname: "web-2", state: "ok" },
+      ],
+    });
+    expect(screen.getByRole("link", { name: "db-1: Critical" })).toHaveAttribute("href", "/servers/view?id=s1");
+    expect(screen.getByText("2 OK")).toBeInTheDocument();
+    first.unmount();
+
+    const pie = render1(
+      { ...states, kind: "pie", title: "Servers by state" },
+      {
+        id: "s",
+        servers: 3,
+        unavailable: 0,
+        kind: "pie",
+        slices: [
+          { label: "critical", state: "critical", value: 1 },
+          { label: "ok", state: "ok", value: 2 },
+        ],
+      },
+    );
+    expect(screen.getByRole("img", { name: "Servers by state" })).toHaveTextContent("3");
+    expect(screen.getAllByRole("listitem").map((l) => l.textContent)).toEqual(["Critical133%", "OK267%"]);
+    pie.unmount();
+
+    render1(
+      { ...states, kind: "timeline", title: "Alerts over time", count: 10 },
+      {
+        id: "s",
+        servers: 3,
+        unavailable: 0,
+        kind: "timeline",
+        rows: [{ server_id: "s1", hostname: "db-1", spans: [{ start: WINDOW.start, end: WINDOW.start + 360, severity: "critical" }] }],
+      },
+    );
+    expect(screen.getByRole("link", { name: "db-1" })).toHaveAttribute("href", "/servers/view?id=s1");
+    expect(screen.getByText("90% without alerts")).toBeInTheDocument();
+  });
+
+  it("names a metric pie's servers and the rest", () => {
+    render1(
+      { id: "p", title: "Traffic", kind: "pie", width: 1, servers: { kind: "all" }, metric: "monitorflow_network_receive_bytes_per_second" },
+      {
+        id: "p",
+        servers: 3,
+        unavailable: 0,
+        kind: "pie",
+        slices: [
+          { label: "web-1", server_id: "s1", value: 3072 },
+          { label: "Other", value: 1024 },
+        ],
+      },
+    );
+    expect(screen.getAllByRole("listitem").map((l) => l.textContent)).toEqual(["web-13 KiB/s75%", "Other servers1 KiB/s25%"]);
+  });
+
   it("says how many servers of the panel its lines show", () => {
     const lines = Array.from({ length: 8 }, (_, i) => ({ label: `web-${i}`, server_id: `s${i}`, points: [[1_800_000_000, 0.5]] as [number, number][] }));
     render1(chart, { id: "c", servers: 16, unavailable: 0, kind: "chart", series: lines });
