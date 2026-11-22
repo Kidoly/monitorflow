@@ -31,6 +31,7 @@ import { Label } from "@/components/ui/StatusLabel";
 import { formatDuration, formatExact } from "@/components/ui/time";
 
 import admin from "./AdminPages.module.css";
+import { UptimeSection } from "./Uptime";
 import styles from "./Reports.module.css";
 
 /** Reports are not live: once every five minutes is enough. */
@@ -221,6 +222,8 @@ export function ReportsPage({ children }: { children?: ReactNode }) {
   return (
     <Page>
       <PageHeader title={t("reports.title")} status={<InfoTip label={t("reports.about")}>{t("reports.rule")}</InfoTip>} />
+      <UptimeSection customerId={scope.customerId} />
+      <h2 className={styles.sectionTitle}>{t("reports.periodTitle")}</h2>
       <div className={styles.controls}>
         <label className={admin.field}>
           {t("reports.period")}

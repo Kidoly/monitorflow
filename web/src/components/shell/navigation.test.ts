@@ -15,9 +15,9 @@ const labels = (me: Me) => visibleNavigation(me).flatMap((section) => section.it
 
 describe("visibleNavigation", () => {
   it("shows Mirrors to global administrators only", () => {
-    expect(labels(as(null))).toContain("Mirrors");
+    expect(labels(as(null))).toContain("Linux mirrors");
     const customerAdmin = labels(as("c1"));
-    expect(customerAdmin).not.toContain("Mirrors");
+    expect(customerAdmin).not.toContain("Linux mirrors");
     expect(labels(as(null))).toContain("Automatic updates");
     expect(customerAdmin).not.toContain("Automatic updates");
     expect(customerAdmin).toContain("Campaigns");
@@ -55,7 +55,7 @@ describe("arrangedNavigation", () => {
 
   it("orders items within their section", () => {
     const sections = ids(as(null), { order: ["incidents", "fleet", "audit", "approvals"] });
-    expect(sections[0]).toEqual(["incidents", "dashboards", "fleet", "silences", "onCall", "reports"]);
+    expect(sections[0]).toEqual(["incidents", "dashboards", "fleet", "onCall", "reports"]);
     expect(sections[2]).toEqual(["audit", "approvals"]);
   });
 

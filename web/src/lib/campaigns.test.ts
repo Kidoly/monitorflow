@@ -1,18 +1,25 @@
 import { describe, expect, it } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
-import { campaign, server } from "@/test/campaigns";
+import { WEB1, WEB2, campaign, detail, server } from "@/test/campaigns";
 
 import type { CampaignRequest } from "./api";
 import {
   campaignSubline,
   campaignTargets,
   canAct,
+  canDelete,
+  canEdit,
+  copyName,
   describeThreshold,
   describeUpdate,
   describeWindow,
+  draftFromCampaign,
   emptyDraft,
+  newWindow,
   planWaves,
+  searchServers,
+  updateSources,
   shortWindow,
   toRequest,
   validateCampaign,
@@ -101,7 +108,7 @@ describe("toRequest", () => {
       packages: "openssl,  libssl3\ncurl",
       thresholdValue: "10",
       thresholdUnit: "percent",
-      windows: [{ kind: "weekly", weekdays: [7, 6], start: "22:00", end: "04:00", timezone: " UTC ", startsAt: "", endsAt: "" }],
+      windows: [{ ...newWindow("weekly"), weekdays: [7, 6], timezone: " UTC " }],
     });
     expect(request).toEqual({
       customer_id: "c1",
@@ -124,7 +131,7 @@ describe("toRequest", () => {
   });
 
   it("sends a one-time window's local times as ISO times, empty when not given", () => {
-    const window = { kind: "once" as const, weekdays: [], start: "", end: "", timezone: "UTC" };
+    const window = newWindow("once");
     const windows = toRequest({
       ...emptyDraft("c1"),
       windows: [
@@ -280,5 +287,114 @@ describe("in French", () => {
     expect(validateCampaign(valid({ waves: [{ size: 1 }, { size: 1 }] }), ["s1"])).toEqual([
       "Lots\u00a0: le lot 2 serait vide.",
     ]);
+  });
+});
+
+describe("editing and copying (ADR-0166)", () => {
+  it("edits what queued nothing and deletes drafts and finished campaigns", () => {
+    const idle = { ...detail().progress, in_progress: 0 };
+    expect(canEdit(campaign({ state: "draft", current_wave: null }))).toBe(true);
+    expect(canEdit(campaign({ state: "scheduled", current_wave: null }))).toBe(true);
+    expect(canEdit(campaign({ state: "paused", current_wave: 0 }))).toBe(false);
+    expect(canEdit(campaign({ state: "stopped", current_wave: null }))).toBe(false);
+    expect(canDelete(campaign({ state: "draft" }))).toBe(true);
+    expect(canDelete(campaign({ state: "completed", progress: idle }))).toBe(true);
+    expect(canDelete(campaign({ state: "stopped" }))).toBe(false);
+    expect(canDelete(campaign({ state: "running", progress: idle }))).toBe(false);
+  });
+
+  it("fills the form from a campaign, the request when kept, else its batches", () => {
+    const pin = { mode: "add" as const, mirrors: [{ name: "debian-12", snapshot: "s1" }] };
+    const kept = draftFromCampaign(
+      detail({ site_id: "site-1", server_ids: [WEB2], wave_specs: [{ servers: [WEB1] }], sources: pin }),
+    );
+    expect(kept).toMatchObject({ siteId: "site-1", serverIds: [WEB2], update: "security", sources: "os", pin });
+    expect(kept.waves).toEqual([{ kind: "servers", value: "1", servers: [WEB1] }]);
+    expect(toRequest(kept)).toMatchObject({ waves: [{ servers: [WEB1] }], security_only: true, sources: pin });
+    // Before ADR-0166: servers outside the site are named, batches become sizes.
+    const older = draftFromCampaign(detail({ site_id: null }));
+    expect(older.serverIds).toEqual([WEB1, WEB2]);
+    expect(older.waves).toEqual([{ kind: "size", value: "1", servers: [] }]);
+    expect(older.windows[0]).toMatchObject({ kind: "weekly", weekdays: [6, 7], timezone: "Europe/Paris" });
+    const appsOnly = { packages: [], security_only: false, allow_reboot: true, include_os: false };
+    const apps = draftFromCampaign(detail({ spec: { ...appsOnly, third_party: [{ manager: "snap", packages: [] }] } }));
+    expect(apps).toMatchObject({ sources: "apps", managers: ["snap"], update: "all", allowReboot: true });
+  });
+
+  it("names a copy within the longest name", () => {
+    expect(copyName("October")).toBe("Copy of October");
+    expect([...copyName("x".repeat(64))]).toHaveLength(64);
+  });
+});
+
+describe("searchServers", () => {
+  it("matches every word in the name, OS or site, in any case", () => {
+    const servers = [
+      server({ id: "a", hostname: "web-1" }),
+      server({ id: "b", hostname: "db-1", os_family: "rhel", os_version: "rocky 9.4", site_name: "lyon" }),
+    ];
+    const ids = (query: string) => searchServers(servers, query).map((s) => s.id);
+    expect(ids("")).toEqual(["a", "b"]);
+    expect(ids("WEB")).toEqual(["a"]);
+    expect(ids("rocky")).toEqual(["b"]);
+    expect(ids("debian 12")).toEqual(["a"]);
+    expect(ids("lyon db")).toEqual(["b"]);
+    expect(ids("lyon web")).toEqual([]);
+  });
+});
+
+describe("update sources", () => {
+  it("come from two independent choices, and need one", () => {
+    expect([updateSources(true, false), updateSources(true, true), updateSources(false, true)]).toEqual(["os", "both", "apps"]);
+    const none = toRequest({ ...emptyDraft("c1"), sources: updateSources(false, false) });
+    expect(none).toMatchObject({ include_os: false });
+    expect(none.third_party).toBeUndefined();
+    expect(validateCampaign(none, ["s1"])).toContain("Choose operating system updates, third-party apps or both.");
+  });
+});
+
+describe("monthly and yearly windows (ADR-0167)", () => {
+  const monthly = { start: "22:00", end: "02:00", timezone: "Europe/Paris" };
+  it("describe the day they open on", () => {
+    const all = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    expect(describeWindow({ kind: "monthly", month_week: 2, weekday: 2, months: all, ...monthly })).toBe(
+      "Second Tuesday of each month 22:00–02:00 (Europe/Paris)",
+    );
+    expect(shortWindow({ kind: "monthly", month_week: 5, weekday: 5, months: [3, 6], ...monthly })).toBe(
+      "Last Friday of Mar, Jun 22:00–02:00",
+    );
+    expect(shortWindow({ kind: "monthly", month_day: 15, month_week: null, weekday: null, months: all, ...monthly })).toBe(
+      "Day 15 of each month 22:00–02:00",
+    );
+    expect(shortWindow({ kind: "monthly", month_day: 31, months: [12], ...monthly })).toBe("Every year on December 31 22:00–02:00");
+    expect(shortWindow({ kind: "monthly", month_week: 1, weekday: 1, months: [9], ...monthly })).toBe(
+      "First Monday of September 22:00–02:00",
+    );
+    setActiveLocale("fr");
+    try {
+      expect(shortWindow({ kind: "monthly", month_week: 2, weekday: 2, months: all, ...monthly })).toBe(
+        "Deuxième mardi de chaque mois 22:00–02:00",
+      );
+      expect(shortWindow({ kind: "monthly", month_day: 1, months: [1], ...monthly })).toBe("Chaque année le 1er janvier 22:00–02:00");
+    } finally {
+      setActiveLocale("en");
+    }
+  });
+
+  it("go to the API and back, and are checked", () => {
+    const yearly = { ...newWindow("yearly"), months: [12], monthDay: "31" };
+    const weekday = { ...newWindow("monthly"), monthMode: "weekday" as const, monthWeek: 5, weekday: 5, months: [3, 1] };
+    const request = toRequest({ ...emptyDraft("c1"), windows: [yearly, weekday] });
+    expect(request.windows).toEqual([
+      { kind: "monthly", month_day: 31, months: [12], start: "22:00", end: "04:00", timezone: expect.any(String) },
+      { kind: "monthly", month_week: 5, weekday: 5, months: [1, 3], start: "22:00", end: "04:00", timezone: expect.any(String) },
+    ]);
+    const back = draftFromCampaign(detail({ windows: request.windows }));
+    expect(back.windows[0]).toMatchObject({ kind: "yearly", monthMode: "day", monthDay: "31", months: [12] });
+    expect(back.windows[1]).toMatchObject({ kind: "monthly", monthMode: "weekday", monthWeek: 5, weekday: 5 });
+    const bad = toRequest({ ...emptyDraft("c1"), windows: [{ ...newWindow("monthly"), monthDay: "0", months: [] }] });
+    expect(validateCampaign(bad, ["s1"])).toEqual(
+      expect.arrayContaining(["Window 1: the day of the month is 1 to 31.", "Window 1: choose at least one month."]),
+    );
   });
 });

@@ -118,12 +118,6 @@
   font-weight: 600;
 }
 
-.mode {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
 /* The storage of on-demand mirrors, with its cap. */
 .cache {
   display: flex;

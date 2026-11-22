@@ -14,9 +14,15 @@ fn at(text: &str) -> DateTime<Utc> {
 
 /// October 2026 with `outages` offline incidents of 10 minutes on web-1.
 fn report(outages: usize) -> Report {
+    let period = (at("2026-10-01T00:00:00Z"), at("2026-11-01T00:00:00Z"));
+    build(&data(outages), period, at("2026-11-01T06:00:00Z"))
+}
+
+/// What [`report`] is made of.
+fn data(outages: usize) -> Data {
     let web = Uuid::from_u128(1);
     let start = at("2026-10-01T00:00:00Z");
-    let data = Data {
+    Data {
         machines: vec![Machine {
             id: web,
             name: "web-1".into(),
@@ -59,9 +65,7 @@ fn report(outages: usize) -> Report {
         parents: vec![],
         pings: HashMap::new(),
         names: vec![],
-    };
-    let period = (start, at("2026-11-01T00:00:00Z"));
-    build(&data, period, at("2026-11-01T06:00:00Z"))
+    }
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -158,7 +162,7 @@ fn periods_in_words() {
 
 #[test]
 fn a_report_reads_summary_first() {
-    let pdf = render(&report(3), Tz::UTC, Language::En);
+    let pdf = render(&report(3), None, Tz::UTC, Language::En);
     assert!(pdf.starts_with(b"%PDF-"));
     for text in [
         "Availability report",
@@ -184,7 +188,7 @@ fn a_report_reads_summary_first() {
 
 #[test]
 fn a_french_report_in_many_pages() {
-    let pdf = render(&report(120), chrono_tz::Europe::Paris, Language::Fr);
+    let pdf = render(&report(120), None, chrono_tz::Europe::Paris, Language::Fr);
     for text in ["Rapport de disponibilité", "Résumé", "Équipe web", "Manqué"] {
         assert!(shows(&pdf, text), "{text}");
     }
@@ -197,4 +201,66 @@ fn a_french_report_in_many_pages() {
         &pdf,
         format!("(Page {pages} / {pages})").as_bytes()
     ));
+}
+
+#[test]
+fn every_page_has_the_logo_and_the_uptime_follows_the_summary() {
+    let end = at("2026-11-01T00:00:00Z");
+    let uptime =
+        crate::availability::uptime::build(&data(3), end, Tz::UTC, at("2026-11-01T06:00:00Z"));
+    let pdf = render(&report(3), Some(&uptime), Tz::UTC, Language::En);
+    for text in [
+        "MonitorFlow",
+        "Availability report, October 2026",
+        "Uptime",
+        "Service, server or check",
+        "90 days",
+        "web-1 (paris)",
+        "Under 99 %",
+    ] {
+        assert!(shows(&pdf, text), "{text}");
+    }
+    let summary = pdf.windows(9).position(|w| w == b"(Summary)").unwrap();
+    let uptime_at = pdf.windows(8).position(|w| w == b"(Uptime)").unwrap();
+    let outages = pdf.windows(9).position(|w| w == b"(Outages)").unwrap();
+    assert!(summary < uptime_at && uptime_at < outages);
+    // One bar per day of October for each row: the service and web-1.
+    let bars = pdf.windows(4).filter(|w| *w == b" re\n").count();
+    assert!(bars >= 2 * 31, "{bars} rectangles");
+
+    // The logo is drawn once per page, in French too.
+    let many = render(
+        &report(120),
+        Some(&uptime),
+        chrono_tz::Europe::Paris,
+        Language::Fr,
+    );
+    let pages = (1..20)
+        .take_while(|n| contains(&many, format!("(Page {n} / ").as_bytes()))
+        .count();
+    assert_eq!(
+        many.windows(16)
+            .filter(|w| *w == b"(MonitorFlow) Tj")
+            .count(),
+        pages
+    );
+    assert!(shows(&many, "Disponibilité"));
+}
+
+#[test]
+fn a_day_is_colored_by_how_much_of_it_was_up() {
+    use crate::availability::uptime::Bar;
+    let bar = |availability: Option<f64>, down: f64| Bar {
+        date: "2026-10-01".parse().unwrap(),
+        availability,
+        down_seconds: down,
+        maintenance_seconds: 0.0,
+    };
+    assert_eq!(uptime_section::color(&bar(Some(100.0), 0.0)), GOOD);
+    assert_eq!(
+        uptime_section::color(&bar(Some(99.5), 432.0)),
+        (0.85, 0.55, 0.05)
+    );
+    assert_eq!(uptime_section::color(&bar(Some(90.0), 8640.0)), BAD);
+    assert_eq!(uptime_section::color(&bar(None, 0.0)), (0.86, 0.87, 0.89));
 }

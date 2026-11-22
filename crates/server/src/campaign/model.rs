@@ -231,6 +231,31 @@ pub enum Window {
         /// An IANA time zone, like `Europe/Paris`.
         timezone: String,
     },
+    /// Every month in `months` (1 is January; empty or absent is every
+    /// month), on day `month_day` (1 to 31; a month without that day has
+    /// no window), or on the `weekday` (ISO) of week `month_week` of the
+    /// month (1 to 4, or 5 for the last), from `start` to `end` local time
+    /// in `timezone`. One month in `months` makes a yearly window
+    /// (ADR-0167).
+    Monthly {
+        /// Set alone, or `month_week` and `weekday` together.
+        #[serde(default)]
+        month_day: Option<u8>,
+        #[serde(default)]
+        month_week: Option<u8>,
+        #[serde(default)]
+        weekday: Option<u8>,
+        #[serde(default)]
+        months: Vec<u8>,
+        /// `HH:MM`, local time.
+        #[schema(value_type = String, example = "22:00")]
+        start: LocalTime,
+        /// `HH:MM`, local time; `00:00` and `24:00` are the end of the day.
+        #[schema(value_type = String, example = "04:00")]
+        end: LocalTime,
+        /// An IANA time zone, like `Europe/Paris`.
+        timezone: String,
+    },
     /// Once, from `starts_at` to `ends_at`.
     Once {
         starts_at: DateTime<Utc>,
@@ -254,20 +279,37 @@ impl Window {
                 if weekdays.is_empty() || weekdays.iter().any(|d| !(1..=7).contains(d)) {
                     return Err("weekdays are 1 (Monday) to 7 (Sunday), at least one".into());
                 }
-                if *start >= LocalTime::END_OF_DAY {
-                    return Err("a window starts before 24:00".into());
+                check_hours(start, end, timezone)
+            }
+            Self::Monthly {
+                month_day,
+                month_week,
+                weekday,
+                months,
+                start,
+                end,
+                timezone,
+            } => {
+                match (*month_day, *month_week, *weekday) {
+                    (Some(1..=31), None, None) => {}
+                    (None, Some(1..=5), Some(1..=7)) => {}
+                    _ => {
+                        return Err(
+                            "a monthly window has a month_day (1 to 31), or a month_week \
+                                    (1 to 4, 5 for the last) and a weekday (1 to 7)"
+                                .into(),
+                        )
+                    }
                 }
-                // Midnight as an end is the end of the day.
-                if end.0 == 0 {
-                    *end = LocalTime::END_OF_DAY;
+                months.sort_unstable();
+                months.dedup();
+                if months.iter().any(|m| !(1..=12).contains(m)) {
+                    return Err("months are 1 (January) to 12 (December)".into());
                 }
-                if start == end {
-                    return Err("a window ends at another time than it starts".into());
+                if months.is_empty() {
+                    *months = (1..=12).collect();
                 }
-                if timezone.is_empty() || timezone.len() > 64 {
-                    return Err("a window needs a time zone such as `Europe/Paris`".into());
-                }
-                Ok(())
+                check_hours(start, end, timezone)
             }
             Self::Once { starts_at, ends_at } => {
                 if starts_at >= ends_at {
@@ -277,6 +319,25 @@ impl Window {
             }
         }
     }
+}
+
+/// Checks the local hours and time zone of a recurring window; midnight
+/// as an end becomes `24:00`.
+fn check_hours(start: &LocalTime, end: &mut LocalTime, timezone: &str) -> Result<(), String> {
+    if *start >= LocalTime::END_OF_DAY {
+        return Err("a window starts before 24:00".into());
+    }
+    // Midnight as an end is the end of the day.
+    if end.0 == 0 {
+        *end = LocalTime::END_OF_DAY;
+    }
+    if start == end {
+        return Err("a window ends at another time than it starts".into());
+    }
+    if timezone.is_empty() || timezone.len() > 64 {
+        return Err("a window needs a time zone such as `Europe/Paris`".into());
+    }
+    Ok(())
 }
 
 /// The `ApplyUpdates` of every command of a campaign.
@@ -634,6 +695,42 @@ mod tests {
             assert!(window.validate().is_err(), "{bad}");
         }
         assert!(serde_json::from_value::<Window>(json!({"kind": "daily"})).is_err());
+    }
+
+    #[test]
+    fn monthly_windows_take_a_day_or_a_weekday_of_a_week() {
+        let mut second_tuesday: Window = serde_json::from_value(json!({
+            "kind": "monthly", "month_week": 2, "weekday": 2, "start": "22:00", "end": "00:00",
+            "timezone": "Europe/Paris"
+        }))
+        .unwrap();
+        second_tuesday.validate().unwrap();
+        assert_eq!(
+            serde_json::to_value(&second_tuesday).unwrap(),
+            json!({"kind": "monthly", "month_day": null, "month_week": 2, "weekday": 2,
+                   "months": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                   "start": "22:00", "end": "24:00", "timezone": "Europe/Paris"})
+        );
+        let mut yearly: Window = serde_json::from_value(json!({
+            "kind": "monthly", "month_day": 31, "months": [12, 12], "start": "01:00",
+            "end": "03:00", "timezone": "UTC"
+        }))
+        .unwrap();
+        yearly.validate().unwrap();
+        assert!(matches!(yearly, Window::Monthly { ref months, .. } if months == &[12]));
+        for bad in [
+            json!({"kind": "monthly", "start": "01:00", "end": "02:00", "timezone": "UTC"}),
+            json!({"kind": "monthly", "month_day": 32, "start": "01:00", "end": "02:00", "timezone": "UTC"}),
+            json!({"kind": "monthly", "month_day": 1, "weekday": 1, "start": "01:00", "end": "02:00", "timezone": "UTC"}),
+            json!({"kind": "monthly", "month_week": 6, "weekday": 1, "start": "01:00", "end": "02:00", "timezone": "UTC"}),
+            json!({"kind": "monthly", "month_week": 1, "start": "01:00", "end": "02:00", "timezone": "UTC"}),
+            json!({"kind": "monthly", "month_day": 1, "months": [13], "start": "01:00", "end": "02:00", "timezone": "UTC"}),
+            json!({"kind": "monthly", "month_day": 1, "start": "01:00", "end": "01:00", "timezone": "UTC"}),
+            json!({"kind": "monthly", "month_day": 1, "start": "01:00", "end": "02:00", "timezone": ""}),
+        ] {
+            let mut window: Window = serde_json::from_value(bad.clone()).unwrap();
+            assert!(window.validate().is_err(), "{bad}");
+        }
     }
 
     #[test]

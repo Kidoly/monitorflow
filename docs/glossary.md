@@ -22,6 +22,7 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | AI provider | Fournisseur d’IA ; « Quelle IA » sur la page IA | Who answers for AI: "Anthropic (Claude)", "OpenAI", or "Another or a local model". "Which AI" on the AI page | vendor, backend, LLM | `provider`, `ai_provider`, `anthropic`, `openai`, `openai_compatible` |
 | Local model | Modèle local | An AI model running on a machine of your own network, through Ollama, llama.cpp, vLLM or LM Studio. Its "address" is where its API is, like http://ollama.lan:11434/v1 | self-hosted LLM, endpoint, inference server | `base_url`, `ai_base_url` |
 | AI commands | Commandes IA | The commands AI remediation sends a server: shell commands on Linux, PowerShell on Windows. On, Off, Not available (an agent too old for them, which updates by itself), or Not known yet while the agent or its relay has not updated | shell commands | `shell`, `commands.shell`, `MF_ALLOW_COMMANDS`, `ai-commands on` |
+| Run AI again, attempt | Relancer l’IA, tentative | A new AI remediation of an alert still open, after the last one ended. "Run AI" for an alert that never had one. Attempts are numbered per alert | retry, rerun, restart | `POST /api/remediation/alerts/{id}/run`, `attempt` note |
 | Allow AI commands to be turned on from the web interface | Autoriser l’activation des commandes IA depuis l’interface web | A server's consent, given on the server, that administrators may turn its AI commands on from its page. They can always turn them off | remote control, remote opt-in | `commands.from_web`, `MF_AI_COMMANDS_FROM_WEB`, `AI_COMMANDS_FROM_WEB`, `ai-commands from-web on` |
 | Device | Équipement | A switch, router, printer, UPS or any address watched without the agent, by checks run from the central server or a relay. It has its own page, alerts and dashboards like a server, and is never "waiting for its agent" | agentless host, target, node | `servers.kind = 'device'`, `address` |
 | Checked from | Vérifié depuis | Where a network check runs: "the central server" or a relay of the site. "Ping, checked from relay-paris" | probe, poller, vantage point (on screen) | `probe`, `probe_relay_id` |
@@ -77,17 +78,22 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Schedule | Planning | The people who take turns being on call for everything, a customer or a site, and when they hand off | rotation, layer, policy | `on_call_schedules`, `on_call_members` |
 | Hand-off | Relève | The moment one person's turn ends and the next one's starts: every day or every week, at a local time in the schedule's time zone | shift change, rollover | `handoff_time`, `anchor_date` |
 | Cover | Remplacement ; « alice remplace bob » | Someone else is on call for a period, for a holiday or a swap: "alice covers bob" | override (on screen), substitute | `on_call_overrides` |
+| On call at once | D’astreinte en même temps | How many people of a schedule are on call together in each turn, 1 to 5: "2 people at once", "alice and bob" | layer, team, pair (on screen) | `people_per_turn` |
 | Gap | Période non couverte | A period when the person on call cannot be told: no email or chat, disabled, removed, or no longer sees the place. The nearest administrators are told instead | hole, uncovered | `problem` |
 | How you are reached | Comment vous joindre | A person's own email address and optional chat or webhook, used when they are on call. Each person sets their own | contact method, notification rule | `user_contacts` |
 | Acknowledge | Prendre en charge ; « Pris en charge par alice à 03:12 » | Say "I'm on it" about an alert: nobody else is told next. "Acknowledged by alice at 03:12". From the alert's page, the alerts list, or the link in a message sent to you | ack, accept, claim, take | `incident_acknowledgements`, `acknowledge` |
 | Follow-up | Relance | Who is told next when nobody acknowledges a critical alert, step after step, for everything, a customer or a site. "bob will be told at 03:27 if nobody acknowledges" | escalation, escalate, escalation policy (an incident "escalated" got worse; the AI "escalates" to a person when it stops) | `follow_up_policies`, `incident_follow_ups` |
 | Step | Étape | One part of a follow-up: after a wait without acknowledgement, tell the person on call of a schedule, named people, channels or the administrators | level, tier (tiers are the risk of AI commands) | `steps` |
-| Only for follow-ups | Uniquement pour les relances | A channel that hears only the alerts nobody acknowledged, when a follow-up step names it | escalation channel | `follow_up_only` |
+| Only for follow-ups | Uniquement pour les relances | A channel or a schedule that hears only the alerts nobody acknowledged, when a follow-up step names it: a schedule like this is a second level behind the people told first | escalation channel, escalation level | `follow_up_only` |
 | Integration | Intégration | Another tool that gets MonitorFlow's events, like a PSA or an automation: a URL that receives a signed JSON request per event. Under Settings › Integrations; for people, use a channel | endpoint, connector, hook, subscription | `integration_endpoints` |
 | Signing secret | Secret de signature | What an integration's receiver checks each request with. Made by MonitorFlow and shown once; "New secret" replaces it at once | key, token, HMAC (on screen) | `secret`, `X-MonitorFlow-Signature` |
 | Secrets key | Clé des secrets | The key, in the server's data, that opens the passwords, webhook URLs, signing secrets and AI key the server keeps to reach other services. It is in every backup and in the join file, never in the database | encryption key, master key, KEK | `secrets/keys`, `mfs1:` |
 | Send again | Renvoyer | Deliver an event an integration already got, or every event of a time range, with the same IDs | replay, resend, redeliver | `/replay`, `X-MonitorFlow-Replay` |
 | Turned off | Désactivée | An integration nothing reached for a day: it gets no new events until someone turns it on | disabled, suspended | `state = 'disabled'` |
+| Custom webhook | Webhook personnalisé | In the catalogue of integrations, the card for an integration: a URL that receives a signed JSON request per event | generic integration, HTTP integration | `integration_endpoints` |
+| PSA connection | Connexion PSA | MonitorFlow calling a PSA's API (HaloPSA first) with credentials it keeps, to open and close tickets. One per installation, set up by a global administrator | PSA integration, connector | `psa_connections` |
+| Client ID, Client Secret | Client ID, Client Secret | What a HaloPSA API application gives for signing in. The secret is never shown again once saved | API key, password, token | `client_id`, `client_secret` |
+| Test connection | Tester la connexion | Sign in to the PSA and read who MonitorFlow acts as, without changing anything there | ping, verify, check credentials | `/api/psa/connection/test` |
 | Plugin | Plugin | A check or a notification channel someone else wrote, installed as a signed file under Settings › Plugins. "Asks for" lists what it may reach, like "Connects to api.pushover.net" | extension, add-on, module, wasm (on screen) | `plugins`, `.mfplugin` |
 | Publisher | Éditeur | Who signed a plugin: MonitorFlow, or someone whose key a global administrator trusts | vendor, signer, author | `plugin_publishers`, `public_key` |
 | Used where | Utilisable sur | Where a plugin may be used: every server (every customer), a customer or a site | scope, enabled for, allow-list | `plugin_places` |
@@ -146,7 +152,7 @@ The French column is what the French interface says for each word, so a term rea
 | Sidebar | Barre latérale |
 | Monitoring | Supervision |
 | Campaign | Campagne |
-| Mirror | Miroir |
+| Mirror (Linux mirrors in the menu) | Miroir (Miroirs Linux dans le menu) |
 | Approval, approve | Approbation, approuver |
 | Audit log | Journal d’audit |
 | Administrator, operator, approver, viewer | Administrateur, opérateur, approbateur, lecteur |

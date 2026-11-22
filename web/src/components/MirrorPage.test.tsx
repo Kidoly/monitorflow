@@ -36,7 +36,7 @@ describe("MirrorPage", () => {
     render(<MirrorPage id={MIRROR_ID} />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "debian-bookworm" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(/^Mirrors$/);
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(/^Linux mirrors$/);
     expect(screen.getByText("apt · deb.debian.org/debian · bookworm · main contrib · amd64 arm64 · every 12 h")).toBeInTheDocument();
     // The last run is told once, by its tile, not again next to the title.
     expect(screen.queryByText("Last run succeeded")).not.toBeInTheDocument();
@@ -72,20 +72,34 @@ describe("MirrorPage", () => {
     expect(wrap).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("offers a snapshot alone only to a mirror whose syncs do not publish one", async () => {
+    stubFetch({ [PATH]: { status: 200, body: mirrorDetail() } });
+    render(<MirrorPage id={MIRROR_ID} />);
+    const sync = await screen.findByRole("button", { name: "Sync now" });
+    expect(sync).toHaveAttribute("title", expect.stringMatching(/then publishes a snapshot/));
+    expect(screen.queryByRole("button", { name: "Create snapshot" })).not.toBeInTheDocument();
+  });
+
   it("starts a snapshot from the header and disables both while running", async () => {
     const user = userEvent.setup();
+    const manual = { auto_snapshot: false };
     const fetchMock = stubFetch({
       [PATH]: [
-        { status: 200, body: mirrorDetail() },
+        { status: 200, body: mirrorDetail(manual) },
         {
           status: 200,
-          body: mirrorDetail({ last_run: { ...mirrorDetail().last_run!, kind: "snapshot", state: "running", finished_at: null } }),
+          body: mirrorDetail({
+            ...manual,
+            last_run: { ...mirrorDetail().last_run!, kind: "snapshot", state: "running", finished_at: null },
+          }),
         },
       ],
       [`POST /api/mirrors/${MIRROR_ID}/snapshots`]: { status: 202, body: run({ kind: "snapshot", state: "running" }) },
     });
     render(<MirrorPage id={MIRROR_ID} />);
-    await user.click(await screen.findByRole("button", { name: "Create snapshot" }));
+    const snapshotButton = await screen.findByRole("button", { name: "Create snapshot" });
+    expect(snapshotButton).toHaveAttribute("title", expect.stringMatching(/without downloading anything/));
+    await user.click(snapshotButton);
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/mirrors/${MIRROR_ID}/snapshots`,
       expect.objectContaining({ method: "POST", body: "{}" }),

@@ -151,8 +151,8 @@ describe("SignInSettingsPage", () => {
     await user.click(await screen.findByRole("button", { name: "Add LDAP directory" }));
     const form = screen.getByRole("form", { name: "New LDAP directory" });
     await user.type(within(form).getByLabelText(/^Directory address/), "ldap://ldap.example.com");
-    expect(within(form).getByLabelText("StartTLS (port 389)")).toBeChecked();
-    await user.click(within(form).getByLabelText("LDAPS (port 636)"));
+    expect(within(form).getByRole("radio", { name: "StartTLS (port 389)" })).toBeChecked();
+    await user.click(within(form).getByRole("radio", { name: "LDAPS (port 636)" }));
     expect(within(form).getByLabelText(/^Directory address/)).toHaveValue("ldaps://ldap.example.com");
     expect(within(form).getAllByRole("radio", { name: /port/ })).toHaveLength(2);
   });

@@ -17,7 +17,11 @@ export function incidentTitle(incident: Pick<Incident, "metric" | "instance">): 
   return isOffline(incident) ? t("incidents.offline") : seriesTitle(undefined, incident.metric, incident.instance);
 }
 
-/** What the incidents list shows; reflected in its query string. */
+/**
+ * What the incidents list shows; reflected in its query string. Open
+ * incidents by default; `resolved` is the History tab, and `all` what one
+ * notification sent together, resolved or not.
+ */
 export interface IncidentFilters {
   state: IncidentState | "all";
   severity: IncidentSeverity | null;
@@ -27,7 +31,7 @@ export interface IncidentFilters {
   groupId: string | null;
 }
 
-export const NO_FILTERS: IncidentFilters = { state: "all", severity: null, siteId: null, serverId: null, groupId: null };
+export const NO_FILTERS: IncidentFilters = { state: "open", severity: null, siteId: null, serverId: null, groupId: null };
 
 const STATES = ["open", "resolved", "all"] as const;
 const SEVERITIES = ["warning", "critical"] as const;
@@ -45,19 +49,21 @@ function uuid(value: string | null): string | null {
  * ignored rather than sent to the API, which would refuse them.
  */
 export function filtersFromQuery(params: URLSearchParams): IncidentFilters {
+  const groupId = uuid(params.get("group"));
   return {
-    state: oneOf(STATES, params.get("state")) ?? "all",
+    // A notification's incidents, whether they resolved since or not.
+    state: oneOf(STATES, params.get("state")) ?? (groupId ? "all" : "open"),
     severity: oneOf(SEVERITIES, params.get("severity")),
     siteId: uuid(params.get("site")),
     serverId: uuid(params.get("server")),
-    groupId: uuid(params.get("group")),
+    groupId,
   };
 }
 
 /** The page's query string for `filters`, without defaults; `""` when unfiltered. */
 export function filtersToQuery(filters: IncidentFilters): string {
   const params = new URLSearchParams();
-  if (filters.state !== "all") params.set("state", filters.state);
+  if (filters.state !== (filters.groupId ? "all" : "open")) params.set("state", filters.state);
   if (filters.severity) params.set("severity", filters.severity);
   if (filters.siteId) params.set("site", filters.siteId);
   if (filters.serverId) params.set("server", filters.serverId);

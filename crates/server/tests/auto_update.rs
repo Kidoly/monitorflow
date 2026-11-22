@@ -589,7 +589,40 @@ db_tests! {
         assert_eq!(body["peers"][0]["id"], relay.to_string());
         assert_eq!(body["total"], status_body["relays"]["totals"]["waiting"]);
 
+        // The versions in use, newest first, and who runs each.
+        let versions: Vec<(Value, u64, bool)> = status_body["agents"]["versions"].as_array().unwrap().iter()
+            .map(|v| (v["version"].clone(), v["count"].as_u64().unwrap(), v["up_to_date"].as_bool().unwrap()))
+            .collect();
+        assert_eq!(versions, [(json!("0.0.2"), 1, true), (json!("0.0.1"), 5, false), (json!("dev"), 1, false)]);
+        assert_eq!(status_body["relays"]["versions"], json!([{ "version": "0.0.1", "count": 1, "up_to_date": false }]));
+        let (status, body) = get("/api/auto-update/agent/versions/peers?version=0.0.1".into()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["total"], 5);
+        assert_eq!(body["target"], "0.0.2");
+        assert_eq!(names(&body), ["lyon-1", "lyon-2", "paris-1", "paris-2", "berlin-1"]);
+        let states: Vec<&str> = body["peers"].as_array().unwrap().iter().map(|p| p["state"].as_str().unwrap()).collect();
+        assert_eq!(states, ["pending", "waiting", "failed", "waiting", "waiting"]);
+        assert_eq!(body["peers"][0]["customer_id"], customer.to_string());
+        let uri = format!("/api/auto-update/agent/versions/peers?version=0.0.1&site_id={paris}&limit=1&offset=1");
+        let (_, body) = get(uri).await;
+        assert_eq!((names(&body), body["total"].clone()), (vec!["paris-2".to_owned()], json!(2)));
+        let (_, body) = get("/api/auto-update/agent/versions/peers?version=dev".into()).await;
+        assert_eq!(names(&body), ["paris-dev"]);
+        assert_eq!(body["peers"][0]["state"], Value::Null, "not a release: counted in no total");
+        let (_, body) = get("/api/auto-update/relay/versions/peers?version=0.0.1".into()).await;
+        assert_eq!(names(&body), ["gateway"]);
+        // Not reported yet: no `version`.
+        sqlx::query("UPDATE servers SET agent_version = NULL WHERE peer_id = 'paris-dev'").execute(&pool).await.unwrap();
+        let (_, body) = get("/api/auto-update/agent/versions/peers".into()).await;
+        assert_eq!((names(&body), body["version"].clone()), (vec!["paris-dev".to_owned()], Value::Null));
+        let (status, v1) = get("/api/v1/auto-update/agent/versions/peers".into()).await;
+        assert_eq!(status, StatusCode::OK, "{v1}");
+        assert_eq!(v1, body);
+
         for (uri, expected) in [
+            ("/api/auto-update/agent/versions/peers?site_id=nope", StatusCode::BAD_REQUEST),
+            ("/api/auto-update/agent/versions/peers?limit=0", StatusCode::BAD_REQUEST),
+            ("/api/auto-update/server/versions/peers?version=0.0.1", StatusCode::NOT_FOUND),
             ("/api/auto-update/agent/peers?state=succeeded", StatusCode::BAD_REQUEST),
             ("/api/auto-update/agent/peers", StatusCode::BAD_REQUEST),
             ("/api/auto-update/agent/peers?state=waiting&limit=501", StatusCode::BAD_REQUEST),

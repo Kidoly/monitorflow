@@ -414,6 +414,87 @@ pub struct Step {
     pub message: String,
 }
 
+/// A milestone of an update, as people follow it: each one the updater
+/// reached, told by the step it wrote then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema), schema(as = UpdateMilestoneKind))]
+#[serde(rename_all = "snake_case")]
+pub enum MilestoneKind {
+    /// The release's signature and images were verified.
+    Verified,
+    /// The new images were downloaded.
+    ImagesPulled,
+    /// The database and the server's data were saved.
+    BackedUp,
+    /// The new version migrated the database.
+    DatabaseMigrated,
+    /// The new server runs and answers with the new version.
+    ServerRestarted,
+    /// The release's agents are cached, for agents and installs.
+    AgentsReady,
+}
+
+/// One milestone and when it was reached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema), schema(as = UpdateMilestone))]
+pub struct Milestone {
+    pub kind: MilestoneKind,
+    /// `null` while not reached, and for good once the update ended
+    /// without it.
+    pub done_at: Option<DateTime<Utc>>,
+}
+
+impl MilestoneKind {
+    pub const ALL: [Self; 6] = [
+        Self::Verified,
+        Self::ImagesPulled,
+        Self::BackedUp,
+        Self::DatabaseMigrated,
+        Self::ServerRestarted,
+        Self::AgentsReady,
+    ];
+
+    /// The milestone a step of the updater marks, from its words: the
+    /// updater writes them in `crates/updater/src/update.rs`, and older
+    /// updaters wrote the same, so steps carry no code of their own.
+    pub fn of_step(message: &str) -> Option<Self> {
+        let between = |start: &str, end: &str| message.starts_with(start) && message.ends_with(end);
+        if message.starts_with("release ") && message.contains(" verified: ") {
+            Some(Self::Verified)
+        } else if message == "images pulled" {
+            Some(Self::ImagesPulled)
+        } else if message.starts_with("database and server data saved to ") {
+            Some(Self::BackedUp)
+        } else if message == "recreating server and web" {
+            // Written once the migration succeeded.
+            Some(Self::DatabaseMigrated)
+        } else if between("server ", " is healthy") {
+            Some(Self::ServerRestarted)
+        } else if between("agent release ", " cached for agents") {
+            Some(Self::AgentsReady)
+        } else {
+            None
+        }
+    }
+}
+
+impl UpdateRun {
+    /// Every milestone in order, with when each was reached.
+    pub fn milestones(&self) -> Vec<Milestone> {
+        MilestoneKind::ALL
+            .into_iter()
+            .map(|kind| Milestone {
+                kind,
+                done_at: self
+                    .steps
+                    .iter()
+                    .find(|step| MilestoneKind::of_step(&step.message) == Some(kind))
+                    .map(|step| step.at),
+            })
+            .collect()
+    }
+}
+
 /// Writes `bytes` to `dir/name` through a new file of a random name,
 /// created exclusively with `mode`, synced and renamed over the target:
 /// readers see the old or the new content, and a link planted at either

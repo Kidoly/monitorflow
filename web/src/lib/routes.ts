@@ -43,7 +43,8 @@ export function incidentPeerHref(incident: { server_id: string | null; relay_id?
 
 /** Link to the incidents list with `filters` (see `lib/incidents.ts`). */
 export function incidentsHref(filters: Partial<IncidentFilters> = {}): string {
-  const query = filtersToQuery({ ...NO_FILTERS, ...filters });
+  // What one notification sent stays whole, resolved incidents included.
+  const query = filtersToQuery({ ...NO_FILTERS, ...(filters.groupId && { state: "all" as const }), ...filters });
   return query ? `/incidents/?${query}` : "/incidents/";
 }
 
@@ -117,6 +118,10 @@ export const NOTIFICATIONS_PATH = "/settings/notifications/";
 export const SNMP_LIBRARY_PATH = "/settings/snmp/";
 /** Signed events for other tools, like a PSA (ADR-0102). */
 export const INTEGRATIONS_PATH = "/settings/integrations/";
+/** The custom webhooks of the integrations catalogue (ADR-0102). */
+export const WEBHOOKS_PATH = "/settings/integrations/webhooks/";
+/** The HaloPSA connection, global administrators only (ADR-0164). */
+export const HALOPSA_PATH = "/settings/integrations/halopsa/";
 /** AI setup, global administrators only (ADR-0064). */
 export const AI_SETTINGS_PATH = "/settings/ai/";
 
@@ -185,6 +190,16 @@ export function relayHref(id: string): string {
 /** Update campaigns (ADR-0033). */
 export const CAMPAIGNS_PATH = "/campaigns/";
 export const NEW_CAMPAIGN_PATH = "/campaigns/new/";
+
+/** The form editing the campaign `id`, which queued nothing yet (ADR-0166). */
+export function editCampaignHref(id: string): string {
+  return `${NEW_CAMPAIGN_PATH}?edit=${encodeURIComponent(id)}`;
+}
+
+/** The creation form, filled with a copy of the campaign `id`. */
+export function copyCampaignHref(id: string): string {
+  return `${NEW_CAMPAIGN_PATH}?from=${encodeURIComponent(id)}`;
+}
 
 /** Link to the page of the campaign `id`. */
 export function campaignHref(id: string): string {

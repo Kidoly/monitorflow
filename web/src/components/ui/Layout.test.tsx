@@ -41,10 +41,10 @@ describe("Breadcrumb", () => {
     expect(within(nav).queryByText((_, el) => el?.getAttribute("aria-current") === "page")).toBeNull();
   });
 
-  it("puts the current page's siblings at the end without its name", () => {
+  it("names the current page's siblings at the end", () => {
     render(<Breadcrumb parents={[{ label: "Fleet", href: "/" }]} siblings={{ label: "Other servers of paris", load: async () => [] }} />);
     const nav = screen.getByRole("navigation", { name: "Breadcrumb" });
-    expect(nav).toHaveTextContent(/^Fleet›▾$/);
+    expect(nav).toHaveTextContent(/^Fleet›Other servers of paris▾$/);
     expect(within(nav).getByRole("button", { name: "Other servers of paris" })).toBeInTheDocument();
   });
 });

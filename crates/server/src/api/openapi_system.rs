@@ -14,7 +14,8 @@ use super::{backups, certificate_authority, health, server_update};
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        live, ready, update_status, check_update, start_update, list_backups, start_backup,
+        live, ready, update_status, check_update, start_update, update_history, list_backups,
+        start_backup,
         download_backup, ca, start_ca_change, next_ca_step,
     ),
     components(schemas(BackupArchive)),
@@ -90,7 +91,10 @@ fn ready() {}
 /// Read the server's update status
 ///
 /// The running version, what the updater service last reported, the last
-/// update with its steps, and a newer release the daily check saw.
+/// update with its steps (the updater's own words), its `milestones` in
+/// order (`verified`, `images_pulled`, `backed_up`, `database_migrated`,
+/// `server_restarted`, `agents_ready`) each with when it was reached, and
+/// a newer release the daily check saw.
 /// `enabled` is false when the deployment has no updater (a package
 /// install, for one): updates are then done by hand. Changes nothing.
 #[utoipa::path(get, path = "/api/v1/server-update", tag = "server-update",
@@ -116,9 +120,13 @@ fn ready() {}
             "requested_by": "admin",
             "state": "succeeded",
             "steps": [
-                { "at": "2026-11-12T20:00:03Z", "message": "Release 0.4.0 verified" },
-                { "at": "2026-11-12T20:01:40Z", "message": "Backup taken" },
-                { "at": "2026-11-12T20:03:05Z", "message": "0.4.0 is running" }
+                { "at": "2026-11-12T20:00:03Z", "message": "release 0.4.0 verified: server, web and updater images" },
+                { "at": "2026-11-12T20:00:41Z", "message": "images pulled" },
+                { "at": "2026-11-12T20:01:40Z", "message": "database and server data saved to monitorflow-backup-20261112T200005Z-update.tar.gz" },
+                { "at": "2026-11-12T20:01:41Z", "message": "new images pinned; migrating the database" },
+                { "at": "2026-11-12T20:01:52Z", "message": "recreating server and web" },
+                { "at": "2026-11-12T20:02:30Z", "message": "server 0.4.0 is healthy" },
+                { "at": "2026-11-12T20:03:05Z", "message": "agent release 0.4.0 cached for agents" }
             ],
             "error": null,
             "backup": "monitorflow-backup-20261112T200005Z-update.tar.gz",
@@ -126,6 +134,14 @@ fn ready() {}
             "started_at": "2026-11-12T20:00:01Z",
             "finished_at": "2026-11-12T20:03:05Z"
         },
+        "milestones": [
+            { "kind": "verified", "done_at": "2026-11-12T20:00:03Z" },
+            { "kind": "images_pulled", "done_at": "2026-11-12T20:00:41Z" },
+            { "kind": "backed_up", "done_at": "2026-11-12T20:01:40Z" },
+            { "kind": "database_migrated", "done_at": "2026-11-12T20:01:52Z" },
+            { "kind": "server_restarted", "done_at": "2026-11-12T20:02:30Z" },
+            { "kind": "agents_ready", "done_at": "2026-11-12T20:03:05Z" }
+        ],
         "requested": false,
         "available": null,
         "channel": "regular"
@@ -187,6 +203,48 @@ fn check_update() {}
         (status = 409, body = ErrorBody, description = "No updater, updater not running, or an update under way: `conflict`"),
     ))]
 fn start_update() {}
+
+/// List the server's updates
+///
+/// The central server's updates, newest first: the versions from and to,
+/// who asked (`null` when the updater started it from the command line, or
+/// it is not known), when it started and ended, and its `result`:
+/// `in_progress`, `succeeded`, `failed` (nothing changed), `rolled_back`
+/// (the previous version runs again, `error` says why) or `unknown`.
+/// Updates asked for before this history are copied from the audit log
+/// without their end; for those, and for one whose end the server did not
+/// see, `result` is `succeeded` with `inferred` when a later update started
+/// from the version it installed or the server runs it (ADR-0172).
+/// Changes nothing.
+#[utoipa::path(get, path = "/api/v1/server-update/history", tag = "server-update",
+    params(server_update::HistoryParams),
+    responses(
+        (status = 200, description = "The updates, newest first", body = server_update::History, example = json!({
+            "updates": [{
+                "id": "8c2f6d1e-4b3a-4f9e-a7c5-0d1b2e3f4a5b",
+                "from": "0.4.0",
+                "to": "0.4.1",
+                "requested_by": "admin",
+                "started_at": "2026-11-21T21:05:57Z",
+                "finished_at": "2026-11-21T21:06:56Z",
+                "result": "succeeded",
+                "error": null,
+                "inferred": false
+            }, {
+                "id": "3f1c2a9e-8b7d-4c6e-9a51-2d0e7f4b6c18",
+                "from": "0.3.2",
+                "to": "0.4.0",
+                "requested_by": "admin",
+                "started_at": "2026-11-12T20:00:01Z",
+                "finished_at": null,
+                "result": "succeeded",
+                "error": null,
+                "inferred": true
+            }]
+        })),
+        (status = 400, body = ErrorBody, description = "`invalid`: `limit` outside 1 to 200"),
+    ))]
+fn update_history() {}
 
 /// List backups
 ///

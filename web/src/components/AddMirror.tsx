@@ -6,6 +6,7 @@ import { rich, t } from "@/i18n";
 import { ApiError, type MirrorDistribution, type MirrorMode, api, describeError } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { usePolledData } from "@/lib/usePolledData";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import styles from "./Mirrors.module.css";
 import { Button } from "./ui/Button";
@@ -89,17 +90,13 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
       {refused && <Banner tone="bad">{refused}</Banner>}
       <fieldset className={styles.modes}>
         <legend>{t("mirrors.mode.label")}</legend>
-        {MODES.map((m) => (
-          <label key={m} className={styles.mode}>
-            <input type="radio" name="mirror-mode" value={m} checked={mode === m} onChange={() => setMode(m)} />
-            <span>
-              <strong>{t(`mirrors.mode.${m}`)}</strong>{" "}
-              <span className={styles.dim}>
-                {m === "on_demand" ? t("mirrors.mode.onDemandHelp") : t("mirrors.mode.fullHelp")}
-              </span>
-            </span>
-          </label>
-        ))}
+        <SegmentedControl
+          label={t("mirrors.mode.label")}
+          options={MODES.map((m) => ({ value: m, label: t(`mirrors.mode.${m}`) }))}
+          value={mode}
+          onChange={setMode}
+        />
+        <span className={styles.dim}>{mode === "on_demand" ? t("mirrors.mode.onDemandHelp") : t("mirrors.mode.fullHelp")}</span>
       </fieldset>
       <p className={styles.note}>
         {data.disk

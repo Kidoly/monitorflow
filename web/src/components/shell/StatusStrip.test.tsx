@@ -14,7 +14,7 @@ const strip = () => screen.findByRole("navigation", { name: "Servers by status" 
 describe("StatusStrip", () => {
   beforeEach(() => setUrl("/incidents/"));
 
-  it("counts every state, each opening the fleet filtered to it", async () => {
+  it("counts every state, each opening the fleet filtered to it, and Silenced the silences", async () => {
     stubFetch({ "GET /api/servers/summary": { status: 200, body: summary } });
     render(<StatusStrip />);
     const links = within(await strip()).getAllByRole("link");
@@ -22,7 +22,7 @@ describe("StatusStrip", () => {
       ["2 Critical", "/?state=critical"],
       ["0 Warning", "/?state=warning"],
       ["1 Acknowledged", "/?state=acknowledged"],
-      ["1 Silenced", "/?state=silenced"],
+      ["1 Silenced", "/silences"],
       ["3 Offline", "/?state=offline"],
       ["1,980 OK", "/?state=ok"],
     ]);
@@ -45,6 +45,15 @@ describe("StatusStrip", () => {
       `/?state=critical&customer=${ACME}&site=${LYON}`,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks Silenced on the silences page", async () => {
+    setUrl("/silences/");
+    stubFetch({ "GET /api/servers/summary": { status: 200, body: summary } });
+    render(<StatusStrip />);
+    const silenced = within(await strip()).getByRole("link", { name: "1 Silenced" });
+    expect(silenced).toHaveAttribute("aria-current", "page");
+    expect(silenced).toHaveAttribute("href", "/silences");
   });
 
   it("stays away without servers or when the counts fail", async () => {

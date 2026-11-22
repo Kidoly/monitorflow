@@ -122,7 +122,7 @@ export function EmptyState({ title, children, actions }: { title?: string; child
   return (
     <div className={cx(styles.empty, !title && styles.compactEmpty)}>
       {title && <strong className={styles.emptyTitle}>{title}</strong>}
-      {children && <span>{children}</span>}
+      {children && <div>{children}</div>}
       {actions && <div className={styles.emptyActions}>{actions}</div>}
     </div>
   );

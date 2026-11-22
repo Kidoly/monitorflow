@@ -43,10 +43,13 @@ import {
   scopeName,
   scopeValue,
 } from "@/lib/notifications";
+import { INTEGRATIONS_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
+import { Switch } from "@/components/ui/Switch";
 
 import styles from "./AdminPages.module.css";
 import own from "./IntegrationsAdmin.module.css";
+import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, fieldClass } from "./ui/Button";
 import { type Column, DataTable } from "./ui/DataTable";
 import { InlineConfirm } from "./ui/InlineConfirm";
@@ -62,7 +65,7 @@ import { RelativeTime } from "./ui/RelativeTime";
 import { SecretField } from "./ui/SecretField";
 import { Label } from "./ui/StatusLabel";
 
-/** `/settings/integrations/`: administrators, each of what they administer, like the API (ADR-0102). */
+/** `/settings/integrations/webhooks/`: administrators, each of what they administer, like the API (ADR-0102). */
 export function IntegrationsPage() {
   const me = useMe();
   if (!isAdministrator(me)) {
@@ -132,7 +135,10 @@ function Integrations() {
   }
 
   const header = (
-    <PageHeader title={t("integrations.title")} />
+    <>
+      <Breadcrumb parents={[{ label: t("integrations.title"), href: INTEGRATIONS_PATH }]} />
+      <PageHeader title={t("integrations.webhooksTitle")} />
+    </>
   );
   if (error instanceof ApiError && error.status === 403) {
     return (
@@ -579,14 +585,11 @@ function IntegrationForm({
           )}
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>{t("integrations.events")}</legend>
-        <label>
-          <input
-            type="checkbox"
-            checked={allEvents.every((e) => events.includes(e))}
-            onChange={(e) => setEvents(e.target.checked ? allEvents : [])}
-          />{" "}
-          {t("integrations.allEvents")}
-        </label>
+        <Switch
+          checked={allEvents.every((e) => events.includes(e))}
+          onChange={(all) => setEvents(all ? allEvents : [])}
+          label={t("integrations.allEvents")}
+        />
         <div className={own.events}>
           {EVENT_GROUPS.map((group) => (
             <fieldset key={group.group} className={styles.fieldset}>
@@ -594,30 +597,23 @@ function IntegrationForm({
               {group.events
                 .filter((e) => allEvents.includes(e.event))
                 .map((e) => (
-                  <label key={e.event}>
-                    <input
-                      type="checkbox"
-                      checked={events.includes(e.event)}
-                      onChange={(change) =>
-                        toggle(e.event, change.target.checked)
-                      }
-                    />{" "}
-                    {eventLabel(e.event)}
-                  </label>
+                  <Switch
+                    key={e.event}
+                    checked={events.includes(e.event)}
+                    onChange={(on) => toggle(e.event, on)}
+                    label={eventLabel(e.event)}
+                  />
                 ))}
             </fieldset>
           ))}
         </div>
       </fieldset>
       {global ? (
-        <label>
-          <input
-            type="checkbox"
-            checked={allowPrivate}
-            onChange={(e) => setAllowPrivate(e.target.checked)}
-          />{" "}
-          {t("integrations.allowPrivate")}
-        </label>
+        <Switch
+          checked={allowPrivate}
+          onChange={setAllowPrivate}
+          label={t("integrations.allowPrivate")}
+        />
       ) : (
         keepsPrivate && (
           <p className={styles.fieldNote}>

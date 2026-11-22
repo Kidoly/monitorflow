@@ -75,7 +75,7 @@ describe("AiSettingsPage", () => {
     expect(screen.getByText(/^Les données des incidents, sans les secrets, sont envoyées à Anthropic\.$/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Activer l’IA" })).toBeDisabled();
     expect(screen.getByLabelText(/^Clé d’API Anthropic/)).toBeInTheDocument();
-    await user.click(screen.getByLabelText("Un autre modèle ou un modèle local"));
+    await user.click(screen.getByRole("radio", { name: "Un autre modèle ou un modèle local" }));
     expect(screen.getByText(/pour que rien n’en sorte/)).toBeInTheDocument();
     expect(screen.getByText(/un contexte de 32\s000 jetons/)).toBeInTheDocument();
   });
@@ -258,7 +258,7 @@ describe("AiSettingsPage", () => {
       "GET /api/settings/public-address": address,
     });
     page();
-    await user.click(await screen.findByLabelText("Another or a local model"));
+    await user.click(await screen.findByRole("radio", { name: "Another or a local model" }));
     expect(screen.getByText(/nothing leaves it/)).toBeInTheDocument();
     expect(screen.getByText(/Small local models diagnose less well/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Enable AI" })).toBeDisabled();
@@ -311,7 +311,7 @@ describe("AiSettingsPage", () => {
       [`POST ${AI}/models`]: { status: 200, body: { models: [], error: "OpenAI refused this API key." } },
     });
     page();
-    await user.click(await screen.findByLabelText("OpenAI"));
+    await user.click(await screen.findByRole("radio", { name: "OpenAI" }));
     const key = screen.getByLabelText(/OpenAI API key/);
     expect(key).toHaveAttribute("placeholder", "sk-…");
     expect(screen.getByLabelText(/^Model/)).toHaveValue("gpt-5.1");

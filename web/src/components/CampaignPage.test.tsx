@@ -12,6 +12,9 @@ import { REFRESH_MS } from "./FleetOverview";
 
 const PATH = `/api/campaigns/${CAMPAIGN_ID}`;
 
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }), useSearchParams: () => new URLSearchParams() }));
+
 describe("CampaignPage", () => {
   it("shows progress per batch and per server", async () => {
     const waves = detail().waves;
@@ -131,5 +134,42 @@ describe("CampaignPage", () => {
     });
     render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
     expect(await screen.findByText("debian-12/s1 (other sources set aside)")).toBeInTheDocument();
+  });
+
+  it("edits and copies a campaign that queued nothing, and deletes a draft after confirmation", async () => {
+    const fetchMock = stubFetch({
+      [`GET ${PATH}`]: { status: 200, body: detail({ state: "draft", current_wave: null, started_at: null }) },
+      [`DELETE ${PATH}`]: { status: 204 },
+    });
+    render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
+    const edit = await screen.findByRole("link", { name: "Edit" });
+    expect(edit).toHaveAttribute("href", expect.stringContaining(`new?edit=${CAMPAIGN_ID}`));
+    const copy = screen.getByRole("link", { name: "Duplicate" });
+    expect(copy).toHaveAttribute("href", expect.stringContaining(`new?from=${CAMPAIGN_ID}`));
+    // A draft is deleted, not stopped.
+    expect(screen.queryByRole("button", { name: "Stop…" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    expect(screen.getByText(/the audit log records who deleted it/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete the campaign" }));
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(true);
+    expect(push).toHaveBeenCalledWith("/campaigns/");
+  });
+
+  it("only copies or stops a running campaign, and only copies or deletes a finished one", async () => {
+    stubFetch({ [`GET ${PATH}`]: { status: 200, body: detail() } });
+    const { unmount } = render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
+    expect(await screen.findByRole("link", { name: "Duplicate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop…" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete…" })).not.toBeInTheDocument();
+    unmount();
+    const idle = { ...detail().progress, in_progress: 0 };
+    stubFetch({
+      [`GET ${PATH}`]: { status: 200, body: detail({ state: "failed", finished_at: "2026-10-23T10:00:00Z", progress: idle }) },
+    });
+    render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
+    expect(await screen.findByRole("button", { name: "Delete…" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop…" })).not.toBeInTheDocument();
   });
 });

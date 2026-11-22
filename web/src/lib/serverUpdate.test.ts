@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { ServerUpdateCheck, ServerUpdateRun } from "./api";
-import { changeLines, imageText, importNotes, inProgress, releasesPage, restoreCommand } from "./serverUpdate";
+import {
+  changeLines,
+  imageText,
+  importNotes,
+  inProgress,
+  milestoneMarks,
+  milestoneWord,
+  releasesPage,
+  restoreCommand,
+} from "./serverUpdate";
 
 const run = (state: ServerUpdateRun["state"]): ServerUpdateRun => ({
   id: "r1",
@@ -18,6 +27,22 @@ const run = (state: ServerUpdateRun["state"]): ServerUpdateRun => ({
 });
 
 describe("server update helpers", () => {
+  it("marks the milestone under way, or the one an update stopped at", () => {
+    const milestones = [
+      { kind: "verified" as const, done_at: "2026-10-27T10:00:00Z" },
+      { kind: "images_pulled" as const, done_at: null },
+      { kind: "backed_up" as const, done_at: null },
+    ];
+    const marks = (state: ServerUpdateRun["state"]) => milestoneMarks(milestones, run(state)).map((m) => m.mark);
+    expect(marks("downloading")).toEqual(["done", "current", "todo"]);
+    expect(marks("failed")).toEqual(["done", "failed", "todo"]);
+    expect(marks("rolled_back")).toEqual(["done", "failed", "todo"]);
+    // A success that skipped a milestone (agents not cached) stops nowhere.
+    expect(marks("succeeded")).toEqual(["done", "todo", "todo"]);
+    expect(milestoneMarks(milestones, run("verifying"))[0]!.at).toBe("2026-10-27T10:00:00Z");
+    expect(milestoneWord("database_migrated")).toBe("Database migrated");
+  });
+
   it("knows when an update is under way", () => {
     expect(inProgress(null, false)).toBe(false);
     expect(inProgress(null, true)).toBe(true);

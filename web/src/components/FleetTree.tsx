@@ -8,7 +8,8 @@ import type { ServerState } from "@/lib/api";
 import { SERVER_STATES, STATE_TONES, stateWord } from "@/lib/serverState";
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
-import { type Column, type SortState, nextSort, sortRows } from "@/components/ui/DataTable";
+import { SelectBox } from "@/components/ui/BulkBar";
+import { type Column, type SortState, type TableSelection, nextSort, sortRows } from "@/components/ui/DataTable";
 import tableStyles from "@/components/ui/DataTable.module.css";
 import { Icon } from "@/components/shell/icons";
 import { toneClass } from "@/components/ui/StatusLabel";
@@ -68,6 +69,9 @@ function groupBy<T extends TreeRow>(rows: T[], of: (row: T) => { id: string; nam
  * grouped by site. Each
  * group line has a pill per state, naming the server when a problem state
  * has just one. One table, so the columns line up and sort across groups.
+ *
+ * `selection` adds a checkbox per server, and one in the header for the
+ * servers shown: in open groups, not folded away or behind "Show more".
  */
 export function FleetTree<T extends TreeRow>({
   rows,
@@ -79,6 +83,7 @@ export function FleetTree<T extends TreeRow>({
   filtered,
   groupedOut = [],
   stateHref,
+  selection,
 }: {
   rows: T[];
   columns: Column<T>[];
@@ -91,6 +96,7 @@ export function FleetTree<T extends TreeRow>({
   groupedOut?: string[];
   /** The fleet filtered to `state` within a site or a customer. */
   stateHref: (state: ServerState, place: { siteId: string } | { customerId: string }) => string;
+  selection?: TableSelection<T>;
 }) {
   // Groups the user opened or closed, by key; the rest follow `healthy`.
   const [toggled, setToggled] = useState<Map<string, boolean>>(new Map());
@@ -103,7 +109,7 @@ export function FleetTree<T extends TreeRow>({
   const customers = multiCustomer ? groupBy(rows, (r) => r.customer) : null;
   const flat = !customers && sites.length === 1;
   const shownColumns = flat ? columns : columns.filter((c) => !groupedOut.includes(c.key));
-  const span = shownColumns.length;
+  const span = shownColumns.length + (selection ? 1 : 0);
 
   function header(group: Group<T>, level: "customer" | "site", place: { siteId: string } | { customerId: string }) {
     const open = isOpen(group);
@@ -125,21 +131,38 @@ export function FleetTree<T extends TreeRow>({
     );
   }
 
-  function servers(group: Group<T>) {
-    if (!flat && !isOpen(group)) return null;
+  /** The servers a site shows, and how many more and how many healthy ones it hides. */
+  function shown(group: Group<T>) {
     const sorted = sortRows(group.rows, columns, sort, defaultOrder);
     // A healthy site someone opened shows its servers.
     const fold = !filtered && !sort && !group.healthy && !unfolded.has(group.key);
     const ordered = fold ? sorted.filter((r) => !r.healthy) : sorted;
-    const healthy = sorted.length - ordered.length;
     const limit = limits.get(group.key) ?? GROUP_PAGE;
-    const more = ordered.length - limit;
+    return { rows: ordered.slice(0, limit), limit, more: ordered.length - limit, healthy: sorted.length - ordered.length };
+  }
+
+  function servers(group: Group<T>) {
+    if (!flat && !isOpen(group)) return null;
+    const { rows: visible, limit, more, healthy } = shown(group);
     return (
       <>
-        {ordered.slice(0, limit).map((row) => (
-          <tr key={row.key} data-row="">
+        {visible.map((row) => (
+          <tr key={row.key} data-row="" className={cx(selection?.selected.has(row.key) && tableStyles.picked)}>
+            {selection && (
+              <td className={cx(tableStyles.select, !flat && styles.indent)}>
+                <SelectBox
+                  label={t("ui.bulk.selectRow", { name: selection.rowLabel(row) })}
+                  keys={[row.key]}
+                  selected={selection.selected}
+                  onChange={selection.onChange}
+                />
+              </td>
+            )}
             {shownColumns.map((column) => (
-              <td key={column.key} className={cx(column.className, !flat && column === shownColumns[0] && styles.indent)}>
+              <td
+                key={column.key}
+                className={cx(column.className, !flat && !selection && column === shownColumns[0] && styles.indent)}
+              >
                 {column.cell(row)}
               </td>
             ))}
@@ -176,11 +199,19 @@ export function FleetTree<T extends TreeRow>({
     </tbody>
   );
 
+  const openSites = customers ? sites.filter((s) => isOpen(customers.find((c) => c.key === s.rows[0]!.customer.id)!)) : sites;
+  const visibleKeys = openSites.filter((s) => flat || isOpen(s)).flatMap((s) => shown(s).rows.map((r) => r.key));
+
   return (
     <div className={tableStyles.box}>
       <table className={cx(tableStyles.table, styles.tree)} aria-label={t("fleet.table")}>
         <thead>
           <tr>
+            {selection && (
+              <th className={tableStyles.select}>
+                <SelectBox label={t("ui.bulk.selectAll")} keys={visibleKeys} selected={selection.selected} onChange={selection.onChange} />
+              </th>
+            )}
             {shownColumns.map((column) => {
               if (!column.sortValue) return <th key={column.key}>{column.header}</th>;
               const direction = sort?.key === column.key ? sort.direction : null;

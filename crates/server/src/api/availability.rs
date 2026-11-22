@@ -20,8 +20,9 @@ use super::{ApiError, ApiState};
 use crate::availability::data::{load, Reach};
 use crate::availability::report::{build, Report};
 use crate::availability::sender::file_name;
+use crate::availability::uptime::{self, Uptime};
 use crate::availability::words::Language;
-use crate::availability::{csv, pdf, Span};
+use crate::availability::{csv, pdf, uptime_at_end, Span};
 
 /// The shortest period a report covers.
 pub const SHORTEST: TimeDelta = TimeDelta::hours(1);
@@ -60,6 +61,21 @@ pub struct FileParams {
     pub time_zone: Option<String>,
 }
 
+/// Query string of `GET /api/availability/uptime`.
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
+pub struct UptimeParams {
+    /// Only this customer's sites and services.
+    pub customer_id: Option<Uuid>,
+    /// The instant the windows end at, RFC 3339; now when absent or in
+    /// the future.
+    pub at: Option<DateTime<Utc>>,
+    /// IANA time zone days are cut in, like `Europe/Paris`; UTC when
+    /// absent.
+    pub time_zone: Option<String>,
+}
+
 /// The period of `from` and `to` at `now`, or why not.
 pub fn period(
     from: Option<DateTime<Utc>>,
@@ -84,17 +100,16 @@ pub fn period(
     Ok((from, to))
 }
 
-/// The report `user` may read over `period`, for `customer` or everything.
-async fn report(
-    state: &ApiState,
+/// What `user` may read for `customer` or everything, and the customer's
+/// name: 404 for a customer outside their reach.
+async fn reach(
+    conn: &mut sqlx::PgConnection,
     user: &CurrentUser,
-    period: Span,
     customer: Option<Uuid>,
-) -> Result<Report, ApiError> {
+) -> Result<(Reach, Option<String>), ApiError> {
     if !user.can_read() {
         return Err(ApiError::Forbidden);
     }
-    let mut conn = state.pool.acquire().await?;
     let readable = user.readable_sites();
     let whole = user.visible_customers();
     let (reach, name) = match customer {
@@ -142,12 +157,30 @@ async fn report(
             )
         }
     };
+    Ok((reach, name))
+}
+
+/// The report `user` may read over `period`, for `customer` or everything,
+/// and with `zone` the uptime at its end, for the PDF (ADR-0172).
+async fn report(
+    state: &ApiState,
+    user: &CurrentUser,
+    period: Span,
+    customer: Option<Uuid>,
+    zone: Option<Tz>,
+) -> Result<(Report, Option<Uptime>), ApiError> {
+    let mut conn = state.pool.acquire().await?;
+    let (reach, name) = reach(&mut conn, user, customer).await?;
     let now = Utc::now();
     let data = load(&mut conn, &reach, period, now).await?;
     let mut report = build(&data, period, now);
     report.customer_id = customer;
     report.customer_name = name;
-    Ok(report)
+    let uptime = match zone {
+        Some(zone) => Some(uptime_at_end(&mut conn, &reach, period, zone, now).await?),
+        None => None,
+    };
+    Ok((report, uptime))
 }
 
 /// `GET /api/availability`.
@@ -159,13 +192,33 @@ pub async fn get(
     let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
     let period = period(params.from, params.to, Utc::now()).map_err(ApiError::Invalid)?;
     Ok(Json(
-        report(&state, &user, period, params.customer_id).await?,
+        report(&state, &user, period, params.customer_id, None)
+            .await?
+            .0,
     ))
+}
+
+/// `GET /api/availability/uptime`: the last 24 hours, 7, 30 and 90 days
+/// and 90 daily bars of what `user` reads (ADR-0172).
+pub async fn uptime(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    params: Result<Query<UptimeParams>, QueryRejection>,
+) -> Result<Json<Uptime>, ApiError> {
+    let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
+    let (_, zone) = language_and_zone(None, params.time_zone.as_deref())?;
+    let now = Utc::now();
+    let at = params.at.map_or(now, |at| at.min(now));
+    let mut conn = state.pool.acquire().await?;
+    let (reach, _) = reach(&mut conn, &user, params.customer_id).await?;
+    let data = load(&mut conn, &reach, uptime::period(at), now).await?;
+    Ok(Json(uptime::build(&data, at, zone, now)))
 }
 
 /// `report` as a `csv` or `pdf` file; the PDF is made off the runtime.
 pub async fn render(
     report: &Report,
+    uptime: Option<Uptime>,
     extension: &str,
     zone: Tz,
     language: Language,
@@ -174,7 +227,7 @@ pub async fn render(
         return Ok(csv::render(report, zone, language).into_bytes());
     }
     let report = report.clone();
-    tokio::task::spawn_blocking(move || pdf::render(&report, zone, language))
+    tokio::task::spawn_blocking(move || pdf::render(&report, uptime.as_ref(), zone, language))
         .await
         .map_err(|e| ApiError::Internal(format!("making the PDF: {e}")))
 }
@@ -210,8 +263,9 @@ pub async fn file(
         "pdf" => ("application/pdf", "pdf"),
         _ => return Err(ApiError::Invalid("The format is `csv` or `pdf`.".into())),
     };
-    let report = report(&state, &user, period, params.customer_id).await?;
-    let body = render(&report, extension, zone, language).await?;
+    let wants_uptime = (extension == "pdf").then_some(zone);
+    let (report, uptime) = report(&state, &user, period, params.customer_id, wants_uptime).await?;
+    let body = render(&report, uptime, extension, zone, language).await?;
     let name = file_name(&report, zone, extension);
     let mut response = body.into_response();
     let headers = response.headers_mut();

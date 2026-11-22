@@ -5,6 +5,9 @@
 //! - `GET /api/auto-update/{kind}/peers?state=…`: the agents or relays
 //!   behind one of those totals, classified by the same
 //!   [`Peer::state`](crate::auto_update::Peer::state).
+//! - `GET /api/auto-update/{kind}/versions/peers?version=…`: the agents
+//!   or relays on one version, in
+//!   [`auto_update_versions`](super::auto_update_versions).
 //! - `PUT /api/settings/auto-update`: changes `enabled` (unless the
 //!   configuration sets it), `paused` or `failure_threshold`, stored in
 //!   `server_settings` like the other server-wide settings (ADR-0054);
@@ -26,6 +29,7 @@ use uuid::Uuid;
 
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
+use super::auto_update_versions;
 use super::sensors::body;
 use super::server_update::require_global_admin;
 use super::servers::page_limit;
@@ -72,6 +76,9 @@ pub struct KindView {
     /// The 10 newest rollouts, `rollout` included, each with where it
     /// ended.
     pub history: Vec<HistoryRollout>,
+    /// How many agents (or relays) run each version, newest first: the
+    /// versions in use, not the releases held.
+    pub versions: Vec<auto_update_versions::VersionCount>,
 }
 
 /// A rollout of the history and where it stands now.
@@ -273,6 +280,7 @@ async fn kind_view(
             rollout,
         })
         .collect();
+    let versions = auto_update_versions::distribution(&state.pool, kind, target).await?;
     Ok(KindView {
         latest: latest.map(ToString::to_string),
         target: target.map(ToString::to_string),
@@ -280,6 +288,7 @@ async fn kind_view(
         totals,
         sites,
         history,
+        versions,
     })
 }
 

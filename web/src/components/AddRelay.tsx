@@ -154,7 +154,7 @@ export function ConfirmRelayNames({ relay, onConfirmed }: { relay: Relay; onConf
           <span className={styles.fieldNote}>{t("relays.confirm.onlyIf")}</span>
         </span>
         <input
-          className={cx(fieldClass, styles.mono)}
+          className={fieldClass}
           value={other}
           onChange={(e) => setOther(e.target.value)}
           placeholder="relay1.paris.example"

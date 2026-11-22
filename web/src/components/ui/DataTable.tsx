@@ -6,6 +6,7 @@ import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { t } from "@/i18n";
 import { useUrlParams } from "@/lib/urlState";
 
+import { SelectBox } from "./BulkBar";
 import { Button } from "./Button";
 import { cx } from "./cx";
 import styles from "./DataTable.module.css";
@@ -80,6 +81,14 @@ export function useUrlSort(param = "sort"): [SortState | null, (sort: SortState 
   return [parseSort(params.get(param)), (sort) => setParams({ [param]: formatSort(sort) })];
 }
 
+/** What a table needs to show checkboxes; see `useSelection`. */
+export interface TableSelection<T> {
+  selected: ReadonlySet<string>;
+  onChange: (keys: readonly string[], on: boolean) => void;
+  /** The row's name in "Select jellyfin". */
+  rowLabel: (row: T) => string;
+}
+
 /**
  * The main cell of a row: a bold 15 px link and the 12 px grey sub-line for
  * secondary facts (OS, agent version, relay).
@@ -101,6 +110,10 @@ export function PrimaryCell({ title, href, sub }: { title: ReactNode; href?: str
  * its own. Without a sort, rows follow `defaultOrder` (e.g. `problemsFirst`).
  *
  * `bare` drops the border, for a table under a heading inside a box.
+ *
+ * `selection` adds a checkbox at the start of each row and one in the
+ * header that checks the rows shown, those of the filters and pages on
+ * screen, never the rest (see `useSelection` and `BulkBar`).
  *
  * Paging: rows past `pageSize` hide behind "Load more", which shows the next
  * page and moves focus to the first link of the first new row. Give
@@ -126,6 +139,7 @@ export function DataTable<T>({
   loading,
   dense,
   bare,
+  selection,
 }: {
   /** Accessible name of the table. */
   label: string;
@@ -153,6 +167,8 @@ export function DataTable<T>({
   dense?: boolean;
   /** No border of its own, inside a section box that has one. */
   bare?: boolean;
+  /** Checkboxes to pick rows for the actions of a `BulkBar`. */
+  selection?: TableSelection<T>;
 }) {
   const [ownSort, setOwnSort] = useState<SortState | null>(null);
   const sort = controlledSort === undefined ? ownSort : controlledSort;
@@ -164,7 +180,7 @@ export function DataTable<T>({
   const ordered = sortRows(rows, columns, sort, defaultOrder);
   const shown = onLoadMore ? ordered : ordered.slice(0, limit);
   const more = onLoadMore ? Boolean(hasMore) : ordered.length > limit;
-  const span = columns.length + (rowActions ? 1 : 0);
+  const span = columns.length + (rowActions ? 1 : 0) + (selection ? 1 : 0);
 
   useEffect(() => {
     const from = focusFrom.current;
@@ -188,6 +204,16 @@ export function DataTable<T>({
         <table className={cx(styles.table, dense && styles.dense)} aria-label={label} aria-busy={loading || undefined}>
           <thead>
             <tr>
+              {selection && (
+                <th className={styles.select}>
+                  <SelectBox
+                    label={t("ui.bulk.selectAll")}
+                    keys={loading ? [] : shown.map(rowKey)}
+                    selected={selection.selected}
+                    onChange={selection.onChange}
+                  />
+                </th>
+              )}
               {columns.map((column) => {
                 if (!column.sortValue) {
                   return <th key={column.key}>{column.header}</th>;
@@ -227,7 +253,17 @@ export function DataTable<T>({
                   const detail = rowDetail?.(row);
                   return (
                     <Fragment key={rowKey(row)}>
-                      <tr data-row="" className={cx(rowMuted?.(row) && styles.muted)}>
+                      <tr data-row="" className={cx(rowMuted?.(row) && styles.muted, selection?.selected.has(rowKey(row)) && styles.picked)}>
+                        {selection && (
+                          <td className={styles.select}>
+                            <SelectBox
+                              label={t("ui.bulk.selectRow", { name: selection.rowLabel(row) })}
+                              keys={[rowKey(row)]}
+                              selected={selection.selected}
+                              onChange={selection.onChange}
+                            />
+                          </td>
+                        )}
                         {columns.map((column) => (
                           <td key={column.key} className={column.className}>
                             {column.cell(row)}

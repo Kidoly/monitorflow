@@ -48,6 +48,9 @@ export const en = {
   "summary.noResult": "no result",
   "summary.failed": "Failed: {reason}",
   "summary.stateChange": "{from} → {to}",
+  "summary.attemptByHand": "Attempt {number}, started by hand",
+  "summary.attemptAccepted": "Attempt {number}, started because the server now accepts AI commands",
+  "summary.attemptAfter": ". The one before: {reason}",
   "close.sensor_normal": "The sensor returned to normal",
   "close.duration_limit": {
     one: "The duration limit of {count} second was reached",
@@ -129,7 +132,15 @@ export const en = {
   "queue.nothing": "Nothing waiting for approval",
   "queue.noneOfTier": "No command of this tier is waiting.",
   "queue.openIncidents": "Open incidents",
-  "queue.empty": "Commands the risk rules hold for a person appear here.",
+  "queue.empty":
+    "The AI looks into each new alert on servers that accept AI commands. Commands that only read run on their own; a command that changes something waits here for an approver. None is waiting now.",
+  "queue.howTitle": "How a command gets here",
+  "queue.howAi": "AI is on, under Settings › AI.",
+  "queue.howServer": "The server accepts AI commands: see the Commands tab of its page.",
+  "queue.howAlert": "An alert opens on that server and the AI proposes a change, such as restarting a stopped service.",
+  "queue.howRules":
+    "The risk rules keep that change for a person: high-impact commands always, low-impact ones unless the rules let them run on their own.",
+  "queue.seeAudit": "See what the AI did",
   "queue.label": "Commands waiting for approval",
   "queue.review": "Review",
   "queue.close": "Close",
@@ -249,6 +260,9 @@ export const fr: Translation<typeof en> = {
   "summary.noResult": "aucun résultat",
   "summary.failed": "En échec : {reason}",
   "summary.stateChange": "{from} → {to}",
+  "summary.attemptByHand": "Tentative {number}, lancée à la main",
+  "summary.attemptAccepted": "Tentative {number}, lancée car le serveur accepte désormais les commandes IA",
+  "summary.attemptAfter": ". La précédente : {reason}",
   "close.sensor_normal": "Le capteur est revenu à la normale",
   "close.duration_limit": {
     one: "La durée limite de {count} seconde a été atteinte",
@@ -331,7 +345,15 @@ export const fr: Translation<typeof en> = {
   "queue.nothing": "Rien en attente d’approbation",
   "queue.noneOfTier": "Aucune commande de ce niveau n’est en attente.",
   "queue.openIncidents": "Incidents ouverts",
-  "queue.empty": "Les commandes que les règles de risque réservent à une personne apparaissent ici.",
+  "queue.empty":
+    "L’IA examine chaque nouvelle alerte des serveurs qui acceptent les commandes IA. Les commandes qui ne font que lire s’exécutent seules ; une commande qui modifie quelque chose attend ici un approbateur. Aucune n’attend pour l’instant.",
+  "queue.howTitle": "Comment une commande arrive ici",
+  "queue.howAi": "L’IA est activée, dans Paramètres › IA.",
+  "queue.howServer": "Le serveur accepte les commandes IA : voir l’onglet Commandes de sa page.",
+  "queue.howAlert": "Une alerte s’ouvre sur ce serveur et l’IA propose une modification, comme redémarrer un service arrêté.",
+  "queue.howRules":
+    "Les règles de risque réservent cette modification à une personne : toujours pour l’impact élevé, et pour l’impact faible sauf si les règles le laissent s’exécuter seul.",
+  "queue.seeAudit": "Voir ce qu’a fait l’IA",
   "queue.label": "Commandes en attente d’approbation",
   "queue.review": "Examiner",
   "queue.close": "Fermer",

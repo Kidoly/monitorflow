@@ -807,6 +807,11 @@ mod tests {
             (&get, "/api/settings/auto-update", Some(Area::Updates)),
             (&get, "/api/auto-update/{kind}/peers", Some(Area::Updates)),
             (
+                &get,
+                "/api/auto-update/{kind}/versions/peers",
+                Some(Area::Updates),
+            ),
+            (
                 &post,
                 "/api/sites/{id}/ai-commands",
                 Some(Area::Remediation),
@@ -814,6 +819,16 @@ mod tests {
             (
                 &post,
                 "/api/remediation/approvals/{id}/approve",
+                Some(Area::Remediation),
+            ),
+            (
+                &post,
+                "/api/remediation/alerts/{id}/run",
+                Some(Area::Remediation),
+            ),
+            (
+                &get,
+                "/api/remediation/alerts/{id}",
                 Some(Area::Remediation),
             ),
             (&post, "/api/dashboard-data", Some(Area::Dashboards)),

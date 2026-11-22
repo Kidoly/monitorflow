@@ -1,0 +1,72 @@
+/* The integrations catalogue: one card per integration, set-up ones first. */
+
+.groupTitle {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  color: var(--text);
+  text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+a.card:hover,
+a.card:focus-visible {
+  border-color: var(--border-strong);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cardTitle {
+  font-weight: 600;
+}
+
+.cardText {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.cardAction {
+  margin-top: auto;
+  padding-top: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* The steps of the HaloPSA page. */
+.where {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}

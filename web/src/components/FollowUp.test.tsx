@@ -105,7 +105,7 @@ describe("FollowUpSection", () => {
     await user.click(within(step).getByRole("checkbox", { name: "Slack #managers" }));
     await user.click(screen.getByRole("button", { name: "Add a step" }));
     const second = screen.getByRole("listitem", { name: "Step 2" });
-    await user.click(within(second).getByRole("checkbox", { name: "The administrators of the place" }));
+    await user.click(within(second).getByRole("switch", { name: "The administrators of the place" }));
     await user.click(screen.getByRole("button", { name: "Move step 2 up" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
     const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");

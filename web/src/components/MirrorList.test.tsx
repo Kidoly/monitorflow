@@ -42,7 +42,7 @@ describe("MirrorListPage", () => {
         <MirrorListPage />
       </As>,
     );
-    const table = await screen.findByRole("table", { name: "Miroirs" });
+    const table = await screen.findByRole("table", { name: "Miroirs Linux" });
     expect(within(table).getByRole("columnheader", { name: /Prochaine synchro/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ajouter un miroir" })).toBeInTheDocument();
     // Retention is told on each mirror's page, not repeated under the list.
@@ -57,7 +57,7 @@ describe("MirrorListPage", () => {
         <MirrorListPage />
       </As>,
     );
-    const table = await screen.findByRole("table", { name: "Mirrors" });
+    const table = await screen.findByRole("table", { name: "Linux mirrors" });
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows[0]).toHaveTextContent("rocky-9");
     expect(rows[0]).toHaveTextContent("dnf · dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os · x86_64");
@@ -124,6 +124,9 @@ describe("MirrorListPage", () => {
     );
     await screen.findByRole("table");
     const sync = await screen.findByRole("button", { name: "Sync now debian-bookworm" });
+    // A sync publishes the snapshot: no second button to tell apart.
+    expect(screen.queryByRole("button", { name: /Snapshot/ })).not.toBeInTheDocument();
+    expect(sync).toHaveAttribute("title", expect.stringMatching(/then publishes a snapshot/));
     await user.click(sync);
     expect(fetchMock).toHaveBeenCalledWith(`/api/mirrors/${MIRROR_ID}/sync`, expect.objectContaining({ method: "POST" }));
     await user.click(await screen.findByRole("button", { name: "Sync now debian-bookworm" }));
@@ -374,7 +377,6 @@ describe("MirrorListPage", () => {
     );
     const row = (await screen.findByText("Being removed")).closest("tr")!;
     expect(within(row).getByRole("button", { name: "Sync now debian-bookworm" })).toBeDisabled();
-    expect(within(row).getByRole("button", { name: "Snapshot debian-bookworm" })).toBeDisabled();
   });
 
   it("is for global administrators only", () => {

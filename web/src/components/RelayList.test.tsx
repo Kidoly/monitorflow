@@ -58,7 +58,7 @@ const waiting = relay({
 });
 
 describe("RelayListPage", () => {
-  it("adds a relay from the empty page with one command and a mirror checkbox", async () => {
+  it("adds a relay from the empty page with one command and a mirror switch", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({
       "GET /api/relays": { status: 200, body: { relays: [], next_cursor: null } },
@@ -80,7 +80,7 @@ describe("RelayListPage", () => {
 
     const command = await screen.findByLabelText(/^Linux/);
     expect(command).toHaveTextContent(`sudo MF_ROLE=relay MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`);
-    await user.click(screen.getByRole("checkbox", { name: /package mirrors/ }));
+    await user.click(screen.getByRole("switch", { name: /package mirrors/ }));
     expect(command).toHaveTextContent("MF_ROLE=relay MF_MIRROR=1 MF_SERVER=");
     const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({ role: "relay", site_id: "site-1", require_approval: false });

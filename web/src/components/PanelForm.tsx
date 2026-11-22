@@ -41,6 +41,7 @@ import { useMultiCustomer } from "@/lib/me";
 import { metricTitle, shortMetric } from "@/lib/metrics";
 import { useScope } from "@/lib/scope";
 import { Button, fieldClass } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 
 import admin from "./AdminPages.module.css";
 import { DashboardPanel } from "./DashboardPanel";
@@ -572,14 +573,11 @@ export function PanelForm({
               </div>
             </fieldset>
             {["chart", "area", "columns"].includes(panel.kind) && (
-              <label className={styles.check}>
-                <input
-                  type="checkbox"
-                  checked={panel.legend ?? true}
-                  onChange={(e) => change(e.target.checked ? without(panel, "legend") : { ...panel, legend: false })}
-                />
-                {t("dashboards.form.legend")}
-              </label>
+              <Switch
+                checked={panel.legend ?? true}
+                onChange={(checked) => change(checked ? without(panel, "legend") : { ...panel, legend: false })}
+                label={t("dashboards.form.legend")}
+              />
             )}
           </div>
         )}

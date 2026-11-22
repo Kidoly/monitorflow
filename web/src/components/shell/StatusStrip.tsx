@@ -9,6 +9,7 @@ import { toneClass } from "@/components/ui/StatusLabel";
 import { t } from "@/i18n";
 import { activeLocale } from "@/i18n/locale";
 import { api } from "@/lib/api";
+import { SILENCES_PATH } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { SERVER_STATES, STATE_TONES, stateHref } from "@/lib/serverState";
 import { usePolledData } from "@/lib/usePolledData";
@@ -17,7 +18,8 @@ import styles from "./StatusStrip.module.css";
 
 /**
  * The servers of the scope by state, at the top of every page (ADR-0130).
- * Each count opens the fleet filtered to that state; a count that needs a
+ * Each count opens the fleet filtered to that state, except Silenced, which
+ * opens the Silences page (it has no sidebar item); a count that needs a
  * look is tinted, zero and OK stay plain. Nothing shows until it loads,
  * nor for a fleet without servers.
  */
@@ -44,12 +46,13 @@ export function StatusStrip() {
           // and only a parent that is down makes them unreachable (ADR-0152).
           if ((state === "waiting" || state === "unreachable") && count === 0) return null;
           const tone = STATE_TONES[state];
-          const active = current === state;
+          const silences = state === "silenced";
+          const active = silences ? pathname.startsWith(SILENCES_PATH) : current === state;
           const tinted = count > 0 && state !== "ok";
           return (
             <li key={state}>
               <Link
-                href={scopedHref(active ? "/" : stateHref(state), scope)}
+                href={scopedHref(silences ? SILENCES_PATH : active ? "/" : stateHref(state), scope)}
                 className={cx(styles.item, tinted && toneClass(tone), tinted && styles.tinted, active && styles.active)}
                 aria-current={active ? "page" : undefined}
               >

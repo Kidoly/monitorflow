@@ -206,7 +206,7 @@ describe("TokensAdmin", () => {
     await within(within(form).getByLabelText("Site")).findByRole("option");
     await user.selectOptions(within(form).getByLabelText("Works for"), "604800");
     await user.type(within(form).getByLabelText(/^Up to/), "10");
-    await user.click(within(form).getByRole("checkbox", { name: "Approve new servers before they appear" }));
+    await user.click(within(form).getByRole("switch", { name: "Approve new servers before they appear" }));
     await user.click(within(form).getByRole("button", { name: "Create install command" }));
     expect(await within(form).findByRole("alert")).toHaveTextContent("Creating the install command failed.");
     const post = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
@@ -315,7 +315,7 @@ describe("TokensAdmin", () => {
     expect(within(install).getByLabelText(/^Linux/)).toHaveTextContent(
       `| sudo MF_ROLE=relay MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
     );
-    await user.click(within(install).getByRole("checkbox", { name: /package mirrors/ }));
+    await user.click(within(install).getByRole("switch", { name: /package mirrors/ }));
     expect(within(install).getByLabelText(/^Linux/)).toHaveTextContent("MF_ROLE=relay MF_MIRROR=1 MF_SERVER=");
     expect(within(panel).queryByRole("group", { name: "Install the agent" })).not.toBeInTheDocument();
     const post = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
@@ -375,7 +375,7 @@ describe("TokensAdmin", () => {
     expect(linux).not.toHaveTextContent("; id");
 
     // Off by default; checked, both lines let the web interface turn AI commands on (ADR-0098).
-    const fromWeb = within(install).getByRole("checkbox", { name: /Allow AI commands to be turned on from the web interface/ });
+    const fromWeb = within(install).getByRole("switch", { name: /Allow AI commands to be turned on from the web interface/ });
     expect(fromWeb).not.toBeChecked();
     expect(linux).not.toHaveTextContent("MF_AI_COMMANDS_FROM_WEB");
     await user.click(fromWeb);
@@ -634,7 +634,7 @@ describe("TokensAdmin", () => {
     expect(screen.getByRole("region", { name: "Tokens" })).toHaveTextContent("1 pending");
     expect(screen.queryByRole("row", { name: /web-02/ })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("checkbox", { name: "Hide used and expired" }));
+    await user.click(screen.getByRole("switch", { name: "Hide used and expired" }));
     const used = screen.getByRole("row", { name: /web-02/ });
     expect(within(used).queryByRole("button")).not.toBeInTheDocument();
     expect(used).toHaveTextContent(/Used.*used /);

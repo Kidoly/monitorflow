@@ -25,6 +25,7 @@ import { Missing } from "@/components/ui/Missing";
 import { Page } from "@/components/ui/Page";
 import { EmptyState, ErrorState, LoadingBlock, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
+import { Switch } from "@/components/ui/Switch";
 
 import styles from "./AdminPages.module.css";
 import { ProbeSelect } from "./AddDevice";
@@ -196,12 +197,8 @@ export function ScanForm({
           ))}
         </select>
       </label>
-      <label className={styles.check}>
-        <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} /> {t("discovery.form.notify")}
-      </label>
-      <label className={styles.check}>
-        <input type="checkbox" checked={snmp} onChange={(e) => setSnmp(e.target.checked)} /> {t("discovery.form.snmp")}
-      </label>
+      <Switch checked={notify} onChange={setNotify} label={t("discovery.form.notify")} />
+      <Switch checked={snmp} onChange={setSnmp} label={t("discovery.form.snmp")} />
       <span className={styles.sectionNote}>{t("discovery.form.snmpHint")}</span>
       {snmp && (
         <fieldset className={styles.panel} aria-label={t("discovery.form.snmp")}>
@@ -210,10 +207,7 @@ export function ScanForm({
         </fieldset>
       )}
       {scan?.snmp && !snmp && (
-        <label className={styles.check}>
-          <input type="checkbox" checked={removeSnmp} onChange={(e) => setRemoveSnmp(e.target.checked)} />{" "}
-          {t("discovery.form.removeSnmp")}
-        </label>
+        <Switch checked={removeSnmp} onChange={setRemoveSnmp} label={t("discovery.form.removeSnmp")} />
       )}
       <p className={styles.sectionNote}>{t("discovery.form.polite")}</p>
       <div className={styles.formFoot}>

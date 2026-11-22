@@ -11,7 +11,7 @@ export function upstreamText(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
-/** What retention keeps (ADR-0074), for the Mirrors pages. */
+/** What retention keeps (ADR-0074), for the Linux mirrors pages. */
 export function retentionText(keep: number): string {
   return t("mirrors.retention", { keep });
 }
@@ -87,4 +87,9 @@ export function durationText(ms: number): string {
   if (s < 60) return `${s} ${sec}`;
   if (s < 3600) return `${Math.floor(s / 60)} ${min} ${pad(s % 60)} ${sec}`;
   return `${Math.floor(s / 3600)} ${hour} ${pad(Math.floor((s % 3600) / 60))} ${min}`;
+}
+
+/** What Sync now does to `mirror`, as a tooltip: a snapshot follows unless the mirror publishes them by hand. */
+export function syncHint(mirror: Pick<Mirror, "auto_snapshot">): string {
+  return mirror.auto_snapshot ? t("mirrors.syncNow.hint") : t("mirrors.syncNow.hintManual");
 }

@@ -705,6 +705,66 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn several_people_on_call_at_once_are_all_told_and_covered_one_by_one(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let a = place(&pool, "acme").await;
+        user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
+        let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
+        let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
+        let carol = user(&pool, "carol", Role::Operator, GrantScope::Customer(a.customer)).await;
+        let dan = user(&pool, "dan", Role::Operator, GrantScope::Customer(a.customer)).await;
+        let inbox = Inbox::start().await;
+        for (id, name) in [(alice, "alice"), (bob, "bob"), (carol, "carol"), (dan, "dan")] {
+            inbox.contact(&pool, id, name).await;
+        }
+        let cookie = login(&pool, "boss").await;
+        let request = |per: u32, members: Vec<Uuid>| json!({
+            "name": "Pairs", "customer_id": a.customer, "time_zone": "UTC",
+            "rotation": "weekly", "handoff_time": "09:00", "handoff_day": 1,
+            "members": members, "people_per_turn": per,
+        });
+        // More at once than people, or over 5, is refused.
+        for bad in [request(3, vec![alice, bob]), request(6, vec![alice, bob])] {
+            let (status, body, _) = call(&pool, "POST", SCHEDULES, Some(&cookie), Some(bad)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        }
+        let (status, body, _) = call(
+            &pool, "POST", SCHEDULES, Some(&cookie), Some(request(2, vec![alice, bob, carol, dan])),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["people_per_turn"], 2);
+        let names = |list: &Value| -> Vec<String> {
+            list.as_array().unwrap().iter().map(|t| t["username"].as_str().unwrap().to_owned()).collect()
+        };
+        assert_eq!(names(&body["now_all"]), ["alice", "bob"]);
+        assert_eq!(names(&body["next_all"]), ["carol", "dan"]);
+        assert_eq!(body["now"]["username"], "alice");
+        assert_eq!(body["turns"][1]["seat"], 1);
+
+        // Both are told of one alert.
+        open(&pool, a.server).await;
+        dispatcher(&pool).pass().await.unwrap();
+        assert_eq!(inbox.who(), ["alice", "bob"]);
+
+        // Dan covers Bob's place only; a place past the second is refused.
+        let id = body["id"].as_str().unwrap().to_owned();
+        let overrides = format!("{SCHEDULES}/{id}/overrides");
+        let cover = |seat: u32| json!({
+            "user_id": dan, "seat": seat, "ends_at": Utc::now() + TimeDelta::hours(5),
+        });
+        let (status, body, _) = call(&pool, "POST", &overrides, Some(&cookie), Some(cover(2))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let (status, body, _) = call(&pool, "POST", &overrides, Some(&cookie), Some(cover(1))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(names(&body["now_all"]), ["alice", "dan"]);
+        assert_eq!(body["overrides"][0]["seat"], 1);
+        open(&pool, a.server).await;
+        dispatcher(&pool).pass().await.unwrap();
+        assert_eq!(inbox.who(), ["alice", "dan"]);
+    }
+
+    #[sqlx::test]
     async fn editing_a_schedule_keeps_who_is_on_call_now(pool: PgPool) {
         monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
@@ -874,6 +934,7 @@ fn the_rotation_is_read_in_the_schedules_own_zone() {
         anchor: "2027-03-12".parse().unwrap(),
         anchor_position: 0,
         members: vec![None],
+        per_turn: 1,
     };
     assert_eq!(
         rota.handoff(0),

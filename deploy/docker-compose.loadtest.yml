@@ -47,7 +47,7 @@ services:
     volumes: ["/storage", "${LOADTEST_STORAGE_TLS_DIR:?run scripts/load-test.sh}:/tls:ro"]
 
   victorialogs:
-    image: victoriametrics/victoria-logs:v1.53.0
+    image: victoriametrics/victoria-logs:v1.54.0
     command: *store-tls
     ports: ["127.0.0.1:${LOADTEST_VICTORIALOGS_PORT:-29428}:9428"]
     volumes: ["/storage", "${LOADTEST_STORAGE_TLS_DIR:?run scripts/load-test.sh}:/tls:ro"]

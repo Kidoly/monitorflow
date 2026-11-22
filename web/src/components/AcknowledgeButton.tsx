@@ -12,9 +12,9 @@ import styles from "./AcknowledgeButton.module.css";
 export const MAX_NOTE = 500;
 
 /**
- * "Acknowledge", then in place, never in a popover: a note field ("What
- * are you doing about it?"), Cancel and Acknowledge, which stays disabled
- * until the note says something (ADR-0130). Focus goes to the field on
+ * "Acknowledge", then in place, never in a popover: an optional note
+ * field ("What are you doing about it?", ADR-0166), Cancel and
+ * Acknowledge. Enter acknowledges at once. Focus goes to the field on
  * open and back to the button on Cancel or Escape. `onAcknowledge`
  * rejecting keeps the form open with its error.
  */
@@ -71,7 +71,6 @@ export function AcknowledgeButton({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!note.trim()) return;
     setBusy(true);
     setError(null);
     try {
@@ -109,7 +108,6 @@ export function AcknowledgeButton({
           value={note}
           maxLength={MAX_NOTE}
           placeholder={t("incidents.button.placeholder")}
-          required
           disabled={busy}
           onChange={(e) => setNote(e.target.value)}
         />
@@ -117,7 +115,7 @@ export function AcknowledgeButton({
       <Button size="small" onClick={cancel} disabled={busy}>
         {t("incidents.button.cancel")}
       </Button>
-      <button type="submit" className={buttonClass({ variant: "k", size: "small" })} disabled={busy || !note.trim()}>
+      <button type="submit" className={buttonClass({ variant: "k", size: "small" })} disabled={busy}>
         {busy ? t("incidents.button.busy") : label}
       </button>
       {error && (

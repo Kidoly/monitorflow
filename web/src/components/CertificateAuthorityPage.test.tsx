@@ -71,7 +71,7 @@ describe("CertificateAuthorityPage", () => {
     expect(screen.getByRole("form", { name: "Start an emergency change?" })).toHaveTextContent(/may have leaked/);
     const confirm = screen.getByRole("button", { name: "Start the emergency change" });
     expect(confirm).toBeDisabled();
-    await user.click(screen.getByRole("checkbox", { name: /must be installed again/ }));
+    await user.click(screen.getByRole("switch", { name: /must be installed again/ }));
     await user.click(confirm);
     expect(posted(fetchMock, `${URL}/rotation`)).toEqual([JSON.stringify({ emergency: true })]);
     expect(await screen.findByRole("alert")).toHaveTextContent(
