@@ -816,6 +816,16 @@ mod tests {
                 "/api/remediation/approvals/{id}/approve",
                 Some(Area::Remediation),
             ),
+            (
+                &post,
+                "/api/remediation/alerts/{id}/run",
+                Some(Area::Remediation),
+            ),
+            (
+                &get,
+                "/api/remediation/alerts/{id}",
+                Some(Area::Remediation),
+            ),
             (&post, "/api/dashboard-data", Some(Area::Dashboards)),
             (&post, "/api/display-links", Some(Area::Dashboards)),
             (&post, "/api/tokens", Some(Area::Administration)),

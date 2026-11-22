@@ -8,7 +8,7 @@
 use utoipa::OpenApi;
 
 use super::openapi::{Common, ErrorBody};
-use super::{remediation, remediation_events, remediation_incidents};
+use super::{remediation, remediation_events, remediation_incidents, remediation_runs};
 use crate::remediation::audit::{ChainReport, EventKind, IncidentState, StoredEvent};
 use crate::remediation::risk::store::{Kind, Policy, StoredRule};
 use crate::remediation::risk::{Decision, Rule, Shell, Tier};
@@ -17,7 +17,7 @@ use crate::remediation::risk::{Decision, Rule, Shell, Tier};
 #[openapi(
     paths(
         list_rules, create_rule, delete_rule, list_policies, set_policy, classify,
-        list_incidents, incident, list_events,
+        list_incidents, incident, list_events, run_status, run,
     ),
     components(schemas(
         Kind, StoredRule, Policy, Decision, Rule, Shell, Tier, IncidentState, EventKind,
@@ -424,3 +424,68 @@ fn incident() {}
         "next_cursor": "MjAyNi0xMS0wNVQwMzoxMzowMlo"
     }))))]
 fn list_events() {}
+
+/// Whether AI remediation can run again on an alert
+///
+/// The alert's remediations so far, one remediation incident per attempt,
+/// and whether the caller may start a new one now with
+/// `POST .../run`. When not, `blocked` says why with a stable code and
+/// `reason` in English; a server that reports refusing AI commands is
+/// `commands_refused`, with the refusal's code in `refusal`, so the reason
+/// shows before anyone starts an attempt that could only stop on it.
+///
+/// The loop starts an attempt by itself, once, when the latest one stopped
+/// because the server refused AI commands and the server accepts them
+/// since (ADR-0165).
+///
+/// Needs any role on the alert's site and the key area "remediation".
+#[utoipa::path(get, path = "/api/v1/remediation/alerts/{id}", tag = "remediation",
+    params(("id" = uuid::Uuid, Path, description = "The alert, an incident of `/incidents`")),
+    responses(
+        (status = 200, description = "Where its remediations stand", body = remediation_runs::RunStatus, example = json!({
+            "alert_incident_id": "2f3a4b5c-6d7e-4f80-9a1b-2c3d4e5f6a7b",
+            "attempts": 1,
+            "latest_id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+            "latest_state": "escalated",
+            "can_run": false,
+            "blocked": "commands_refused",
+            "reason": "AI commands are off on this server; run the installer there with MF_ALLOW_COMMANDS=1 to allow them",
+            "refusal": "commands_off"
+        })),
+        (status = 404, body = ErrorBody, description = "`not_found`: no such alert, or one on a site \
+the caller does not read"),
+    ))]
+fn run_status() {}
+
+/// Run AI remediation again on an alert
+///
+/// Opens a new remediation incident for an open alert whose remediations
+/// are all closed (escalated, failed, or resolved while the alert stayed
+/// open), or that never had one. The remediation loop drives it on its next
+/// poll, with the configured limits, and the AI gets how the earlier
+/// attempts ended in its context. Its first event is a `note` with `code`
+/// `attempt`, `trigger` `person`, the user as actor, its `attempt` number
+/// and `previous`, how the one before ended; the audit log records
+/// `remediation.run`.
+///
+/// Needs an approver or administrator role on the alert's site and the key
+/// area "remediation".
+#[utoipa::path(post, path = "/api/v1/remediation/alerts/{id}/run", tag = "remediation",
+    params(("id" = uuid::Uuid, Path, description = "The alert, an incident of `/incidents`")),
+    responses(
+        (status = 201, description = "The attempt opened", body = remediation_runs::RunStarted, example = json!({
+            "id": "6e7f8091-a2b3-4c4d-9e5f-6a7b8c9d0e1f",
+            "alert_incident_id": "2f3a4b5c-6d7e-4f80-9a1b-2c3d4e5f6a7b",
+            "attempt": 2,
+            "previous_id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+            "state": "open"
+        })),
+        (status = 403, body = ErrorBody, description = "`forbidden`: the caller is no approver on the \
+alert's site"),
+        (status = 404, body = ErrorBody, description = "`not_found`: no such alert, or one on a site \
+the caller does not read"),
+        (status = 409, body = ErrorBody, description = "`conflict`, with `error` saying why: the alert \
+is resolved, it is on a device or an offline host, an attempt is running or waits for approval, AI is \
+off, or the server reports refusing AI commands (with how to allow them)"),
+    ))]
+fn run() {}

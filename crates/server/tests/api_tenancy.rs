@@ -1771,6 +1771,18 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let (_, body) = ctx.call(method, path, None).await;
             assert!(Ctx::mentions(&body, a.remediation), "{body}");
         }
+        ("GET", "/api/remediation/alerts/{id}") | ("POST", "/api/remediation/alerts/{id}/run") => {
+            let uri = path.replace("{id}", &b.incident.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM remediation_incidents WHERE alert_incident_id = $1",
+            )
+            .bind(b.incident)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            assert!(count <= 1, "a new attempt opened across customers: {count}");
+        }
         ("GET", "/api/remediation/incidents/{id}") => {
             let uri = format!("/api/remediation/incidents/{}", b.remediation);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);

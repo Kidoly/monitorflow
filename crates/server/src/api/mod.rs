@@ -172,6 +172,8 @@
 //! | POST | `/api/remediation/approvals/{id}/approve` | approver, see below | body `{"command"?}`; 200 [`approvals::DecisionView`]; 409 once decided, past the deadline, or when the server refuses these commands (ADR-0076) |
 //! | POST | `/api/remediation/approvals/{id}/reject` | approver | body `{"reason"}`; 200 [`approvals::DecisionView`]; 409 as for approve |
 //! | GET | `/api/remediation/events` | any role | [`remediation_events::EventList`], see below |
+//! | GET | `/api/remediation/alerts/{id}` | read | [`remediation_runs::RunStatus`]: the alert's attempts and whether the user may start one now (ADR-0165) |
+//! | POST | `/api/remediation/alerts/{id}/run` | approver | 201 [`remediation_runs::RunStarted`]: a new remediation of the open alert; 409 when the alert is resolved or has no agent, one is in progress, AI is off, or the server refuses AI commands |
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
 //! | GET | `/api/servers/{id}/thresholds` | read | [`thresholds::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
@@ -471,7 +473,10 @@
 //!
 //! # Remediation incidents
 //!
-//! Read-only: the AI remediation loop owns them (ADR-0042).
+//! Read-only: the AI remediation loop owns them (ADR-0042), except that
+//! an approver may open a new attempt on an open alert with
+//! `POST /api/remediation/alerts/{id}/run` (ADR-0165). An alert can have
+//! several, one per attempt, the latest first.
 //! `GET /api/remediation/incidents` takes optional `state` (`open`,
 //! `running`, `awaiting_approval`, `resolved`, `escalated`, `failed`),
 //! `customer_id`, `site_id`, `server_id`, `alert_incident_id`, `limit` (1
@@ -789,6 +794,7 @@ pub mod release_import;
 pub mod remediation;
 pub mod remediation_events;
 pub mod remediation_incidents;
+pub mod remediation_runs;
 pub mod report_schedules;
 pub mod revoke;
 pub mod roles;
@@ -878,6 +884,8 @@ pub struct ApiSettings {
     pub web_url: String,
     /// `[ai]`, which wins over the settings of the web interface (ADR-0064).
     pub ai: ai::AiSettings,
+    /// `[remediation]`: the limits of an attempt a person starts (ADR-0165).
+    pub remediation: monitorflow_common::config::RemediationConfig,
     /// The public keys license keys are checked with (ADR-0100): the
     /// built-in ones, or a throwaway key in tests.
     #[cfg(feature = "enterprise")]
@@ -899,6 +907,7 @@ impl ApiSettings {
             auto_update_enabled: config.auto_update.enabled,
             web_url: config.web_base_url(),
             ai: ai::AiSettings::from_config(config),
+            remediation: config.remediation.clone(),
             #[cfg(feature = "enterprise")]
             license_keys: crate::edition::Verifier::built_in(),
             proxmox_enabled: config.proxmox.enabled,
@@ -1314,6 +1323,14 @@ pub fn router(state: ApiState) -> Router {
             post(approvals::reject),
         )
         .route("/api/remediation/events", get(remediation_events::list))
+        .route(
+            "/api/remediation/alerts/{id}",
+            get(remediation_runs::status),
+        )
+        .route(
+            "/api/remediation/alerts/{id}/run",
+            post(remediation_runs::run),
+        )
         .route("/api/devices", post(devices::create))
         .route("/api/devices/templates", get(devices::templates))
         .route("/api/devices/detect", post(devices::detect))
