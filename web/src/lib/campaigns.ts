@@ -38,12 +38,29 @@ export const MAX_TTL_S = 7 * 86_400;
 /** ISO weekdays, Monday 1 to Sunday 7. */
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
+/** Months, January 1 to December 12. */
+export const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
+
+/** Weeks of a month: the first to the fourth, and 5 for the last. */
+export const MONTH_WEEKS = [1, 2, 3, 4, 5] as const;
+
+const locale = () => (activeLocale() === "en" ? "en-US" : activeLocale());
+
+/** The long name of ISO weekday `day`: "Tuesday", "mardi". */
+export function weekdayLong(day: number): string {
+  return new Date(2026, 0, 4 + day).toLocaleString(locale(), { weekday: "long" });
+}
+
+/** The name of month `month` (1 is January): "January", or "Jan" when `short`. */
+export function monthName(month: number, short = false): string {
+  return new Date(2026, month - 1, 1).toLocaleString(locale(), { month: short ? "short" : "long" });
+}
+
 /** The short name of ISO weekday `day` in the active language: "Mon", "lun.". */
 export function weekdayName(day: number): string {
   if (!(Number.isInteger(day) && day >= 1 && day <= 7)) return String(day);
   // 5 January 2026 is a Monday. American English says "Tue", where British English may say "Tues".
-  const locale = activeLocale() === "en" ? "en-US" : activeLocale();
-  return new Date(2026, 0, 4 + day).toLocaleString(locale, { weekday: "short" });
+  return new Date(2026, 0, 4 + day).toLocaleString(locale(), { weekday: "short" });
 }
 
 export interface WaveDraft {
@@ -54,8 +71,17 @@ export interface WaveDraft {
 }
 
 export interface WindowDraft {
-  kind: "weekly" | "once";
+  /** `monthly` and `yearly` are both monthly windows of the API; yearly has one month. */
+  kind: "weekly" | "monthly" | "yearly" | "once";
   weekdays: number[];
+  /** Monthly and yearly: on a day of the month, or on a weekday of a week of it. */
+  monthMode: "day" | "weekday";
+  /** As typed. */
+  monthDay: string;
+  monthWeek: number;
+  weekday: number;
+  /** The months it opens in; the first one for a yearly window. */
+  months: number[];
   start: string;
   end: string;
   timezone: string;
@@ -115,7 +141,54 @@ export interface CampaignDraft {
 }
 
 export function newWindow(kind: WindowDraft["kind"] = "weekly"): WindowDraft {
-  return { kind, weekdays: [6, 7], start: "22:00", end: "04:00", timezone: browserTimeZone(), startsAt: "", endsAt: "" };
+  return {
+    kind,
+    weekdays: [6, 7],
+    monthMode: "day",
+    monthDay: "1",
+    monthWeek: 1,
+    weekday: 6,
+    months: kind === "yearly" ? [1] : [...MONTHS],
+    start: "22:00",
+    end: "04:00",
+    timezone: browserTimeZone(),
+    startsAt: "",
+    endsAt: "",
+  };
+}
+
+/** `window` as another kind, keeping its hours, zone and day. */
+export function changeKind(window: WindowDraft, kind: WindowDraft["kind"]): WindowDraft {
+  const months = kind === "yearly" ? [window.months[0] ?? 1] : kind === "monthly" ? [...MONTHS] : window.months;
+  return { ...window, kind, months: window.kind === kind ? window.months : months };
+}
+
+function windowRequest(w: WindowDraft): CampaignWindow {
+  if (w.kind === "once") {
+    return { kind: "once", starts_at: localToIso(w.startsAt) ?? "", ends_at: localToIso(w.endsAt) ?? "" };
+  }
+  const hours = { start: w.start, end: w.end, timezone: w.timezone.trim() };
+  if (w.kind === "weekly") return { kind: "weekly", weekdays: [...w.weekdays].sort((a, b) => a - b), ...hours };
+  const day =
+    w.monthMode === "day" ? { month_day: Number(w.monthDay) } : { month_week: w.monthWeek, weekday: w.weekday };
+  const months = w.kind === "yearly" ? w.months.slice(0, 1) : [...w.months].sort((a, b) => a - b);
+  return { kind: "monthly", ...day, months, ...hours };
+}
+
+function windowDraft(w: CampaignWindow): WindowDraft {
+  if (w.kind === "once") return { ...newWindow("once"), startsAt: isoToLocal(w.starts_at), endsAt: isoToLocal(w.ends_at) };
+  const hours = { start: w.start, end: w.end, timezone: w.timezone };
+  if (w.kind === "weekly") return { ...newWindow("weekly"), weekdays: w.weekdays, ...hours };
+  const byDay = w.month_day !== null && w.month_day !== undefined;
+  return {
+    ...newWindow(w.months.length === 1 ? "yearly" : "monthly"),
+    monthMode: byDay ? "day" : "weekday",
+    monthDay: byDay ? String(w.month_day) : "1",
+    monthWeek: w.month_week ?? 1,
+    weekday: w.weekday ?? 6,
+    months: w.months,
+    ...hours,
+  };
 }
 
 export function emptyDraft(customerId = ""): CampaignDraft {
@@ -146,11 +219,7 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
         ? { size: Number(wave.value) }
         : { percent: Number(wave.value) },
   );
-  const windows: CampaignWindow[] = draft.windows.map((w) =>
-    w.kind === "weekly"
-      ? { kind: "weekly", weekdays: [...w.weekdays].sort((a, b) => a - b), start: w.start, end: w.end, timezone: w.timezone.trim() }
-      : { kind: "once", starts_at: localToIso(w.startsAt) ?? "", ends_at: localToIso(w.endsAt) ?? "" },
-  );
+  const windows = draft.windows.map(windowRequest);
   const agent = draft.update === "agent";
   const os = agent || includesOs(draft.sources);
   const apps = !agent && includesApps(draft.sources);
@@ -232,11 +301,7 @@ export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {
     ttl: campaign.command_ttl_s,
     thresholdValue: String(campaign.failure_threshold.value),
     thresholdUnit: campaign.failure_threshold.unit,
-    windows: campaign.windows.map((w): WindowDraft =>
-      w.kind === "weekly"
-        ? { ...newWindow("weekly"), weekdays: w.weekdays, start: w.start, end: w.end, timezone: w.timezone }
-        : { ...newWindow("once"), startsAt: isoToLocal(w.starts_at), endsAt: isoToLocal(w.ends_at) },
-    ),
+    windows: campaign.windows.map(windowDraft),
     ...(campaign.sources && { pin: campaign.sources }),
   };
 }
@@ -371,9 +436,17 @@ export function validateCampaign(request: CampaignRequest, targets: string[]): s
   if (request.windows.length > MAX_WINDOWS) errors.push(t("campaigns.check.windowCount", { max: MAX_WINDOWS }));
   request.windows.forEach((w, i) => {
     const windowName = t("campaigns.check.window", { number: i + 1 });
-    if (w.kind === "weekly") {
-      if (w.weekdays.length === 0 || w.weekdays.some((d) => !(Number.isInteger(d) && d >= 1 && d <= 7))) {
-        errors.push(t("campaigns.check.weekday", { window: windowName }));
+    if (w.kind !== "once") {
+      if (w.kind === "weekly") {
+        if (w.weekdays.length === 0 || w.weekdays.some((d) => !(Number.isInteger(d) && d >= 1 && d <= 7))) {
+          errors.push(t("campaigns.check.weekday", { window: windowName }));
+        }
+      } else {
+        const day = w.month_day;
+        if (day !== undefined && day !== null && !(Number.isInteger(day) && day >= 1 && day <= 31)) {
+          errors.push(t("campaigns.check.monthDay", { window: windowName }));
+        }
+        if (w.months.length === 0) errors.push(t("campaigns.check.months", { window: windowName }));
       }
       if (!TIME.test(w.start) || w.start === "24:00") errors.push(t("campaigns.check.start", { window: windowName }));
       if (!TIME.test(w.end)) errors.push(t("campaigns.check.end", { window: windowName }));
@@ -457,11 +530,37 @@ export function weekdaysText(weekdays: number[]): string {
   return weekdays.map(weekdayName).join(", ");
 }
 
+/** When a recurring window opens: "Sat, Sun", "Second Tuesday of each month", "Every year on December 31". */
+export function recurrenceText(window: Exclude<CampaignWindow, { kind: "once" }>): string {
+  if (window.kind === "weekly") return weekdaysText(window.weekdays);
+  const { months } = window;
+  const day = window.month_day ?? null;
+  // French writes the first of a month "1er".
+  const nth = (d: number) => (activeLocale() === "fr" && d === 1 ? "1er" : String(d));
+  if (months.length === 1 && day !== null) {
+    const date =
+      activeLocale() === "fr"
+        ? `${nth(day)} ${monthName(months[0]!)}`
+        : new Date(2026, months[0]! - 1, day).toLocaleString(locale(), { day: "numeric", month: "long" });
+    return t("campaigns.window.yearDay", { date });
+  }
+  const when =
+    months.length === 12
+      ? t("campaigns.window.eachMonth")
+      : months.map((m) => monthName(m, months.length > 1)).join(", ");
+  if (day !== null) return t("campaigns.window.monthDay", { day: nth(day), months: when });
+  return t("campaigns.window.monthWeek", {
+    week: t(`campaigns.window.week${window.month_week ?? 1}` as "campaigns.window.week1"),
+    weekday: weekdayLong(window.weekday ?? 1),
+    months: when,
+  });
+}
+
 export function describeWindow(window: CampaignWindow): string {
   if (window.kind === "once") {
     return t("campaigns.window.once", { start: formatDateTime(window.starts_at), end: formatDateTime(window.ends_at) });
   }
-  return `${weekdaysText(window.weekdays)} ${window.start}–${window.end} (${window.timezone})`;
+  return `${recurrenceText(window)} ${window.start}–${window.end} (${window.timezone})`;
 }
 
 /** Tints of campaign states; their words come from `campaignStateWord`. */
@@ -524,8 +623,8 @@ export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources
 
 /** A window in a table cell: "Sat, Sun 22:00–04:00", "23 Oct 02:00–05:00". */
 export function shortWindow(window: CampaignWindow): string {
-  if (window.kind === "weekly") {
-    return `${weekdaysText(window.weekdays)} ${window.start}–${window.end}`;
+  if (window.kind !== "once") {
+    return `${recurrenceText(window)} ${window.start}–${window.end}`;
   }
   const start = new Date(window.starts_at);
   const end = new Date(window.ends_at);

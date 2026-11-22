@@ -2738,6 +2738,21 @@ export type CampaignWindow =
       /** IANA name, like `Europe/Paris`. */
       timezone: string;
     }
+  | {
+      /** ADR-0167: a day of the month, or a weekday of a week of it, in `months`; one month is yearly. */
+      kind: "monthly";
+      /** 1 to 31; or null with `month_week` and `weekday`. */
+      month_day?: number | null;
+      /** 1 to 4, 5 for the last. */
+      month_week?: number | null;
+      /** ISO weekday. */
+      weekday?: number | null;
+      /** 1 is January; the API answers all twelve for every month. */
+      months: number[];
+      start: string;
+      end: string;
+      timezone: string;
+    }
   | { kind: "once"; starts_at: string; ends_at: string };
 
 /** Explicit servers, a number of servers, or a percentage of all targets (rounded up). */

@@ -16,6 +16,7 @@ import {
   describeWindow,
   draftFromCampaign,
   emptyDraft,
+  newWindow,
   planWaves,
   searchServers,
   updateSources,
@@ -107,7 +108,7 @@ describe("toRequest", () => {
       packages: "openssl,  libssl3\ncurl",
       thresholdValue: "10",
       thresholdUnit: "percent",
-      windows: [{ kind: "weekly", weekdays: [7, 6], start: "22:00", end: "04:00", timezone: " UTC ", startsAt: "", endsAt: "" }],
+      windows: [{ ...newWindow("weekly"), weekdays: [7, 6], timezone: " UTC " }],
     });
     expect(request).toEqual({
       customer_id: "c1",
@@ -130,7 +131,7 @@ describe("toRequest", () => {
   });
 
   it("sends a one-time window's local times as ISO times, empty when not given", () => {
-    const window = { kind: "once" as const, weekdays: [], start: "", end: "", timezone: "UTC" };
+    const window = newWindow("once");
     const windows = toRequest({
       ...emptyDraft("c1"),
       windows: [
@@ -349,5 +350,51 @@ describe("update sources", () => {
     expect(none).toMatchObject({ include_os: false });
     expect(none.third_party).toBeUndefined();
     expect(validateCampaign(none, ["s1"])).toContain("Choose operating system updates, third-party apps or both.");
+  });
+});
+
+describe("monthly and yearly windows (ADR-0167)", () => {
+  const monthly = { start: "22:00", end: "02:00", timezone: "Europe/Paris" };
+  it("describe the day they open on", () => {
+    const all = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    expect(describeWindow({ kind: "monthly", month_week: 2, weekday: 2, months: all, ...monthly })).toBe(
+      "Second Tuesday of each month 22:00–02:00 (Europe/Paris)",
+    );
+    expect(shortWindow({ kind: "monthly", month_week: 5, weekday: 5, months: [3, 6], ...monthly })).toBe(
+      "Last Friday of Mar, Jun 22:00–02:00",
+    );
+    expect(shortWindow({ kind: "monthly", month_day: 15, month_week: null, weekday: null, months: all, ...monthly })).toBe(
+      "Day 15 of each month 22:00–02:00",
+    );
+    expect(shortWindow({ kind: "monthly", month_day: 31, months: [12], ...monthly })).toBe("Every year on December 31 22:00–02:00");
+    expect(shortWindow({ kind: "monthly", month_week: 1, weekday: 1, months: [9], ...monthly })).toBe(
+      "First Monday of September 22:00–02:00",
+    );
+    setActiveLocale("fr");
+    try {
+      expect(shortWindow({ kind: "monthly", month_week: 2, weekday: 2, months: all, ...monthly })).toBe(
+        "Deuxième mardi de chaque mois 22:00–02:00",
+      );
+      expect(shortWindow({ kind: "monthly", month_day: 1, months: [1], ...monthly })).toBe("Chaque année le 1er janvier 22:00–02:00");
+    } finally {
+      setActiveLocale("en");
+    }
+  });
+
+  it("go to the API and back, and are checked", () => {
+    const yearly = { ...newWindow("yearly"), months: [12], monthDay: "31" };
+    const weekday = { ...newWindow("monthly"), monthMode: "weekday" as const, monthWeek: 5, weekday: 5, months: [3, 1] };
+    const request = toRequest({ ...emptyDraft("c1"), windows: [yearly, weekday] });
+    expect(request.windows).toEqual([
+      { kind: "monthly", month_day: 31, months: [12], start: "22:00", end: "04:00", timezone: expect.any(String) },
+      { kind: "monthly", month_week: 5, weekday: 5, months: [1, 3], start: "22:00", end: "04:00", timezone: expect.any(String) },
+    ]);
+    const back = draftFromCampaign(detail({ windows: request.windows }));
+    expect(back.windows[0]).toMatchObject({ kind: "yearly", monthMode: "day", monthDay: "31", months: [12] });
+    expect(back.windows[1]).toMatchObject({ kind: "monthly", monthMode: "weekday", monthWeek: 5, weekday: 5 });
+    const bad = toRequest({ ...emptyDraft("c1"), windows: [{ ...newWindow("monthly"), monthDay: "0", months: [] }] });
+    expect(validateCampaign(bad, ["s1"])).toEqual(
+      expect.arrayContaining(["Window 1: the day of the month is 1 to 31.", "Window 1: choose at least one month."]),
+    );
   });
 });
