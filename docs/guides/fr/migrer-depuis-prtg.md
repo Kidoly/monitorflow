@@ -22,6 +22,7 @@ Ressaisir des centaines d'équipements, de capteurs et de limites est la partie 
 | Capteurs d'espace disque et de volume, avec des limites sur un canal de pourcentage libre | Seuil d'espace disque pour ce lecteur ou point de montage | Approchée : lu comme espace utilisé |
 | Capteur de service Windows | Contrôle du service Windows, critique quand il s'arrête | Exacte |
 | Capteur de port | Contrôle de port sur l'adresse de l'équipement | Approchée : vérifié par l'agent du serveur, pas depuis une sonde |
+| Capteurs Bureau à distance, SMTP, IMAP et POP3 | Contrôle de port de leur port sur l'adresse de l'équipement | Approchée : MonitorFlow vérifie que le port accepte les connexions, sans parler le protocole |
 | Capteurs HTTP et HTTP avancé | Contrôle de site web de la page : sa méthode, le mot-clé qu'elle doit ou ne doit pas contenir, les en-têtes personnalisés et le délai, avec les limites de temps de réponse en seuil | Exacte ; approchée pour un POST, un mot-clé donné en expression régulière ou une authentification Windows. Le mot de passe n'est pas importé : saisissez-le ensuite dans le contrôle |
 | Capteur de certificat SSL | Contrôle de site web de son hôte et de son port, avec ses limites en jours sur les jours restants. Une page du même site déjà contrôlée les reprend à sa place | Approchée : le contrôle demande aussi la page, quelle que soit sa réponse |
 | Capteurs de journal d'événements | Contrôle du journal d'événements avec le même journal, les mêmes niveaux, sources et ID d'événement | Exacte, ou approchée quand un filtre sur le message ou une limite de nombre ne peut pas être repris |
@@ -40,7 +41,9 @@ Il faut être administrateur du site où vont les serveurs, et avoir l'un de ces
 - **Un nom d'utilisateur et son passhash.** Dans PRTG, ouvrez **Setup › Account Settings › My Account** et cliquez sur **Show passhash**.
 - **Le fichier de configuration**, `PRTG Configuration.dat`, copié depuis `C:\ProgramData\Paessler\PRTG Network Monitor\` sur le serveur central PRTG. Il contient tous les réglages, limites des canaux comprises ; ses heures de maintenance sont lues en UTC, car le fichier ne dit pas le fuseau horaire de PRTG.
 
-Le jeton ou le passhash ne sert qu'à cette lecture : MonitorFlow ne le garde jamais et ne l'écrit dans aucun journal. Utilisez une adresse `https://` pour qu'il ne circule pas en clair.
+Si PRTG est derrière un proxy inverse ou un pare-feu applicatif web qui demande un utilisateur et un mot de passe (authentification HTTP basique) avant la connexion de PRTG, remplissez aussi **Utilisateur du proxy** et **Mot de passe du proxy** (`proxy_user` et `proxy_password` dans l'API). Les deux accompagnent chaque requête, avec le jeton ou le passhash.
+
+Le jeton, le passhash et le mot de passe du proxy ne servent qu'à cette lecture : MonitorFlow ne les garde jamais et ne les écrit dans aucun journal. Utilisez une adresse `https://` pour qu'il ne circule pas en clair.
 
 ## Lire et voir l'aperçu
 

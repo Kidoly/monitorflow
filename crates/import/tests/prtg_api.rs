@@ -16,7 +16,7 @@ use tokio::net::TcpListener;
 const TOKEN: &str = "recorded-token";
 /// The only paths a reader may ask for.
 const READING: &[&str] = &[
-    "/api/getstatus.json",
+    "/api/status.json",
     "/api/table.json",
     "/api/getobjectproperty.htm",
     "/controls/editnotification.htm",
@@ -90,8 +90,14 @@ fn answer(recorded: &BTreeMap<String, Value>, line: &str, seen: &Mutex<Seen>) ->
     }
 }
 
-/// Starts the stand-in; returns its base URL.
+/// Starts the stand-in; returns its base URL. With `proxy`, it is behind
+/// a reverse proxy that refuses requests without that `Authorization`
+/// header, before PRTG sees them.
 async fn stand_in(seen: Arc<Mutex<Seen>>) -> String {
+    stand_in_behind(seen, None).await
+}
+
+async fn stand_in_behind(seen: Arc<Mutex<Seen>>, proxy: Option<&'static str>) -> String {
     let recorded: Arc<BTreeMap<String, Value>> =
         Arc::new(serde_json::from_str(include_str!("fixtures/prtg/api.json")).unwrap());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -112,7 +118,19 @@ async fn stand_in(seen: Arc<Mutex<Seen>>) -> String {
                 }
                 let text = String::from_utf8_lossy(&request);
                 let line = text.lines().next().unwrap().to_owned();
-                let (status, body) = answer(&recorded, &line, &seen);
+                let authorized = proxy.is_none_or(|expected| {
+                    text.lines().any(|l| {
+                        l.split_once(':').is_some_and(|(k, v)| {
+                            k.eq_ignore_ascii_case("authorization") && v.trim() == expected
+                        })
+                    })
+                });
+                let (status, body) = if authorized {
+                    answer(&recorded, &line, &seen)
+                } else {
+                    seen.lock().unwrap().refused += 1;
+                    (401, "Authorization required".into())
+                };
                 let response = format!(
                     "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -163,6 +181,34 @@ async fn a_refused_token_says_so() {
     assert!(matches!(error, ReadError::Refused(_)), "{error}");
     // The token is not in the message.
     assert!(!error.to_string().contains("wrong"));
+}
+
+#[tokio::test]
+async fn a_reverse_proxy_asking_for_basic_authentication() {
+    // "proxy:secret" in base64.
+    const BASIC: &str = "Basic cHJveHk6c2VjcmV0";
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let url = stand_in_behind(seen.clone(), Some(BASIC)).await;
+    let error = Prtg
+        .read(connect(&url, TOKEN), &context())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ReadError::Refused(_)), "{error}");
+
+    let Input::Connect(mut connection) = connect(&url, TOKEN) else {
+        unreachable!()
+    };
+    connection.0.insert("proxy_user".into(), "proxy".into());
+    connection
+        .0
+        .insert("proxy_password".into(), "secret".into());
+    let inventory = Prtg
+        .read(Input::Connect(connection), &context())
+        .await
+        .unwrap();
+    let expected: Value =
+        serde_json::from_str(include_str!("fixtures/prtg/api-inventory.json")).unwrap();
+    assert_eq!(serde_json::to_value(&inventory).unwrap(), expected);
 }
 
 /// Reading a file runs off the runtime: on a runtime of one thread,
