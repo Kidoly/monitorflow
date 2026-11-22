@@ -3868,6 +3868,37 @@ export interface ReportSent {
   recipients: string[];
 }
 
+/** One day of uptime (ADR-0172). */
+export interface UptimeDay {
+  /** Local date, "2026-11-22". */
+  date: string;
+  /** Percent; null when nothing was counted. */
+  availability: number | null;
+  down_seconds: number;
+  maintenance_seconds: number;
+}
+
+/** One service, server, device or check with its windows and daily bars. */
+export interface UptimeRow {
+  kind: "service" | "server" | "device" | "check";
+  id: string;
+  name: string;
+  check: string | null;
+  site_name: string | null;
+  /** Percent over the last 24 hours, 7, 30 and 90 days; null when not measured. */
+  windows: { day: number | null; week: number | null; month: number | null; quarter: number | null };
+  outages: number;
+  /** 90 days, the oldest first, today so far last. */
+  days: UptimeDay[];
+}
+
+/** `GET /api/availability/uptime`. */
+export interface Uptime {
+  at: string;
+  time_zone: string;
+  rows: UptimeRow[];
+}
+
 /** The query of an availability report: a period and, for an MSP, a customer. */
 export interface AvailabilityQuery {
   from: string;
@@ -4293,6 +4324,13 @@ export const api = {
   /** Availability over a period of what the user reads (ADR-0155). */
   availability: (query: AvailabilityQuery, signal?: AbortSignal) =>
     request<AvailabilityReport>(`/api/availability?${availabilityQuery(query)}`, { signal }),
+
+  /** The last 24 hours, 7, 30 and 90 days and 90 daily bars, days cut in `time_zone` (ADR-0172). */
+  uptime: (query: { customer_id?: string | null; time_zone: string }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ time_zone: query.time_zone });
+    if (query.customer_id) params.set("customer_id", query.customer_id);
+    return request<Uptime>(`/api/availability/uptime?${params.toString()}`, { signal });
+  },
 
   /** Business services of the customers the user is granted as a whole. */
   businessServices: (signal?: AbortSignal) => request<{ services: BusinessService[] }>("/api/business-services", { signal }),

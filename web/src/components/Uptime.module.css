@@ -1,0 +1,188 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.row + .row {
+  border-top: 1px solid var(--border);
+}
+
+/* A check sits under its server. */
+.check {
+  padding-left: 30px;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.what {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.name {
+  overflow-wrap: anywhere;
+}
+
+.windows {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(64px, auto));
+  gap: 12px;
+  margin: 0;
+}
+
+.window {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.window dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.window dd {
+  margin: 0;
+}
+
+.percent {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: none;
+}
+
+.percent.up {
+  color: var(--ok);
+}
+
+.percent.minor {
+  color: var(--warn);
+}
+
+.percent.major {
+  color: var(--bad);
+}
+
+.percent.none {
+  color: var(--muted);
+}
+
+.bars {
+  display: flex;
+  gap: 2px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bar {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 2px;
+}
+
+.bar:hover {
+  opacity: 0.75;
+}
+
+.up {
+  background: var(--ok);
+}
+
+.minor {
+  background: var(--warn);
+}
+
+.major {
+  background: var(--bad);
+}
+
+.none {
+  background: var(--border);
+}
+
+/* On a phone, the last 30 days: 90 bars would be a pixel each. */
+@media (max-width: 640px) {
+  .bar:nth-child(-n + 60) {
+    display: none;
+  }
+
+  .windows {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .window {
+    align-items: flex-start;
+  }
+
+  .check {
+    padding-left: 14px;
+  }
+}

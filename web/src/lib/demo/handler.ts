@@ -250,6 +250,21 @@ const ROUTES: [RegExp, Handler][] = [
       services: [], machines, checks: [], maintenance: [],
     };
   }],
+  // Uptime (ADR-0172): the same servers, up every day.
+  [/^\/api\/availability\/uptime$/, (_, q) => {
+    const today = new Date();
+    const days = Array.from({ length: 90 }, (_, i) => {
+      const date = new Date(today.getTime() - (89 - i) * 86_400_000).toISOString().slice(0, 10);
+      return { date, availability: 100, down_seconds: 0, maintenance_seconds: 0 };
+    });
+    const windows = { day: 100, week: 100, month: 100, quarter: 100 };
+    return {
+      at: today.toISOString(), time_zone: q.get("time_zone") ?? "UTC",
+      rows: SERVERS.map((s) => ({
+        kind: "server", id: s.id, name: s.hostname, check: null, site_name: s.site_name, windows, outages: 0, days,
+      })),
+    };
+  }],
   [/^\/api\/business-services$/, () => ({ services: [] })],
   [/^\/api\/silences$/, (_, q) => {
     const target = q.get("server_id") ?? q.get("relay_id") ?? q.get("site_id");
