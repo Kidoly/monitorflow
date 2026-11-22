@@ -8,6 +8,12 @@
   margin-bottom: 12px;
 }
 
+/* A form in the bar (a note, a period, a window) can be taller than the
+   screen: stuck to the top, its buttons would never scroll into view. */
+.bar:has(form) {
+  position: static;
+}
+
 /* Kept mounted, so the live region exists before it has something to say. */
 .hidden {
   margin: 0;

@@ -29,6 +29,7 @@ import { formatDay, formatDuration, formatExact, formatSince } from "@/component
 
 import { AcknowledgeButton } from "./AcknowledgeButton";
 import { BulkSilence, type SilencePeriod } from "./BulkSilence";
+import { FleetAdminActions } from "./FleetAdminActions";
 import styles from "./FleetOverview.module.css";
 import { FleetTree, type TreeRow } from "./FleetTree";
 
@@ -147,18 +148,18 @@ export function FleetOverview() {
   const anyFilter = ["state", "status", "site", "os", "incidents", "q"].some((k) => params.get(k));
 
   const selection = useSelection();
-  const bulk = useBulkRunner<Row>(selection, (r) => r.key, (r) => r.server.hostname, refresh);
+  const bulk = useBulkRunner<Server>(selection, (s) => s.id, (s) => s.hostname, refresh);
   // Checked servers a filter took away are out of reach.
-  const chosen = filtered.filter((r) => selection.selected.has(r.key));
-  const writable = (r: Row) => modifiesSite(me, r.server.customer_id, r.server.site_id);
+  const chosen = filtered.filter((r) => selection.selected.has(r.key)).map((r) => r.server);
+  const writable = (s: Server) => modifiesSite(me, s.customer_id, s.site_id);
   // Its open incidents nobody acknowledged yet, all on its site: one request per server.
   const acknowledgeChosen = (note: string) =>
     bulk.run(chosen, {
       done: (count) => t("fleet.bulk.acknowledged", { count }),
       skipped: (count) => t("fleet.bulk.nothingToAcknowledge", { count }),
       allowed: writable,
-      act: async (r) => {
-        const ids = (data?.incidents ?? []).filter((i) => i.server_id === r.key && !i.acknowledged_at).map((i) => i.id);
+      act: async (s) => {
+        const ids = (data?.incidents ?? []).filter((i) => i.server_id === s.id && !i.acknowledged_at).map((i) => i.id);
         if (ids.length === 0) return "skipped";
         const { acknowledged } = await api.acknowledgeIncidents(ids, note);
         return acknowledged.length > 0 ? "done" : "skipped";
@@ -168,8 +169,8 @@ export function FleetOverview() {
     bulk.run(chosen, {
       done: (count) => t("fleet.bulk.silenced", { count }),
       allowed: writable,
-      act: async (r) => {
-        await api.createSilence({ scope: "server", target_id: r.key, ...period });
+      act: async (s) => {
+        await api.createSilence({ scope: "server", target_id: s.id, ...period });
         return "done";
       },
     });
@@ -306,6 +307,7 @@ export function FleetOverview() {
                   disabled={bulk.busy}
                   onSilence={silenceChosen}
                 />
+                <FleetAdminActions servers={chosen} bulk={bulk} onChanged={refresh} />
               </BulkBar>
               <FleetTree
                 rows={filtered}

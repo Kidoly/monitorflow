@@ -183,8 +183,12 @@ export function useBulkRunner<T>(
       setBusy(false);
     }
   }
-  return { busy, summary, run, dismiss: () => setSummary(null) };
+  /** Says how an action that is not one call per item went, like a maintenance window for them all. */
+  const say = (text: string, tone: BulkSummary["tone"] = "ok") => setSummary({ text, tone });
+  return { busy, summary, run, say, dismiss: () => setSummary(null) };
 }
+
+export type BulkRunner<T> = ReturnType<typeof useBulkRunner<T>>;
 
 /**
  * `act` once per distinct `group` (a server several incidents share), every

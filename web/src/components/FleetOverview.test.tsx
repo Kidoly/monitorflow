@@ -365,6 +365,68 @@ describe("FleetOverview", () => {
     expect(screen.getByRole("checkbox", { name: "Select db-2" })).toBeChecked();
   });
 
+  describe("administration of the checked servers", () => {
+    const admin = me({ role: "administrator", customer_id: "c1", site_id: null });
+    const other = server({ id: "s5", hostname: "db-2", customer_id: "c2", customer_name: "globex", site_id: "site-2", site_name: "berlin", state: "critical", open_incidents: 1 });
+    const device = server({ id: "s6", hostname: "switch-1", kind: "device", agent_version: null, state: "critical", open_incidents: 1 });
+    const current = server({ id: "s7", hostname: "web-7", agent_version: "0.2.0", state: "critical", open_incidents: 1, offline_alerts: false });
+    const releases = { "GET /api/agent-releases": { status: 200, body: { versions: ["0.2.0", "0.1.0"], latest: "0.2.0" } } };
+
+    async function checkAll(servers: Server[], routes: Record<string, { status: number; body?: unknown }>) {
+      const fetchMock = stubFetch({ ...reply(servers, []), ...releases, ...routes });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(
+        <As user={admin}>
+          <FleetOverview />
+        </As>,
+      );
+      await table();
+      await user.click(screen.getByRole("checkbox", { name: "Select every row shown" }));
+      const bar = screen.getByRole("region", { name: "Bulk actions" });
+      await user.click(within(bar).getByRole("button", { name: `More actions for the ${servers.length} selected servers` }));
+      return { fetchMock, user, bar };
+    }
+    const posted = (fetchMock: ReturnType<typeof stubFetch>, method: string) =>
+      fetchMock.mock.calls.filter(([, init]) => init?.method === method).map(([url]) => url);
+
+    it("removes them after a confirmation that gives the count", async () => {
+      const { fetchMock, user, bar } = await checkAll([web1, other], {
+        "POST /api/servers/s1/revoke": { status: 200, body: {} },
+      });
+      await user.click(screen.getByRole("menuitem", { name: "Remove…" }));
+      expect(within(bar).getByText("Remove the 2 selected servers?")).toBeInTheDocument();
+      expect(posted(fetchMock, "POST")).toEqual([]);
+      await user.click(within(bar).getByRole("button", { name: "Remove 2 servers" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 removed, 1 refused: insufficient rights \(db-2\)/);
+      expect(posted(fetchMock, "POST")).toEqual(["/api/servers/s1/revoke"]);
+    });
+
+    it("updates the agents that are behind", async () => {
+      const { fetchMock, user, bar } = await checkAll([web1, device, current], {
+        "POST /api/servers/s1/commands": { status: 201, body: {} },
+      });
+      await user.click(screen.getByRole("menuitem", { name: "Update agents to 0.2.0…" }));
+      await user.click(within(bar).getByRole("button", { name: "Update 3 servers" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 queued for update, 2 already up to date or without an agent/);
+      expect(posted(fetchMock, "POST")).toEqual(["/api/servers/s1/commands"]);
+    });
+
+    it("turns offline alerts off where they are on", async () => {
+      const { fetchMock, user, bar } = await checkAll([web1, current], {
+        "PUT /api/servers/s1/offline-alerts": { status: 200, body: { enabled: false } },
+      });
+      await user.click(screen.getByRole("menuitem", { name: "Turn off offline alerts" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 changed, 1 already that way/);
+      expect(posted(fetchMock, "PUT")).toEqual(["/api/servers/s1/offline-alerts"]);
+    });
+
+    it("keeps a maintenance window to one site", async () => {
+      const { user, bar } = await checkAll([web1, other], {});
+      await user.click(screen.getByRole("menuitem", { name: "Maintenance window…" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^A maintenance window covers servers of one site\./);
+    });
+  });
+
   it("falls back to the servers' counts when incidents cannot be read", async () => {
     stubFetch({ ...reply([web1]), [OPEN]: { status: 500, body: { error: "internal error" } } });
     render(<FleetOverview />);
