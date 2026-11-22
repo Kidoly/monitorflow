@@ -1161,7 +1161,7 @@
           "alerts"
         ],
         "summary": "Download an availability report",
-        "description": "The same report as a file to keep or send: `pdf`, a document to send to a customer as it is (a summary in plain words, then the details), or `csv`, one row per service, server, device and check with its numbers, then one row per outage and per planned maintenance, with a `kind` column. CSV numbers are plain (seconds, dot decimals); words are in `language`; times are in `time_zone`.\n\n**Who**: any role, as above. **Area**: `alerts`.",
+        "description": "The same report as a file to keep or send: `pdf`, a document to send to a customer as it is (a header with the logo on every page, a summary in plain words, the uptime over 24 hours, 7, 30 and 90 days at the period's end with a bar per day of the period, then the details), or `csv`, one row per service, server, device and check with its numbers, then one row per outage and per planned maintenance, with a `kind` column. CSV numbers are plain (seconds, dot decimals); words are in `language`; times are in `time_zone`.\n\n**Who**: any role, as above. **Area**: `alerts`.",
         "operationId": "availability_file",
         "parameters": [
           {

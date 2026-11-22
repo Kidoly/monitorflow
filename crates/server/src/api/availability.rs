@@ -22,7 +22,7 @@ use crate::availability::report::{build, Report};
 use crate::availability::sender::file_name;
 use crate::availability::uptime::{self, Uptime};
 use crate::availability::words::Language;
-use crate::availability::{csv, pdf, Span};
+use crate::availability::{csv, pdf, uptime_at_end, Span};
 
 /// The shortest period a report covers.
 pub const SHORTEST: TimeDelta = TimeDelta::hours(1);
@@ -160,13 +160,15 @@ async fn reach(
     Ok((reach, name))
 }
 
-/// The report `user` may read over `period`, for `customer` or everything.
+/// The report `user` may read over `period`, for `customer` or everything,
+/// and with `zone` the uptime at its end, for the PDF (ADR-0172).
 async fn report(
     state: &ApiState,
     user: &CurrentUser,
     period: Span,
     customer: Option<Uuid>,
-) -> Result<Report, ApiError> {
+    zone: Option<Tz>,
+) -> Result<(Report, Option<Uptime>), ApiError> {
     let mut conn = state.pool.acquire().await?;
     let (reach, name) = reach(&mut conn, user, customer).await?;
     let now = Utc::now();
@@ -174,7 +176,11 @@ async fn report(
     let mut report = build(&data, period, now);
     report.customer_id = customer;
     report.customer_name = name;
-    Ok(report)
+    let uptime = match zone {
+        Some(zone) => Some(uptime_at_end(&mut conn, &reach, period, zone, now).await?),
+        None => None,
+    };
+    Ok((report, uptime))
 }
 
 /// `GET /api/availability`.
@@ -186,7 +192,9 @@ pub async fn get(
     let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
     let period = period(params.from, params.to, Utc::now()).map_err(ApiError::Invalid)?;
     Ok(Json(
-        report(&state, &user, period, params.customer_id).await?,
+        report(&state, &user, period, params.customer_id, None)
+            .await?
+            .0,
     ))
 }
 
@@ -210,6 +218,7 @@ pub async fn uptime(
 /// `report` as a `csv` or `pdf` file; the PDF is made off the runtime.
 pub async fn render(
     report: &Report,
+    uptime: Option<Uptime>,
     extension: &str,
     zone: Tz,
     language: Language,
@@ -218,7 +227,7 @@ pub async fn render(
         return Ok(csv::render(report, zone, language).into_bytes());
     }
     let report = report.clone();
-    tokio::task::spawn_blocking(move || pdf::render(&report, zone, language))
+    tokio::task::spawn_blocking(move || pdf::render(&report, uptime.as_ref(), zone, language))
         .await
         .map_err(|e| ApiError::Internal(format!("making the PDF: {e}")))
 }
@@ -254,8 +263,9 @@ pub async fn file(
         "pdf" => ("application/pdf", "pdf"),
         _ => return Err(ApiError::Invalid("The format is `csv` or `pdf`.".into())),
     };
-    let report = report(&state, &user, period, params.customer_id).await?;
-    let body = render(&report, extension, zone, language).await?;
+    let wants_uptime = (extension == "pdf").then_some(zone);
+    let (report, uptime) = report(&state, &user, period, params.customer_id, wants_uptime).await?;
+    let body = render(&report, uptime, extension, zone, language).await?;
     let name = file_name(&report, zone, extension);
     let mut response = body.into_response();
     let headers = response.headers_mut();

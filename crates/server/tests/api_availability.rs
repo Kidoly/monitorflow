@@ -278,6 +278,10 @@ db_tests! {
         let has = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
         assert!(has(b"(For acme)"));
         assert!(has(b"(acme website)"));
+        // The header with the logo, and the uptime at the end of October.
+        assert!(has(b"(MonitorFlow) Tj"));
+        assert!(has(b"(Uptime)"));
+        assert!(has(b"(acme-web \xb7 ") || has(b"(acme-web (acme-site))"));
         assert!(!has(b"globex"));
     }
 }

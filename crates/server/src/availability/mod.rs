@@ -25,12 +25,14 @@ pub use spans::{Span, Spans};
 
 /// The whole report of `customer` (its sites and services), or of
 /// everything when `None`: what a schedule sends, with no user to narrow it.
+/// With `zone`, the uptime at the period's end comes with it (ADR-0172).
 pub async fn for_customer(
     db: &mut sqlx::PgConnection,
     customer: Option<uuid::Uuid>,
     period: Span,
     now: DateTime<Utc>,
-) -> Result<report::Report, sqlx::Error> {
+    zone: Option<chrono_tz::Tz>,
+) -> Result<(report::Report, Option<uptime::Uptime>), sqlx::Error> {
     let (reach, name) = match customer {
         None => (
             data::Reach {
@@ -63,7 +65,25 @@ pub async fn for_customer(
     let mut report = report::build(&data, period, now);
     report.customer_id = customer;
     report.customer_name = name;
-    Ok(report)
+    let uptime = match zone {
+        Some(zone) => Some(uptime_at_end(db, &reach, period, zone, now).await?),
+        None => None,
+    };
+    Ok((report, uptime))
+}
+
+/// The uptime of `reach` at the end of `period` (or now, when it is still
+/// going on), days cut in `zone`: what a report's PDF shows (ADR-0172).
+pub async fn uptime_at_end(
+    db: &mut sqlx::PgConnection,
+    reach: &data::Reach,
+    period: Span,
+    zone: chrono_tz::Tz,
+    now: DateTime<Utc>,
+) -> Result<uptime::Uptime, sqlx::Error> {
+    let at = period.1.min(now);
+    let data = data::load(db, reach, uptime::period(at), now).await?;
+    Ok(uptime::build(&data, at, zone, now))
 }
 
 /// Something that made a thing down for a while: the critical time of an

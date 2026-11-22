@@ -200,16 +200,25 @@ async fn make_and_send(pool: &PgPool, schedule: &Stored, period: Span) -> Result
                 .into(),
         );
     }
-    let report = for_customer(&mut conn, schedule.customer_id, period, Utc::now())
-        .await
-        .map_err(|e| format!("The report could not be made: {e}"))?;
+    let uptime_zone = schedule.pdf.then_some(zone);
+    let (report, uptime) = for_customer(
+        &mut conn,
+        schedule.customer_id,
+        period,
+        Utc::now(),
+        uptime_zone,
+    )
+    .await
+    .map_err(|e| format!("The report could not be made: {e}"))?;
     drop(conn);
     let mut attachments = Vec::new();
     if schedule.pdf {
         let copy = report.clone();
-        let body = tokio::task::spawn_blocking(move || pdf::render(&copy, zone, language))
-            .await
-            .map_err(|e| format!("The PDF could not be made: {e}"))?;
+        let body = tokio::task::spawn_blocking(move || {
+            pdf::render(&copy, uptime.as_ref(), zone, language)
+        })
+        .await
+        .map_err(|e| format!("The PDF could not be made: {e}"))?;
         attachments.push(Attachment {
             name: file_name(&report, zone, "pdf"),
             content_type: "application/pdf",
