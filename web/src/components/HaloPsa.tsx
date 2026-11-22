@@ -19,6 +19,7 @@ import styles from "./AdminPages.module.css";
 import own from "./IntegrationsCatalogue.module.css";
 import { psaStatus } from "./IntegrationsCatalogue";
 import { PsaSiteLinks } from "./PsaSiteLinks";
+import { PsaTickets } from "./PsaTickets";
 import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, fieldClass } from "./ui/Button";
 import { InlineConfirm } from "./ui/InlineConfirm";
@@ -73,7 +74,10 @@ function HaloPsa() {
       <p className={styles.footnote}>{t("psa.intro")}</p>
       <ConnectionForm key={data.connection?.updated_at ?? "new"} saved={data.connection} onSaved={refresh} />
       {data.connection ? (
-        <PsaSiteLinks key={data.connection.base_url} />
+        <>
+          <PsaSiteLinks key={data.connection.base_url} />
+          <PsaTickets key={`tickets-${data.connection.base_url}`} connection={data.connection} onSaved={refresh} />
+        </>
       ) : (
         <p className={styles.footnote}>
           <strong>{t("psa.step.sites")}</strong> {t("psa.sites.saveFirst")}

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveLocale } from "@/i18n/locale";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
-import { connection } from "@/test/psa";
+import { connection, psaListStubs } from "@/test/psa";
 
 import { HaloPsaPage, sameAddress } from "./HaloPsa";
 
@@ -51,6 +51,8 @@ describe("HaloPsaPage", () => {
       [`POST ${CONNECTION}/test`]: { status: 200, body: { ok: true, agent_name: "MonitorFlow", error: null } },
       [`PUT ${CONNECTION}`]: { status: 200, body: connection() },
       "GET /api/psa/site-links": { status: 200, body: { sites: [] } },
+      "GET /api/psa/tickets": { status: 200, body: { tickets: [] } },
+      ...psaListStubs,
     });
     const user = userEvent.setup();
     page();
@@ -79,6 +81,8 @@ describe("HaloPsaPage", () => {
     stubFetch({
       [`GET ${CONNECTION}`]: { status: 200, body: { connection: connection() } },
       "GET /api/psa/site-links": { status: 200, body: { sites: [] } },
+      "GET /api/psa/tickets": { status: 200, body: { tickets: [] } },
+      ...psaListStubs,
       [`POST ${CONNECTION}/test`]: {
         status: 200,
         body: { ok: false, agent_name: null, error: "halo.example.com answered 401 Unauthorized to the sign-in: invalid_client" },

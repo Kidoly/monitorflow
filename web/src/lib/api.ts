@@ -3461,6 +3461,40 @@ export interface PsaConnection {
   last_error_at: string | null;
   created_at: string;
   updated_at: string;
+  tickets: PsaTicketSettings;
+}
+
+/** What tickets the PSA connection opens and how it closes them (ADR-0166). */
+export interface PsaTicketSettings {
+  ticket_type_id: number | null;
+  ticket_type_name: string | null;
+  category: string | null;
+  min_severity: "warning" | "critical";
+  /** Null adds a note only. */
+  resolved_status_id: number | null;
+  resolved_status_name: string | null;
+}
+
+export interface PsaTicketSettingsRequest {
+  ticket_type_id: number | null;
+  category: string | null;
+  min_severity: "warning" | "critical";
+  resolved_status_id: number | null;
+}
+
+/** One incident's ticket in the PSA. */
+export interface PsaTicket {
+  incident_id: string;
+  ticket_id: number | null;
+  state: "creating" | "open" | "closed" | "skipped" | "failed";
+  error: string | null;
+  metric: string;
+  severity: string;
+  server_name: string | null;
+  site_name: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
 }
 
 export interface PsaConnectionState {
@@ -4648,6 +4682,18 @@ export const api = {
 
   unlinkPsaSite: (site: string) =>
     request<void>(`/api/psa/site-links/${encodeURIComponent(site)}`, { method: "DELETE" }),
+
+  psaTicketTypes: (signal?: AbortSignal) => request<PsaRecordList>("/api/psa/ticket-types", { signal }),
+
+  psaCategories: (signal?: AbortSignal) => request<{ categories: string[] }>("/api/psa/categories", { signal }),
+
+  psaStatuses: (signal?: AbortSignal) => request<PsaRecordList>("/api/psa/statuses", { signal }),
+
+  savePsaTicketSettings: (body: PsaTicketSettingsRequest) =>
+    request<PsaConnection>("/api/psa/ticket-settings", { method: "PUT", body }),
+
+  /** The latest tickets opened for incidents, closed, skipped or refused. */
+  psaTickets: (signal?: AbortSignal) => request<{ tickets: PsaTicket[] }>("/api/psa/tickets", { signal }),
 
   /** Signs in to the PSA with the form's values, the saved ones filling the gaps; changes nothing there. */
   testPsaConnection: (body: PsaConnectionRequest) =>
