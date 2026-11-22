@@ -132,7 +132,7 @@ describe("ApprovalQueue", () => {
     stubFetch({ [LIST]: list() });
     render(<ApprovalQueue />);
     expect(await screen.findByText("Nothing waiting for approval")).toBeInTheDocument();
-    expect(screen.getByText(/Commands that only read run on their own/)).toBeInTheDocument();
+    expect(screen.getByText(/The AI diagnoses every new alert/)).toBeInTheDocument();
     expect(screen.getByText("How a command gets here")).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(4);
     expect(screen.getByRole("link", { name: "See what the AI did" })).toHaveAttribute(

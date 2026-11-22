@@ -96,8 +96,7 @@ export const en = {
   "agent.relayNote": "(optional; host:port agents use to reach it)",
   "agent.relayInvalid": "Enter a name or IP address, with an optional port; IPv6 addresses in brackets.",
   "agent.aiFromWeb": "Allow AI commands to be turned on from the web interface",
-  "agent.aiFromWebNote":
-    "(administrators can then turn AI commands on and off from the server's page; without it, they can only turn them off)",
+  "agent.aiFromWebNote": "(administrators can then turn AI commands on and off from the server's page; they stay off until someone does. Without it, they can only turn them off)",
   "command.unavailable": "{name}: {reason}",
   "relay.title": "Install the relay",
   "relay.central":
@@ -298,8 +297,7 @@ export const fr: Translation<typeof en> = {
   "agent.relayNote": "(facultatif ; hôte:port par lequel les agents le joignent)",
   "agent.relayInvalid": "Saisissez un nom ou une adresse IP, avec un port facultatif ; les adresses IPv6 entre crochets.",
   "agent.aiFromWeb": "Autoriser l’activation des commandes IA depuis l’interface web",
-  "agent.aiFromWebNote":
-    "(les administrateurs peuvent alors activer et désactiver les commandes IA depuis la page du serveur ; sans cela, ils peuvent seulement les désactiver)",
+  "agent.aiFromWebNote": "(les administrateurs peuvent alors activer et désactiver les commandes IA depuis la page du serveur ; elles restent désactivées tant que personne ne le fait. Sans cela, ils peuvent seulement les désactiver)",
   "command.unavailable": "{name} : {reason}",
   "relay.title": "Installer le relais",
   "relay.central":

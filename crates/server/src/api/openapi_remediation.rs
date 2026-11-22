@@ -255,6 +255,12 @@ fn classify() {}
 /// carries the command waiting for a person in `pending_command`; the
 /// approval queue (`/remediation/approvals`) decides it.
 ///
+/// Every alert gets a diagnosis (ADR-0175): `diagnosis` and `ai_advice`
+/// hold the AI's latest, as untrusted text. Where no command could run
+/// (the server refuses AI commands, a device, a host that stopped
+/// reporting), `diagnosis_only` says why, and the incident closes on the
+/// AI's answer, escalated to a person with its `close_code`.
+///
 /// Needs any role and the key area "remediation"; lists the incidents of
 /// the servers of the sites the caller reads. A filter outside them gives
 /// an empty list. Paginated with `limit` and `cursor`; unknown parameters
@@ -288,7 +294,43 @@ fn classify() {}
                 "rule": {"source": "builtin", "id": "low.systemctl"},
                 "reason": "`systemctl restart` of a service",
                 "proposed_at": "2026-11-05T03:12:40Z"
-            }
+            },
+            "diagnosis": "nginx exited after a configuration reload.",
+            "diagnosed_at": "2026-11-05T03:12:40Z",
+            "ai_advice": "The configuration test passes now; a restart should bring it back.",
+            "ai_command": "systemctl restart nginx",
+            "diagnosis_only": null,
+            "close_code": null,
+            "close_reason": null,
+            "close_detail": null,
+            "close_limit": null
+        }, {
+            "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+            "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+            "customer_name": "acme",
+            "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+            "site_name": "paris",
+            "server_id": "4b5c6d7e-8f90-4a1b-9c2d-3e4f5a6b7c8d",
+            "hostname": "db-1",
+            "alert_incident_id": "9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f",
+            "metric": "monitorflow_disk_used_ratio",
+            "instance": "/",
+            "state": "escalated",
+            "opened_at": "2026-11-05T02:40:11Z",
+            "closed_at": "2026-11-05T02:40:19Z",
+            "max_commands": 10,
+            "max_duration_s": 1800,
+            "event_count": 4,
+            "pending_command": null,
+            "diagnosis": "/ grew from 70% to 93% in two hours; the logs show the backup job writing to /var/backups.",
+            "diagnosed_at": "2026-11-05T02:40:18Z",
+            "ai_advice": "Check the size of /var/backups and move old archives off the server.",
+            "ai_command": null,
+            "diagnosis_only": "commands_off",
+            "close_code": "commands_off",
+            "close_reason": "the AI diagnosed the incident without commands: AI commands are off on this server; the Commands tab of its page turns them on, or gives the line to run there (MF_ALLOW_COMMANDS=1)",
+            "close_detail": null,
+            "close_limit": null
         }],
         "next_cursor": null
     }))))]
@@ -326,6 +368,15 @@ fn list_incidents() {}
             "max_duration_s": 1800,
             "event_count": 3,
             "pending_command": null,
+            "diagnosis": "nginx stopped; its last log lines may say why.",
+            "diagnosed_at": "2026-11-05T03:12:31Z",
+            "ai_advice": "Reading the unit's status is harmless.",
+            "ai_command": "systemctl status nginx",
+            "diagnosis_only": null,
+            "close_code": null,
+            "close_reason": null,
+            "close_detail": null,
+            "close_limit": null,
             "events": [{
                 "seq": 1,
                 "kind": "context_sent",
@@ -430,9 +481,15 @@ fn list_events() {}
 /// The alert's remediations so far, one remediation incident per attempt,
 /// and whether the caller may start a new one now with
 /// `POST .../run`. When not, `blocked` says why with a stable code and
-/// `reason` in English; a server that reports refusing AI commands is
-/// `commands_refused`, with the refusal's code in `refusal`, so the reason
-/// shows before anyone starts an attempt that could only stop on it.
+/// `reason` in English.
+///
+/// Where no command can run (the server reports refusing AI commands, a
+/// device, an offline host), an attempt still starts: the AI diagnoses
+/// from what the server already holds and runs nothing. `diagnosis_only`
+/// says so before anyone starts it, with `refusal` for a server that
+/// refuses (ADR-0175). On an open alert that never had a remediation,
+/// `no_attempt` says why: AI is off, the alert is too old for AI to look
+/// at it by itself, or it does so within seconds.
 ///
 /// The loop starts an attempt by itself, once, when the latest one stopped
 /// because the server refused AI commands and the server accepts them
@@ -447,10 +504,14 @@ fn list_events() {}
             "attempts": 1,
             "latest_id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
             "latest_state": "escalated",
-            "can_run": false,
-            "blocked": "commands_refused",
-            "reason": "AI commands are off on this server; run the installer there with MF_ALLOW_COMMANDS=1 to allow them",
-            "refusal": "commands_off"
+            "can_run": true,
+            "blocked": null,
+            "reason": null,
+            "refusal": "commands_off",
+            "diagnosis_only": "commands_off",
+            "diagnosis_only_reason": "AI commands are off on this server; the Commands tab of its page turns them on, or gives the line to run there (MF_ALLOW_COMMANDS=1)",
+            "no_attempt": null,
+            "no_attempt_reason": null
         })),
         (status = 404, body = ErrorBody, description = "`not_found`: no such alert, or one on a site \
 the caller does not read"),
@@ -461,7 +522,8 @@ fn run_status() {}
 ///
 /// Opens a new remediation incident for an open alert whose remediations
 /// are all closed (escalated, failed, or resolved while the alert stayed
-/// open), or that never had one. The remediation loop drives it on its next
+/// open), or that never had one. Where no command can run, the AI only
+/// diagnoses (`diagnosis_only` of the status). The remediation loop drives it on its next
 /// poll, with the configured limits, and the AI gets how the earlier
 /// attempts ended in its context. Its first event is a `note` with `code`
 /// `attempt`, `trigger` `person`, the user as actor, its `attempt` number
@@ -485,7 +547,6 @@ alert's site"),
         (status = 404, body = ErrorBody, description = "`not_found`: no such alert, or one on a site \
 the caller does not read"),
         (status = 409, body = ErrorBody, description = "`conflict`, with `error` saying why: the alert \
-is resolved, it is on a device or an offline host, an attempt is running or waits for approval, AI is \
-off, or the server reports refusing AI commands (with how to allow them)"),
+is resolved, an attempt is running or waits for approval, or AI is off"),
     ))]
 fn run() {}

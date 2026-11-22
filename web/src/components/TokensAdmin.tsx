@@ -623,7 +623,9 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   const titleId = useId();
   const [source, setSource] = useState<InstallSource>(token.install.source);
   const [relay, setRelay] = useState(initialRelay);
-  const [aiFromWeb, setAiFromWeb] = useState(false);
+  // Ticked by default (ADR-0175): the server's page can then turn AI
+  // commands on; nothing runs until someone does.
+  const [aiFromWeb, setAiFromWeb] = useState(true);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
   const origin = pageOrigin();

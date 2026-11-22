@@ -94,7 +94,7 @@ describe("eventSummary", () => {
     expect(
       eventSummary(event({ kind: "note", payload: { text: "attempt 3", code: "attempt", trigger: "commands_accepted", attempt: 3, previous: { ...previous, code: "commands_off" } } })),
     ).toBe(
-      "Attempt 3, started because the server now accepts AI commands. The one before: AI commands are off on this server. Run the installer there with MF_ALLOW_COMMANDS=1 to allow them.",
+      "Attempt 3, started because the server now accepts AI commands. The one before: AI commands are off on this server. The Commands tab of its page turns them on, or gives the line to run there.",
     );
     expect(eventSummary(event({ kind: "note", payload: { text: "attempt 1", code: "attempt", trigger: "person", attempt: 1, previous: null } }))).toBe(
       "Attempt 1, started by hand",
@@ -119,7 +119,7 @@ describe("eventSummary", () => {
     );
     // MonitorFlow's own messages are translated from their codes, the AI's words kept as they are.
     expect(eventSummary(event({ kind: "escalation", payload: { reason: "x", code: "commands_off", to: "escalated" } }))).toBe(
-      "Les commandes IA sont désactivées sur ce serveur. Relancez-y l’installateur avec MF_ALLOW_COMMANDS=1 pour les autoriser.",
+      "Les commandes IA sont désactivées sur ce serveur. L’onglet Commandes de sa page les active, ou donne la ligne à y lancer.",
     );
     expect(
       eventSummary(event({ kind: "escalation", payload: { reason: "x", code: "ai_escalated", detail: "grow the volume", to: "escalated" } })),

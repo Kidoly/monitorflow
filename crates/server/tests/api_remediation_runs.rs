@@ -1,6 +1,6 @@
 //! Running AI remediation again on an open alert through the API
-//! (ADR-0165) against a real PostgreSQL: who may, what refuses it and
-//! what it records. Ignored without `DATABASE_URL`.
+//! (ADR-0165) against a real PostgreSQL: who may, what refuses it, what
+//! it records, and where it only diagnoses (ADR-0175). Ignored without `DATABASE_URL`.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -260,26 +260,7 @@ db_tests! {
         assert_eq!(code, StatusCode::CONFLICT);
         assert!(body["error"].as_str().unwrap().contains("AI remediation is off"), "{body}");
 
-        // The server reports refusing AI commands: said before running.
-        sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"off\"}' WHERE id = $1")
-            .bind(s.server)
-            .execute(&pool)
-            .await
-            .unwrap();
-        let (_, body) = status(&pool, true, &alice, s.alert).await;
-        assert_eq!(body["blocked"], "commands_refused");
-        assert_eq!(body["refusal"], "commands_off");
-        assert!(body["reason"].as_str().unwrap().contains("MF_ALLOW_COMMANDS=1"), "{body}");
-        let (code, body) = run(&pool, true, &alice, s.alert).await;
-        assert_eq!(code, StatusCode::CONFLICT);
-        assert!(body["error"].as_str().unwrap().contains("MF_ALLOW_COMMANDS=1"), "{body}");
-
         // A resolved alert has nothing left to fix.
-        sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"accepted\"}' WHERE id = $1")
-            .bind(s.server)
-            .execute(&pool)
-            .await
-            .unwrap();
         sqlx::query("UPDATE incidents SET state = 'resolved', resolved_at = now() WHERE id = $1")
             .bind(s.alert)
             .execute(&pool)
@@ -295,6 +276,61 @@ db_tests! {
             .await
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    /// Where no command can run, an attempt still starts: the AI
+    /// diagnoses, and the status says so first (ADR-0175).
+    #[sqlx::test]
+    async fn where_no_command_can_run_it_runs_to_diagnose(pool: PgPool) {
+        let s = setup(&pool, "acme").await;
+        let alice = session(&pool, "alice", Role::Approver, Some(s.site)).await;
+        let (_, body) = status(&pool, true, &alice, s.alert).await;
+        assert_eq!((&body["diagnosis_only"], &body["refusal"]), (&Value::Null, &Value::Null), "{body}");
+
+        sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"off\"}' WHERE id = $1")
+            .bind(s.server)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (_, body) = status(&pool, true, &alice, s.alert).await;
+        assert_eq!((body["can_run"].as_bool(), &body["blocked"]), (Some(true), &Value::Null), "{body}");
+        assert_eq!(body["refusal"], "commands_off");
+        assert_eq!(body["diagnosis_only"], "commands_off");
+        assert!(body["diagnosis_only_reason"].as_str().unwrap().contains("Commands tab"), "{body}");
+        assert_eq!(body["no_attempt"], Value::Null);
+        let (code, body) = run(&pool, true, &alice, s.alert).await;
+        assert_eq!(code, StatusCode::CREATED, "{body}");
+
+        // A device, and a host that stopped reporting.
+        let device: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family, kind, address, package_updates)
+             VALUES ('device-sw1', $1, 'switch-1', 'device', 'device', '192.0.2.1', false)
+             RETURNING id",
+        )
+        .bind(s.site)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        for (server, metric, code) in [
+            (device, "monitorflow_snmp_if_up", "device"),
+            (s.server, "offline", "offline"),
+        ] {
+            let alert: Uuid = sqlx::query_scalar(
+                "INSERT INTO incidents (server_id, metric, instance, severity, opened_at, last_value,
+                                        last_value_at, peak_value, threshold)
+                 VALUES ($1, $2, '', 'critical', now(), 0, now(), 0, '{}') RETURNING id",
+            )
+            .bind(server)
+            .bind(metric)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let (_, body) = status(&pool, true, &alice, alert).await;
+            assert_eq!((body["can_run"].as_bool(), body["diagnosis_only"].as_str()), (Some(true), Some(code)), "{body}");
+            assert_eq!(body["no_attempt"], "soon", "{body}");
+            let (status, body) = run(&pool, true, &alice, alert).await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+        }
     }
 
     #[sqlx::test]
@@ -342,6 +378,11 @@ db_tests! {
         let alice = session(&pool, "alice", Role::Approver, Some(s.site)).await;
         let (_, body) = status(&pool, true, &alice, alert).await;
         assert_eq!((body["attempts"].as_i64(), body["can_run"].as_bool()), (Some(0), Some(true)));
+        // Too old for AI to look at it by itself: said, with the way out.
+        assert_eq!(body["no_attempt"], "too_old", "{body}");
+        assert!(body["no_attempt_reason"].as_str().unwrap().contains("start it by hand"), "{body}");
+        let (_, body) = status(&pool, false, &alice, alert).await;
+        assert_eq!(body["no_attempt"], "ai_off", "{body}");
         let (code, body) = run(&pool, true, &alice, alert).await;
         assert_eq!(code, StatusCode::CREATED, "{body}");
         assert_eq!((body["attempt"].as_i64(), &body["previous_id"]), (Some(1), &Value::Null));

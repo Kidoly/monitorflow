@@ -1,7 +1,7 @@
 # ADR-0098: AI commands turned on and off from the web interface
 
 Date: 2026-11-16
-Status: accepted
+Status: accepted; the Add servers checkbox is ticked by default (ADR-0175)
 
 ## Context
 

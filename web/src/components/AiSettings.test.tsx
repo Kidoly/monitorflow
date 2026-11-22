@@ -120,7 +120,7 @@ describe("AiSettingsPage", () => {
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveValue("");
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveAttribute("placeholder", "Saved; leave empty to keep it");
     // AI commands are turned on from each server's page now (ADR-0098).
-    expect(await screen.findByText(/Turn AI commands on or off for every server at once/)).toBeInTheDocument();
+    expect(await screen.findByText(/Turn them on for every server at once below/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Command that allows AI commands")).not.toBeInTheDocument();
   });
 
@@ -191,7 +191,7 @@ describe("AiSettingsPage", () => {
       },
     });
     page();
-    expect(await screen.findByText("No server accepts AI commands.")).toBeInTheDocument();
+    expect(await screen.findByText("No server accepts AI commands yet: the AI diagnoses their alerts without running anything.")).toBeInTheDocument();
     expect(screen.queryByText(/^Off:/)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "web-1" })).not.toBeInTheDocument();
   });
@@ -212,7 +212,7 @@ describe("AiSettingsPage", () => {
       "GET /api/servers": { status: 500, body: { error: "database unavailable" } },
     });
     page();
-    expect(await screen.findByText(/Turn AI commands on or off for every server at once/)).toBeInTheDocument();
+    expect(await screen.findByText(/Turn them on for every server at once below/)).toBeInTheDocument();
     expect(screen.queryByText(/accept AI commands\./)).not.toBeInTheDocument();
   });
 

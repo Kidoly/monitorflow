@@ -1,6 +1,10 @@
 //! Running AI remediation again on an alert that is still open
 //! (ADR-0165): whether it can start now and why not, and starting it.
 //!
+//! A run starts wherever the alert is open, even where no command can run:
+//! the AI then diagnoses from the context alone, and the status says so
+//! (ADR-0175).
+//!
 //! Each run is a new remediation incident of the alert, whose first event,
 //! a `note` with code `attempt`, names the person who asked; the
 //! `audit_log` row `remediation.run` says it too. The loop drives it like
@@ -10,6 +14,7 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -20,11 +25,13 @@ use super::auth::CurrentUser;
 use super::roles::Role;
 use super::sensors::{parse_id, UNIQUE_VIOLATION};
 use super::{ApiError, ApiState};
-use crate::commands::acceptance::{self, Refusal};
+use crate::commands::acceptance;
 use crate::remediation::audit::{AuditError, IncidentState};
+use crate::remediation::runner::reach::{self, DiagnosisOnly};
 use crate::remediation::runner::retry::{
     self, AlertAttempts, Attempt, Blocked, RetryError, Trigger,
 };
+use crate::remediation::runner::ALERT_MAX_AGE;
 use crate::remediation::switch;
 
 /// Why AI remediation cannot run on an alert now, for the caller.
@@ -32,7 +39,6 @@ use crate::remediation::switch;
 enum Why {
     Alert(Blocked),
     AiOff,
-    Refused(Refusal),
     Role,
 }
 
@@ -41,7 +47,6 @@ impl Why {
         match self {
             Self::Alert(blocked) => blocked.code(),
             Self::AiOff => "ai_off",
-            Self::Refused(_) => "commands_refused",
             Self::Role => "role",
         }
     }
@@ -49,11 +54,55 @@ impl Why {
     fn message(self) -> &'static str {
         match self {
             Self::Alert(blocked) => blocked.message(),
-            Self::AiOff => {
-                "AI remediation is off; a global administrator can turn it on under Settings, AI"
-            }
-            Self::Refused(refusal) => refusal.message(),
+            Self::AiOff => AI_OFF,
             Self::Role => "starting AI remediation needs an approver role on the server's site",
+        }
+    }
+}
+
+const AI_OFF: &str =
+    "AI remediation is off; a global administrator can turn it on under Settings, AI";
+
+/// Why an open alert has no remediation yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoAttempt {
+    /// AI is off.
+    AiOff,
+    /// It opened more than an hour before AI looked: the loop leaves it
+    /// alone (ADR-0165), a person can start one.
+    TooOld,
+    /// The loop opens one on its next poll.
+    Soon,
+}
+
+impl NoAttempt {
+    fn of(ai_on: bool, opened_at: DateTime<Utc>, now: DateTime<Utc>) -> Self {
+        let max_age = chrono::Duration::from_std(ALERT_MAX_AGE).unwrap_or_default();
+        if !ai_on {
+            Self::AiOff
+        } else if now - opened_at > max_age {
+            Self::TooOld
+        } else {
+            Self::Soon
+        }
+    }
+
+    fn code(self) -> &'static str {
+        match self {
+            Self::AiOff => "ai_off",
+            Self::TooOld => "too_old",
+            Self::Soon => "soon",
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::AiOff => AI_OFF,
+            Self::TooOld => {
+                "the alert opened more than an hour before AI looked at it; AI looks at new \
+                 alerts only, start it by hand"
+            }
+            Self::Soon => "AI looks at the alert within seconds",
         }
     }
 }
@@ -72,18 +121,33 @@ pub struct RunStatus {
     pub latest_state: Option<IncidentState>,
     /// Whether the caller may start an attempt now: `blocked` is `null`.
     pub can_run: bool,
-    /// Why not: `alert_resolved`, `no_agent` (a device, or the server is
-    /// offline), `in_progress` (an attempt is running or waits for
-    /// approval), `ai_off`, `commands_refused` (the server reports refusing
-    /// AI commands, see `refusal`), or `role` (the caller is no approver on
-    /// the site). `null` when it can run.
+    /// Why not: `alert_resolved`, `in_progress` (an attempt is running or
+    /// waits for approval), `ai_off`, or `role` (the caller is no approver
+    /// on the site). `null` when it can run. Since ADR-0175 a device, an
+    /// offline host or a server refusing AI commands no longer blocks
+    /// (`no_agent` and `commands_refused` are not returned any more): the
+    /// attempt diagnoses without commands, see `diagnosis_only`.
     pub blocked: Option<&'static str>,
     /// `blocked` as an English sentence.
     pub reason: Option<&'static str>,
-    /// With `commands_refused`, why the server refuses: `commands_off`,
-    /// `commands_off_windows`, `system_unsupported` or `agent_too_old`,
-    /// the codes of remediation events (ADR-0076).
+    /// When the server reports refusing AI commands, why: `commands_off`,
+    /// `commands_off_windows`, `system_unsupported` or `agent_too_old`, the
+    /// codes of remediation events (ADR-0076). `null` otherwise.
     pub refusal: Option<&'static str>,
+    /// Why an attempt started now could not run commands, so the AI would
+    /// only diagnose from what the server already holds (ADR-0175): a
+    /// `refusal` code, `device` (no agent) or `offline` (the host stopped
+    /// reporting). `null` when commands can run, or the alert is resolved.
+    pub diagnosis_only: Option<&'static str>,
+    /// `diagnosis_only` as an English sentence.
+    pub diagnosis_only_reason: Option<&'static str>,
+    /// On an open alert without any remediation, why: `ai_off`, `too_old`
+    /// (it opened more than an hour before AI looked at it; AI looks at new
+    /// alerts only, a person can start one) or `soon` (AI looks at it
+    /// within seconds). `null` once it has one, or when resolved.
+    pub no_attempt: Option<&'static str>,
+    /// `no_attempt` as an English sentence.
+    pub no_attempt_reason: Option<&'static str>,
 }
 
 /// Body of `POST /api/remediation/alerts/{id}/run`.
@@ -132,10 +196,6 @@ async fn why_not(
     if !ai_on(state).await? {
         return Ok(Some(Why::AiOff));
     }
-    // Said before it starts: the first command would come back refused.
-    if let Some(refusal) = acceptance::shell_refusal(&state.pool, found.server_id).await? {
-        return Ok(Some(Why::Refused(refusal)));
-    }
     if !user.sites_with(Role::Approver).contains(found.site_id) {
         return Ok(Some(Why::Role));
     }
@@ -151,6 +211,19 @@ pub async fn status(
 ) -> Result<Json<RunStatus>, ApiError> {
     let (id, found) = alert(&state, &user, &id).await?;
     let why = why_not(&state, &user, &found).await?;
+    let open = found.state == "open";
+    let refusal = acceptance::shell_refusal(&state.pool, found.server_id).await?;
+    let diagnosis_only = if open {
+        reach::of(&state.pool, found.server_id, &found.metric).await?
+    } else {
+        None
+    };
+    let no_attempt = if open && found.attempts == 0 {
+        let ai_on = ai_on(&state).await?;
+        Some(NoAttempt::of(ai_on, found.opened_at, Utc::now()))
+    } else {
+        None
+    };
     Ok(Json(RunStatus {
         alert_incident_id: id,
         attempts: found.attempts,
@@ -159,10 +232,11 @@ pub async fn status(
         can_run: why.is_none(),
         blocked: why.map(Why::code),
         reason: why.map(Why::message),
-        refusal: match why {
-            Some(Why::Refused(refusal)) => Some(refusal.code()),
-            _ => None,
-        },
+        refusal: refusal.map(|r| r.code()),
+        diagnosis_only: diagnosis_only.map(DiagnosisOnly::code),
+        diagnosis_only_reason: diagnosis_only.map(DiagnosisOnly::message),
+        no_attempt: no_attempt.map(NoAttempt::code),
+        no_attempt_reason: no_attempt.map(NoAttempt::message),
     }))
 }
 
@@ -242,26 +316,24 @@ mod tests {
     fn every_reason_has_a_code_and_a_sentence() {
         let reasons = [
             Why::Alert(Blocked::AlertResolved),
-            Why::Alert(Blocked::NoAgent),
             Why::Alert(Blocked::InProgress),
             Why::AiOff,
-            Why::Refused(Refusal::Off { windows: false }),
             Why::Role,
         ];
         let codes: Vec<_> = reasons.iter().map(|w| w.code()).collect();
-        assert_eq!(
-            codes,
-            [
-                "alert_resolved",
-                "no_agent",
-                "in_progress",
-                "ai_off",
-                "commands_refused",
-                "role"
-            ]
-        );
-        assert!(Why::Refused(Refusal::Off { windows: false })
-            .message()
-            .contains("MF_ALLOW_COMMANDS=1"));
+        assert_eq!(codes, ["alert_resolved", "in_progress", "ai_off", "role"]);
+        assert!(reasons.iter().all(|w| !w.message().is_empty()));
+    }
+
+    #[test]
+    fn an_alert_without_attempt_says_why() {
+        let now = Utc::now();
+        let recent = now - chrono::Duration::minutes(5);
+        let old = now - chrono::Duration::minutes(61);
+        assert_eq!(NoAttempt::of(false, recent, now), NoAttempt::AiOff);
+        assert_eq!(NoAttempt::of(true, recent, now), NoAttempt::Soon);
+        assert_eq!(NoAttempt::of(true, old, now), NoAttempt::TooOld);
+        assert_eq!(NoAttempt::of(false, old, now).code(), "ai_off");
+        assert_eq!(NoAttempt::TooOld.code(), "too_old");
     }
 }

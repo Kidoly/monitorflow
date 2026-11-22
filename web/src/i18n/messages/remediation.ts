@@ -47,6 +47,7 @@ export const en = {
   "summary.notCompleted": "Did not complete: {error}{took}",
   "summary.noResult": "no result",
   "summary.failed": "Failed: {reason}",
+  "summary.diagnosisOnly": "Diagnosis only, handed to a person: {reason}",
   "summary.stateChange": "{from} → {to}",
   "summary.attemptByHand": "Attempt {number}, started by hand",
   "summary.attemptAccepted": "Attempt {number}, started because the server now accepts AI commands",
@@ -69,9 +70,11 @@ export const en = {
   "close.approved_forbidden": "The approved command is forbidden: {detail}",
   "close.needs_approval": "The rules changed, the command now needs approval: {detail}",
   "close.commands_off":
-    "AI commands are off on this server. Run the installer there with MF_ALLOW_COMMANDS=1 to allow them.",
+    "AI commands are off on this server. The Commands tab of its page turns them on, or gives the line to run there.",
   "close.commands_off_windows":
-    "AI commands are off on this server. Run monitorflow-agent.exe ai-commands on there as an administrator, then restart the MonitorFlowAgent service.",
+    "AI commands are off on this server. The Commands tab of its page turns them on, or gives the command to run there.",
+  "close.device": "This is a device without an agent, so no command can run on it",
+  "close.offline": "The host stopped reporting, so no command can reach it",
   "close.system_unsupported": "This server's system does not run AI commands yet",
   "close.agent_too_old": "This server's agent is too old for AI commands; it updates by itself",
   "close.snapshot_failed": "The snapshot before the change failed: {detail}",
@@ -132,11 +135,10 @@ export const en = {
   "queue.nothing": "Nothing waiting for approval",
   "queue.noneOfTier": "No command of this tier is waiting.",
   "queue.openIncidents": "Open incidents",
-  "queue.empty":
-    "The AI looks into each new alert on servers that accept AI commands. Commands that only read run on their own; a command that changes something waits here for an approver. None is waiting now.",
+  "queue.empty": "The AI diagnoses every new alert. On servers that accept AI commands it also runs read-only checks by itself, and a command that changes something waits here for an approver. None is waiting now.",
   "queue.howTitle": "How a command gets here",
   "queue.howAi": "AI is on, under Settings › AI.",
-  "queue.howServer": "The server accepts AI commands: see the Commands tab of its page.",
+  "queue.howServer": "The server accepts AI commands: turn them on from the Commands tab of its page.",
   "queue.howServerAll": "Turn them on on every server at once.",
   "queue.howAlert": "An alert opens on that server and the AI proposes a change, such as restarting a stopped service.",
   "queue.howRules":
@@ -206,7 +208,7 @@ export const en = {
   "audit.what": "the audit log",
   "audit.noMatch": "No events match these filters.",
   "audit.openIncidents": "Open incidents",
-  "audit.none": "No remediation has run yet.",
+  "audit.none": "Nothing yet. Once AI is on, each new alert gets its entries here: what the AI was sent, its diagnosis and, where the server accepts AI commands, every command and its result.",
   "audit.label": "Remediation events",
   "audit.showing": {
     one: "Showing {count} event · {size} per page",
@@ -260,6 +262,7 @@ export const fr: Translation<typeof en> = {
   "summary.notCompleted": "Inachevée : {error}{took}",
   "summary.noResult": "aucun résultat",
   "summary.failed": "En échec : {reason}",
+  "summary.diagnosisOnly": "Diagnostic seul, confié à une personne : {reason}",
   "summary.stateChange": "{from} → {to}",
   "summary.attemptByHand": "Tentative {number}, lancée à la main",
   "summary.attemptAccepted": "Tentative {number}, lancée car le serveur accepte désormais les commandes IA",
@@ -282,9 +285,11 @@ export const fr: Translation<typeof en> = {
   "close.approved_forbidden": "La commande approuvée est interdite : {detail}",
   "close.needs_approval": "Les règles ont changé, la commande demande maintenant une approbation : {detail}",
   "close.commands_off":
-    "Les commandes IA sont désactivées sur ce serveur. Relancez-y l’installateur avec MF_ALLOW_COMMANDS=1 pour les autoriser.",
+    "Les commandes IA sont désactivées sur ce serveur. L’onglet Commandes de sa page les active, ou donne la ligne à y lancer.",
   "close.commands_off_windows":
-    "Les commandes IA sont désactivées sur ce serveur. Lancez-y monitorflow-agent.exe ai-commands on en administrateur, puis redémarrez le service MonitorFlowAgent.",
+    "Les commandes IA sont désactivées sur ce serveur. L’onglet Commandes de sa page les active, ou donne la commande à y lancer.",
+  "close.device": "C’est un équipement sans agent : aucune commande ne peut s’y exécuter",
+  "close.offline": "L’hôte ne remonte plus rien : aucune commande ne peut l’atteindre",
   "close.system_unsupported": "Le système de ce serveur n’exécute pas encore de commandes IA",
   "close.agent_too_old": "L’agent de ce serveur est trop ancien pour les commandes IA ; il se met à jour tout seul",
   "close.snapshot_failed": "L’instantané avant le changement a échoué : {detail}",
@@ -346,11 +351,10 @@ export const fr: Translation<typeof en> = {
   "queue.nothing": "Rien en attente d’approbation",
   "queue.noneOfTier": "Aucune commande de ce niveau n’est en attente.",
   "queue.openIncidents": "Incidents ouverts",
-  "queue.empty":
-    "L’IA examine chaque nouvelle alerte des serveurs qui acceptent les commandes IA. Les commandes qui ne font que lire s’exécutent seules ; une commande qui modifie quelque chose attend ici un approbateur. Aucune n’attend pour l’instant.",
+  "queue.empty": "L’IA diagnostique chaque nouvelle alerte. Sur les serveurs qui acceptent les commandes IA, elle lance aussi seule des vérifications en lecture, et une commande qui modifie quelque chose attend ici un approbateur. Aucune n’attend pour l’instant.",
   "queue.howTitle": "Comment une commande arrive ici",
   "queue.howAi": "L’IA est activée, dans Paramètres › IA.",
-  "queue.howServer": "Le serveur accepte les commandes IA : voir l’onglet Commandes de sa page.",
+  "queue.howServer": "Le serveur accepte les commandes IA : activez-les depuis l’onglet Commandes de sa page.",
   "queue.howServerAll": "Les activer sur tous les serveurs d’un coup.",
   "queue.howAlert": "Une alerte s’ouvre sur ce serveur et l’IA propose une modification, comme redémarrer un service arrêté.",
   "queue.howRules":
@@ -423,7 +427,7 @@ export const fr: Translation<typeof en> = {
   "audit.what": "le journal d’audit",
   "audit.noMatch": "Aucun événement ne correspond à ces filtres.",
   "audit.openIncidents": "Incidents ouverts",
-  "audit.none": "Aucune remédiation n’a encore eu lieu.",
+  "audit.none": "Rien pour l’instant. Une fois l’IA activée, chaque nouvelle alerte a ses entrées ici : ce qui a été envoyé à l’IA, son diagnostic et, là où le serveur accepte les commandes IA, chaque commande et son résultat.",
   "audit.label": "Événements de remédiation",
   "audit.showing": {
     one: "{count} événement affiché · {size} par page",

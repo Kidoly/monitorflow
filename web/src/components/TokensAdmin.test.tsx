@@ -175,7 +175,7 @@ describe("TokensAdmin", () => {
     );
     const commands = within(panel).getByRole("group", { name: "Install the agent" });
     expect(within(commands).getByLabelText(/^Linux/)).toHaveTextContent(
-      `| sudo MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
+      `| sudo MF_AI_COMMANDS_FROM_WEB=1 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
     );
     expect(within(commands).getByLabelText(/^Windows/)).toHaveTextContent(`ENROLLMENT_TOKEN=${SECRET}`);
     const post = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
@@ -358,7 +358,7 @@ describe("TokensAdmin", () => {
 
     const install = await screen.findByRole("group", { name: "Install the agent" });
     const linux = within(install).getByLabelText(/^Linux/);
-    expect(linux).toHaveTextContent(`| sudo MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`);
+    expect(linux).toHaveTextContent(`| sudo MF_AI_COMMANDS_FROM_WEB=1 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`);
     expect(within(install).getByLabelText(/^Windows/)).toHaveTextContent(
       `UPSTREAM_URL=https://mf.example:7443 ENROLLMENT_TOKEN=${SECRET}`,
     );
@@ -374,13 +374,14 @@ describe("TokensAdmin", () => {
     expect(linux).toHaveTextContent("MF_SERVER=mf.example:7443 MF_TOKEN");
     expect(linux).not.toHaveTextContent("; id");
 
-    // Off by default; checked, both lines let the web interface turn AI commands on (ADR-0098).
+    // On by default (ADR-0175): both lines let the web interface turn AI commands on (ADR-0098); unticked, neither does.
     const fromWeb = within(install).getByRole("switch", { name: /Allow AI commands to be turned on from the web interface/ });
-    expect(fromWeb).not.toBeChecked();
-    expect(linux).not.toHaveTextContent("MF_AI_COMMANDS_FROM_WEB");
-    await user.click(fromWeb);
+    expect(fromWeb).toBeChecked();
     expect(linux).toHaveTextContent("sudo MF_AI_COMMANDS_FROM_WEB=1 MF_SERVER=");
     expect(within(install).getByLabelText(/^Windows/)).toHaveTextContent("AI_COMMANDS_FROM_WEB=1");
+    await user.click(fromWeb);
+    expect(linux).not.toHaveTextContent("MF_AI_COMMANDS_FROM_WEB");
+    expect(within(install).getByLabelText(/^Windows/)).not.toHaveTextContent("AI_COMMANDS_FROM_WEB");
   });
 
   it("lets global administrators change the address of every command in one step", async () => {
