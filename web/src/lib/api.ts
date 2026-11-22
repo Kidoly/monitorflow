@@ -1982,6 +1982,25 @@ export interface ServerUpdateMilestone {
   done_at: string | null;
 }
 
+/** How an update of the server's history ended (ADR-0172). */
+export type ServerUpdateResult = "in_progress" | "succeeded" | "failed" | "rolled_back" | "unknown";
+
+/** One update of the server, `GET /api/server-update/history`. */
+export interface ServerUpdateHistoryEntry {
+  id: string;
+  from: string | null;
+  to: string;
+  /** Null when the updater started it (command line) or it is not known. */
+  requested_by: string | null;
+  started_at: string;
+  finished_at: string | null;
+  result: ServerUpdateResult;
+  /** Why it failed or rolled back, in the updater's words. */
+  error: string | null;
+  /** `result` was deduced from the updates after it, not recorded. */
+  inferred: boolean;
+}
+
 export interface ServerUpdateView {
   running_version: string;
   /** The server is set up for updates from the web interface. */
@@ -5128,6 +5147,10 @@ export const api = {
   /** Server updates; global administrators only (ADR-0056). */
   serverUpdate: (signal?: AbortSignal) =>
     request<ServerUpdateView>("/api/server-update", { signal }),
+
+  /** The server's updates, newest first (ADR-0172). */
+  serverUpdateHistory: (signal?: AbortSignal) =>
+    request<{ updates: ServerUpdateHistoryEntry[] }>("/api/server-update/history", { signal }),
 
   license: (signal?: AbortSignal) => request<LicenseView>("/api/license", { signal }),
 

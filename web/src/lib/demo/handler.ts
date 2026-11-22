@@ -395,6 +395,12 @@ const ROUTES: [RegExp, Handler][] = [
     tags: [],
   })],
   [/^\/api\/server-update$/, () => SERVER_UPDATE],
+  [/^\/api\/server-update\/history$/, () => ({
+    updates: [{
+      id: SERVER_UPDATE.update!.id, from: "0.5.2", to: SERVER_VERSION, requested_by: "alex", started_at: ago(10 * DAY + 10),
+      finished_at: ago(10 * DAY + 3), result: "succeeded", error: null, inferred: false,
+    }],
+  })],
   [/^\/api\/license$/, () => ({ available: false })],
   [/^\/api\/backups$/, () => BACKUPS],
   [/^\/api\/certificate-authority$/, () => CERTIFICATE_AUTHORITY],
