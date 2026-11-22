@@ -106,7 +106,7 @@ MonitorFlow keeps copies of the Debian, Ubuntu and RHEL package repositories, an
 
 ### 1. Check the requirements
 
-- A Linux machine for the central server: 2 vCPU and 4 GB of RAM are enough for a few dozen servers. Docker is installed for you if it is missing.
+- A Linux machine for the central server: 2 vCPU and 4 GB of RAM watch up to about 8,000 servers (measured in the [load test](docs/load-test.md), 10 sensors each); add memory first beyond that. Docker is installed for you if it is missing.
 - Ports your browsers and servers can reach on it: **443** and **80** (web interface), **7443** and **7445** (agents and relays), **7480** (packages, if you use updates).
 - Servers to watch: any Linux with systemd (x86_64 or ARM64), or Windows.
 
