@@ -26,7 +26,7 @@ pub(super) const COLUMNS: &str =
     "id, customer_id, name, site_id, packages, security_only, allow_reboot,
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
      created_by, created_at, started_at, finished_at, sources_mode, agent_version, include_os,
-     third_party";
+     third_party, requested_server_ids, requested_waves";
 
 /// Who acts, as `(actor_kind, actor_id)` of the audit log.
 pub type Actor<'a> = (&'a str, &'a str);
@@ -64,6 +64,10 @@ pub enum CampaignError {
         action: &'static str,
         state: CampaignState,
     },
+    /// The campaign's state allows the action, what it holds does not;
+    /// the message says why and is safe to show.
+    #[error("{0}")]
+    Busy(String),
     #[error("database query failed: {0}")]
     Database(#[from] sqlx::Error),
 }
@@ -95,6 +99,9 @@ pub struct CampaignRow {
     /// Whether OS updates are included (ADR-0138).
     pub include_os: bool,
     pub third_party: sqlx::types::Json<Vec<ThirdPartySpec>>,
+    /// The `server_ids` and `waves` asked; `None` before ADR-0166.
+    pub requested_server_ids: Option<Vec<Uuid>>,
+    pub requested_waves: Option<sqlx::types::Json<Vec<WaveSpec>>>,
 }
 
 impl CampaignRow {
@@ -170,8 +177,9 @@ impl CampaignStore {
             sqlx::query_as(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
                      allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit,
-                     sources_mode, agent_version, include_os, third_party, created_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                     sources_mode, agent_version, include_os, third_party, requested_server_ids,
+                     requested_waves, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                  RETURNING {COLUMNS}"
             ))),
             new,
@@ -188,6 +196,150 @@ impl CampaignStore {
                 action: "campaign.create",
                 target: Some(("campaign", &row.id.to_string())),
                 details: details(&row, new, &plan),
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(row)
+    }
+
+    /// Replaces everything of the campaign `id` by `new`, but its state and
+    /// who made it, audited as `campaign.update`. Only a campaign that
+    /// queued nothing yet changes: a draft, or a scheduled or paused one
+    /// whose first batch is still waiting (ADR-0166).
+    pub async fn update(
+        &self,
+        id: Uuid,
+        new: &NewCampaign,
+        actor: Actor<'_>,
+    ) -> Result<CampaignRow, CampaignError> {
+        let windows = check(new)?;
+        let mut tx = self.pool.begin().await?;
+        let row = lock(&mut tx, id).await?.ok_or(CampaignError::NotFound)?;
+        if row.state.is_final() {
+            return Err(CampaignError::Transition {
+                action: "edit",
+                state: row.state,
+            });
+        }
+        let queued: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM commands WHERE campaign_id = $1)")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if row.current_wave.is_some() || queued {
+            return Err(CampaignError::Busy(
+                "cannot edit a campaign that queued commands already: duplicate it instead".into(),
+            ));
+        }
+        // Before planning, so its own pins do not count twice.
+        for table in [
+            "campaign_targets",
+            "campaign_waves",
+            "campaign_windows",
+            "campaign_snapshots",
+        ] {
+            // SQL-safe: interpolates only the constant table names above.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE campaign_id = $1"
+            )))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        let plan = plan(&mut tx, new, windows).await?;
+        // SQL-safe: interpolates only the constant COLUMNS.
+        let row: CampaignRow = bind_fields(
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "UPDATE campaigns SET customer_id = $1, name = $2, site_id = $3, packages = $4,
+                     security_only = $5, allow_reboot = $6, command_ttl_s = $7,
+                     failure_threshold = $8, failure_threshold_unit = $9, sources_mode = $10,
+                     agent_version = $11, include_os = $12, third_party = $13,
+                     requested_server_ids = $14, requested_waves = $15
+                 WHERE id = $16
+                 RETURNING {COLUMNS}"
+            ))),
+            new,
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        write_plan(&mut tx, id, new, &plan).await?;
+        let mut details = details(&row, new, &plan);
+        details["state"] = json!(row.state.as_str());
+        audit::record(
+            &mut *tx,
+            Event {
+                actor_kind: actor.0,
+                actor_id: actor.1,
+                action: "campaign.update",
+                target: Some(("campaign", &id.to_string())),
+                details,
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(row)
+    }
+
+    /// Deletes a draft or a finished campaign with its batches, servers
+    /// and windows, audited as `campaign.delete`; its commands stay in the
+    /// history. Refused while some of them are still in flight or a
+    /// server's package sources are still to be put back (ADR-0166).
+    pub async fn delete(&self, id: Uuid, actor: Actor<'_>) -> Result<CampaignRow, CampaignError> {
+        let mut tx = self.pool.begin().await?;
+        let row = lock(&mut tx, id).await?.ok_or(CampaignError::NotFound)?;
+        if !(row.state == CampaignState::Draft || row.state.is_final()) {
+            return Err(CampaignError::Transition {
+                action: "delete",
+                state: row.state,
+            });
+        }
+        let (in_flight, unrestored, servers): (bool, bool, i64) = sqlx::query_as(
+            "SELECT
+                 EXISTS (SELECT 1 FROM commands
+                         WHERE campaign_id = $1 AND state IN ('queued', 'sent', 'running')),
+                 EXISTS (SELECT 1 FROM campaign_targets t
+                         JOIN commands cfg ON cfg.id = t.sources_command_id
+                         JOIN servers s ON s.id = t.server_id
+                         WHERE t.campaign_id = $1 AND t.restore_command_id IS NULL
+                           AND s.revoked_at IS NULL
+                           AND (cfg.sent_at IS NOT NULL OR cfg.state = 'queued')),
+                 (SELECT count(*) FROM campaign_targets WHERE campaign_id = $1)",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if in_flight {
+            return Err(CampaignError::Busy(
+                "the campaign still has commands in flight: delete it once they end".into(),
+            ));
+        }
+        if unrestored {
+            return Err(CampaignError::Busy(
+                "the package sources of some servers are not restored yet".into(),
+            ));
+        }
+        sqlx::query("DELETE FROM campaigns WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        audit::record(
+            &mut *tx,
+            Event {
+                actor_kind: actor.0,
+                actor_id: actor.1,
+                action: "campaign.delete",
+                target: Some(("campaign", &id.to_string())),
+                details: json!({
+                    "name": row.name,
+                    "customer_id": row.customer_id,
+                    "state": row.state.as_str(),
+                    "servers": servers,
+                    "created_at": row.created_at,
+                    "started_at": row.started_at,
+                    "finished_at": row.finished_at,
+                }),
             },
         )
         .await?;
@@ -354,7 +506,7 @@ async fn plan(
 type RowQuery<'q> =
     sqlx::query::QueryAs<'q, sqlx::Postgres, CampaignRow, sqlx::postgres::PgArguments>;
 
-/// Binds `$1` to `$13` of an insert of `campaigns` from `new`.
+/// Binds `$1` to `$15` of an insert or update of `campaigns` from `new`.
 fn bind_fields<'q>(query: RowQuery<'q>, new: &'q NewCampaign) -> RowQuery<'q> {
     query
         .bind(new.customer_id)
@@ -370,6 +522,8 @@ fn bind_fields<'q>(query: RowQuery<'q>, new: &'q NewCampaign) -> RowQuery<'q> {
         .bind(new.agent_version.as_ref().map(ToString::to_string))
         .bind(new.spec.include_os)
         .bind(sqlx::types::Json(&new.spec.third_party))
+        .bind(&new.server_ids)
+        .bind(sqlx::types::Json(&new.waves))
 }
 
 /// Stores the pins, waves, targets and windows of the campaign `id`.

@@ -1088,6 +1088,43 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 "{body}"
             );
         }
+        ("PUT", "/api/campaigns/{id}") => {
+            let uri = format!("/api/campaigns/{}", b.campaign);
+            let body = json!({ "customer_id": b.customer, "name": "x", "site_id": b.site });
+            assert_eq!(ctx.status(method, &uri, Some(body)).await, not_found);
+            // A's campaign can neither move to B nor reach B's servers or sites.
+            let uri = format!("/api/campaigns/{}", a.campaign);
+            let body = json!({ "customer_id": b.customer, "name": "x", "site_id": b.site });
+            assert_eq!(ctx.status(method, &uri, Some(body)).await, not_found);
+            for target in [
+                json!({ "server_ids": [b.server] }),
+                json!({ "site_id": b.site }),
+            ] {
+                let mut body = json!({ "customer_id": a.customer, "name": "x" });
+                body.as_object_mut()
+                    .unwrap()
+                    .extend(target.as_object().unwrap().clone());
+                let (status, answer) = ctx.call(method, &uri, Some(body)).await;
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+            }
+            let customers: Vec<Uuid> =
+                sqlx::query_scalar("SELECT customer_id FROM campaigns WHERE id = ANY($1)")
+                    .bind([a.campaign, b.campaign])
+                    .fetch_all(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert!(customers.contains(&a.customer) && customers.contains(&b.customer));
+        }
+        ("DELETE", "/api/campaigns/{id}") => {
+            let uri = format!("/api/campaigns/{}", b.campaign);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let left: i64 = sqlx::query_scalar("SELECT count(*) FROM campaigns WHERE id = $1")
+                .bind(b.campaign)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            assert_eq!(left, 1);
+        }
         ("POST", "/api/campaigns/{id}/start")
         | ("POST", "/api/campaigns/{id}/pause")
         | ("POST", "/api/campaigns/{id}/resume")

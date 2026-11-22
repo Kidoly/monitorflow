@@ -177,8 +177,8 @@ db_tests! {
             [
                 "agent_version", "command_ttl_s", "created_at", "created_by", "current_wave", "customer_id",
                 "customer_name", "error", "failure_threshold", "finished_at", "id", "name",
-                "progress", "site_id", "sources", "spec", "started_at", "state", "wave_count",
-                "waves", "windows"
+                "progress", "server_ids", "site_id", "sources", "spec", "started_at", "state",
+                "wave_count", "wave_specs", "waves", "windows"
             ]
         );
         assert_eq!(created["state"], "draft");
@@ -188,6 +188,8 @@ db_tests! {
         assert_eq!(created["failure_threshold"], json!({"value": 10, "unit": "percent"}));
         assert_eq!(created["windows"], h.body()["windows"]);
         assert_eq!(created["sources"], Value::Null);
+        assert_eq!(created["server_ids"], json!([]));
+        assert_eq!(created["wave_specs"], json!([{"size": 1}]));
         assert_eq!(created["wave_count"], 2);
         assert_eq!(created["current_wave"], Value::Null);
         assert_eq!(
@@ -336,5 +338,111 @@ db_tests! {
         let (status, created) = h.send("POST", "/api/campaigns", &admin, Some(body)).await;
         assert_eq!(status, StatusCode::CREATED, "{created}");
         assert_eq!(created["waves"][0]["servers"][0]["server_id"], json!(h.servers[1]));
+    }
+
+    #[sqlx::test]
+    async fn campaigns_are_edited_until_queued_and_deleted_once_over(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let (_, created) = h.send("POST", "/api/campaigns", &admin, Some(h.body())).await;
+        let id = created["id"].as_str().unwrap().to_owned();
+        let detail = format!("/api/campaigns/{id}");
+
+        // The whole request again: one batch of the second server.
+        let mut edited = h.body();
+        edited["name"] = json!("Edited");
+        edited["site_id"] = Value::Null;
+        edited["server_ids"] = json!([h.servers[1]]);
+        edited["waves"] = json!([]);
+        edited["windows"] = json!([]);
+        let (status, body) = h.send("PUT", &detail, &admin, Some(edited.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!((body["name"].as_str(), body["state"].as_str()), (Some("Edited"), Some("draft")));
+        assert_eq!(body["server_ids"], json!([h.servers[1]]));
+        assert_eq!(body["wave_specs"], json!([]));
+        assert_eq!(body["waves"].as_array().unwrap().len(), 1);
+        assert_eq!(body["waves"][0]["servers"][0]["server_id"], json!(h.servers[1]));
+        assert_eq!(body["windows"], json!([]));
+        assert_eq!(body["created_at"], created["created_at"]);
+        let mut bad = edited.clone();
+        bad["command_ttl_s"] = json!(10);
+        assert_eq!(h.send("PUT", &detail, &admin, Some(bad)).await.0, StatusCode::BAD_REQUEST);
+        let viewer = h.login("viewer", Role::Viewer, GrantScope::Customer(h.customer)).await;
+        assert_eq!(h.send("PUT", &detail, &viewer, Some(edited.clone())).await.0, StatusCode::FORBIDDEN);
+        assert_eq!(h.send("DELETE", &detail, &viewer, None).await.0, StatusCode::FORBIDDEN);
+
+        // Scheduled with nothing queued still changes; once queued, not.
+        assert_eq!(h.send("POST", &format!("{detail}/start"), &admin, None).await.0, StatusCode::OK);
+        let (status, body) = h.send("PUT", &detail, &admin, Some(edited.clone())).await;
+        assert_eq!((status, body["state"].as_str()), (StatusCode::OK, Some("scheduled")));
+        let (status, body) = h.send("DELETE", &detail, &admin, None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "cannot delete a campaign that is scheduled");
+        let uuid: Uuid = id.parse().unwrap();
+        Runner::new(pool.clone()).advance(uuid, Utc::now()).await.unwrap();
+        let (status, body) = h.send("PUT", &detail, &admin, Some(edited.clone())).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "cannot edit a campaign that queued commands already: duplicate it instead");
+
+        // Stopped with its command sent: deleted once that ends.
+        let command: Uuid = sqlx::query_scalar("SELECT id FROM commands WHERE campaign_id = $1")
+            .bind(uuid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE commands SET state = 'sent', sent_at = now() WHERE id = $1")
+            .bind(command)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (_, stopped) = h.send("POST", &format!("{detail}/stop"), &admin, None).await;
+        assert_eq!(stopped["state"], "stopped");
+        let (status, body) = h.send("DELETE", &detail, &admin, None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "the campaign still has commands in flight: delete it once they end");
+        let (status, body) = h.send("PUT", &detail, &admin, Some(edited)).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "cannot edit a campaign that is stopped");
+        sqlx::query("UPDATE commands SET state = 'succeeded', finished_at = now() WHERE id = $1")
+            .bind(command)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(h.send("DELETE", &detail, &admin, None).await.0, StatusCode::NO_CONTENT);
+        assert_eq!(h.send("GET", &detail, &admin, None).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(h.send("DELETE", &detail, &admin, None).await.0, StatusCode::NOT_FOUND);
+        // The command stays, without its campaign; the audit log keeps everything.
+        let kept: Option<Uuid> = sqlx::query_scalar("SELECT campaign_id FROM commands WHERE id = $1")
+            .bind(command)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, None);
+        let actions: Vec<String> = sqlx::query_scalar(
+            "SELECT action FROM audit_log WHERE target_id = $1 AND action LIKE 'campaign.%' ORDER BY id",
+        )
+        .bind(&id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            actions,
+            ["campaign.create", "campaign.update", "campaign.start", "campaign.update",
+             "campaign.queue", "campaign.stop", "campaign.delete"]
+        );
+        let details: Value = sqlx::query_scalar(
+            "SELECT details FROM audit_log WHERE target_id = $1 AND action = 'campaign.delete'",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((details["name"].as_str(), details["state"].as_str()), (Some("Edited"), Some("stopped")));
+        assert_eq!(details["servers"], 1);
+
+        // A draft is deleted at once.
+        let (_, draft) = h.send("POST", "/api/campaigns", &admin, Some(h.body())).await;
+        let draft = format!("/api/campaigns/{}", draft["id"].as_str().unwrap());
+        assert_eq!(h.send("DELETE", &draft, &admin, None).await.0, StatusCode::NO_CONTENT);
     }
 }

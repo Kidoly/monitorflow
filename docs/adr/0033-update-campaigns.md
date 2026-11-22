@@ -1,7 +1,7 @@
 # ADR-0033: Update campaigns
 
 Date: 2026-10-24
-Status: accepted
+Status: accepted; amended by ADR-0166 (editing and deleting campaigns)
 
 ## Context
 
@@ -19,7 +19,7 @@ Constraints:
 
 Migration `20261024090000_campaigns`, plus `20261024091000_commands_campaign_fk` for the foreign key from `commands.campaign_id`.
 
-- `campaigns`: `customer_id`, `name`, the `site_id` named at creation if any, the `ApplyUpdates` spec (`packages`, `security_only`, `allow_reboot`), `command_ttl_s` (60 s to 7 days, default one hour), the failure threshold (`failure_threshold`, `failure_threshold_unit` `count` or `percent`), `state`, `current_wave`, `error`, `created_by`, `created_at`, `started_at`, `finished_at`. Campaigns are never deleted.
+- `campaigns`: `customer_id`, `name`, the `site_id` named at creation if any, the `ApplyUpdates` spec (`packages`, `security_only`, `allow_reboot`), `command_ttl_s` (60 s to 7 days, default one hour), the failure threshold (`failure_threshold`, `failure_threshold_unit` `count` or `percent`), `state`, `current_wave`, `error`, `created_by`, `created_at`, `started_at`, `finished_at`. Campaigns are never deleted (until ADR-0166).
 - `campaign_waves`: `(campaign_id, position)` from 0, `started_at`, `finished_at`.
 - `campaign_targets`: one row per server with its `wave`, its current `command_id` and an `error` when it got no command (revoked since creation).
 - `campaign_windows`: the maintenance windows, below.

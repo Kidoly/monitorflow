@@ -16,8 +16,8 @@ use crate::campaign::{
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        list_campaigns, create_campaign, campaign, start_campaign, pause_campaign,
-        resume_campaign, stop_campaign,
+        list_campaigns, create_campaign, campaign, update_campaign, delete_campaign,
+        start_campaign, pause_campaign, resume_campaign, stop_campaign,
     ),
     components(schemas(
         CampaignState, FailureThreshold, FailureUnit, PinnedMirror, SourcesMode, SourcesPin,
@@ -29,7 +29,8 @@ use crate::campaign::{
         (name = "campaigns", description = "Package or agent updates sent to many servers of one \
 customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than \
 its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is \
-started. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an \
+started. A campaign is edited until its first batch is queued and deleted as a draft or once \
+finished; to run one again, copy it: read it and create another from its fields. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an \
 agent update campaign), queued behind any other command of that server and checked by its agent, \
 which runs package updates only when its administrator allowed them. Campaign commands are made by \
 an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading \
@@ -96,6 +97,8 @@ fn campaign_in(state: &str) -> serde_json::Value {
         }],
         "sources": null,
         "agent_version": null,
+        "server_ids": [],
+        "wave_specs": [{"size": 1}],
         "wave_count": 2,
         "current_wave": if queued { Some(0) } else { None },
         "progress": {
@@ -160,7 +163,6 @@ fn list_example() -> serde_json::Value {
 ///
 /// The campaigns of the customers the caller reads as a whole, newest
 /// first, without their batches and servers (read one for those).
-/// Campaigns are never deleted.
 ///
 /// Needs any role on the customer as a whole (everything or the customer;
 /// a role on one site, or a key that reaches one site, sees none) and the
@@ -198,6 +200,12 @@ fn list_campaigns() {}
 ///
 /// These commands come from an administrator, so they are not classified
 /// by the risk rules and need no approval.
+///
+/// To copy a campaign, read it and send its `name`, `customer_id`,
+/// `site_id`, `server_ids`, `wave_specs` (as `waves`), the fields of
+/// `spec`, `command_ttl_s`, `failure_threshold`, `windows`, `sources` and
+/// `agent_version` here: the copy is a new draft, with the servers of the
+/// site as they are now.
 ///
 /// Needs an administrator role on the customer as a whole and the key
 /// area "updates". Audited as `campaign.create`. Not safe to repeat: send
@@ -250,6 +258,78 @@ fn create_campaign() {}
 customer the caller does not read as a whole"),
     ))]
 fn campaign() {}
+
+/// Edit a campaign
+///
+/// Replaces the whole campaign with the body, which is the body of a
+/// creation: fields left out take their defaults, not the campaign's
+/// values. Its servers are frozen again into batches, as at creation. The
+/// state, who made it and when stay.
+///
+/// Only a campaign that queued nothing yet changes: a `draft`, or a
+/// `scheduled` or `paused` one whose first batch is still waiting for a
+/// maintenance window. Once a batch was queued, or once finished, it is
+/// 409: copy it into a new campaign instead (see "Create a campaign").
+///
+/// Needs an administrator role on the campaign's customer, and on the
+/// customer of the body when it moves it, as a whole, and the key area
+/// "updates". Audited as `campaign.update`.
+#[utoipa::path(put, path = "/api/v1/campaigns/{id}", tag = "campaigns",
+    params(("id" = uuid::Uuid, Path, description = "The campaign")),
+    request_body(content = campaigns::CreateRequest, example = json!({
+        "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+        "name": "November updates",
+        "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+        "waves": [{"size": 1}],
+        "security_only": true,
+        "windows": [{
+            "kind": "weekly", "weekdays": [6], "start": "22:00", "end": "04:00",
+            "timezone": "Europe/Paris"
+        }]
+    })),
+    responses(
+        (status = 200, description = "The campaign as edited, with its batches and servers",
+            body = campaigns::CampaignDetail, example = draft),
+        (status = 400, body = ErrorBody, description = "`invalid`, as for a creation"),
+        (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
+without administering it as a whole. `api_key_scope`: the key lacks the area"),
+        (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \
+customer the caller does not read as a whole"),
+        (status = 409, body = ErrorBody, description = "`conflict`: `cannot edit a campaign that is \
+<state>` once it is finished, `cannot edit a campaign that queued commands already: duplicate it \
+instead`, or a `sources` conflict as for a creation"),
+    ))]
+fn update_campaign() {}
+
+/// Delete a campaign
+///
+/// Deletes a `draft`, or a `stopped`, `completed` or `failed` campaign,
+/// with its batches, servers and windows. Its commands stay in the
+/// history under `/commands/{id}`, without their `campaign_id`. A
+/// campaign in progress is stopped first.
+///
+/// Refused while some of its commands are still `queued`, `sent` or
+/// `running` (stopping lets the commands already sent finish), or while
+/// the package sources of some of its servers are still to be put back
+/// after pinned snapshots.
+///
+/// Needs an administrator role on the customer as a whole and the key
+/// area "updates". Audited as `campaign.delete`, with its name, state and
+/// number of servers.
+#[utoipa::path(delete, path = "/api/v1/campaigns/{id}", tag = "campaigns",
+    params(("id" = uuid::Uuid, Path, description = "The campaign")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
+without administering it as a whole. `api_key_scope`: the key lacks the area"),
+        (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \
+customer the caller does not read as a whole"),
+        (status = 409, body = ErrorBody, description = "`conflict`: `cannot delete a campaign that is \
+<state>` for one `scheduled`, `running` or `paused` (stop it first), `the campaign still has \
+commands in flight: delete it once they end`, or `the package sources of some servers are not \
+restored yet`"),
+    ))]
+fn delete_campaign() {}
 
 /// Start a campaign
 ///
@@ -323,9 +403,10 @@ fn resume_campaign() {}
 
 /// Stop a campaign
 ///
-/// Any state but a final one → `stopped`, for good. Commands still
-/// `queued` are cancelled; those already sent or running finish. A
-/// stopped campaign cannot be started again: create another.
+/// Any state but a final one → `stopped`, for good: this is how a
+/// campaign is cancelled. Commands still `queued` are cancelled; those
+/// already sent or running finish. A stopped campaign cannot be started
+/// again: copy it into another, or delete it.
 ///
 /// Needs an administrator role on the customer as a whole and the key
 /// area "updates". Audited as `campaign.stop`. Stopping a `stopped`,

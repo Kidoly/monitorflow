@@ -2312,7 +2312,7 @@
           "campaigns"
         ],
         "summary": "List campaigns",
-        "description": "The campaigns of the customers the caller reads as a whole, newest\nfirst, without their batches and servers (read one for those).\nCampaigns are never deleted.\n\nNeeds any role on the customer as a whole (everything or the customer;\na role on one site, or a key that reaches one site, sees none) and the\nkey area \"updates\". Paginated with `limit` and `cursor`; unknown\nparameters and bad values are 400.",
+        "description": "The campaigns of the customers the caller reads as a whole, newest\nfirst, without their batches and servers (read one for those).\n\nNeeds any role on the customer as a whole (everything or the customer;\na role on one site, or a key that reaches one site, sees none) and the\nkey area \"updates\". Paginated with `limit` and `cursor`; unknown\nparameters and bad values are 400.",
         "operationId": "list_campaigns",
         "parameters": [
           {
@@ -2387,6 +2387,7 @@
                         "succeeded": 0,
                         "total": 2
                       },
+                      "server_ids": [],
                       "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                       "sources": null,
                       "spec": {
@@ -2399,6 +2400,11 @@
                       "started_at": "2026-11-08T22:00:04Z",
                       "state": "running",
                       "wave_count": 2,
+                      "wave_specs": [
+                        {
+                          "size": 1
+                        }
+                      ],
                       "windows": [
                         {
                           "end": "04:00",
@@ -2492,7 +2498,7 @@
           "campaigns"
         ],
         "summary": "Create a campaign",
-        "description": "Makes a `draft` campaign: nothing is sent to any server until it is\nstarted. Its servers are frozen now: those of `server_ids` and the\nunrevoked servers of `site_id`, all of the customer, sorted by host\nname. A server added to the site later is not added to the campaign.\nThey are split into batches by `waves`, in order: explicit server\nlists first, then `{\"size\": n}` and `{\"percent\": p}` (of all servers,\nrounded up) take the next servers by host name; the servers left form\none last batch. Without `waves`, one batch.\n\nOnce started, each server gets one signed command, sent when its agent\nis connected and has no other command in flight:\n\n- a package update (`apply_updates` with `packages`, `security_only`\n  and `allow_reboot`; empty `packages` upgrades everything). A server\n  whose agent does not accept package updates is left out of its\n  batch. Where it can, MonitorFlow takes a local snapshot of the server\n  first (`snapshot_command_id`). With `sources`, the server's package\n  sources are first pointed at the pinned mirror snapshots and put back\n  after the update (`sources_command_id`, `restore_command_id`); the\n  central server needs mirrors and `mirror_public_url` for that;\n- or, with `agent_version`, an agent update (`self_update`) to that\n  version, which takes no package options.\n\nThese commands come from an administrator, so they are not classified\nby the risk rules and need no approval.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.create`. Not safe to repeat: send\n`Idempotency-Key` to retry.",
+        "description": "Makes a `draft` campaign: nothing is sent to any server until it is\nstarted. Its servers are frozen now: those of `server_ids` and the\nunrevoked servers of `site_id`, all of the customer, sorted by host\nname. A server added to the site later is not added to the campaign.\nThey are split into batches by `waves`, in order: explicit server\nlists first, then `{\"size\": n}` and `{\"percent\": p}` (of all servers,\nrounded up) take the next servers by host name; the servers left form\none last batch. Without `waves`, one batch.\n\nOnce started, each server gets one signed command, sent when its agent\nis connected and has no other command in flight:\n\n- a package update (`apply_updates` with `packages`, `security_only`\n  and `allow_reboot`; empty `packages` upgrades everything). A server\n  whose agent does not accept package updates is left out of its\n  batch. Where it can, MonitorFlow takes a local snapshot of the server\n  first (`snapshot_command_id`). With `sources`, the server's package\n  sources are first pointed at the pinned mirror snapshots and put back\n  after the update (`sources_command_id`, `restore_command_id`); the\n  central server needs mirrors and `mirror_public_url` for that;\n- or, with `agent_version`, an agent update (`self_update`) to that\n  version, which takes no package options.\n\nThese commands come from an administrator, so they are not classified\nby the risk rules and need no approval.\n\nTo copy a campaign, read it and send its `name`, `customer_id`,\n`site_id`, `server_ids`, `wave_specs` (as `waves`), the fields of\n`spec`, `command_ttl_s`, `failure_threshold`, `windows`, `sources` and\n`agent_version` here: the copy is a new draft, with the servers of the\nsite as they are now.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.create`. Not safe to repeat: send\n`Idempotency-Key` to retry.",
         "operationId": "create_campaign",
         "parameters": [
           {
@@ -2571,6 +2577,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "sources": null,
                   "spec": {
@@ -2583,6 +2590,11 @@
                   "started_at": null,
                   "state": "draft",
                   "wave_count": 2,
+                  "wave_specs": [
+                    {
+                      "size": 1
+                    }
+                  ],
                   "waves": [
                     {
                       "finished_at": null,
@@ -2803,6 +2815,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "sources": null,
                   "spec": {
@@ -2815,6 +2828,11 @@
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "running",
                   "wave_count": 2,
+                  "wave_specs": [
+                    {
+                      "size": 1
+                    }
+                  ],
                   "waves": [
                     {
                       "finished_at": null,
@@ -2961,6 +2979,409 @@
             }
           }
         }
+      },
+      "put": {
+        "tags": [
+          "campaigns"
+        ],
+        "summary": "Edit a campaign",
+        "description": "Replaces the whole campaign with the body, which is the body of a\ncreation: fields left out take their defaults, not the campaign's\nvalues. Its servers are frozen again into batches, as at creation. The\nstate, who made it and when stay.\n\nOnly a campaign that queued nothing yet changes: a `draft`, or a\n`scheduled` or `paused` one whose first batch is still waiting for a\nmaintenance window. Once a batch was queued, or once finished, it is\n409: copy it into a new campaign instead (see \"Create a campaign\").\n\nNeeds an administrator role on the campaign's customer, and on the\ncustomer of the body when it moves it, as a whole, and the key area\n\"updates\". Audited as `campaign.update`.",
+        "operationId": "update_campaign",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The campaign",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignRequest"
+              },
+              "example": {
+                "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                "name": "November updates",
+                "security_only": true,
+                "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                "waves": [
+                  {
+                    "size": 1
+                  }
+                ],
+                "windows": [
+                  {
+                    "end": "04:00",
+                    "kind": "weekly",
+                    "start": "22:00",
+                    "timezone": "Europe/Paris",
+                    "weekdays": [
+                      6
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The campaign as edited, with its batches and servers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignDetail"
+                },
+                "example": {
+                  "agent_version": null,
+                  "command_ttl_s": 3600,
+                  "created_at": "2026-11-06T10:30:00Z",
+                  "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
+                  "current_wave": null,
+                  "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                  "customer_name": "acme",
+                  "error": null,
+                  "failure_threshold": {
+                    "unit": "count",
+                    "value": 0
+                  },
+                  "finished_at": null,
+                  "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
+                  "name": "November updates",
+                  "progress": {
+                    "cancelled": 0,
+                    "failed": 0,
+                    "in_progress": 0,
+                    "pending": 2,
+                    "succeeded": 0,
+                    "total": 2
+                  },
+                  "server_ids": [],
+                  "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "sources": null,
+                  "spec": {
+                    "allow_reboot": false,
+                    "include_os": true,
+                    "packages": [],
+                    "security_only": true,
+                    "third_party": []
+                  },
+                  "started_at": null,
+                  "state": "draft",
+                  "wave_count": 2,
+                  "wave_specs": [
+                    {
+                      "size": 1
+                    }
+                  ],
+                  "waves": [
+                    {
+                      "finished_at": null,
+                      "index": 0,
+                      "progress": {
+                        "cancelled": 0,
+                        "failed": 0,
+                        "in_progress": 0,
+                        "pending": 1,
+                        "succeeded": 0,
+                        "total": 1
+                      },
+                      "servers": [
+                        {
+                          "command_id": null,
+                          "error": null,
+                          "exit_code": null,
+                          "finished_at": null,
+                          "hostname": "web-1",
+                          "peer_id": "web-1.paris.acme",
+                          "restore_command_id": null,
+                          "server_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                          "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                          "snapshot_command_id": null,
+                          "sources_command_id": null,
+                          "status": "pending"
+                        }
+                      ],
+                      "started_at": null,
+                      "state": "pending"
+                    },
+                    {
+                      "finished_at": null,
+                      "index": 1,
+                      "progress": {
+                        "cancelled": 0,
+                        "failed": 0,
+                        "in_progress": 0,
+                        "pending": 1,
+                        "succeeded": 0,
+                        "total": 1
+                      },
+                      "servers": [
+                        {
+                          "command_id": null,
+                          "error": null,
+                          "exit_code": null,
+                          "finished_at": null,
+                          "hostname": "web-2",
+                          "peer_id": "web-2.paris.acme",
+                          "restore_command_id": null,
+                          "server_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                          "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                          "snapshot_command_id": null,
+                          "sources_command_id": null,
+                          "status": "pending"
+                        }
+                      ],
+                      "started_at": null,
+                      "state": "pending"
+                    }
+                  ],
+                  "windows": [
+                    {
+                      "end": "04:00",
+                      "kind": "weekly",
+                      "start": "22:00",
+                      "timezone": "Europe/Paris",
+                      "weekdays": [
+                        6
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`, as for a creation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the customer without administering it as a whole. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such campaign, or one of a customer the caller does not read as a whole",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: `cannot edit a campaign that is <state>` once it is finished, `cannot edit a campaign that queued commands already: duplicate it instead`, or a `sources` conflict as for a creation; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "campaigns"
+        ],
+        "summary": "Delete a campaign",
+        "description": "Deletes a `draft`, or a `stopped`, `completed` or `failed` campaign,\nwith its batches, servers and windows. Its commands stay in the\nhistory under `/commands/{id}`, without their `campaign_id`. A\ncampaign in progress is stopped first.\n\nRefused while some of its commands are still `queued`, `sent` or\n`running` (stopping lets the commands already sent finish), or while\nthe package sources of some of its servers are still to be put back\nafter pinned snapshots.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.delete`, with its name, state and\nnumber of servers.",
+        "operationId": "delete_campaign",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The campaign",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the customer without administering it as a whole. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such campaign, or one of a customer the caller does not read as a whole",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: `cannot delete a campaign that is <state>` for one `scheduled`, `running` or `paused` (stop it first), `the campaign still has commands in flight: delete it once they end`, or `the package sources of some servers are not restored yet`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/campaigns/{id}/pause": {
@@ -3026,6 +3447,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "sources": null,
                   "spec": {
@@ -3038,6 +3460,11 @@
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "paused",
                   "wave_count": 2,
+                  "wave_specs": [
+                    {
+                      "size": 1
+                    }
+                  ],
                   "waves": [
                     {
                       "finished_at": null,
@@ -3269,6 +3696,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "sources": null,
                   "spec": {
@@ -3281,6 +3709,11 @@
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "running",
                   "wave_count": 2,
+                  "wave_specs": [
+                    {
+                      "size": 1
+                    }
+                  ],
                   "waves": [
                     {
                       "finished_at": null,
@@ -3512,6 +3945,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "sources": null,
                   "spec": {
@@ -3524,6 +3958,11 @@
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "scheduled",
                   "wave_count": 2,
+                  "wave_specs": [
+                    {
+                      "size": 1
+                    }
+                  ],
                   "waves": [
                     {
                       "finished_at": null,
@@ -3698,7 +4137,7 @@
           "campaigns"
         ],
         "summary": "Stop a campaign",
-        "description": "Any state but a final one → `stopped`, for good. Commands still\n`queued` are cancelled; those already sent or running finish. A\nstopped campaign cannot be started again: create another.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.stop`. Stopping a `stopped`,\n`completed` or `failed` campaign is 409.",
+        "description": "Any state but a final one → `stopped`, for good: this is how a\ncampaign is cancelled. Commands still `queued` are cancelled; those\nalready sent or running finish. A stopped campaign cannot be started\nagain: copy it into another, or delete it.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.stop`. Stopping a `stopped`,\n`completed` or `failed` campaign is 409.",
         "operationId": "stop_campaign",
         "parameters": [
           {
@@ -3755,6 +4194,7 @@
                     "succeeded": 1,
                     "total": 2
                   },
+                  "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "sources": null,
                   "spec": {
@@ -3767,6 +4207,11 @@
                   "started_at": "2026-11-08T22:00:04Z",
                   "state": "stopped",
                   "wave_count": 2,
+                  "wave_specs": [
+                    {
+                      "size": 1
+                    }
+                  ],
                   "waves": [
                     {
                       "finished_at": "2026-11-08T22:20:31Z",
@@ -44609,6 +45054,17 @@
           "progress": {
             "$ref": "#/components/schemas/CampaignProgress"
           },
+          "server_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The `server_ids` of the request, as last written; `null` for a\ncampaign made before they were kept (ADR-0166)."
+          },
           "site_id": {
             "type": [
               "string",
@@ -44646,6 +45102,16 @@
             "type": "integer",
             "description": "Number of batches.",
             "minimum": 0
+          },
+          "wave_specs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CampaignWaveSpec"
+            },
+            "description": "The `waves` of the request, as last written; `null` for a campaign\nmade before they were kept. `waves` holds the batches they made."
           },
           "windows": {
             "type": "array",
@@ -44789,7 +45255,7 @@
       },
       "CampaignRequest": {
         "type": "object",
-        "description": "Body of `POST /api/campaigns`. Only `customer_id`, `name` and a target\n(`site_id` and/or `server_ids`) are required.",
+        "description": "Body of `POST /api/campaigns` and `PUT /api/campaigns/{id}`. Only\n`customer_id`, `name` and a target (`site_id` and/or `server_ids`) are\nrequired.",
         "required": [
           "customer_id",
           "name"
@@ -61179,7 +61645,7 @@
     },
     {
       "name": "campaigns",
-      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\"."
+      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. A campaign is edited until its first batch is queued and deleted as a draft or once finished; to run one again, copy it: read it and create another from its fields. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\"."
     },
     {
       "name": "automatic updates",

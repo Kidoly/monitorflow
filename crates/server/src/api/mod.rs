@@ -247,6 +247,8 @@
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
+//! | PUT | `/api/campaigns/{id}` | customer administrator | body [`campaigns::CreateRequest`]; 200 [`campaigns::CampaignDetail`]; 409 once a batch was queued |
+//! | DELETE | `/api/campaigns/{id}` | customer administrator | 204 for a draft or finished campaign; 409 otherwise or while commands are in flight |
 //! | POST | `/api/campaigns/{id}/start`, `/pause`, `/resume`, `/stop` | customer administrator | 200 [`campaigns::CampaignDetail`]; 409 when the state does not allow it |
 //! | GET | `/api/remediation/rules` | customer role | [`remediation::RuleList`], see below |
 //! | POST | `/api/remediation/rules` | customer administrator | body [`remediation::RuleRequest`]; 201 the stored rule |
@@ -566,7 +568,9 @@
 //! `unknown server`), frozen into `waves` at creation. Listings take
 //! `customer_id`, `state`, `limit` (1 to 500, default 100) and `cursor`.
 //! Actions answer 409 `cannot <action> a campaign that is <state>` when
-//! the state does not allow them. Everything is audited (`campaign.*`).
+//! the state does not allow them. A campaign is edited (`PUT`, the whole
+//! request again) until its first batch is queued, and deleted as a draft
+//! or once finished (ADR-0166). Everything is audited (`campaign.*`).
 //!
 //! # Remediation rules
 //!
@@ -1540,7 +1544,12 @@ pub fn router(state: ApiState) -> Router {
             "/api/campaigns",
             get(campaigns::list).post(campaigns::create),
         )
-        .route("/api/campaigns/{id}", get(campaigns::detail))
+        .route(
+            "/api/campaigns/{id}",
+            get(campaigns::detail)
+                .put(campaigns::update)
+                .delete(campaigns::delete),
+        )
         .route("/api/campaigns/{id}/start", post(campaigns::start))
         .route("/api/campaigns/{id}/pause", post(campaigns::pause))
         .route("/api/campaigns/{id}/resume", post(campaigns::resume))
