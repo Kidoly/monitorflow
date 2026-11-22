@@ -510,3 +510,55 @@ export const readyMades = (): ReadyMade[] => [
 export function readyMade(id: string | null): ReadyMade | undefined {
   return readyMades().find((d) => d.id === id);
 }
+
+/** What a panel shows, the first choice of the panel form (ADR-0166). */
+export type PanelSource = "metric" | "states" | "alerts" | "text";
+
+export function sourceOf(panel: Panel): PanelSource {
+  if (panel.kind === "text") return "text";
+  if (panel.kind === "alerts" || panel.kind === "timeline") return "alerts";
+  if ((panel.kind === "states" || panel.kind === "pie") && !panel.metric) return "states";
+  return "metric";
+}
+
+/** The ways to draw what a panel shows, the most useful first. */
+export const KINDS_FOR: Record<PanelSource, readonly PanelKind[]> = {
+  metric: ["chart", "area", "columns", "heatmap", "gauge", "figure", "bars", "top", "states", "pie", "table"],
+  states: ["states", "pie"],
+  alerts: ["alerts", "timeline"],
+  text: ["text"],
+};
+
+/** The metrics most dashboards show, offered first. */
+export const COMMON_METRICS = [
+  "monitorflow_cpu_usage_ratio",
+  "monitorflow_memory_available_ratio",
+  "monitorflow_disk_used_ratio",
+  "monitorflow_cpu_load15",
+  "monitorflow_diskio_busy_ratio",
+  "monitorflow_ping_rtt_seconds",
+];
+
+/** How a metric is best drawn at first: up or down as squares, the rest as lines over time. */
+export function defaultKind(metric: string): PanelKind {
+  return /_(up|active)$/.test(shortMetric(metric)) ? "states" : "chart";
+}
+
+/**
+ * The panel showing `source` instead, drawn its first way, or `metric`
+ * drawn as it is now when it already shows a metric.
+ */
+export function withSource(panel: Panel, source: PanelSource, metric?: string): Panel {
+  if (source === "metric") {
+    const { instance: _instance, metric: _metric, ...rest } = panel;
+    void _instance;
+    void _metric;
+    const next = metric ?? panel.metric ?? CPU;
+    const kind = sourceOf(panel) === "metric" && panel.kind !== "table" ? panel.kind : defaultKind(next);
+    return withKind({ ...rest, metric: next, ...(next === CPU && { instance: "total" }), columns: undefined }, kind);
+  }
+  const { metric: _m, instance: _i, ...rest } = panel;
+  void _m;
+  void _i;
+  return withKind(rest, KINDS_FOR[source][0]!);
+}

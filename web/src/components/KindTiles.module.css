@@ -1,0 +1,140 @@
+/* Tiles to choose how a panel is drawn (ADR-0166). */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.tile:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.tile[data-checked] {
+  border-color: var(--series-1);
+  box-shadow: inset 0 0 0 1px var(--series-1);
+  background: var(--hl);
+  color: var(--text);
+}
+
+.tile:focus-within {
+  outline: 2px solid var(--series-1);
+  outline-offset: 2px;
+}
+
+.radio {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.picture {
+  width: 48px;
+  height: 32px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tile[data-checked] .picture {
+  stroke: var(--series-1);
+}
+
+.second {
+  opacity: 0.45;
+}
+
+.fill {
+  fill: currentColor;
+  stroke: none;
+  opacity: 0.7;
+}
+
+.tile[data-checked] .fill {
+  fill: var(--series-1);
+}
+
+.figure {
+  fill: currentColor;
+  stroke: none;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.track {
+  opacity: 0.35;
+}
+
+.dot {
+  fill: currentColor;
+}
+
+.thick {
+  stroke-width: 3.5;
+}
+
+.ok,
+.warn,
+.bad {
+  stroke: none;
+}
+
+.ok {
+  fill: var(--series-3);
+}
+
+.warn {
+  fill: var(--threshold-warn);
+}
+
+.bad {
+  fill: var(--threshold-crit);
+}
+
+.ring {
+  stroke-width: 6;
+  opacity: 0.35;
+}
+
+.slice {
+  stroke-width: 6;
+  stroke-linecap: butt;
+}
+
+.okLine,
+.warnLine,
+.badLine {
+  stroke-width: 4;
+  stroke-linecap: butt;
+}
+
+.okLine {
+  stroke: var(--series-3);
+  opacity: 0.5;
+}
+
+.warnLine {
+  stroke: var(--threshold-warn);
+}
+
+.badLine {
+  stroke: var(--threshold-crit);
+}

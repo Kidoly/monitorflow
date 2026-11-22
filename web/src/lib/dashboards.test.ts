@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { DashboardSpec, Panel, Server, Sharing } from "./api";
 import {
+  KINDS_FOR,
   baseKind,
+  defaultKind,
+  sourceOf,
+  withSource,
   copyName,
   copySpec,
   defaultInstance,
@@ -203,5 +207,32 @@ describe("panel kinds and display options", () => {
     expect(panelFormat(chart)(0.5)).toBe("50%");
     expect(panelFormat({ ...chart, unit: "bytes", metric: "monitorflow_x_total" })(2048)).toBe("2 KiB");
     expect(panelFormat({ ...chart, kind: "figure", combine: "count" })(12)).toBe("12");
+  });
+});
+
+const CPU_METRIC = "monitorflow_cpu_usage_ratio";
+
+describe("what a panel shows", () => {
+  it("reads the source of each kind", () => {
+    const of = (fields: Partial<Panel>) => sourceOf({ ...chart, ...fields });
+    expect([of({}), of({ kind: "table" }), of({ kind: "timeline" }), of({ kind: "text" })]).toEqual(["metric", "metric", "alerts", "text"]);
+    expect([of({ kind: "states", metric: undefined }), of({ kind: "pie" })]).toEqual(["states", "metric"]);
+    for (const [source, kinds] of Object.entries(KINDS_FOR)) {
+      for (const kind of kinds) expect(sourceOf(withSource(withKind(chart, kind), source as keyof typeof KINDS_FOR))).toBe(source);
+    }
+  });
+
+  it("switches source, keeping how a metric is drawn", () => {
+    const area = withKind(chart, "area");
+    const disk = withSource(area, "metric", "monitorflow_disk_used_ratio");
+    expect(disk).toMatchObject({ kind: "area", metric: "monitorflow_disk_used_ratio" });
+    expect(disk.instance).toBeUndefined();
+    const states = withSource(area, "states");
+    expect(states).toMatchObject({ kind: "states" });
+    expect(states.metric).toBeUndefined();
+    expect(withSource(states, "metric", "monitorflow_ping_up").kind).toBe("states");
+    expect(withSource(states, "metric", CPU_METRIC)).toMatchObject({ kind: "chart", instance: "total", combine: "each" });
+    expect(withSource(chart, "alerts")).toMatchObject({ kind: "alerts", count: 10 });
+    expect(defaultKind("monitorflow_http_shop_up")).toBe("states");
   });
 });
