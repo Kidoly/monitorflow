@@ -77,3 +77,24 @@ describe("without the demo flag", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("static demo uptime", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_MONITORFLOW_DEMO", "1");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("shows a few outages on the uptime page, each in its windows and bars", async () => {
+    const { rows } = await api.uptime({ time_zone: "UTC" });
+    const app = rows.find((r) => r.name === "app-04")!;
+    expect(app.outages).toBe(1);
+    expect(app.days.at(-1)!.down_seconds).toBe(2_520);
+    expect(app.windows.day).toBeLessThan(99);
+    expect(app.windows.quarter).toBeGreaterThan(99.9);
+    const web = rows.find((r) => r.name === "web-01")!;
+    expect(web.windows).toEqual({ day: 100, week: 100, month: 100, quarter: 100 });
+    expect(web.days.every((d) => d.down_seconds === 0)).toBe(true);
+  });
+});
