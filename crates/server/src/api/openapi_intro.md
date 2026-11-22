@@ -94,6 +94,8 @@ The checkboxes of the web interface's incident and fleet lists act on many items
 | Turn offline alerts on or off | `PUT /api/v1/servers/{id}/offline-alerts`, once per server |
 | Maintenance window for servers of one site | `POST /api/v1/maintenance-windows` once, with them all in `server_ids` |
 | Remove servers | `POST /api/v1/servers/{id}/revoke`, once per server |
+| Pause a server's sensors | `POST /api/v1/silences` with `scope` `server` and the sensor in `checks`, once per check, with the reason and end typed; at most 30 days |
+| Turn off a server's sensors | once per sensor: `POST /api/v1/servers/{id}/sensor_configs` with `enabled` `false`; for one disk of several, `POST /api/v1/servers/{id}/thresholds` with `enabled` `false`; for a check added on that server, `DELETE /api/v1/sensor_configs/{id}` and its rows of `DELETE /api/v1/thresholds/{id}` |
 
 `POST /api/v1/incidents/acknowledge` also takes up to 500 incidents in one request, but all or none: one incident on a site the key may only read refuses the whole request with 403, before anything is written. Send one at a time when some may be out of reach.
 

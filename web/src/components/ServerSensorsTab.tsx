@@ -18,6 +18,7 @@ import { unitOf } from "@/lib/format";
 import { coversCheck } from "@/lib/maintenance";
 import { inOneHour, tomorrowMorning } from "@/lib/silences";
 import { formatDay } from "@/components/ui/time";
+import { oncePer, useBulkRunner, useSelection } from "@/lib/bulk";
 import { modifiesSite, useMe } from "@/lib/me";
 import { sensorHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -25,6 +26,7 @@ import { LEVEL_LABELS, perInstance, ruleCompact, ruleLevel, ruleSummary, rowRule
 import { type SensorRow, formatSensorValue } from "@/lib/sensors";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Button } from "@/components/ui/Button";
+import { BulkBar } from "@/components/ui/BulkBar";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, EmptyState } from "@/components/ui/PageState";
 import { Reason } from "@/components/ui/Reason";
@@ -35,6 +37,7 @@ import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import type { Tone } from "@/components/ui/tone";
 
 import { AddCheck, type Target, TurnBackOn, stopChecking, stringParams } from "./MonitoringSettings";
+import { type Pause, PauseButton } from "./PauseButton";
 import styles from "./ServerPage.module.css";
 import { SnmpChecks } from "./SnmpChecks";
 import { WebsiteChecks } from "./WebsiteChecks";
@@ -64,6 +67,8 @@ export function ServerSensorsTab({
   onChanged,
   checkSilences = [],
   onSilenceCheck,
+  onPauseCheck,
+  onPaused,
 }: {
   server: ServerDetail;
   sensors: EffectiveSensors | { error: string };
@@ -77,6 +82,9 @@ export function ServerSensorsTab({
   checkSilences?: Silence[];
   /** Silences one check until a time; operators of the site. */
   onSilenceCheck?: (check: SilencedCheck, end: Date) => Promise<void>;
+  /** Pauses one check with a reason, for the bulk bar; `onPaused` once a batch is done. */
+  onPauseCheck?: (check: SilencedCheck, pause: Pause) => Promise<void>;
+  onPaused?: () => void;
 }) {
   const scope = useScope();
   const me = useMe();
@@ -86,6 +94,12 @@ export function ServerSensorsTab({
   const { id, site_id: siteId, site_name: siteName, os_family: osFamily } = server;
   const target = useMemo<Target>(() => ({ kind: "server", id, siteId, siteName, osFamily }), [id, siteId, siteName, osFamily]);
   const canEdit = !server.revoked_at && modifiesSite(me, server.customer_id, siteId);
+  const selection = useSelection();
+  const bulk = useBulkRunner<SensorRow>(selection, (row) => row.key, (row) => row.title, () => {
+    onChanged();
+    onPaused?.();
+  });
+  const [turningOff, setTurningOff] = useState(false);
 
   if ("error" in sensors) {
     return (
@@ -134,6 +148,37 @@ export function ServerSensorsTab({
       items.push({ label, onSelect: () => setConfirming(row.key), danger: true });
     }
     return items;
+  }
+
+  /** Whether the row's menu offers Turn off, as `menuItems` decides. */
+  const canTurnOff = (row: SensorRow) => {
+    const muting = perInstance(row.sensor, row.instance);
+    return !muting || Boolean(ruleOfRow(row)?.enabled);
+  };
+  // Checked rows a refresh took away are out of reach.
+  const chosen = rows.filter((row) => selection.selected.has(row.key));
+  // One silence per check: the rows of one check (its disks) share it, as its row menu does.
+  const checkKey = (row: SensorRow) => `${row.sensor.name}\t${row.sensor.instance}`;
+  function pauseChosen(pause: Pause) {
+    const pauseOnce = oncePer(checkKey, async (row: SensorRow) => {
+      await onPauseCheck?.({ name: row.sensor.name, instance: row.sensor.instance }, pause);
+      return "done" as const;
+    });
+    return bulk.run(chosen, { done: (count) => t("server.sensors.bulk.paused", { count }), act: pauseOnce });
+  }
+  function turnOffChosen() {
+    // One disk of several mutes its own alert; another sensor stops once for all its rows.
+    const offKey = (row: SensorRow) => (perInstance(row.sensor, row.instance) && ruleOfRow(row) ? row.key : checkKey(row));
+    const stopOnce = oncePer(offKey, async (row: SensorRow) => {
+      await turnOffRow(row, ruleOfRow(row), target, rules.siteSensors);
+      return "done" as const;
+    });
+    return bulk.run(chosen, {
+      done: (count) => t("server.sensors.bulk.turnedOff", { count }),
+      skipped: (count) => t("server.sensors.bulk.cannotTurnOff", { count }),
+      // A disk of several whose alert is already off: nothing to turn off.
+      act: (row) => (canTurnOff(row) ? stopOnce(row) : Promise.resolve("skipped" as const)),
+    });
   }
 
   const columns: Column<SensorRow>[] = [
@@ -226,26 +271,57 @@ export function ServerSensorsTab({
       {rows.length === 0 ? (
         <EmptyState actions={addButton || undefined}>{t("server.sensors.none")}</EmptyState>
       ) : (
-        <DataTable
-          label={t("server.sensors.table")}
-          columns={columns}
-          rows={rows}
-          rowKey={(row) => row.key}
-          rowActions={(row) => <RowMenu label={t("server.sensors.actions", { title: row.title })} items={menuItems(row)} />}
-          rowDetail={(row) =>
-            confirming === row.key && (
-              <TurnOff
-                row={row}
-                rule={ruleOfRow(row)}
-                target={target}
-                hostname={server.hostname}
-                siteSensors={rules.siteSensors}
-                onClose={() => setConfirming(null)}
-                onChanged={onChanged}
+        // One block, so the bar takes no gap of the tab while it is empty.
+        <div>
+          {canEdit && (
+            <BulkBar count={chosen.length} onClear={selection.clear} summary={bulk.summary} onDismiss={bulk.dismiss}>
+              <PauseButton
+                name={t("server.sensors.bulk.pauseName", { count: chosen.length })}
+                disabled={bulk.busy}
+                onPause={pauseChosen}
+                describeError={describeError}
               />
-            )
-          }
-        />
+              <RowMenu
+                label={t("server.sensors.bulk.moreName", { count: chosen.length })}
+                disabled={bulk.busy}
+                items={[{ label: t("server.sensors.bulk.turnOff"), onSelect: () => setTurningOff(true), danger: true }]}
+              />
+              {turningOff && (
+                <div className={styles.bulkConfirm}>
+                  <InlineConfirm
+                    onClose={() => setTurningOff(false)}
+                    trigger=""
+                    title={t("server.sensors.bulk.turnOffTitle", { count: chosen.length })}
+                    consequence={t("server.sensors.bulk.turnOffConsequence")}
+                    confirmLabel={t("server.sensors.bulk.turnOffConfirm", { count: chosen.length })}
+                    onConfirm={turnOffChosen}
+                  />
+                </div>
+              )}
+            </BulkBar>
+          )}
+          <DataTable
+            label={t("server.sensors.table")}
+            columns={columns}
+            rows={rows}
+            rowKey={(row) => row.key}
+            rowActions={(row) => <RowMenu label={t("server.sensors.actions", { title: row.title })} items={menuItems(row)} />}
+            rowDetail={(row) =>
+              confirming === row.key && (
+                <TurnOff
+                  row={row}
+                  rule={ruleOfRow(row)}
+                  target={target}
+                  hostname={server.hostname}
+                  siteSensors={rules.siteSensors}
+                  onClose={() => setConfirming(null)}
+                  onChanged={onChanged}
+                />
+              )
+            }
+            selection={canEdit ? { selected: selection.selected, onChange: selection.change, rowLabel: (row) => row.title } : undefined}
+          />
+        </div>
       )}
       {sensors.sensors.some((s) => s.kind === "http") && <WebsiteChecks serverId={server.id} />}
       {server.kind === "device" && <SnmpChecks server={server} onChanged={onChanged} />}
@@ -347,11 +423,7 @@ function TurnOff({
         consequence={t("server.sensors.offAlertsConsequence")}
         confirmLabel={t("server.sensors.turnOffConfirm")}
         onConfirm={async () => {
-          const { metric, comparison, warning, critical, duration_s, hysteresis } = rule;
-          await saveThreshold(
-            { kind: "servers", id: target.id },
-            { metric, instance: row.instance, comparison, warning, critical, duration_s, hysteresis, enabled: false },
-          );
+          await turnOffRow(row, rule, target, siteSensors);
           onChanged();
         }}
       />
@@ -366,11 +438,33 @@ function TurnOff({
       consequence={removing ? "" : t("server.sensors.stopConsequence")}
       confirmLabel={removing ? t("server.sensors.removeConfirm") : t("server.sensors.turnOffConfirm")}
       onConfirm={async () => {
-        await stopChecking(target, row.sensor, removing);
+        await turnOffRow(row, rule, target, siteSensors);
         onChanged();
       }}
     />
   );
+}
+
+/**
+ * What Turn off does to one row: one disk of several mutes its alert;
+ * another sensor stops being checked here; a check added on this server
+ * is removed.
+ */
+async function turnOffRow(
+  row: SensorRow,
+  rule: EffectiveThreshold | undefined,
+  target: Target,
+  siteSensors: EffectiveSensor[] | null,
+): Promise<void> {
+  if (perInstance(row.sensor, row.instance) && rule) {
+    const { metric, comparison, warning, critical, duration_s, hysteresis } = rule;
+    await saveThreshold(
+      { kind: "servers", id: target.id },
+      { metric, instance: row.instance, comparison, warning, critical, duration_s, hysteresis, enabled: false },
+    );
+    return;
+  }
+  await stopChecking(target, row.sensor, own(row.sensor, siteSensors));
 }
 
 const TONES: Record<SensorRow["status"], Tone> = { critical: "bad", warning: "warn", unknown: "neutral", ok: "ok" };
