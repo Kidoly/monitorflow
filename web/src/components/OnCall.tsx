@@ -192,12 +192,14 @@ function ContactSection() {
           <div className={styles.contactLine}>
             <span>{rich("onCall.contact.by", { how: <strong>{described}</strong> })}</span>
             {data.last_error && <Label tone="bad">{data.last_error}</Label>}
-            <Button size="small" onClick={() => edit(data)}>
-              {t("onCall.contact.change")}
-            </Button>
-            <Button size="small" disabled={busy} onClick={() => void test()}>
-              {t("onCall.contact.sendTest")}
-            </Button>
+            <span className={styles.contactButtons}>
+              <Button size="small" onClick={() => edit(data)}>
+                {t("onCall.contact.change")}
+              </Button>
+              <Button size="small" disabled={busy} onClick={() => void test()}>
+                {t("onCall.contact.sendTest")}
+              </Button>
+            </span>
           </div>
         ) : null}
         {message && (

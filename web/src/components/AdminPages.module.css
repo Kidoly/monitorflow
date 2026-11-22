@@ -256,6 +256,35 @@ tr td.wrap {
   gap: 8px;
 }
 
+/*
+ * Two buttons that belong together stay side by side: on a phone they
+ * share the line evenly, a long label breaking inside its button rather
+ * than the pair breaking into a cascade.
+ */
+.pair {
+  display: inline-flex;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .pair {
+    flex: 1 1 100%;
+    align-items: stretch;
+  }
+
+  .pair > :is(button, a)[class] {
+    flex: 1 1 0;
+    min-width: 0;
+    height: auto;
+    min-height: 32px;
+    padding-block: 6px;
+    justify-content: center;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.3;
+  }
+}
+
 /* A row outside a table, free to wrap on a phone. */
 .buttonRow {
   display: flex;
