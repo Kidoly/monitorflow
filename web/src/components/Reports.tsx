@@ -31,7 +31,7 @@ import { Label } from "@/components/ui/StatusLabel";
 import { formatDuration, formatExact } from "@/components/ui/time";
 
 import admin from "./AdminPages.module.css";
-import { UptimeSection } from "./Uptime";
+import { Budget, Result, UptimeSection, shownInUptime, useUptime } from "./Uptime";
 import styles from "./Reports.module.css";
 
 /** Reports are not live: once every five minutes is enough. */
@@ -56,17 +56,6 @@ function Tile({ label, value }: { label: string; value: ReactNode }) {
       <span className={styles.tileValue}>{value}</span>
     </div>
   );
-}
-
-function Result({ service }: { service: AvailabilityService }) {
-  if (service.met === null) return <Label tone="neutral">{t("reports.noTarget")}</Label>;
-  return service.met ? <Label tone="ok">{t("reports.met")}</Label> : <Label tone="bad">{t("reports.missed")}</Label>;
-}
-
-function Budget({ service }: { service: AvailabilityService }) {
-  const budget = service.budget_seconds;
-  if (budget === null) return <>{t("reports.none")}</>;
-  return budget >= 0 ? <>{formatDuration(budget)}</> : <span className={styles.bad}>{t("reports.exceeded", { time: formatDuration(-budget) })}</span>;
 }
 
 function Summary({ report }: { report: AvailabilityReport }) {
@@ -156,23 +145,34 @@ function Maintenance({ rows }: { rows: AvailabilityMaintenance[] }) {
   return <DataTable label={t("reports.maintenance.title")} columns={columns} rows={rows} rowKey={(m) => `${m.start}\t${m.reason}\t${m.servers.join()}`} />;
 }
 
-/** The report itself: summary first, then the details. */
-export function ReportView({ report }: { report: AvailabilityReport }) {
+/** Which entries uptime rows already show; `null` when there are none. */
+type Shown = ReturnType<typeof shownInUptime>;
+
+/**
+ * The report's details: services, servers and devices, and checks that
+ * the uptime rows above do not already carry (all of them without uptime),
+ * then outages and planned maintenance.
+ */
+export function ReportView({ report, shown = null }: { report: AvailabilityReport; shown?: Shown }) {
   const outages = report.machines.flatMap((m) => m.outage_list).sort((a, b) => a.start.localeCompare(b.start));
+  const services = shown ? report.services.filter((s) => !shown("service", s.id)) : report.services;
+  const machines = shown ? report.machines.filter((m) => !shown("machine", m.id)) : report.machines;
+  const checks = shown ? report.checks.filter((c) => c.instance || !shown("check", c.server_id, c.name)) : report.checks;
   return (
     <>
-      <Summary report={report} />
-      {report.services.length > 0 && (
+      {services.length > 0 && (
         <Section title={t("reports.services.title")}>
-          <Services services={report.services} />
+          <Services services={services} />
         </Section>
       )}
-      <Section title={t("reports.machines.title")}>
-        {report.machines.length ? <Machines machines={report.machines} /> : <p className={admin.fieldNote}>{t("reports.machines.empty")}</p>}
-      </Section>
-      {report.checks.length > 0 && (
+      {(machines.length > 0 || !shown) && (
+        <Section title={t("reports.machines.title")}>
+          {machines.length ? <Machines machines={machines} /> : <p className={admin.fieldNote}>{t("reports.machines.empty")}</p>}
+        </Section>
+      )}
+      {checks.length > 0 && (
         <Section title={t("reports.checks.title")} note={t("reports.checks.note")}>
-          <Checks checks={report.checks} />
+          <Checks checks={checks} />
         </Section>
       )}
       {outages.length > 0 && (
@@ -219,11 +219,13 @@ export function ReportsPage({ children }: { children?: ReactNode }) {
   const report = data && query && Date.parse(data.from) === Date.parse(query.from) ? data : null;
   const zone = browserTimeZone();
   const language = activeLocale();
+  const uptime = useUptime(scope.customerId);
+  // Until uptime is known its rows are coming: the report's tables wait
+  // rather than list everything for a moment; without it, they list all.
+  const shown = uptime.data ? shownInUptime(uptime.data) : uptime.error === null ? () => true : null;
   return (
     <Page>
       <PageHeader title={t("reports.title")} status={<InfoTip label={t("reports.about")}>{t("reports.rule")}</InfoTip>} />
-      <UptimeSection customerId={scope.customerId} />
-      <h2 className={styles.sectionTitle}>{t("reports.periodTitle")}</h2>
       <div className={styles.controls}>
         <label className={admin.field}>
           {t("reports.period")}
@@ -266,11 +268,12 @@ export function ReportsPage({ children }: { children?: ReactNode }) {
       ) : (
         <Banner tone="warn">{t("reports.period.invalid")}</Banner>
       )}
-      {query && !report && error !== null && !isUnauthorized(error) ? (
+      {query && !report && error !== null && !isUnauthorized(error) && (
         <ErrorState what={t("reports.load")} error={describeError(error)} onRetry={refresh} />
-      ) : report ? (
-        <ReportView report={report} />
-      ) : null}
+      )}
+      {report && <Summary report={report} />}
+      <UptimeSection uptime={uptime} report={report} periodName={t(`reports.period.${choice}`)} />
+      {report && <ReportView report={report} shown={shown} />}
       {children}
     </Page>
   );

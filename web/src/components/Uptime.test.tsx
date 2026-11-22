@@ -6,7 +6,11 @@ import type { Uptime, UptimeDay, UptimeRow } from "@/lib/api";
 import { browserTimeZone } from "@/lib/onCall";
 import { stubFetch } from "@/test/fetch";
 
-import { UptimeSection, toneOf } from "./Uptime";
+import { UptimeSection, toneOf, useUptime } from "./Uptime";
+
+function Uptime({ customerId }: { customerId: string | null }) {
+  return <UptimeSection uptime={useUptime(customerId)} />;
+}
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
@@ -53,7 +57,7 @@ describe("toneOf", () => {
 describe("UptimeSection", () => {
   it("shows the four windows and one bar per day, each with its numbers in words", async () => {
     stubFetch({ [key()]: { status: 200, body: uptime([row(), row({ kind: "check", check: "disk", outages: 1 })]) } });
-    render(<UptimeSection customerId={null} />);
+    render(<Uptime customerId={null} />);
     const bars = await screen.findByRole("list", { name: "Daily uptime of mail-1" });
     expect(within(bars).getAllByRole("listitem")).toHaveLength(90);
     const last = within(bars).getAllByRole("listitem")[89]!;
@@ -61,21 +65,23 @@ describe("UptimeSection", () => {
     expect(within(bars).getAllByRole("listitem")[0]).toHaveAccessibleName(/Not measured/);
     expect(screen.getByText("2 outages in 90 days", { exact: false })).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Daily uptime of mail-1 · disk" })).toBeInTheDocument();
+    // Every window writes its percentage, not only on hover.
     expect(screen.getAllByText("90 days")[0]!.nextSibling).toHaveTextContent("97.000 %");
+    expect(screen.getAllByText("24 h")[0]!.nextSibling).toHaveTextContent("100.000 %");
     expect(screen.getByRole("list", { name: "Legend" })).toHaveTextContent("Under 99 %");
   });
 
   it("asks for the reader's customer and time zone, and speaks French", async () => {
     setActiveLocale("fr");
     stubFetch({ [key("c1")]: { status: 200, body: uptime([row()]) } });
-    render(<UptimeSection customerId="c1" />);
+    render(<Uptime customerId="c1" />);
     expect(await screen.findByRole("list", { name: "Disponibilité par jour de mail-1" })).toBeInTheDocument();
     expect(screen.getByText("Disponibilité")).toBeInTheDocument();
   });
 
   it("says when there is nothing to show", async () => {
     stubFetch({ [key()]: { status: 200, body: uptime([]) } });
-    render(<UptimeSection customerId={null} />);
+    render(<Uptime customerId={null} />);
     expect(await screen.findByText(/Nothing to show yet/)).toBeInTheDocument();
   });
 });
