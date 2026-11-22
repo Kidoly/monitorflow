@@ -9,6 +9,7 @@ import {
   DEMO_REFUSAL,
   type AgentInstall,
   type AutoUpdateStatus,
+  type AutoUpdateVersionPeerList,
   type BackupsView,
   type CertificateAuthorityView,
   type DashboardData,
@@ -303,6 +304,7 @@ const ROUTES: [RegExp, Handler][] = [
   })],
   [/^\/api\/mirrors\/([^/]+)$/, ([id]) => mirrorDetail(found(MIRRORS.find((m) => m.id === id)))],
   [/^\/api\/auto-update$/, () => autoUpdate()],
+  [/^\/api\/auto-update\/(agent|relay)\/versions\/peers$/, ([kind]) => versionPeers(kind!)],
   [/^\/api\/agent-releases$/, () => ({ versions: [AGENT_VERSION, "0.5.2", "0.5.1"], latest: AGENT_VERSION })],
 
   // Alerting
@@ -633,8 +635,30 @@ function autoUpdate(): AutoUpdateStatus {
   return {
     settings: { enabled: true, enabled_locked: false, paused: false, failure_threshold: 3 },
     server_version: SERVER_VERSION,
-    agents: { latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(SERVERS.length), sites, history },
-    relays: { latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(1), sites: [sites[0]!], history: [] },
+    agents: {
+      latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(SERVERS.length), sites, history,
+      versions: [{ version: AGENT_VERSION, count: SERVERS.length, up_to_date: true }],
+    },
+    relays: {
+      latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(1), sites: [sites[0]!], history: [],
+      versions: [{ version: AGENT_VERSION, count: 1, up_to_date: true }],
+    },
+  };
+}
+
+/** Every demo agent or relay runs the target. */
+function versionPeers(kind: string): AutoUpdateVersionPeerList {
+  const site = (id: string) => SITES.find((s) => s.id === id)?.name ?? "";
+  const peers = kind === "relay"
+    ? [{ id: RELAY.id, name: RELAY.name, site_id: RELAY.site_id }]
+    : SERVERS.map((s) => ({ id: s.id, name: s.hostname, site_id: s.site_id }));
+  return {
+    version: AGENT_VERSION,
+    target: AGENT_VERSION,
+    total: peers.length,
+    peers: peers.map((p) => ({
+      ...p, site_name: site(p.site_id), customer_id: CUSTOMER.id, customer_name: CUSTOMER.name, state: "up_to_date" as const,
+    })),
   };
 }
 

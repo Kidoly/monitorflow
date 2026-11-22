@@ -13,8 +13,8 @@ import {
   type AutoUpdatePeerState,
   type AutoUpdateSite,
   type AutoUpdateStatus,
-  type HistoryRollout,
-  type RolloutOutcome,
+  type AutoUpdateVersionCount,
+  type AutoUpdateVersionPeer,
   type SitePhase,
   api,
   describeError,
@@ -151,8 +151,8 @@ function AutoUpdate() {
         </Banner>
       )}
       <Settings status={data} busy={busy} onChange={change} />
-      <Kind relays kind={data.relays} now={updatedAt} />
-      <Kind relays={false} kind={agents} now={updatedAt} />
+      <Kind relays kind={data.relays} />
+      <Kind relays={false} kind={agents} />
     </div>
   );
 }
@@ -172,21 +172,30 @@ export function versionsText(status: AutoUpdateStatus): string {
 
 const PEER_STATES: readonly AutoUpdatePeerState[] = ["up_to_date", "waiting", "pending", "failed"];
 
+/** In the URL, the version of those that reported none: never a real one. */
+const NO_VERSION = "none";
+
 /**
  * The list of peers open under the tiles of `relays` or agents, from the
- * URL: `?agents=waiting&agentsSite=<id>`, so it can be shared.
+ * URL: `?agents=waiting&agentsSite=<id>`, or the peers on one version:
+ * `?agentsVersion=0.9.1`, so it can be shared. One list at a time.
  */
 function useOpenList(relays: boolean) {
   const [params, setParams] = useUrlParams();
   const pathname = usePathname();
   const key = relays ? "relays" : "agents";
   const siteKey = `${key}Site`;
+  const versionKey = `${key}Version`;
   const value = params.get(key);
   const state = PEER_STATES.find((s) => s === value) ?? null;
   const site = state ? params.get(siteKey) : null;
+  const versionParam = state ? null : params.get(versionKey);
+  /** `undefined` when no version is open, `null` for "not reported". */
+  const version = versionParam === null ? undefined : versionParam === NO_VERSION ? null : versionParam;
   const changes = (next: AutoUpdatePeerState | null, nextSite: string | null): ParamChanges => ({
     [key]: next,
     [siteKey]: next ? nextSite : null,
+    [versionKey]: null,
   });
   const href = (next: AutoUpdatePeerState, nextSite: string) => {
     const query = new URLSearchParams(params);
@@ -201,14 +210,29 @@ function useOpenList(relays: boolean) {
     toggle: (next: AutoUpdatePeerState) => setParams(changes(state === next ? null : next, null)),
     open: (next: AutoUpdatePeerState, nextSite: string | null) => setParams(changes(next, nextSite)),
     href,
+    version,
+    /** Opens the peers on `next`, or closes them when they are open. */
+    toggleVersion: (next: string | null) =>
+      setParams({
+        ...changes(null, null),
+        [versionKey]: version === next ? null : (next ?? NO_VERSION),
+      }),
+    versionHref: (next: string | null) => {
+      const query = new URLSearchParams(params);
+      query.delete(key);
+      query.delete(siteKey);
+      query.set(versionKey, next ?? NO_VERSION);
+      return `${pathname}?${query}`;
+    },
   };
 }
 
 /** Progress of one kind of peer: totals, sites and rollouts. */
-function Kind({ relays, kind, now }: { relays: boolean; kind: AutoUpdateKind; now: Date }) {
+function Kind({ relays, kind }: { relays: boolean; kind: AutoUpdateKind }) {
   const title = relays ? t("autoUpdate.relays") : t("autoUpdate.agents");
   const list = useOpenList(relays);
   const listId = useId();
+  const versionListId = useId();
   const tile = (label: string, state: AutoUpdatePeerState, value: number, tone: Tone) => ({
     label,
     value,
@@ -256,11 +280,15 @@ function Kind({ relays, kind, now }: { relays: boolean; kind: AutoUpdateKind; no
         href={list.href}
         onOpen={openSite}
       />
-      <History
-        rollouts={kind.history}
-        now={now}
-        label={relays ? t("autoUpdate.relaysRollouts") : t("autoUpdate.agentsRollouts")}
+      <Versions
+        versions={kind.versions}
+        relays={relays}
+        open={list.version}
+        controls={versionListId}
+        href={list.versionHref}
+        onToggle={list.toggleVersion}
       />
+      {list.version !== undefined && <VersionPeers id={versionListId} relays={relays} version={list.version} />}
     </section>
   );
 }
@@ -555,29 +583,149 @@ function Sites({
   return <DataTable bare label={label} columns={columns} rows={sites} rowKey={(s) => s.id} />;
 }
 
-const OUTCOME_TONES: Record<RolloutOutcome, Tone> = {
-  rolling: "info",
-  halted: "bad",
-  finished: "ok",
-  superseded: "neutral",
-};
+/** "0.9.1", or "Not reported" for those that reported no version. */
+function versionText(version: string | null) {
+  return version ?? <span className={styles.dim}>{t("autoUpdate.list.noVersion")}</span>;
+}
 
-function History({ rollouts, now, label }: { rollouts: HistoryRollout[]; now: Date; label: string }) {
-  if (rollouts.length === 0) return null;
-  const columns: Column<HistoryRollout>[] = [
-    { key: "version", header: t("autoUpdate.column.release"), cell: (r) => <strong>{r.version}</strong> },
+/** The versions agents or relays run, each opening the list of who runs it. */
+function Versions({
+  versions,
+  relays,
+  open,
+  controls,
+  href,
+  onToggle,
+}: {
+  versions: AutoUpdateVersionCount[];
+  relays: boolean;
+  open: string | null | undefined;
+  controls: string;
+  href: (version: string | null) => string;
+  onToggle: (version: string | null) => void;
+}) {
+  if (versions.length === 0) return null;
+  const label = relays ? t("autoUpdate.versions.relays") : t("autoUpdate.versions.agents");
+  const columns: Column<AutoUpdateVersionCount>[] = [
+    {
+      key: "version",
+      header: t("autoUpdate.column.version"),
+      cell: (v) => <strong>{versionText(v.version)}</strong>,
+    },
     {
       key: "state",
       header: t("autoUpdate.column.state"),
-      cell: (r) => <Label tone={OUTCOME_TONES[r.outcome]}>{t(`autoUpdate.outcome.${r.outcome}`)}</Label>,
+      cell: (v) => (v.up_to_date ? <Label tone="ok">{t("autoUpdate.tile.upToDate")}</Label> : null),
     },
-    { key: "started", header: t("autoUpdate.column.started"), cell: (r) => <RelativeTime value={r.started_at} now={now} /> },
     {
-      key: "reason",
-      header: t("autoUpdate.column.reason"),
-      className: styles.wrap,
-      cell: (r) => r.reason,
+      key: "count",
+      header: relays ? t("autoUpdate.relays") : t("autoUpdate.agents"),
+      cell: (v) => (
+        <a
+          href={href(v.version)}
+          aria-expanded={open === v.version}
+          aria-controls={open === v.version ? controls : undefined}
+          onClick={(e) => {
+            e.preventDefault();
+            onToggle(v.version);
+          }}
+        >
+          {t(relays ? "autoUpdate.versions.relayCount" : "autoUpdate.versions.agentCount", { count: v.count })}
+        </a>
+      ),
     },
   ];
-  return <DataTable bare label={label} columns={columns} rows={rollouts} rowKey={(r) => `${r.kind}-${r.version}`} />;
+  return (
+    <>
+      <div className={styles.sectionHead}>
+        <h3 className={styles.sectionTitle}>{label}</h3>
+      </div>
+      <DataTable bare label={label} columns={columns} rows={versions} rowKey={(v) => v.version ?? NO_VERSION} />
+    </>
+  );
 }
+
+/** The agents or relays on one version, with where each stands. */
+function VersionPeers({ id, relays, version }: { id: string; relays: boolean; version: string | null }) {
+  const kind = relays ? "relay" : "agent";
+  const fetcher = useCallback(
+    (signal: AbortSignal) => api.autoUpdateVersionPeers(kind, version, signal),
+    [kind, version],
+  );
+  const { data, error, refresh } = usePolledData(fetcher);
+  const multiCustomer = useMultiCustomer();
+  const label =
+    version === null
+      ? t(relays ? "autoUpdate.versions.relaysNone" : "autoUpdate.versions.agentsNone")
+      : relays
+        ? t("autoUpdate.versions.relaysOn", { version })
+        : t("autoUpdate.versions.agentsOn", { version });
+
+  let body;
+  if (!data) {
+    body = error ? (
+      <Banner tone="bad">
+        <strong>{t("ui.page.loadFailed", { what: t("autoUpdate.list.what") })}</strong> {describeError(error)}{" "}
+        <Button size="small" onClick={refresh}>
+          {t("ui.page.retry")}
+        </Button>
+      </Banner>
+    ) : (
+      <LoadingBlock />
+    );
+  } else {
+    const columns: Column<AutoUpdateVersionPeer>[] = [
+      {
+        key: "name",
+        header: relays ? t("autoUpdate.column.relay") : t("autoUpdate.column.server"),
+        cell: (p) => <Link href={relays ? relayHref(p.id) : serverHref(p.id)}>{p.name}</Link>,
+      },
+      {
+        key: "site",
+        header: t("autoUpdate.column.site"),
+        cell: (p) => (
+          <>
+            {p.site_name} {multiCustomer && <span className={styles.dim}>· {p.customer_name}</span>}
+          </>
+        ),
+      },
+      {
+        key: "state",
+        header: t("autoUpdate.column.state"),
+        cell: (p) => (p.state ? <Label tone={STATE_TONES[p.state]}>{t(STATE_WORDS[p.state])}</Label> : null),
+      },
+    ];
+    body = (
+      <>
+        <DataTable bare label={label} columns={columns} rows={data.peers} rowKey={(p) => p.id} />
+        {data.total > data.peers.length && (
+          <p className={styles.sectionNote}>
+            {t("autoUpdate.list.more", { shown: data.peers.length, total: data.total })}
+          </p>
+        )}
+      </>
+    );
+  }
+  return (
+    <div id={id} role="region" aria-label={label}>
+      <div className={styles.sectionHead}>
+        <h3 className={styles.sectionTitle}>{label}</h3>
+      </div>
+      {body}
+    </div>
+  );
+}
+
+const STATE_TONES: Record<AutoUpdatePeerState, Tone> = {
+  up_to_date: "ok",
+  waiting: "neutral",
+  pending: "info",
+  failed: "bad",
+};
+
+const STATE_WORDS = {
+  up_to_date: "autoUpdate.tile.upToDate",
+  waiting: "autoUpdate.tile.waiting",
+  pending: "autoUpdate.tile.inProgress",
+  failed: "autoUpdate.tile.failed",
+} as const;

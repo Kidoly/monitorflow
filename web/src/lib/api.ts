@@ -1367,6 +1367,38 @@ export interface AutoUpdateKind {
   totals: AutoUpdateTotals;
   sites: AutoUpdateSite[];
   history: HistoryRollout[];
+  /** How many run each version, newest first. */
+  versions: AutoUpdateVersionCount[];
+}
+
+/** One version in use and how many agents or relays run it. */
+export interface AutoUpdateVersionCount {
+  /** `null` for those that have not reported one yet. */
+  version: string | null;
+  count: number;
+  /** On the target or newer; `false` without a target or for a development build. */
+  up_to_date: boolean;
+}
+
+/** One agent (a server) or relay of `GET /api/auto-update/{kind}/versions/peers`. */
+export interface AutoUpdateVersionPeer {
+  id: string;
+  name: string;
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  /** Towards the target; `null` without a target or outside every total. */
+  state: AutoUpdatePeerState | null;
+}
+
+/** `GET /api/auto-update/{kind}/versions/peers`: one page and the total. */
+export interface AutoUpdateVersionPeerList {
+  version: string | null;
+  target: string | null;
+  total: number;
+  /** By customer, site and name. */
+  peers: AutoUpdateVersionPeer[];
 }
 
 /** `GET /api/auto-update`. */
@@ -4913,6 +4945,13 @@ export const api = {
     const query = new URLSearchParams({ state, limit: String(AUTO_UPDATE_PEERS_MAX) });
     if (siteId) query.set("site_id", siteId);
     return request<AutoUpdatePeerList>(`/api/auto-update/${kind}/peers?${query}`, { signal });
+  },
+
+  /** The agents or relays on `version`; `null` lists those that reported none. */
+  autoUpdateVersionPeers: (kind: RolloutKind, version: string | null, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ limit: String(AUTO_UPDATE_PEERS_MAX) });
+    if (version !== null) query.set("version", version);
+    return request<AutoUpdateVersionPeerList>(`/api/auto-update/${kind}/versions/peers?${query}`, { signal });
   },
 
   /** Changes automatic update settings; global administrators only; audited. */

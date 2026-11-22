@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
-import type { AutoUpdatePeer, AutoUpdatePeerList, AutoUpdateStatus } from "@/lib/api";
+import type { AutoUpdatePeer, AutoUpdatePeerList, AutoUpdateStatus, AutoUpdateVersionPeerList } from "@/lib/api";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { setUrl } from "@/test/navigation";
@@ -14,7 +14,7 @@ vi.mock("next/navigation", () => import("@/test/navigation"));
 
 const globalAdmin = me({ role: "administrator", customer_id: null, site_id: null });
 const zero = { up_to_date: 0, waiting: 0, waiting_for_relay: 0, pending: 0, succeeded: 0, failed: 0 };
-const noRelays = { latest: "0.3.0", target: "0.3.0", rollout: null, totals: zero, sites: [], history: [] };
+const noRelays = { latest: "0.3.0", target: "0.3.0", rollout: null, totals: zero, sites: [], history: [], versions: [] };
 
 function status(overrides: Partial<AutoUpdateStatus> = {}): AutoUpdateStatus {
   return {
@@ -46,6 +46,11 @@ function status(overrides: Partial<AutoUpdateStatus> = {}): AutoUpdateStatus {
         { id: "s2", name: "lyon", customer_name: "acme", auto_update: false, enabled: false, phase: null, totals: zero },
       ],
       history: [],
+      versions: [
+        { version: "0.3.0", count: 3, up_to_date: true },
+        { version: "0.2.0", count: 1, up_to_date: false },
+        { version: null, count: 1, up_to_date: false },
+      ],
     },
     relays: noRelays,
     ...overrides,
@@ -157,27 +162,91 @@ describe("AutoUpdatePage", () => {
   });
 });
 
-describe("history", () => {
+describe("versions in use", () => {
   beforeEach(() => setUrl("/admin/updates/"));
 
-  it("shows older rollouts as superseded and the target's as finished", async () => {
-    const s = status();
-    s.agents.totals = { ...zero, up_to_date: 5 };
-    const base = s.agents.rollout!;
-    s.agents.history = [
-      { ...base, outcome: "finished" },
-      { ...base, version: "0.2.0", outcome: "superseded" },
-    ];
-    stubFetch({ "GET /api/auto-update": { status: 200, body: s } });
+  const onOld: AutoUpdateVersionPeerList = {
+    version: "0.2.0",
+    target: "0.3.0",
+    total: 1,
+    peers: [
+      {
+        id: "srv-1",
+        name: "web-01",
+        site_id: "s1",
+        site_name: "paris",
+        customer_id: "c1",
+        customer_name: "acme",
+        state: "waiting",
+      },
+    ],
+  };
+
+  it("counts each version and lists who runs one on a click", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      "GET /api/auto-update": { status: 200, body: status() },
+      "GET /api/auto-update/agent/versions/peers?limit=500&version=0.2.0": {
+        status: 200,
+        body: onOld,
+      },
+    });
     render(
       <As user={globalAdmin}>
         <AutoUpdatePage />
       </As>,
     );
-    const history = await screen.findByRole("table", { name: "Agents rollouts" });
-    expect(within(history).getByRole("row", { name: /0\.3\.0/ })).toHaveTextContent("Finished");
-    expect(within(history).getByRole("row", { name: /0\.2\.0/ })).toHaveTextContent("Superseded");
-    expect(within(history).queryByText("In progress")).not.toBeInTheDocument();
+    const versions = await screen.findByRole("table", {
+      name: "Agent versions in use",
+    });
+    expect(within(versions).getByRole("row", { name: /0\.3\.0/ })).toHaveTextContent("Up to date3 agents");
+    expect(within(versions).getByRole("row", { name: /Not reported/ })).toHaveTextContent("1 agent");
+    // Rollouts of releases nobody runs any more are not listed.
+    expect(screen.queryByRole("table", { name: /rollouts/ })).not.toBeInTheDocument();
+
+    const count = within(within(versions).getByRole("row", { name: /0\.2\.0/ })).getByRole("link", { name: "1 agent" });
+    expect(count).toHaveAttribute("href", "/admin/updates/?agentsVersion=0.2.0");
+    await user.click(count);
+    expect(window.location.search).toBe("?agentsVersion=0.2.0");
+    expect(count).toHaveAttribute("aria-expanded", "true");
+    const list = await screen.findByRole("table", { name: "Agents on 0.2.0" });
+    expect(document.getElementById(count.getAttribute("aria-controls")!)).toContainElement(list);
+    expect(within(list).getByRole("row", { name: /web-01/ })).toHaveTextContent("paris");
+    expect(within(list).getByRole("row", { name: /web-01/ })).toHaveTextContent("Waiting");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auto-update/agent/versions/peers?limit=500&version=0.2.0",
+      expect.anything(),
+    );
+
+    // A tile's list replaces it.
+    const agents = screen.getByRole("group", { name: "Agents" });
+    await user.click(within(agents).getByRole("button", { name: /Waiting/ }));
+    expect(window.location.search).toBe("?agents=waiting");
+    expect(screen.queryByRole("table", { name: "Agents on 0.2.0" })).not.toBeInTheDocument();
+  });
+
+  it("lists those that reported no version, in French", async () => {
+    setActiveLocale("fr");
+    setUrl("/admin/updates/?agentsVersion=none");
+    const fetchMock = stubFetch({
+      "GET /api/auto-update": { status: 200, body: status() },
+      "GET /api/auto-update/agent/versions/peers?limit=500": {
+        status: 200,
+        body: { ...onOld, version: null },
+      },
+    });
+    render(
+      <As user={globalAdmin}>
+        <AutoUpdatePage />
+      </As>,
+    );
+    expect(
+      await screen.findByRole("table", {
+        name: "Agents sans version signalée",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Versions des agents en service" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/auto-update/agent/versions/peers?limit=500", expect.anything());
   });
 
   it("names three different versions when they differ", () => {
