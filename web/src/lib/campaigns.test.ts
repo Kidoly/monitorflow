@@ -18,6 +18,7 @@ import {
   emptyDraft,
   planWaves,
   searchServers,
+  updateSources,
   shortWindow,
   toRequest,
   validateCampaign,
@@ -338,5 +339,15 @@ describe("searchServers", () => {
     expect(ids("debian 12")).toEqual(["a"]);
     expect(ids("lyon db")).toEqual(["b"]);
     expect(ids("lyon web")).toEqual([]);
+  });
+});
+
+describe("update sources", () => {
+  it("come from two independent choices, and need one", () => {
+    expect([updateSources(true, false), updateSources(true, true), updateSources(false, true)]).toEqual(["os", "both", "apps"]);
+    const none = toRequest({ ...emptyDraft("c1"), sources: updateSources(false, false) });
+    expect(none).toMatchObject({ include_os: false });
+    expect(none.third_party).toBeUndefined();
+    expect(validateCampaign(none, ["s1"])).toContain("Choose operating system updates, third-party apps or both.");
   });
 });

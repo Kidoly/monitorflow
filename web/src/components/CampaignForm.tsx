@@ -18,7 +18,6 @@ import {
 import {
   type CampaignDraft,
   type UpdateKind,
-  type UpdateSources,
   type WaveDraft,
   type WindowDraft,
   MANAGER_NAMES,
@@ -28,12 +27,15 @@ import {
   canEdit,
   copyName,
   draftFromCampaign,
+  includesApps,
+  includesOs,
   managerFits,
   weekdayName,
   emptyDraft,
   newWindow,
   planWaves,
   toRequest,
+  updateSources,
   validateCampaign,
 } from "@/lib/campaigns";
 import { formatDuration } from "@/lib/format";
@@ -49,12 +51,6 @@ import { Banner, EmptyState, LoadingBlock, NoPermission, NotFound, PageHeader } 
 
 /** Command validity choices; the API takes 60 s to 7 days. */
 const TTLS = [900, 3600, 4 * 3600, 86_400, 604_800];
-
-const SOURCES: [UpdateSources, PlainKey][] = [
-  ["os", "campaigns.form.sources.os"],
-  ["apps", "campaigns.form.sources.apps"],
-  ["both", "campaigns.form.sources.both"],
-];
 
 const UPDATE_KINDS: [UpdateKind, PlainKey][] = [
   ["all", "campaigns.update.all"],
@@ -319,19 +315,30 @@ export function CampaignForm({
 
         <Fieldset legend={t("campaigns.form.update")}>
           {!agentUpdate && (
-            <div className={own.row} role="radiogroup" aria-label={t("campaigns.form.sources")}>
-              {SOURCES.map(([sources, label]) => (
-                <label key={sources} className={own.inline}>
-                  <input type="radio" name="sources" checked={draft.sources === sources} onChange={() =>
-                      set({ sources, ...(sources === "apps" && draft.update !== "agent" && { update: "all" as const }) })
-                    }
-                  />
-                  {t(label)}
-                </label>
-              ))}
+            <div className={own.row} role="group" aria-label={t("campaigns.form.sources")}>
+              <label className={own.inline}>
+                <input
+                  type="checkbox"
+                  checked={includesOs(draft.sources)}
+                  onChange={(e) => {
+                    const sources = updateSources(e.target.checked, includesApps(draft.sources));
+                    // Security updates and package lists are the OS's.
+                    set({ sources, ...(!includesOs(sources) && { update: "all" as const }) });
+                  }}
+                />
+                {t("campaigns.form.sources.os")}
+              </label>
+              <label className={own.inline}>
+                <input
+                  type="checkbox"
+                  checked={includesApps(draft.sources)}
+                  onChange={(e) => set({ sources: updateSources(includesOs(draft.sources), e.target.checked) })}
+                />
+                {t("campaigns.form.sources.apps")}
+              </label>
             </div>
           )}
-          {!agentUpdate && draft.sources !== "os" && (
+          {!agentUpdate && includesApps(draft.sources) && (
             <>
               <div className={own.row} role="group" aria-label={t("campaigns.form.managers")}>
                 {THIRD_PARTY_MANAGERS.map((manager) => (
@@ -358,7 +365,7 @@ export function CampaignForm({
           )}
           <div className={own.row} role="radiogroup" aria-label={t("campaigns.form.updateKind")}>
             {UPDATE_KINDS.filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
-              .filter(([kind]) => draft.sources !== "apps" || kind === "all" || kind === "agent")
+              .filter(([kind]) => includesOs(draft.sources) || kind === "all" || kind === "agent")
               .map(([kind, label]) => (
                 <label key={kind} className={own.inline}>
                   <input type="radio" name="update" checked={draft.update === kind} onChange={() => set({ update: kind })} />
@@ -408,6 +415,7 @@ export function CampaignForm({
               </select>
             </label>
           </div>
+          <p className={own.note}>{t("campaigns.form.ttlNote")}</p>
         </Fieldset>
 
         <Fieldset legend={t("campaigns.form.windows")}>

@@ -67,8 +67,16 @@ export interface WindowDraft {
 /** `agent` updates the agents themselves (ADR-0053). */
 export type UpdateKind = "all" | "security" | "packages" | "agent";
 
-/** Which updates a package campaign installs (ADR-0138): the OS's, third-party apps', or both. */
-export type UpdateSources = "os" | "apps" | "both";
+/** Which updates a package campaign installs (ADR-0138): the OS's, third-party apps', both, or not yet chosen. */
+export type UpdateSources = "os" | "apps" | "both" | "none";
+
+/** The sources of two independent choices: OS updates, third-party apps. */
+export function updateSources(os: boolean, apps: boolean): UpdateSources {
+  return os ? (apps ? "both" : "os") : apps ? "apps" : "none";
+}
+
+export const includesOs = (sources: UpdateSources): boolean => sources === "os" || sources === "both";
+export const includesApps = (sources: UpdateSources): boolean => sources === "apps" || sources === "both";
 
 /** Third-party managers, Windows first. */
 export const THIRD_PARTY_MANAGERS: ThirdPartyManagerName[] = ["winget", "flatpak", "snap"];
@@ -144,8 +152,8 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
       : { kind: "once", starts_at: localToIso(w.startsAt) ?? "", ends_at: localToIso(w.endsAt) ?? "" },
   );
   const agent = draft.update === "agent";
-  const os = agent || draft.sources !== "apps";
-  const apps = !agent && draft.sources !== "os";
+  const os = agent || includesOs(draft.sources);
+  const apps = !agent && includesApps(draft.sources);
   return {
     customer_id: draft.customerId,
     name: draft.name,
@@ -347,6 +355,7 @@ export function validateCampaign(request: CampaignRequest, targets: string[]): s
   if (request.agent_version !== undefined && compareVersions(request.agent_version, request.agent_version) === null) {
     errors.push(t("campaigns.check.agentVersion"));
   }
+  if (request.include_os === false && request.third_party === undefined) errors.push(t("campaigns.check.sources"));
   if (request.third_party?.length === 0) errors.push(t("campaigns.check.managers"));
   if (request.packages.length > MAX_PACKAGES) errors.push(t("campaigns.check.packageCount", { max: String(MAX_PACKAGES) }));
   const badPackage = request.packages.find((p) => p.length > 128 || !PACKAGE.test(p));

@@ -53,7 +53,7 @@ describe("CampaignForm", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "1 serveur ciblé. 1 laissé de côté : les mises à jour de paquets n’y sont pas disponibles.",
     );
-    expect(within(form).getByLabelText("Chaque commande peut démarrer dans un délai de")).toHaveTextContent("1 heure");
+    expect(within(form).getByLabelText("Une commande non démarrée expire après")).toHaveTextContent("1 heure");
   });
 
   it("leaves out hosts that take no package updates, and says so", async () => {
@@ -186,9 +186,17 @@ describe("CampaignForm", () => {
     const form = await screen.findByRole("form", { name: "New campaign" });
     await user.type(within(form).getByLabelText("Name"), "Apps");
     await user.selectOptions(within(form).getByLabelText("Every server of the site"), "site-1");
-    expect(screen.getByRole("radio", { name: "Operating system" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Operating system" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Third-party apps" })).not.toBeChecked();
     expect(screen.queryByRole("group", { name: "App managers" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("radio", { name: "Third-party apps" }));
+    await user.click(screen.getByRole("radio", { name: "Security updates only" }));
+    await user.click(screen.getByRole("checkbox", { name: "Third-party apps" }));
+    await user.click(screen.getByRole("checkbox", { name: "Operating system" }));
+    // Neither: the form asks for one.
+    await user.click(screen.getByRole("checkbox", { name: "Third-party apps" }));
+    await user.click(screen.getByRole("button", { name: "Create campaign" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose operating system updates, third-party apps or both.");
+    await user.click(screen.getByRole("checkbox", { name: "Third-party apps" }));
     expect(screen.queryByRole("radio", { name: "Security updates only" })).not.toBeInTheDocument();
     expect(screen.getByText(/no security classification/)).toBeInTheDocument();
     const managers = screen.getByRole("group", { name: "App managers" });
