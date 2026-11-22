@@ -137,6 +137,7 @@ export const en = {
   "queue.howTitle": "How a command gets here",
   "queue.howAi": "AI is on, under Settings › AI.",
   "queue.howServer": "The server accepts AI commands: see the Commands tab of its page.",
+  "queue.howServerAll": "Turn them on on every server at once.",
   "queue.howAlert": "An alert opens on that server and the AI proposes a change, such as restarting a stopped service.",
   "queue.howRules":
     "The risk rules keep that change for a person: high-impact commands always, low-impact ones unless the rules let them run on their own.",
@@ -350,6 +351,7 @@ export const fr: Translation<typeof en> = {
   "queue.howTitle": "Comment une commande arrive ici",
   "queue.howAi": "L’IA est activée, dans Paramètres › IA.",
   "queue.howServer": "Le serveur accepte les commandes IA : voir l’onglet Commandes de sa page.",
+  "queue.howServerAll": "Les activer sur tous les serveurs d’un coup.",
   "queue.howAlert": "Une alerte s’ouvre sur ce serveur et l’IA propose une modification, comme redémarrer un service arrêté.",
   "queue.howRules":
     "Les règles de risque réservent cette modification à une personne : toujours pour l’impact élevé, et pour l’impact faible sauf si les règles le laissent s’exécuter seul.",

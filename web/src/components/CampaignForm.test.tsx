@@ -246,6 +246,49 @@ describe("CampaignForm", () => {
     expect(push).toHaveBeenCalledWith(expect.stringContaining(`id=${CAMPAIGN_ID}`));
   });
 
+  it("locks what a run under way holds and sends it as the campaign has it", async () => {
+    const user = userEvent.setup();
+    const source = detail({
+      site_id: "site-1",
+      server_ids: [],
+      wave_specs: [{ size: 1 }],
+      spec: { packages: ["openssl"], security_only: false, allow_reboot: true, include_os: true, third_party: [] },
+    });
+    const fetchMock = stubFetch({ ...inventory, [`PUT /api/campaigns/${CAMPAIGN_ID}`]: { status: 200, body: source } });
+    render(<CampaignForm me={customerAdmin} initial={draftFromCampaign(source)} source={source} edit />);
+    const form = await screen.findByRole("form", { name: "Edit October updates" });
+    expect(screen.getByText(/A run is under way/)).toBeInTheDocument();
+    expect(within(form).getAllByText("Fixed while the campaign runs.")).toHaveLength(3);
+    expect(within(form).getByRole("group", { name: "Servers" })).toBeDisabled();
+    expect(within(form).getByLabelText("Allow reboot")).toBeDisabled();
+    await user.clear(within(form).getByLabelText("Name"));
+    await user.type(within(form).getByLabelText("Name"), "Renamed");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    const call = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(call?.[1]?.body as string)).toEqual({
+      customer_id: "c1",
+      name: "Renamed",
+      site_id: "site-1",
+      server_ids: [],
+      waves: [{ size: 1 }],
+      packages: ["openssl"],
+      security_only: false,
+      allow_reboot: true,
+      command_ttl_s: 3600,
+      failure_threshold: { value: 0, unit: "count" },
+      windows: source.windows,
+    });
+  });
+
+  it("says a finished campaign is saved for its next run", async () => {
+    const idle = { ...detail().progress, in_progress: 0 };
+    const source = detail({ state: "failed", finished_at: "2026-10-23T10:00:00Z", progress: idle });
+    stubFetch(inventory);
+    render(<CampaignForm me={customerAdmin} initial={draftFromCampaign(source)} source={source} edit />);
+    expect(await screen.findByText(/is over\. Saving keeps its last run/)).toBeInTheDocument();
+    expect(screen.queryByText("Fixed while the campaign runs.")).not.toBeInTheDocument();
+  });
+
   it("searches servers, pages through them, chooses all results and removes one", async () => {
     const user = userEvent.setup();
     const many = Array.from({ length: 120 }, (_, i) => {
