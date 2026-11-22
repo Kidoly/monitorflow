@@ -1534,6 +1534,21 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         // Integration endpoints (ADR-0102): channels' rules, and B's events
         // cannot be replayed to A's endpoint.
+        // The PSA's clients and the site matching: global administrators
+        // only, even for a site of their own customer (ADR-0166).
+        ("GET", "/api/psa/clients")
+        | ("GET", "/api/psa/clients/{id}/sites")
+        | ("GET", "/api/psa/site-links")
+        | ("PUT", "/api/psa/site-links/{site_id}")
+        | ("DELETE", "/api/psa/site-links/{site_id}") => {
+            for site in [a.site, b.site] {
+                let uri = path
+                    .replace("{id}", "10")
+                    .replace("{site_id}", &site.to_string());
+                let body = method.eq("PUT").then(|| json!({ "client_id": 10 }));
+                assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+            }
+        }
         ("GET", "/api/integrations") => {
             let other = ctx.integration(json!(b.customer)).await;
             let (status, body) = ctx.call(method, path, None).await;
