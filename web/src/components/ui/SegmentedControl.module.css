@@ -1,4 +1,5 @@
-/* Grouped buttons in one bordered pill; wraps onto a second line on a narrow screen. */
+/* Grouped buttons in one bordered pill; wraps onto a second line on a
+   narrow screen, where the options share each line's width evenly. */
 .group {
   display: inline-flex;
   flex-wrap: wrap;
@@ -13,6 +14,7 @@
 }
 
 .option {
+  flex: 1 1 auto;
   min-height: calc(var(--control-h) - 6px);
   padding: 4px 12px;
   border: 0;

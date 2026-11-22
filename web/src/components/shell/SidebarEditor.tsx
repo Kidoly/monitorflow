@@ -110,73 +110,75 @@ export function SidebarEditor({ me }: { me: Me }) {
         {t("shell.sidebar.items")}
       </div>
       <p className={styles.hint}>{t("shell.sidebar.itemsHint")}</p>
-      {sections.map((section) => (
-        <section key={section.heading} className={styles.section} aria-labelledby={`sidebar-${section.heading}`}>
-          <h3 className={styles.heading} id={`sidebar-${section.heading}`}>
-            {t(section.heading)}
-          </h3>
-          <ul className={styles.list}>
-            {section.items.map((item, index) => {
-              const name = t(item.label);
-              return (
-                <li key={item.id} className={styles.row}>
-                  <Switch
-                    rowClassName={styles.check}
-                    checked={!hidden.includes(item.id)}
-                    onChange={(shown) => setShown(item.id, shown)}
-                    label={
-                      <span className={styles.item}>
-                        <Icon name={item.icon} />
-                        {name}
-                      </span>
-                    }
-                  />
-                  <Button
-                    size="small"
-                    ref={ref(`${item.id}:up`)}
-                    aria-label={t("shell.sidebar.moveUp", { name })}
-                    title={t("shell.sidebar.moveUp", { name })}
-                    disabled={index === 0}
-                    onClick={() => move(section, index, -1)}
-                  >
-                    ↑
-                  </Button>
-                  <Button
-                    size="small"
-                    ref={ref(`${item.id}:down`)}
-                    aria-label={t("shell.sidebar.moveDown", { name })}
-                    title={t("shell.sidebar.moveDown", { name })}
-                    disabled={index === section.items.length - 1}
-                    onClick={() => move(section, index, 1)}
-                  >
-                    ↓
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ))}
-      <ul className={styles.list}>
-        <li className={styles.row}>
-          <Switch
-            rowClassName={styles.check}
-            checked
-            disabled
-            onChange={() => {}}
-            aria-describedby="sidebar-settings-always"
-            label={
-              <span className={styles.item}>
-                <Icon name={SETTINGS_ITEM.icon} />
-                {t(SETTINGS_ITEM.label)}
-              </span>
-            }
-          />
-          <span className={styles.always} id="sidebar-settings-always">
-            {t("shell.sidebar.alwaysShown")}
-          </span>
-        </li>
-      </ul>
+      <div className={styles.sections}>
+        {sections.map((section) => (
+          <section key={section.heading} className={styles.section} aria-labelledby={`sidebar-${section.heading}`}>
+            <h3 className={styles.heading} id={`sidebar-${section.heading}`}>
+              {t(section.heading)}
+            </h3>
+            <ul className={styles.list}>
+              {section.items.map((item, index) => {
+                const name = t(item.label);
+                return (
+                  <li key={item.id} className={styles.row}>
+                    <Switch
+                      rowClassName={styles.check}
+                      checked={!hidden.includes(item.id)}
+                      onChange={(shown) => setShown(item.id, shown)}
+                      label={
+                        <span className={styles.item}>
+                          <Icon name={item.icon} />
+                          {name}
+                        </span>
+                      }
+                    />
+                    <Button
+                      size="small"
+                      ref={ref(`${item.id}:up`)}
+                      aria-label={t("shell.sidebar.moveUp", { name })}
+                      title={t("shell.sidebar.moveUp", { name })}
+                      disabled={index === 0}
+                      onClick={() => move(section, index, -1)}
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      size="small"
+                      ref={ref(`${item.id}:down`)}
+                      aria-label={t("shell.sidebar.moveDown", { name })}
+                      title={t("shell.sidebar.moveDown", { name })}
+                      disabled={index === section.items.length - 1}
+                      onClick={() => move(section, index, 1)}
+                    >
+                      ↓
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+        <ul className={styles.list}>
+          <li className={styles.row}>
+            <Switch
+              rowClassName={styles.check}
+              checked
+              disabled
+              onChange={() => {}}
+              aria-describedby="sidebar-settings-always"
+              label={
+                <span className={styles.item}>
+                  <Icon name={SETTINGS_ITEM.icon} />
+                  {t(SETTINGS_ITEM.label)}
+                </span>
+              }
+            />
+            <span className={styles.always} id="sidebar-settings-always">
+              {t("shell.sidebar.alwaysShown")}
+            </span>
+          </li>
+        </ul>
+      </div>
 
       <div className={styles.actions}>
         <Button onClick={reset} disabled={!stored}>
