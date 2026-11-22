@@ -5266,6 +5266,26 @@
                     "width": 1
                   },
                   {
+                    "columns": [
+                      {
+                        "instance": "total",
+                        "metric": "monitorflow_cpu_usage_ratio"
+                      },
+                      {
+                        "metric": "monitorflow_disk_used_ratio"
+                      }
+                    ],
+                    "count": 20,
+                    "id": "servers",
+                    "kind": "table",
+                    "order": "highest",
+                    "servers": {
+                      "kind": "all"
+                    },
+                    "title": "Servers",
+                    "width": 3
+                  },
+                  {
                     "combine": "max",
                     "id": "cpu-now",
                     "instance": "total",
@@ -5353,6 +5373,22 @@
                         }
                       ],
                       "servers": 1,
+                      "unavailable": 0
+                    },
+                    {
+                      "id": "servers",
+                      "kind": "table",
+                      "rows": [
+                        {
+                          "hostname": "web-1",
+                          "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
+                          "values": [
+                            0.125,
+                            0.812
+                          ]
+                        }
+                      ],
+                      "servers": 4,
                       "unavailable": 0
                     },
                     {
@@ -5820,6 +5856,26 @@
                       "width": 1
                     },
                     {
+                      "columns": [
+                        {
+                          "instance": "total",
+                          "metric": "monitorflow_cpu_usage_ratio"
+                        },
+                        {
+                          "metric": "monitorflow_disk_used_ratio"
+                        }
+                      ],
+                      "count": 20,
+                      "id": "servers",
+                      "kind": "table",
+                      "order": "highest",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "title": "Servers",
+                      "width": 3
+                    },
+                    {
                       "combine": "max",
                       "id": "cpu-now",
                       "instance": "total",
@@ -5901,6 +5957,26 @@
                         },
                         "title": "Fullest disks",
                         "width": 1
+                      },
+                      {
+                        "columns": [
+                          {
+                            "instance": "total",
+                            "metric": "monitorflow_cpu_usage_ratio"
+                          },
+                          {
+                            "metric": "monitorflow_disk_used_ratio"
+                          }
+                        ],
+                        "count": 20,
+                        "id": "servers",
+                        "kind": "table",
+                        "order": "highest",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "Servers",
+                        "width": 3
                       },
                       {
                         "combine": "max",
@@ -6098,6 +6174,26 @@
                         "width": 1
                       },
                       {
+                        "columns": [
+                          {
+                            "instance": "total",
+                            "metric": "monitorflow_cpu_usage_ratio"
+                          },
+                          {
+                            "metric": "monitorflow_disk_used_ratio"
+                          }
+                        ],
+                        "count": 20,
+                        "id": "servers",
+                        "kind": "table",
+                        "order": "highest",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "Servers",
+                        "width": 3
+                      },
+                      {
                         "combine": "max",
                         "id": "cpu-now",
                         "instance": "total",
@@ -6286,6 +6382,26 @@
                       "width": 1
                     },
                     {
+                      "columns": [
+                        {
+                          "instance": "total",
+                          "metric": "monitorflow_cpu_usage_ratio"
+                        },
+                        {
+                          "metric": "monitorflow_disk_used_ratio"
+                        }
+                      ],
+                      "count": 20,
+                      "id": "servers",
+                      "kind": "table",
+                      "order": "highest",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "title": "Servers",
+                      "width": 3
+                    },
+                    {
                       "combine": "max",
                       "id": "cpu-now",
                       "instance": "total",
@@ -6367,6 +6483,26 @@
                         },
                         "title": "Fullest disks",
                         "width": 1
+                      },
+                      {
+                        "columns": [
+                          {
+                            "instance": "total",
+                            "metric": "monitorflow_cpu_usage_ratio"
+                          },
+                          {
+                            "metric": "monitorflow_disk_used_ratio"
+                          }
+                        ],
+                        "count": 20,
+                        "id": "servers",
+                        "kind": "table",
+                        "order": "highest",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "Servers",
+                        "width": 3
                       },
                       {
                         "combine": "max",
@@ -53297,6 +53433,16 @@
             "description": "The first colour of the palette it uses, 1 to 8; 1 when absent.",
             "minimum": 0
           },
+          "columns": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PanelColumn"
+            },
+            "description": "A table's columns, 1 to 6, sorted by the first."
+          },
           "combine": {
             "oneOf": [
               {
@@ -53376,6 +53522,13 @@
             "$ref": "#/components/schemas/PanelServers",
             "description": "Every server of the dashboard when absent."
           },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A text panel's Markdown, up to 4000 characters."
+          },
           "thresholds": {
             "oneOf": [
               {
@@ -53407,6 +53560,27 @@
             "format": "int32",
             "description": "Columns of the three-column grid, 1 to 3; 1 when absent.",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "PanelColumn": {
+        "type": "object",
+        "description": "One column of a table: a metric, of one instance or the worst of all.",
+        "required": [
+          "metric"
+        ],
+        "properties": {
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only this instance; the worst of the server's instances when absent."
+          },
+          "metric": {
+            "type": "string",
+            "description": "Full name, `monitorflow_…`."
           }
         },
         "additionalProperties": false
@@ -53466,7 +53640,10 @@
           "gauge",
           "bars",
           "area",
-          "columns"
+          "columns",
+          "heatmap",
+          "table",
+          "text"
         ]
       },
       "PanelOrder": {
@@ -53544,6 +53721,43 @@
           },
           {
             "type": "object",
+            "description": "A table: a row per server, sorted by its first column.",
+            "required": [
+              "rows",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "table"
+                ]
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TableRow"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A text panel, which reads nothing.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "text"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "required": [
               "alerts",
               "unreachable",
@@ -53591,7 +53805,7 @@
             }
           }
         ],
-        "description": "What a panel shows. `kind` is the shape of the data, the panel's kind\nor the one it draws differently: `chart` for `chart`, `area` and\n`columns`; `figure` for `figure` and `gauge`; `top` for `top` and\n`bars` (ADR-0166)."
+        "description": "What a panel shows. `kind` is the shape of the data, the panel's kind\nor the one it draws differently: `chart` for `chart`, `area` and\n`columns` and `heatmap`; `figure` for `figure` and `gauge`; `top`\nfor `top` and `bars` (ADR-0166)."
       },
       "PanelServers": {
         "oneOf": [
@@ -59696,6 +59910,35 @@
           }
         }
       },
+      "TableRow": {
+        "type": "object",
+        "description": "One row of a table: a server and its value in each column.",
+        "required": [
+          "server_id",
+          "hostname",
+          "values"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "In the order of the panel's columns; `null` where the server does\nnot report it."
+          }
+        }
+      },
       "TemplateList": {
         "type": "object",
         "description": "Body of `GET /api/devices/templates`.",
@@ -61319,7 +61562,7 @@
     },
     {
       "name": "dashboards",
-      "description": "Pages of panels kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a site or customer see its dashboards; any role above viewer makes, changes and deletes them; anyone who can read makes their own. With a key, the \"dashboards\" area; a key sees, changes and deletes its maker's \"Only me\" dashboards whatever its reach, but the data of any panel is only ever read within the key's reach. A panel never shows more than the person asking may read: its servers are resolved again on every read, and servers they cannot see are counted, not named.\n\nA panel's `kind` says how it is drawn: `chart` (lines), `area` (areas, stacked when there is one per server), `columns` (a column per step, stacked likewise), `figure` (one number), `gauge` (one number on a dial), `top` (a list of the highest or lowest servers), `bars` (the same as horizontal bars) and `alerts` (open alerts). Kinds that draw the same data take the same fields and answer the same data shape: `area` and `columns` as `chart`, `gauge` as `figure`, `bars` as `top`. Optional display fields, ignored by the data: `unit`, `min` and `max` of the scale, `thresholds` (`warning`, `critical`) that colour figures, gauges and bars and draw lines on charts, `legend` (charts over time only) and `color`, the first colour of the eight of the palette. Alerts panels take none of them. Dashboards saved before these kinds and fields existed read unchanged.\n\nDisplay links, which show dashboards on a wall screen without signing in, are made, listed and turned off only in the web interface, by an administrator of the dashboards' site or customer (or of anything for their own). A link's secret is in the URL fragment, shown once; a screen trades it for a session of one hour. Whoever holds the URL sees the link's dashboards, up to 12, and nothing else: no other page, no settings, no change. Each screen request reads as the link's maker with their roles of the moment, so a maker who is disabled or loses the role stops their links. A link may expire or never; deleting a dashboard removes it from its links. Because a link reads with all its maker's roles and outlives a key, `/api/v1/display-links`, `/api/v1/dashboards/{id}/display-links` and `/api/v1/display` answer 404."
+      "description": "Pages of panels kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a site or customer see its dashboards; any role above viewer makes, changes and deletes them; anyone who can read makes their own. With a key, the \"dashboards\" area; a key sees, changes and deletes its maker's \"Only me\" dashboards whatever its reach, but the data of any panel is only ever read within the key's reach. A panel never shows more than the person asking may read: its servers are resolved again on every read, and servers they cannot see are counted, not named.\n\nA panel's `kind` says how it is drawn: `chart` (lines), `area` (areas, stacked when there is one per server), `columns` (a column per step, stacked likewise), `figure` (one number), `gauge` (one number on a dial), `top` (a list of the highest or lowest servers), `bars` (the same as horizontal bars), `alerts` (open alerts), `heatmap` (a row per server over time, coloured by value: the `count` worst servers), `table` (a row per server, a column per metric of `columns`, sorted by the first, the `count` first) and `text` (Markdown in `text`, no data). Kinds that draw the same data take the same fields and answer the same data shape: `area`, `columns` and `heatmap` as `chart`, `gauge` as `figure`, `bars` as `top`; a table answers `table`, a text panel `text`. A table column without an instance shows the worst of the server's instances. Optional display fields, ignored by the data: `unit`, `min` and `max` of the scale, `thresholds` (`warning`, `critical`) that colour figures, gauges and bars and draw lines on charts, `legend` (charts over time only) and `color`, the first colour of the eight of the palette. Alerts panels take none of them. Dashboards saved before these kinds and fields existed read unchanged.\n\nDisplay links, which show dashboards on a wall screen without signing in, are made, listed and turned off only in the web interface, by an administrator of the dashboards' site or customer (or of anything for their own). A link's secret is in the URL fragment, shown once; a screen trades it for a session of one hour. Whoever holds the URL sees the link's dashboards, up to 12, and nothing else: no other page, no settings, no change. Each screen request reads as the link's maker with their roles of the moment, so a maker who is disabled or loses the role stops their links. A link may expire or never; deleting a dashboard removes it from its links. Because a link reads with all its maker's roles and outlives a key, `/api/v1/display-links`, `/api/v1/dashboards/{id}/display-links` and `/api/v1/display` answer 404."
     },
     {
       "name": "plugins",

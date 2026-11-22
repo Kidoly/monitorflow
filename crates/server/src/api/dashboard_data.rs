@@ -27,7 +27,9 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use super::auth::CurrentUser;
-use super::dashboards::{check_panels, Combine, Order, Panel, PanelKind, Servers, TimeRange};
+use super::dashboards::{
+    check_panels, Combine, Order, Panel, PanelKind, Servers, TableColumn, TimeRange,
+};
 use super::metrics::{check_metric, quote, series, SeriesView, METRIC_PREFIX};
 use super::sensors::body;
 use super::{ApiError, ApiState};
@@ -146,6 +148,16 @@ pub struct TopRow {
     pub value: Option<f64>,
 }
 
+/// One row of a table: a server and its value in each column.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TableRow {
+    pub server_id: Uuid,
+    pub hostname: String,
+    /// In the order of the panel's columns; `null` where the server does
+    /// not report it.
+    pub values: Vec<Option<f64>>,
+}
+
 /// One open alert.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 #[schema(as = DashboardAlert)]
@@ -178,8 +190,8 @@ pub struct UnreachableServer {
 
 /// What a panel shows. `kind` is the shape of the data, the panel's kind
 /// or the one it draws differently: `chart` for `chart`, `area` and
-/// `columns`; `figure` for `figure` and `gauge`; `top` for `top` and
-/// `bars` (ADR-0166).
+/// `columns` and `heatmap`; `figure` for `figure` and `gauge`; `top`
+/// for `top` and `bars` (ADR-0166).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum PanelResult {
@@ -192,6 +204,12 @@ pub enum PanelResult {
     Top {
         rows: Vec<TopRow>,
     },
+    /// A table: a row per server, sorted by its first column.
+    Table {
+        rows: Vec<TableRow>,
+    },
+    /// A text panel, which reads nothing.
+    Text {},
     Alerts {
         alerts: Vec<AlertRow>,
         /// Its servers behind a parent that is down (ADR-0152): they open
@@ -394,6 +412,19 @@ pub fn build(panel: &Panel, selector: &str, range: TimeRange) -> Option<Call> {
     let metric = panel.metric.as_deref()?;
     let combine = panel.combine.unwrap_or(Combine::Avg);
     Some(match panel.kind {
+        PanelKind::Heatmap => {
+            let rolled = if range.rolls_up() {
+                format!("{}({selector}[{}s])", rollup(metric), range.step())
+            } else {
+                selector.to_owned()
+            };
+            let count = panel.count.unwrap_or(10);
+            Call::Range(if low_is_bad(metric) {
+                format!("bottomk_min({count}, {rolled})")
+            } else {
+                format!("topk_max({count}, {rolled})")
+            })
+        }
         PanelKind::Chart | PanelKind::Area | PanelKind::Columns => {
             let rolled = if range.rolls_up() {
                 format!("{}({selector}[{}s])", rollup(metric), range.step())
@@ -422,8 +453,41 @@ pub fn build(panel: &Panel, selector: &str, range: TimeRange) -> Option<Call> {
                 panel.count.unwrap_or(5)
             ))
         }
-        PanelKind::Alerts => return None,
+        PanelKind::Alerts | PanelKind::Table | PanelKind::Text => return None,
     })
+}
+
+/// The queries of a table, one per column: each server's value, the worst
+/// of its instances when the column names none, for the `count` servers
+/// first by the first column, so no answer has more series than rows.
+pub fn table_calls(
+    columns: &[TableColumn],
+    selection: &Selection,
+    order: Option<Order>,
+    count: u32,
+) -> Vec<Call> {
+    let value = |c: &TableColumn| {
+        let worst = if low_is_bad(&c.metric) { "min" } else { "max" };
+        format!(
+            "{worst} by (peer) ({})",
+            selection.selector(&c.metric, c.instance.as_deref())
+        )
+    };
+    let Some(first) = columns.first() else {
+        return Vec::new();
+    };
+    let function = match order {
+        Some(Order::Lowest) => "bottomk",
+        _ => "topk",
+    };
+    let rows = format!("{function}({count}, {})", value(first));
+    std::iter::once(Call::Instant(rows.clone()))
+        .chain(
+            columns[1..]
+                .iter()
+                .map(|c| Call::Instant(format!("{} and on (peer) {rows}", value(c)))),
+        )
+        .collect()
 }
 
 fn combined_label(combine: Combine) -> &'static str {
@@ -496,12 +560,58 @@ async fn visible_servers(
     .await?)
 }
 
+/// What a table's answers, one per column, become: the servers reporting
+/// any column, sorted by the first, those without it last.
+fn convert_table(
+    panel: &Panel,
+    servers: &[&Visible],
+    answers: Vec<Value>,
+) -> Result<PanelResult, ApiError> {
+    let columns = answers.len();
+    let mut rows: Vec<TableRow> = Vec::new();
+    let mut at: HashMap<&str, usize> = HashMap::new();
+    let by_peer: HashMap<&str, &Visible> =
+        servers.iter().map(|s| (s.peer_id.as_str(), *s)).collect();
+    for (column, data) in answers.into_iter().enumerate() {
+        for found in series(data)? {
+            // Defense in depth: a series of a peer outside the panel is dropped.
+            let Some(server) = found
+                .labels
+                .get("peer")
+                .and_then(|p| by_peer.get(p.as_str()))
+            else {
+                continue;
+            };
+            let index = *at.entry(server.peer_id.as_str()).or_insert_with(|| {
+                rows.push(TableRow {
+                    server_id: server.id,
+                    hostname: server.hostname.clone(),
+                    values: vec![None; columns],
+                });
+                rows.len() - 1
+            });
+            rows[index].values[column] = found.points.last().and_then(|p| p.1);
+        }
+    }
+    let lowest = panel.order == Some(Order::Lowest);
+    rows.sort_by(|a, b| match (a.values[0], b.values[0]) {
+        (Some(x), Some(y)) if lowest => x.total_cmp(&y),
+        (Some(x), Some(y)) => y.total_cmp(&x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.hostname.cmp(&b.hostname),
+    });
+    rows.truncate(panel.count.unwrap_or(10) as usize);
+    Ok(PanelResult::Table { rows })
+}
+
 /// What one metric panel's answer becomes.
 fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResult, ApiError> {
     let by_peer: HashMap<&str, &Visible> =
         servers.iter().map(|s| (s.peer_id.as_str(), *s)).collect();
     let combine = panel.combine.unwrap_or(Combine::Avg);
     let per_server = panel.kind.base() == PanelKind::Top
+        || panel.kind == PanelKind::Heatmap
         || (panel.kind.base() == PanelKind::Chart && combine == Combine::Each);
     // Defense in depth: a series of a peer outside the panel is dropped.
     let found: Vec<(Option<&Visible>, SeriesView)> = series(data)?
@@ -513,7 +623,7 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
         })
         .collect();
     Ok(match panel.kind {
-        PanelKind::Chart | PanelKind::Area | PanelKind::Columns => {
+        PanelKind::Chart | PanelKind::Area | PanelKind::Columns | PanelKind::Heatmap => {
             let mut lines: Vec<ChartSeries> = found
                 .into_iter()
                 .map(|(server, s)| {
@@ -572,6 +682,8 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
             alerts: Vec::new(),
             unreachable: Vec::new(),
         },
+        PanelKind::Table => PanelResult::Table { rows: Vec::new() },
+        PanelKind::Text => PanelResult::Text {},
     })
 }
 
@@ -652,53 +764,70 @@ pub(super) async fn compute(
     )
     .await?;
 
-    // Metric queries, at most PARALLEL at a time.
+    // Metric queries, at most PARALLEL at a time; a table sends one per column.
     let semaphore = Arc::new(Semaphore::new(PARALLEL));
     let mut tasks = JoinSet::new();
     let mut results: Vec<Option<PanelResult>> = Vec::new();
+    let mut answers: Vec<Vec<Option<Value>>> = Vec::new();
     for (index, (panel, (servers, _))) in request.panels.iter().zip(&resolved).enumerate() {
+        answers.push(Vec::new());
         let selection = Selection::new(
             servers,
             &visible,
             matches!(panel.servers, Servers::List { .. }),
         );
-        let selector = selection.selector(
-            panel.metric.as_deref().unwrap_or_default(),
-            panel.instance.as_deref(),
-        );
-        let call = build(panel, &selector, range);
+        let calls: Vec<Call> = match &panel.columns {
+            Some(columns) if panel.kind == PanelKind::Table => {
+                table_calls(columns, &selection, panel.order, panel.count.unwrap_or(10))
+            }
+            _ => {
+                let selector = selection.selector(
+                    panel.metric.as_deref().unwrap_or_default(),
+                    panel.instance.as_deref(),
+                );
+                build(panel, &selector, range).into_iter().collect()
+            }
+        };
         let empty = || match panel.kind {
-            PanelKind::Chart | PanelKind::Area | PanelKind::Columns => {
+            PanelKind::Chart | PanelKind::Area | PanelKind::Columns | PanelKind::Heatmap => {
                 PanelResult::Chart { series: Vec::new() }
             }
             PanelKind::Figure | PanelKind::Gauge => PanelResult::Figure { value: None },
             PanelKind::Top | PanelKind::Bars => PanelResult::Top { rows: Vec::new() },
+            PanelKind::Table => PanelResult::Table { rows: Vec::new() },
+            PanelKind::Text => PanelResult::Text {},
             PanelKind::Alerts => PanelResult::Alerts {
                 alerts: Vec::new(),
                 unreachable: Vec::new(),
             },
         };
-        let (Some(call), false) = (call, servers.is_empty()) else {
+        if calls.is_empty() || servers.is_empty() {
             results.push(Some(empty()));
             continue;
-        };
+        }
         let filter = selection.filter();
-        let (path, mut params) = match call {
-            Call::Range(query) => (
-                "/api/v1/query_range",
-                vec![
-                    ("query", query),
-                    ("start", start.to_string()),
-                    ("end", end.to_string()),
-                    ("step", step.to_string()),
-                ],
-            ),
-            Call::Instant(query) => (
-                "/api/v1/query",
-                vec![("query", query), ("time", at.to_string())],
-            ),
-        };
-        if params[0].1.len() + filter.len() > MAX_QUERY_BYTES {
+        let requests: Vec<(&'static str, Vec<(&'static str, String)>)> = calls
+            .into_iter()
+            .map(|call| match call {
+                Call::Range(query) => (
+                    "/api/v1/query_range",
+                    vec![
+                        ("query", query),
+                        ("start", start.to_string()),
+                        ("end", end.to_string()),
+                        ("step", step.to_string()),
+                    ],
+                ),
+                Call::Instant(query) => (
+                    "/api/v1/query",
+                    vec![("query", query), ("time", at.to_string())],
+                ),
+            })
+            .collect();
+        if requests
+            .iter()
+            .any(|(_, params)| params[0].1.len() + filter.len() > MAX_QUERY_BYTES)
+        {
             results.push(Some(PanelResult::Error {
                 error: "Too many sites or servers for one panel. Choose a site or a customer."
                     .into(),
@@ -711,27 +840,51 @@ pub(super) async fn compute(
             }));
             continue;
         };
-        params.push(("extra_filters[]", filter));
         results.push(None);
-        let (cache, semaphore) = (state.dashboard_cache.clone(), semaphore.clone());
-        tasks.spawn(async move {
-            let _permit = semaphore.acquire_owned().await;
-            (index, cached(&vm, &cache, path, &params).await)
-        });
+        answers[index] = vec![None; requests.len()];
+        for (sub, (path, mut params)) in requests.into_iter().enumerate() {
+            params.push(("extra_filters[]", filter.clone()));
+            let (vm, cache, semaphore) =
+                (vm.clone(), state.dashboard_cache.clone(), semaphore.clone());
+            tasks.spawn(async move {
+                let _permit = semaphore.acquire_owned().await;
+                (index, sub, cached(&vm, &cache, path, &params).await)
+            });
+        }
     }
     while let Some(joined) = tasks.join_next().await {
-        let (index, answer) = joined.map_err(|e| ApiError::Internal(e.to_string()))?;
-        let panel = &request.panels[index];
-        results[index] = Some(match answer {
-            Ok(data) => {
-                convert(panel, &resolved[index].0, data).unwrap_or_else(|e| PanelResult::Error {
-                    error: e.to_string(),
-                })
+        let (index, sub, answer) = joined.map_err(|e| ApiError::Internal(e.to_string()))?;
+        match answer {
+            Ok(data) => answers[index][sub] = Some(data),
+            // The first failure of a panel is the one it shows.
+            Err(error) if results[index].is_none() => {
+                results[index] = Some(PanelResult::Error {
+                    error: failure(&error),
+                });
             }
-            Err(error) => PanelResult::Error {
-                error: failure(&error),
-            },
-        });
+            Err(_) => {}
+        }
+    }
+    for (index, panel) in request.panels.iter().enumerate() {
+        if results[index].is_some() {
+            continue;
+        }
+        let data: Vec<Value> = std::mem::take(&mut answers[index])
+            .into_iter()
+            .flatten()
+            .collect();
+        let servers = &resolved[index].0;
+        let converted = if panel.kind == PanelKind::Table {
+            convert_table(panel, servers, data)
+        } else {
+            match data.into_iter().next() {
+                Some(data) => convert(panel, servers, data),
+                None => Err(ApiError::Internal("no answer".into())),
+            }
+        };
+        results[index] = Some(converted.unwrap_or_else(|e| PanelResult::Error {
+            error: e.to_string(),
+        }));
     }
 
     let panels = request
@@ -1123,6 +1276,80 @@ mod tests {
         let one = json!({"result": [{"metric": {}, "values": [[1, "0.7"]]}]});
         assert!(
             matches!(convert(&gauge, &servers, one).unwrap(), PanelResult::Figure { value: Some(v) } if v == 0.7)
+        );
+    }
+
+    #[test]
+    fn heatmaps_take_the_worst_rows_and_tables_a_query_per_column() {
+        let s = "m{site=~\"p\"}";
+        let heat = panel(json!({"id": "a", "title": "t", "kind": "heatmap",
+            "metric": "monitorflow_cpu_usage_ratio", "count": 12}));
+        assert_eq!(
+            build(&heat, s, TimeRange::Day),
+            Some(Call::Range(format!(
+                "topk_max(12, max_over_time({s}[300s]))"
+            )))
+        );
+        let visible = [server(1, "paris", 1, false)];
+        let servers: Vec<&Visible> = visible.iter().collect();
+        let selection = Selection::new(&servers, &visible, false);
+        let columns = vec![
+            TableColumn {
+                metric: "monitorflow_cpu_usage_ratio".into(),
+                instance: Some("total".into()),
+            },
+            TableColumn {
+                metric: "monitorflow_memory_available_ratio".into(),
+                instance: None,
+            },
+        ];
+        let first = r#"topk(5, max by (peer) (monitorflow_cpu_usage_ratio{site=~"paris",instance="total"}))"#;
+        assert_eq!(
+            table_calls(&columns, &selection, Some(Order::Highest), 5),
+            [
+                Call::Instant(first.into()),
+                Call::Instant(format!(
+                    r#"min by (peer) (monitorflow_memory_available_ratio{{site=~"paris"}}) and on (peer) {first}"#
+                )),
+            ]
+        );
+    }
+
+    #[test]
+    fn tables_sort_servers_by_their_first_column() {
+        let visible = [
+            server(1, "paris", 1, false),
+            server(2, "paris", 1, false),
+            server(3, "paris", 1, false),
+        ];
+        let servers: Vec<&Visible> = visible.iter().collect();
+        let table = panel(
+            json!({"id": "a", "title": "t", "kind": "table", "order": "highest", "count": 2,
+            "columns": [{"metric": "monitorflow_cpu_usage_ratio"}, {"metric": "monitorflow_disk_used_ratio"}]}),
+        );
+        let cpu = json!({"result": [
+            {"metric": {"peer": "agent-1"}, "value": [1, "0.2"]},
+            {"metric": {"peer": "agent-2"}, "value": [1, "0.9"]},
+            {"metric": {"peer": "intruder"}, "value": [1, "1"]}
+        ]});
+        let disk = json!({"result": [
+            {"metric": {"peer": "agent-3"}, "value": [1, "0.5"]},
+            {"metric": {"peer": "agent-2"}, "value": [1, "0.4"]}
+        ]});
+        let PanelResult::Table { rows } = convert_table(&table, &servers, vec![cpu, disk]).unwrap()
+        else {
+            panic!()
+        };
+        let shown: Vec<(&str, Vec<Option<f64>>)> = rows
+            .iter()
+            .map(|r| (r.hostname.as_str(), r.values.clone()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("web-2", vec![Some(0.9), Some(0.4)]),
+                ("web-1", vec![Some(0.2), None])
+            ]
         );
     }
 

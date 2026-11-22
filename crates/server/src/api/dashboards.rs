@@ -37,8 +37,14 @@ pub const MAX_PANELS: usize = 24;
 pub const MAX_NAME: usize = 80;
 /// Most servers a panel names one by one.
 pub const MAX_NAMED_SERVERS: usize = 50;
-/// Most rows of a top list or alerts panel.
+/// Most rows of a top list, alerts panel or heatmap.
 pub const MAX_COUNT: u32 = 20;
+/// Most rows of a table.
+pub const MAX_TABLE_ROWS: u32 = 50;
+/// Most columns of a table.
+pub const MAX_TABLE_COLUMNS: usize = 6;
+/// Longest text of a text panel, in characters.
+pub const MAX_TEXT: usize = 4_000;
 
 /// Time ranges, as on the sensor pages (ADR-0020).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -128,13 +134,20 @@ pub enum PanelKind {
     /// Columns over the range, one per step, stacked when there is one
     /// per server.
     Columns,
+    /// A row per server over the range, coloured by value: the worst
+    /// `count` servers.
+    Heatmap,
+    /// A row per server and a column per metric, now.
+    Table,
+    /// Text in Markdown, no data.
+    Text,
 }
 
 impl PanelKind {
     /// The kind whose data this one draws.
     pub fn base(self) -> Self {
         match self {
-            Self::Area | Self::Columns => Self::Chart,
+            Self::Area | Self::Columns | Self::Heatmap => Self::Chart,
             Self::Gauge => Self::Figure,
             Self::Bars => Self::Top,
             other => other,
@@ -143,7 +156,7 @@ impl PanelKind {
 
     /// Whether it draws over time, with a legend.
     fn over_time(self) -> bool {
-        self.base() == Self::Chart
+        matches!(self, Self::Chart | Self::Area | Self::Columns)
     }
 }
 
@@ -161,6 +174,18 @@ pub enum Unit {
     Seconds,
     Celsius,
     Number,
+}
+
+/// One column of a table: a metric, of one instance or the worst of all.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = PanelColumn)]
+#[serde(deny_unknown_fields)]
+pub struct TableColumn {
+    /// Full name, `monitorflow_…`.
+    pub metric: String,
+    /// Only this instance; the worst of the server's instances when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
 }
 
 /// Values at which a panel turns amber and red, in the metric's unit (a
@@ -252,6 +277,12 @@ pub struct Panel {
     /// The first colour of the palette it uses, 1 to 8; 1 when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<u8>,
+    /// A table's columns, 1 to 6, sorted by the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<Vec<TableColumn>>,
+    /// A text panel's Markdown, up to 4000 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 fn one() -> u8 {
@@ -338,7 +369,69 @@ fn check_panel(panel: &Panel) -> Result<(), String> {
     }
     let count_ok = |count: Option<u32>| count.is_some_and(|c| (1..=MAX_COUNT).contains(&c));
     check_options(panel)?;
+    if panel.columns.is_some() && panel.kind != PanelKind::Table {
+        return Err("only a table has columns.".into());
+    }
+    if panel.text.is_some() && panel.kind != PanelKind::Text {
+        return Err("only a text panel has text.".into());
+    }
     match panel.kind {
+        PanelKind::Text => {
+            let text = panel.text.as_deref().unwrap_or_default();
+            if text.trim().is_empty() || text.chars().count() > MAX_TEXT {
+                return Err(format!("write a text of up to {MAX_TEXT} characters."));
+            }
+            if panel.servers != Servers::All
+                || panel.metric.is_some()
+                || panel.instance.is_some()
+                || panel.combine.is_some()
+                || panel.order.is_some()
+                || panel.count.is_some()
+                || has_options(panel)
+            {
+                return Err("a text panel takes its text only.".into());
+            }
+            return Ok(());
+        }
+        PanelKind::Table => {
+            if panel.metric.is_some()
+                || panel.instance.is_some()
+                || panel.combine.is_some()
+                || has_options(panel)
+            {
+                return Err("a table takes servers, columns, an order and a count.".into());
+            }
+            if panel.order.is_none() {
+                return Err("say which end of its first column comes first.".into());
+            }
+            if !panel
+                .count
+                .is_some_and(|c| (1..=MAX_TABLE_ROWS).contains(&c))
+            {
+                return Err(format!("show 1 to {MAX_TABLE_ROWS} rows."));
+            }
+            let columns = panel.columns.as_deref().unwrap_or_default();
+            if columns.is_empty() || columns.len() > MAX_TABLE_COLUMNS {
+                return Err(format!("give it 1 to {MAX_TABLE_COLUMNS} columns."));
+            }
+            for column in columns {
+                check_metric(&column.metric).map_err(|e| e.to_string())?;
+                if let Some(instance) = &column.instance {
+                    validate::instance(instance).map_err(|e| e.to_string())?;
+                }
+            }
+            return Ok(());
+        }
+        PanelKind::Heatmap => {
+            if panel.combine.is_some() || panel.order.is_some() {
+                return Err(
+                    "a heatmap shows the worst servers: it takes no combine or order.".into(),
+                );
+            }
+            if !count_ok(panel.count) {
+                return Err(format!("show 1 to {MAX_COUNT} rows."));
+            }
+        }
         PanelKind::Alerts => {
             if panel.metric.is_some()
                 || panel.instance.is_some()
@@ -967,6 +1060,12 @@ mod tests {
                    "order": "highest", "count": 8, "unit": "ratio", "min": 0, "max": 1}),
             json!({"id": "a", "title": "Memory", "kind": "area", "metric": "monitorflow_memory_used_bytes",
                    "combine": "each", "legend": false, "unit": "bytes"}),
+            json!({"id": "a", "title": "Heat", "kind": "heatmap", "metric": "monitorflow_cpu_usage_ratio",
+                   "count": 12, "thresholds": {"warning": 0.8}}),
+            json!({"id": "a", "title": "Servers", "kind": "table", "order": "highest", "count": 50,
+                   "columns": [{"metric": "monitorflow_cpu_usage_ratio", "instance": "total"},
+                               {"metric": "monitorflow_disk_used_ratio"}]}),
+            json!({"id": "a", "title": "Read me", "kind": "text", "text": "# On call\nCall **Bob**."}),
             json!({"id": "a", "title": "Traffic", "kind": "columns", "metric": "monitorflow_network_receive_bytes_per_second",
                    "combine": "sum", "thresholds": {"critical": 1e9}}),
         ] {
@@ -1012,6 +1111,19 @@ mod tests {
             json!({"id": "a", "title": "x", "kind": "bars", "metric": "monitorflow_cpu_usage_ratio", "count": 5}),
             json!({"id": "a", "title": "x", "kind": "area", "metric": "monitorflow_cpu_usage_ratio", "combine": "count"}),
             json!({"id": "a", "title": "x", "kind": "alerts", "count": 5, "color": 2}),
+            json!({"id": "a", "title": "x", "kind": "heatmap", "metric": "monitorflow_cpu_usage_ratio", "count": 5, "combine": "each"}),
+            json!({"id": "a", "title": "x", "kind": "heatmap", "metric": "monitorflow_cpu_usage_ratio"}),
+            json!({"id": "a", "title": "x", "kind": "table", "order": "highest", "count": 5, "columns": []}),
+            json!({"id": "a", "title": "x", "kind": "table", "order": "highest", "count": 51,
+                   "columns": [{"metric": "monitorflow_cpu_usage_ratio"}]}),
+            json!({"id": "a", "title": "x", "kind": "table", "count": 5,
+                   "columns": [{"metric": "monitorflow_cpu_usage_ratio"}]}),
+            json!({"id": "a", "title": "x", "kind": "table", "order": "highest", "count": 5,
+                   "columns": [{"metric": "up"}]}),
+            json!({"id": "a", "title": "x", "kind": "text", "text": " "}),
+            json!({"id": "a", "title": "x", "kind": "text", "text": "x".repeat(4001)}),
+            json!({"id": "a", "title": "x", "kind": "text", "text": "hi", "servers": {"kind": "site", "id": Uuid::nil()}}),
+            json!({"id": "a", "title": "x", "kind": "chart", "metric": "monitorflow_cpu_usage_ratio", "combine": "avg", "text": "hi"}),
             chart(json!({"servers": {"kind": "list", "ids": []}})),
             chart(json!({"servers": {"kind": "list", "ids": vec![Uuid::nil(); 51]}})),
             chart(json!({"servers": {"kind": "tag", "name": "db"}})),

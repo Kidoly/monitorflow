@@ -22,9 +22,12 @@ servers are resolved again on every read, and servers they cannot see are counte
 A panel's `kind` says how it is drawn: `chart` (lines), `area` (areas, stacked when there is one \
 per server), `columns` (a column per step, stacked likewise), `figure` (one number), `gauge` (one \
 number on a dial), `top` (a list of the highest or lowest servers), `bars` (the same as \
-horizontal bars) and `alerts` (open alerts). Kinds that draw the same data take the same fields \
-and answer the same data shape: `area` and `columns` as `chart`, `gauge` as `figure`, `bars` as \
-`top`. Optional display fields, ignored by the data: `unit`, `min` and `max` of the scale, \
+horizontal bars), `alerts` (open alerts), `heatmap` (a row per server over time, coloured by \
+value: the `count` worst servers), `table` (a row per server, a column per metric of `columns`, \
+sorted by the first, the `count` first) and `text` (Markdown in `text`, no data). Kinds that draw \
+the same data take the same fields and answer the same data shape: `area`, `columns` and \
+`heatmap` as `chart`, `gauge` as `figure`, `bars` as `top`; a table answers `table`, a text \
+panel `text`. A table column without an instance shows the worst of the server's instances. Optional display fields, ignored by the data: `unit`, `min` and `max` of the scale, \
 `thresholds` (`warning`, `critical`) that colour figures, gauges and bars and draw lines on \
 charts, `legend` (charts over time only) and `color`, the first colour of the eight of the \
 palette. Alerts panels take none of them. Dashboards saved before these kinds and fields existed \
@@ -56,6 +59,14 @@ fn spec_example() -> serde_json::Value {
                 "id": "disks", "title": "Fullest disks", "kind": "top", "width": 1,
                 "servers": { "kind": "list", "ids": ["6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e"] },
                 "metric": "monitorflow_disk_used_ratio", "order": "highest", "count": 5
+            },
+            {
+                "id": "servers", "title": "Servers", "kind": "table", "width": 3,
+                "servers": { "kind": "all" }, "order": "highest", "count": 20,
+                "columns": [
+                    { "metric": "monitorflow_cpu_usage_ratio", "instance": "total" },
+                    { "metric": "monitorflow_disk_used_ratio" }
+                ]
             },
             {
                 "id": "cpu-now", "title": "CPU now, busiest server", "kind": "gauge", "width": 1,
@@ -181,6 +192,9 @@ fn delete() {}
                 ] },
                 { "id": "disks", "servers": 1, "unavailable": 0, "kind": "top", "rows": [
                     { "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e", "hostname": "web-1", "instance": "/var", "value": 0.812 }
+                ] },
+                { "id": "servers", "servers": 4, "unavailable": 0, "kind": "table", "rows": [
+                    { "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e", "hostname": "web-1", "values": [0.125, 0.812] }
                 ] },
                 { "id": "cpu-now", "servers": 4, "unavailable": 0, "kind": "figure", "value": 0.83 },
                 { "id": "alerts", "servers": 4, "unavailable": 1, "kind": "alerts", "alerts": [

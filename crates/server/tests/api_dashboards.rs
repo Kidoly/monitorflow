@@ -351,6 +351,23 @@ db_tests! {
         let kinds: Vec<&str> = body["panels"].as_array().unwrap().iter().map(|p| p["kind"].as_str().unwrap()).collect();
         assert_eq!(kinds, ["figure", "top", "chart", "chart"]);
 
+        // A heatmap reads a chart's data, a table a query per column, a text panel nothing.
+        let before = w.vm.seen().len();
+        let request = json!({ "range": "1h", "within": { "kind": "all" }, "panels": [
+            { "id": "h", "title": "Heat", "kind": "heatmap", "metric": cpu, "count": 5 },
+            { "id": "t", "title": "Servers", "kind": "table", "order": "highest", "count": 10,
+              "columns": [{ "metric": cpu, "instance": "total" }, { "metric": "monitorflow_disk_used_ratio" }] },
+            { "id": "x", "title": "Read me", "kind": "text", "text": "Call **Bob**." },
+        ] });
+        let (status, body) = send(&w.app, &admin, "POST", "/api/dashboard-data", Some(request)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let kinds: Vec<&str> = body["panels"].as_array().unwrap().iter().map(|p| p["kind"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["chart", "table", "text"]);
+        let seen = w.vm.seen()[before..].to_vec();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert!(seen.iter().any(|q| q.contains("topk_max(5, ")), "{seen:?}");
+        assert!(seen.iter().any(|q| q.contains("and on (peer) topk(10, ")), "{seen:?}");
+
         // A display option of the wrong kind is refused with a sentence.
         let alerts = json!([{ "id": "x", "title": "Alerts", "kind": "alerts", "count": 5, "color": 2 }]);
         let (status, body) = send(&w.app, &admin, "POST", "/api/dashboards",
