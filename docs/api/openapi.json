@@ -21357,19 +21357,44 @@
                         "ends_at": "2026-11-23T08:00:00Z",
                         "override_id": null,
                         "problem": "no_contact",
+                        "seat": 0,
                         "starts_at": "2026-11-16T08:00:00Z",
                         "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                         "username": "bob"
                       },
+                      "next_all": [
+                        {
+                          "ends_at": "2026-11-23T08:00:00Z",
+                          "override_id": null,
+                          "problem": "no_contact",
+                          "seat": 0,
+                          "starts_at": "2026-11-16T08:00:00Z",
+                          "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                          "username": "bob"
+                        }
+                      ],
                       "now": {
                         "ends_at": "2026-11-16T08:00:00Z",
                         "override_id": null,
                         "problem": null,
+                        "seat": 0,
                         "starts_at": "2026-11-09T08:00:00Z",
                         "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                         "username": "alice"
                       },
+                      "now_all": [
+                        {
+                          "ends_at": "2026-11-16T08:00:00Z",
+                          "override_id": null,
+                          "problem": null,
+                          "seat": 0,
+                          "starts_at": "2026-11-09T08:00:00Z",
+                          "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                          "username": "alice"
+                        }
+                      ],
                       "overrides": [],
+                      "people_per_turn": 1,
                       "rotation": "weekly",
                       "site_id": null,
                       "site_name": null,
@@ -21379,6 +21404,7 @@
                           "ends_at": "2026-11-16T08:00:00Z",
                           "override_id": null,
                           "problem": null,
+                          "seat": 0,
                           "starts_at": "2026-11-09T08:00:00Z",
                           "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                           "username": "alice"
@@ -21387,6 +21413,7 @@
                           "ends_at": "2026-11-23T08:00:00Z",
                           "override_id": null,
                           "problem": "no_contact",
+                          "seat": 0,
                           "starts_at": "2026-11-16T08:00:00Z",
                           "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                           "username": "bob"
@@ -21473,7 +21500,7 @@
           "on-call"
         ],
         "summary": "Add an on-call schedule",
-        "description": "Administrators of its place. The first member is on call from the last\nhand-off, so someone is on call at once. Audited as\n`on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`\nto retry.",
+        "description": "Administrators of its place. The first member is on call from the last\nhand-off, so someone is on call at once. With `people_per_turn` above\n1, that many members are on call together and all are told (ADR-0170). Audited as\n`on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`\nto retry.",
         "operationId": "create_on_call_schedule",
         "parameters": [
           {
@@ -21503,6 +21530,7 @@
                   "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"
                 ],
                 "name": "acme night shift",
+                "people_per_turn": 1,
                 "rotation": "weekly",
                 "site_id": null,
                 "time_zone": "Europe/Paris"
@@ -21547,19 +21575,44 @@
                     "ends_at": "2026-11-23T08:00:00Z",
                     "override_id": null,
                     "problem": "no_contact",
+                    "seat": 0,
                     "starts_at": "2026-11-16T08:00:00Z",
                     "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                     "username": "bob"
                   },
+                  "next_all": [
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "seat": 0,
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
                   "now": {
                     "ends_at": "2026-11-16T08:00:00Z",
                     "override_id": null,
                     "problem": null,
+                    "seat": 0,
                     "starts_at": "2026-11-09T08:00:00Z",
                     "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                     "username": "alice"
                   },
+                  "now_all": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "seat": 0,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    }
+                  ],
                   "overrides": [],
+                  "people_per_turn": 1,
                   "rotation": "weekly",
                   "site_id": null,
                   "site_name": null,
@@ -21569,6 +21622,7 @@
                       "ends_at": "2026-11-16T08:00:00Z",
                       "override_id": null,
                       "problem": null,
+                      "seat": 0,
                       "starts_at": "2026-11-09T08:00:00Z",
                       "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                       "username": "alice"
@@ -21577,6 +21631,7 @@
                       "ends_at": "2026-11-23T08:00:00Z",
                       "override_id": null,
                       "problem": "no_contact",
+                      "seat": 0,
                       "starts_at": "2026-11-16T08:00:00Z",
                       "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                       "username": "bob"
@@ -21587,7 +21642,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: no name or one over 80 characters, an unknown time zone, a rotation other than `daily` or `weekly`, a time not `HH:MM`, no day for a weekly hand-off, no members, over 50, the same one twice, someone who does not see all of the place, a customer and a site together, an unknown customer or site",
+            "description": "`invalid`: no name or one over 80 characters, an unknown time zone, a rotation other than `daily` or `weekly`, a time not `HH:MM`, no day for a weekly hand-off, no members, over 50, the same one twice, `people_per_turn` outside 1 to 5 or above the number of members, someone who does not see all of the place, a customer and a site together, an unknown customer or site",
             "content": {
               "application/json": {
                 "schema": {
@@ -21723,6 +21778,7 @@
                   "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"
                 ],
                 "name": "acme night shift",
+                "people_per_turn": 1,
                 "rotation": "weekly",
                 "site_id": null,
                 "time_zone": "Europe/Paris"
@@ -21767,19 +21823,44 @@
                     "ends_at": "2026-11-23T08:00:00Z",
                     "override_id": null,
                     "problem": "no_contact",
+                    "seat": 0,
                     "starts_at": "2026-11-16T08:00:00Z",
                     "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                     "username": "bob"
                   },
+                  "next_all": [
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "seat": 0,
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
                   "now": {
                     "ends_at": "2026-11-16T08:00:00Z",
                     "override_id": null,
                     "problem": null,
+                    "seat": 0,
                     "starts_at": "2026-11-09T08:00:00Z",
                     "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                     "username": "alice"
                   },
+                  "now_all": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "seat": 0,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    }
+                  ],
                   "overrides": [],
+                  "people_per_turn": 1,
                   "rotation": "weekly",
                   "site_id": null,
                   "site_name": null,
@@ -21789,6 +21870,7 @@
                       "ends_at": "2026-11-16T08:00:00Z",
                       "override_id": null,
                       "problem": null,
+                      "seat": 0,
                       "starts_at": "2026-11-09T08:00:00Z",
                       "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                       "username": "alice"
@@ -21797,6 +21879,7 @@
                       "ends_at": "2026-11-23T08:00:00Z",
                       "override_id": null,
                       "problem": "no_contact",
+                      "seat": 0,
                       "starts_at": "2026-11-16T08:00:00Z",
                       "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                       "username": "bob"
@@ -22027,7 +22110,7 @@
           "on-call"
         ],
         "summary": "Add a cover",
-        "description": "Puts a member, or anyone who could be one, on call for a period,\nwhatever the rotation says: for a holiday or a swap. A start absent or\npast is now. Administrators of the schedule's place. Answers the\nschedule. Audited as `on_call.override_create`. Not safe to repeat:\nsend `Idempotency-Key` to retry.",
+        "description": "Puts a member, or anyone who could be one, on call for a period,\nwhatever the rotation says: for a holiday or a swap. With several\npeople on call at once, `seat` says whose place it takes, 0 for the\nfirst person of the turn. A start absent or past is now. Administrators of the schedule's place. Answers the\nschedule. Audited as `on_call.override_create`. Not safe to repeat:\nsend `Idempotency-Key` to retry.",
         "operationId": "add_on_call_cover",
         "parameters": [
           {
@@ -22060,6 +22143,7 @@
               },
               "example": {
                 "ends_at": "2026-12-27T08:00:00Z",
+                "seat": 0,
                 "starts_at": "2026-12-24T18:00:00Z",
                 "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f"
               }
@@ -22103,19 +22187,44 @@
                     "ends_at": "2026-11-23T08:00:00Z",
                     "override_id": null,
                     "problem": "no_contact",
+                    "seat": 0,
                     "starts_at": "2026-11-16T08:00:00Z",
                     "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                     "username": "bob"
                   },
+                  "next_all": [
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "seat": 0,
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
                   "now": {
                     "ends_at": "2026-11-16T08:00:00Z",
                     "override_id": null,
                     "problem": null,
+                    "seat": 0,
                     "starts_at": "2026-11-09T08:00:00Z",
                     "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                     "username": "alice"
                   },
+                  "now_all": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "seat": 0,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    }
+                  ],
                   "overrides": [],
+                  "people_per_turn": 1,
                   "rotation": "weekly",
                   "site_id": null,
                   "site_name": null,
@@ -22125,6 +22234,7 @@
                       "ends_at": "2026-11-16T08:00:00Z",
                       "override_id": null,
                       "problem": null,
+                      "seat": 0,
                       "starts_at": "2026-11-09T08:00:00Z",
                       "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                       "username": "alice"
@@ -22133,6 +22243,7 @@
                       "ends_at": "2026-11-23T08:00:00Z",
                       "override_id": null,
                       "problem": "no_contact",
+                      "seat": 0,
                       "starts_at": "2026-11-16T08:00:00Z",
                       "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                       "username": "bob"
@@ -22143,7 +22254,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: an end not after the start, over 90 days, a start over a year away, someone who does not see all of the place",
+            "description": "`invalid`: an end not after the start, over 90 days, a start over a year away, a `seat` not below the schedule's `people_per_turn`, someone who does not see all of the place",
             "content": {
               "application/json": {
                 "schema": {
@@ -52650,6 +52761,7 @@
         "required": [
           "id",
           "user_id",
+          "seat",
           "starts_at",
           "ends_at"
         ],
@@ -52663,6 +52775,12 @@
             "type": "string",
             "format": "uuid",
             "description": "The cover's ID, to remove it."
+          },
+          "seat": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The place of the turn it covers, 0 for the first person.",
+            "minimum": 0
           },
           "starts_at": {
             "type": "string",
@@ -52695,6 +52813,15 @@
             "type": "string",
             "format": "date-time",
             "description": "After the start, at most 90 days after it; the start within a\nyear."
+          },
+          "seat": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Which place of the turn they cover, 0 (the default) for the first\nperson; below the schedule's `people_per_turn`.",
+            "minimum": 0
           },
           "starts_at": {
             "type": [
@@ -52814,7 +52941,10 @@
           "rotation",
           "handoff_time",
           "members",
+          "people_per_turn",
           "overrides",
+          "now_all",
+          "next_all",
           "turns",
           "fallback",
           "can_manage"
@@ -52886,23 +53016,37 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/OnCallTurn",
-                "description": "The next one who takes over; `null` when nobody else does within\nthe horizon."
+                "description": "Who takes the first place next; `null` when nobody else does within\nthe horizon."
               },
               {
                 "type": "null"
               }
             ]
           },
+          "next_all": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallTurn"
+            },
+            "description": "Who takes each place next, in the order of the places; a place\nnobody else takes within the horizon is left out."
+          },
           "now": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/OnCallTurn",
-                "description": "Who is on call now; `null` only without members."
+                "description": "Who holds the first place now; `null` only without members."
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "now_all": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallTurn"
+            },
+            "description": "Everyone on call now, one per place, the first being `now`."
           },
           "overrides": {
             "type": "array",
@@ -52910,6 +53054,12 @@
               "$ref": "#/components/schemas/OnCallCover"
             },
             "description": "Covers not over yet, by start."
+          },
+          "people_per_turn": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many people are on call at once, 1 to 5 (ADR-0170).",
+            "minimum": 0
           },
           "rotation": {
             "$ref": "#/components/schemas/OnCallRotation",
@@ -52939,7 +53089,7 @@
             "items": {
               "$ref": "#/components/schemas/OnCallTurn"
             },
-            "description": "The turns that start within the next 28 days, the one running\nnow first."
+            "description": "The turns that start within the next 28 days, the ones running\nnow first, by start and then by place."
           }
         }
       },
@@ -53003,6 +53153,15 @@
             "type": "string",
             "description": "1 to 80 characters, trimmed."
           },
+          "people_per_turn": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many people are on call at once: 1 (the default) to 5, and at\nmost the number of members. Turns take them in order: with 2,\nthe first and second members, then the third and fourth.",
+            "minimum": 0
+          },
           "rotation": {
             "type": "string",
             "description": "`daily` or `weekly`."
@@ -53026,6 +53185,7 @@
         "type": "object",
         "description": "One period with one person on call.",
         "required": [
+          "seat",
           "starts_at",
           "ends_at"
         ],
@@ -53053,6 +53213,12 @@
                 "type": "null"
               }
             ]
+          },
+          "seat": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The place in the turn, 0 for the first person; always 0 with one\nperson per turn (ADR-0170).",
+            "minimum": 0
           },
           "starts_at": {
             "type": "string",
