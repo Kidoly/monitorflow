@@ -18,7 +18,7 @@ A third kind of campaign window, `monthly`, with the rule of ADR-0151:
 - `months`, 1 to 12, every month when empty or absent; the API answers the list in full. One month makes a yearly window; four make a quarterly one. There is no `yearly` kind: it would be the same rule with fewer choices.
 - `start`, `end` and `timezone` as for weekly windows: an end before the start closes the next day.
 
-Storage: `campaign_windows` gains `month_day`, `month_week` and `months`; the weekday is the single element of `weekdays`, so the column means the same for both recurring kinds (migration `20261203100000_campaign_monthly_windows`). Constraints keep each kind's columns consistent.
+Storage: `campaign_windows` gains `month_day`, `month_week` and `months`; the weekday is the single element of `weekdays`, so the column means the same for both recurring kinds (migration `20261203095000_campaign_monthly_windows`). Constraints keep each kind's columns consistent.
 
 Evaluation stays in PostgreSQL, as ADR-0033 chose: `campaign_window_day(rule, date)` says whether a recurring window opens on a local date, and `campaign_window_end` calls it for today and, for windows past midnight, yesterday. The last week of the month is the one where the same weekday a week later is in the next month.
 
