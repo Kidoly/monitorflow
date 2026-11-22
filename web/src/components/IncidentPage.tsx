@@ -249,6 +249,18 @@ export function IncidentPage({ id }: { id: string | null }) {
           { label: open ? t("incidents.tile.duration") : t("incidents.tile.lasted"), value: formatDuration(((resolved ?? now.getTime() / 1000) - opened)) },
         ]}
       />
+      {/* Right under the figures, the AI's reading of them; on an open alert,
+          when AI did nothing, it says why (ADR-0175). */}
+      {(attempts.length > 0 || (open && run)) && (
+        <Remediation
+          attempts={attempts}
+          run={open ? run : null}
+          alertId={incident.id}
+          serverId={incident.server_id}
+          hostname={incident.hostname}
+          onStarted={refresh}
+        />
+      )}
       {chart === null ? null : "error" in chart ? (
         <Banner tone="bad">{chart.error}</Banner>
       ) : (
@@ -314,17 +326,6 @@ export function IncidentPage({ id }: { id: string | null }) {
           </TableBox>
         )}
       </div>
-      {/* Always on an open alert: when AI did nothing, it says why (ADR-0175). */}
-      {(attempts.length > 0 || (open && run)) && (
-        <Remediation
-          attempts={attempts}
-          run={open ? run : null}
-          alertId={incident.id}
-          serverId={incident.server_id}
-          hostname={incident.hostname}
-          onStarted={refresh}
-        />
-      )}
     </Page>
   );
 }
@@ -666,13 +667,17 @@ export function attemptWhy(attempt: RemediationIncident, serverId: string | null
   }
   const code = attempt.close_code;
   if (!code) return null;
+  // Its words are in the diagnosis above already.
+  if (code === "ai_escalated") return { text: t("incidents.ai.why.handedOver") };
   const reason = closeReason(
     { code, detail: attempt.close_detail ?? undefined, limit: attempt.close_limit ?? undefined },
     attempt.close_reason ?? "",
   );
-  if (code === "ai_failed") return { text: t("incidents.ai.why.ended", { reason }), link: { href: AI_SETTINGS_PATH, label: t("incidents.ai.why.checkAi") } };
-  if (REFUSALS.includes(code)) return { text: t("incidents.ai.why.ended", { reason }), link: commands };
-  return { text: t("incidents.ai.why.ended", { reason }), link: audit };
+  const text = t("incidents.ai.why.ended", { reason: reason.replace(/[.\s]+$/, "") });
+  if (code === "ai_failed") return { text, link: { href: AI_SETTINGS_PATH, label: t("incidents.ai.why.checkAi") } };
+  if (REFUSALS.includes(code)) return { text, link: commands };
+  // The diagnosis links to the audit log already.
+  return { text, link: attempt.diagnosis ? undefined : audit };
 }
 
 /** Why an open alert has no AI remediation yet. */

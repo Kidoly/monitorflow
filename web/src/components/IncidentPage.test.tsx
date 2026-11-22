@@ -364,6 +364,23 @@ describe("IncidentPage", () => {
       expect(within(region).getByRole("link", { name: "Check Settings › AI" })).toHaveAttribute("href", expect.stringMatching(/^\/settings\/ai\/?$/));
     });
 
+    it("does not repeat the AI's words when it handed over", async () => {
+      const handed = {
+        ...attempt("r1", "escalated", "2026-10-19T11:00:20Z"),
+        diagnosis: "Logs fill /var.",
+        ai_advice: "Rotate the logs.",
+        close_code: "ai_escalated",
+        close_detail: "Rotate the logs.",
+        close_reason: "the AI escalated: Rotate the logs.",
+      };
+      stubIncident(open(), { status: 200, body: { incidents: [handed], next_cursor: null } }, status({}));
+      render(<IncidentPage id={ID} />);
+      const region = await screen.findByRole("region", { name: "AI remediation" });
+      expect(region).toHaveTextContent("The AI handed the incident to a person.");
+      expect(within(region).getAllByText(/Rotate the logs/)).toHaveLength(1);
+      expect(within(region).getAllByRole("link", { name: "See what the AI did" })).toHaveLength(1);
+    });
+
     it("words it in French", async () => {
       setActiveLocale("fr");
       try {
