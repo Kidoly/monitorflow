@@ -1,20 +1,99 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-  <img alt="" src="docs/images/logo.svg" width="96" height="96">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.svg">
+  <img alt="MonitorFlow: watch your servers, fix what breaks, keep them up to date." src="docs/images/banner.svg" width="100%">
 </picture>
 
-# MonitorFlow
+<p align="center">
+  <a href="https://github.com/Kidoly/monitorflow/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Kidoly/monitorflow?label=release&color=8b4dff"></a>
+  <a href="https://github.com/Kidoly/monitorflow/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/Kidoly/monitorflow/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="LICENSE"><img alt="Licence: AGPL-3.0" src="https://img.shields.io/github/license/Kidoly/monitorflow?label=licence&color=6a2bd6"></a>
+  <img alt="Agents for Linux and Windows" src="https://img.shields.io/badge/agents-Linux%20%7C%20Windows-5a5d66">
+</p>
 
-MonitorFlow watches your Linux and Windows servers, tells you when something goes wrong, and keeps them up to date, all from one web page. You install one central server, then a small program called an agent on each server you want to watch. It is free and open source, made for a company running its own servers and for service providers running servers for their customers.
+<p align="center">
+  <strong>Open source monitoring and fleet management for your Linux and Windows servers.</strong><br>
+  MonitorFlow watches your servers, tells you when something goes wrong, and keeps them up to date, all from one web page.<br>
+  Made for a company running its own servers and for service providers running servers for their customers.
+</p>
+
+<p align="center">
+  <a href="#get-started-in-5-minutes">Get started</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="docs/deploy-server.md">Guides</a> ·
+  <a href="docs/api/openapi.json">API</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screens/tour-dark.webp">
+  <img alt="A short tour of the web interface: the fleet, a server, an incident, the AI's proposal waiting for approval, and a dashboard." src="docs/images/screens/tour.webp" width="100%">
+</picture>
+
+> [!NOTE]
+> **Early development.** The one-line installer installs the [latest release](https://github.com/Kidoly/monitorflow/releases/latest). Some features described in `docs/` are only on the `main` branch and come with the next release.
+
+## What you get
+
+### Your whole fleet on one page
+
+Every server, its state and what is wrong with it, grouped by site. Problems first, the rest below.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screens/fleet-dark.png">
+  <img alt="The fleet page: servers grouped by site, with their state, the problem and when they were last seen." src="docs/images/screens/fleet.png" width="100%">
+</picture>
+
+### Incidents that tell the whole story
+
+When a limit is crossed, an incident opens with the graph around it, its thresholds and its timeline, and you are notified by email, webhook, Slack, Teams or Discord.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screens/incident-dark.png">
+  <img alt="An incident page: disk used at 96% on db-02, with the graph around the incident, the threshold and the timeline." src="docs/images/screens/incident.png" width="100%">
+</picture>
+
+### An AI that proposes, a person who decides
+
+The AI diagnoses the alert and proposes a command. Rules, not the AI, decide how risky it is, and nothing runs before someone approves it. Every step goes to an audit log.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screens/ai-diagnosis-dark.png">
+  <img alt="The approvals page: the AI's diagnosis of a full disk, its reasoning, the proposed command, the rule that classified it and the rollback snapshot." src="docs/images/screens/ai-diagnosis.png" width="100%">
+</picture>
+
+### Dashboards for the team and the wall screen
+
+Build your own, and show them on a TV with a display link that needs no sign-in.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screens/dashboard-dark.png">
+  <img alt="A dashboard with open alerts, average CPU, CPU of the web servers, fullest disks and least memory available." src="docs/images/screens/dashboard.png" width="100%">
+</picture>
+
+### Updates in waves, during your hours
+
+MonitorFlow keeps copies of the Debian, Ubuntu and RHEL package repositories, and updates servers batch by batch. A campaign stops by itself if too many fail.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screens/campaign-dark.png">
+  <img alt="An update campaign in its second batch: 7 servers updated, 4 in progress, 10 pending." src="docs/images/screens/campaign.png" width="100%">
+</picture>
+
+### Uptime you can show
+
+90 days of uptime per server, and availability reports for each customer as PDF or CSV.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screens/uptime-dark.png">
+  <img alt="The uptime report: one bar per day over 90 days for each server, with its uptime over 24 hours, 7, 30 and 90 days." src="docs/images/screens/uptime.png" width="100%">
+</picture>
+
+## How it works
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.png">
   <img alt="MonitorFlow architecture: agents on your Linux and Windows servers, and a relay at a remote site, connect out to the central server. The central server runs the web interface, the MonitorFlow server, PostgreSQL, VictoriaMetrics, VictoriaLogs and the updater, and reaches out to an AI provider, package repositories and notification channels." src="docs/images/architecture.png">
 </picture>
-
-**Status: early development.** The one-line installer installs the [latest release](https://github.com/Kidoly/monitorflow/releases/latest). Some features described in `docs/` are only on the `main` branch and come with the next release.
-
-## How it works
 
 - **An agent runs on each server.** It measures CPU, memory, disks, services, ports and logs, and sends them to the central server.
 - **Agents only connect out.** Your servers never accept incoming connections: nothing to open in their firewall. Every connection is encrypted and both sides prove who they are with certificates (this is called mutual TLS, or mTLS).
@@ -82,7 +161,8 @@ Most of these are pages under **Administration** in the web interface:
 
 The full guides are [Installing the server](docs/deploy-server.md), [Installing the agent](docs/deploy-agent.md) and [Installing a relay](docs/deploy-relay.md).
 
-## Troubleshooting
+<details>
+<summary><strong>Troubleshooting</strong></summary>
 
 **The installer stops with "Docker could not be installed".** It prints the last lines of Docker's own installer above. If they show `E: dpkg was interrupted`, the machine's package manager was stopped halfway, often by an automatic update. Repair it, then run the installer again:
 
@@ -100,7 +180,10 @@ On a distribution Docker's script does not cover, install Docker Engine 23 or la
 
 **A server does not appear in the fleet.** The agent installer prints the reason and the end of the agent's log. Most often the server cannot reach ports 7443 and 7445 of the central server, or the command was revoked or has expired. Fix it, copy a fresh command from Add servers, and run it again. `journalctl -u monitorflow-agent` shows the agent's log.
 
-## Uninstall
+</details>
+
+<details>
+<summary><strong>Uninstall</strong></summary>
 
 **Central server** (asks whether to delete the data; Docker stays installed):
 
@@ -115,6 +198,8 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
 ```
 
 **Agent on Windows**: choose **Remove** on the server's page, and run the command it shows in PowerShell as administrator.
+
+</details>
 
 ## For MSPs and remote sites
 

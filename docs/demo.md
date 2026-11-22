@@ -33,3 +33,7 @@ To look at it, serve `web/out` with any static file server, for example `python3
 ## Where it is published
 
 The website repository, `Kidoly/monitorflow-website`, checks this repository out, runs `npm run build:demo` in `web/` with `NEXT_PUBLIC_MONITORFLOW_SITE_URL` set to the site's address, and publishes `web/out` as static files at `demo.<domain>`.
+
+## Screenshots in the README
+
+The screenshots and the short animation in the README (`docs/images/screens/`) are taken from this demo, in English, in the light and the dark theme, at 1280 by 800 pixels with the banner hidden. Retake them from the demo when a screen they show changes, so they never show real servers or addresses.
