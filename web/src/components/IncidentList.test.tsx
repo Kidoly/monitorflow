@@ -292,8 +292,8 @@ describe("IncidentList", () => {
     await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(6));
     await user.click(screen.getByRole("checkbox", { name: "Select every row shown" }));
     const bar = screen.getByRole("region", { name: "Bulk actions" });
-    await user.click(within(bar).getByRole("button", { name: "Silence the servers of the 5 selected incidents" }));
-    await user.click(screen.getByRole("menuitem", { name: "1 hour" }));
+    await user.click(within(bar).getByRole("button", { name: "More actions for the 5 selected incidents" }));
+    await user.click(screen.getByRole("menuitem", { name: "Silence their servers: 1 hour" }));
     expect(await within(bar).findByRole("status")).toHaveTextContent(
       /^3 silenced, 1 already resolved, 1 refused: insufficient rights \(Disk used \/var on db-1\)/,
     );
@@ -309,6 +309,49 @@ describe("IncidentList", () => {
     expect(Date.parse(bodies[0].ends_at) - NOW.getTime()).toBeLessThan(3_660_000);
   });
 
+  it("pauses the sensors of the checked incidents with a reason, once per check", async () => {
+    const a = incident({ id: "3a6a9a3e-5b7c-4d8e-9f01-23456789abcd", can_acknowledge: true });
+    const b = incident({ id: "3b6a9a3e-5b7c-4d8e-9f01-23456789abcd", instance: "/", can_acknowledge: true });
+    const down = incident({ id: "3c6a9a3e-5b7c-4d8e-9f01-23456789abcd", metric: "offline", instance: "", can_acknowledge: true });
+    const disk = { origin: "default", entry_id: null, kind: "disk", name: "disk", instance: "", interval_ms: 60_000, timeout_ms: null, params: {} };
+    const fetchMock = stubFetch({
+      ...options,
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [a, b, down], next_cursor: null } },
+      [`GET /api/servers/${SERVER_ID}/sensors`]: { status: 200, body: { server_id: SERVER_ID, sensors: [disk] } },
+      "POST /api/silences": { status: 201, body: {} },
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <As user={me({ role: "operator", customer_id: null, site_id: SITE_ID })}>
+        <IncidentList filters={NO_FILTERS} />
+      </As>,
+    );
+    await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(4));
+    await user.click(screen.getByRole("checkbox", { name: "Select every row shown" }));
+    const bar = screen.getByRole("region", { name: "Bulk actions" });
+    // Acknowledge first, then Pause, then the rest.
+    expect(within(bar).getAllByRole("button").map((b) => b.textContent)).toEqual(["Acknowledge", "Pause", "⋯", "Deselect"]);
+    await user.click(within(bar).getByRole("button", { name: "Pause the sensors of the 3 selected incidents" }));
+    await user.type(within(bar).getByRole("textbox", { name: "Why" }), "resizing the volume");
+    await user.selectOptions(within(bar).getByRole("combobox", { name: "For" }), "Until tomorrow, 8:00");
+    await user.click(within(bar).getByRole("button", { name: "Pause" }));
+    expect(await within(bar).findByRole("status")).toHaveTextContent(/^2 paused, 1 without a sensor to pause \(offline or resolved\)/);
+    const bodies = fetchMock.mock.calls
+      .filter(([url]) => url === "/api/silences")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    // Both disks are one check of one server: one silence.
+    expect(bodies).toEqual([
+      {
+        scope: "server",
+        target_id: SERVER_ID,
+        reason: "resizing the volume",
+        ends_at: new Date(2026, 9, 20, 8).toISOString(),
+        checks: [{ name: "disk", instance: "" }],
+      },
+    ]);
+    expect(fetchMock.mock.calls.filter(([url]) => url === `/api/servers/${SERVER_ID}/sensors`)).toHaveLength(1);
+  });
+
   it("silences for a custom period", async () => {
     const fetchMock = stubFetch({
       ...options,
@@ -322,8 +365,8 @@ describe("IncidentList", () => {
       </As>,
     );
     await user.click(await screen.findByRole("checkbox", { name: "Select Disk used /var on web-1" }));
-    await user.click(screen.getByRole("button", { name: "Silence the server of the selected incident" }));
-    await user.click(screen.getByRole("menuitem", { name: "Custom…" }));
+    await user.click(screen.getByRole("button", { name: "More actions for the selected incident" }));
+    await user.click(screen.getByRole("menuitem", { name: "Silence their servers: Custom…" }));
     const reason = screen.getByRole("textbox", { name: "Why" });
     await user.clear(reason);
     await user.type(reason, "disk swap");

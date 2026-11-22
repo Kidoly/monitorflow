@@ -5,12 +5,14 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { t } from "@/i18n";
-import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
+import { type EffectiveSensor, type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
 import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffline } from "@/lib/incidents";
 import { administersEverything, modifiesSite, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref, incidentsHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { incidentValue } from "@/lib/rules";
+import { sensorOf } from "@/lib/sensors";
+import { RowMenu } from "@/components/ui/RowMenu";
 import { oncePer, useBulkRunner, useSelection } from "@/lib/bulk";
 import { usePolledData } from "@/lib/usePolledData";
 import { replaceParams } from "@/lib/urlState";
@@ -25,7 +27,8 @@ import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
 import { AcknowledgeButton } from "./AcknowledgeButton";
-import { BulkSilence, type SilencePeriod } from "./BulkSilence";
+import { type SilencePeriod, useBulkSilence } from "./BulkSilence";
+import { type Pause, PauseButton } from "./PauseButton";
 import styles from "./IncidentList.module.css";
 
 /** A threshold incident's value; offline ones have none. */
@@ -214,6 +217,8 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       },
     });
 
+  const writable = (i: Incident) => modifiesSite(me, i.customer_id ?? customerIds.get(i.site_id) ?? "", i.site_id);
+
   // Its server, or its relay for a relay's offline incident: once each, however many incidents share it.
   function silenceChosen(period: SilencePeriod) {
     const silence = oncePer(
@@ -229,10 +234,51 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     return bulk.run(chosen, {
       done: (count) => t("incidents.bulk.silenced", { count }),
       skipped: (count) => t("incidents.bulk.alreadyResolved", { count }),
-      allowed: (i) => modifiesSite(me, i.customer_id ?? customerIds.get(i.site_id) ?? "", i.site_id),
+      allowed: writable,
       act: async (i) => (i.state === "open" ? silence(i) : "skipped"),
     });
   }
+  const silenceMenu = useBulkSilence(t("incidents.bulk.silenceSubmit"), silenceChosen, (choice) =>
+    t("incidents.bulk.silenceItem", { choice }),
+  );
+
+  /**
+   * Pauses the check that opened each incident (ADR-0151), found from its
+   * server's sensors as the Sensors tab does: once per check however many
+   * of its incidents are checked. Offline incidents have no check.
+   */
+  function pauseChosen(pause: Pause) {
+    const sensors = new Map<string, Promise<EffectiveSensor[]>>();
+    const sensorsOf = (id: string) => {
+      let list = sensors.get(id);
+      if (!list) {
+        list = api.serverSensors(id).then((r) => r.sensors);
+        sensors.set(id, list);
+      }
+      return list;
+    };
+    const calls = new Map<string, Promise<unknown>>();
+    return bulk.run(chosen, {
+      done: (count) => t("incidents.bulk.paused", { count }),
+      skipped: (count) => t("incidents.bulk.nothingToPause", { count }),
+      allowed: writable,
+      act: async (i) => {
+        if (i.state !== "open" || !i.server_id || isOffline(i)) return "skipped";
+        const sensor = sensorOf(await sensorsOf(i.server_id), i.metric);
+        if (!sensor) return "skipped";
+        const check = { name: sensor.name, instance: sensor.instance };
+        const key = `${i.server_id}\t${check.name}\t${check.instance}`;
+        let call = calls.get(key);
+        if (!call) {
+          call = api.createSilence({ scope: "server", target_id: i.server_id, ...pause, checks: [check] });
+          calls.set(key, call);
+        }
+        await call;
+        return "done";
+      },
+    });
+  }
+
 
   const acknowledgeable = incidents.filter((i) => i.state === "open" && i.can_acknowledge && !i.acknowledged_at);
   const body = (
@@ -306,12 +352,14 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
               onAcknowledge={acknowledgeChosen}
               describeError={describeError}
             />
-            <BulkSilence
-              label={t("incidents.bulk.silenceName", { count: chosen.length })}
-              submitLabel={t("incidents.bulk.silenceSubmit")}
+            <PauseButton
+              name={t("incidents.bulk.pauseName", { count: chosen.length })}
               disabled={bulk.busy}
-              onSilence={silenceChosen}
+              onPause={pauseChosen}
+              describeError={describeError}
             />
+            <RowMenu label={t("incidents.bulk.moreName", { count: chosen.length })} disabled={bulk.busy} items={silenceMenu.items} />
+            {silenceMenu.form}
           </BulkBar>
           <DataTable
             label={t("incidents.title")}

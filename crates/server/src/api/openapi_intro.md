@@ -87,6 +87,7 @@ The checkboxes of the web interface's incident and fleet lists act on many items
 | Action | Route, once per item |
 | --- | --- |
 | Acknowledge incidents | `POST /api/v1/incidents/acknowledge` with one ID in `incident_ids` |
+| Pause the sensors of incidents | `GET /api/v1/servers/{id}/sensors` once per server to find the check behind each incident's metric, then `POST /api/v1/silences` with `scope` `server` and that check in `checks`, once per check |
 | Silence the servers of incidents | `POST /api/v1/silences` with `scope` `server` (`relay` for a relay's offline incident), once per server however many incidents it has |
 | Acknowledge the alerts of servers | `POST /api/v1/incidents/acknowledge` with the server's open incidents nobody acknowledged, once per server (they share its site) |
 | Silence servers | `POST /api/v1/silences` with `scope` `server`, once per server |
