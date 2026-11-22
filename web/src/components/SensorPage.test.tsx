@@ -270,7 +270,7 @@ describe("SensorPage", () => {
       const fetchMock = edit({ "GET /api/servers?site_id=site-1&limit=500": { status: 200, body: { servers, next_cursor: null } } });
       const form = await openEditor(user);
       expect(await within(form).findByText("· 2 servers")).toBeInTheDocument();
-      expect(within(form).getByRole("radio", { name: /^every server of paris \(site default\)/ }).closest("label")).toHaveTextContent(
+      expect(within(form).getByRole("radio", { name: /^every server of paris \(site default\)/ }).closest("button")).toHaveTextContent(
         "every server of paris (site default) · 2 servers",
       );
       expect(within(form).getByPlaceholderText("No warning")).toBeInTheDocument();
@@ -319,7 +319,7 @@ describe("SensorPage", () => {
       const fetchMock = edit();
       const form = await openEditor(user);
       expect(within(form).getByRole("radio", { name: "every server of paris (site default)" })).toBeChecked();
-      expect(within(form).getAllByRole("radio").map((r) => r.closest("label")?.textContent?.trim())).toEqual([
+      expect(within(form).getAllByRole("radio").map((r) => r.closest("button")?.textContent?.trim())).toEqual([
         "this sensor only (/var) · 1 server",
         "every disk on web-1 · 1 server",
         "every server of paris (site default)",

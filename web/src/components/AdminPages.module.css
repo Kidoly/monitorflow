@@ -161,27 +161,6 @@ tr td.wrap {
   font-weight: 500;
 }
 
-.radios {
-  display: flex;
-  gap: 16px;
-  height: 36px;
-  align-items: center;
-}
-
-.radios label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-/* Choices with longer words, on several lines at phone width. */
-.radiosWrap {
-  flex-wrap: wrap;
-  height: auto;
-  min-height: 36px;
-  row-gap: 6px;
-}
-
 /* A form or control under a section's note. */
 .sectionBody {
   padding: 0 20px 16px;

@@ -234,7 +234,7 @@ describe("PanelForm", () => {
     expect(await screen.findByRole("option", { name: "total" })).toBeInTheDocument();
     expect(screen.getByLabelText("Watches")).toHaveValue("total");
 
-    await userEvent.click(screen.getByLabelText("Top list"));
+    await userEvent.click(screen.getByRole("radio", { name: "Top list" }));
     await userEvent.selectOptions(screen.getByLabelText("Metric"), "monitorflow_disk_used_ratio");
     await userEvent.selectOptions(await screen.findByLabelText("Watches"), "/var");
     expect(screen.getByLabelText("Title")).toHaveValue("Highest: Disk used /var");

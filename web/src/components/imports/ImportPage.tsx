@@ -32,6 +32,7 @@ import { isAdministrator, multiSite, useMe } from "@/lib/me";
 import { browserTimeZone, timeZones } from "@/lib/onCall";
 import { TOKENS_PATH } from "@/lib/routes";
 import { useUrlParams } from "@/lib/urlState";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import { Button, fieldClass } from "../ui/Button";
 import { cx } from "../ui/cx";
@@ -264,25 +265,16 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
         <span className={styles.note}>{t("imports.start.zoneNote")}</span>
       </label>
       {source && source.extensions.length > 0 && source.connect.length > 0 && (
-        <div
+        <SegmentedControl
           className={styles.modes}
-          role="radiogroup"
-          aria-label={t("imports.start.how")}
-        >
-          {(["files", "connect"] as const).map((m) => (
-            <label key={m} className={styles.check}>
-              <input
-                type="radio"
-                name={`${formId}-mode`}
-                checked={mode === m}
-                onChange={() => setMode(m)}
-              />{" "}
-              {m === "files"
-                ? t("imports.start.files")
-                : t("imports.start.connect")}
-            </label>
-          ))}
-        </div>
+          label={t("imports.start.how")}
+          options={[
+            { value: "files", label: t("imports.start.files") },
+            { value: "connect", label: t("imports.start.connect") },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
       )}
       {source && shownMode === "files" && (
         <label className={styles.field}>

@@ -13,6 +13,7 @@ import { CopyButton, SecretField } from "@/components/ui/SecretField";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatAgo } from "@/components/ui/time";
 import { Switch } from "@/components/ui/Switch";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { rich, t } from "@/i18n";
 import {
   type AgentInstall,
@@ -233,14 +234,12 @@ function CreateToken({
       <div className={styles.formGrid}>
         <fieldset className={styles.fieldset}>
           <legend className={styles.legend}>{t("install.token.role")}</legend>
-          <div className={styles.radios}>
-            {(["agent", "relay"] as const).map((value) => (
-              <label key={value}>
-                <input type="radio" name="role" checked={role === value} onChange={() => setRole(value)} />{" "}
-                {roleWord(value)}
-              </label>
-            ))}
-          </div>
+          <SegmentedControl
+            label={t("install.token.role")}
+            options={(["agent", "relay"] as const).map((value) => ({ value, label: roleWord(value) }))}
+            value={role}
+            onChange={setRole}
+          />
         </fieldset>
         <label className={styles.field}>
           {t("install.token.name")}
@@ -594,32 +593,25 @@ function pageOrigin(): string {
   return typeof window === "undefined" ? "" : window.location.origin;
 }
 
-function SourceRadios({
-  name,
+function SourceChoice({
+  label,
   value,
   onChange,
   disabled = false,
 }: {
-  name: string;
+  label: string;
   value: InstallSource;
   onChange: (source: InstallSource) => void;
   disabled?: boolean;
 }) {
   return (
-    <div className={styles.radios}>
-      {SOURCES.map((source) => (
-        <label key={source}>
-          <input
-            type="radio"
-            name={name}
-            checked={value === source}
-            disabled={disabled}
-            onChange={() => onChange(source)}
-          />{" "}
-          {sourceWord(source)}
-        </label>
-      ))}
-    </div>
+    <SegmentedControl
+      label={label}
+      options={SOURCES.map((source) => ({ value: source, label: sourceWord(source) }))}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+    />
   );
 }
 
@@ -629,7 +621,6 @@ function SourceRadios({
  */
 function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTarget; relay?: string }) {
   const titleId = useId();
-  const sourceName = useId();
   const [source, setSource] = useState<InstallSource>(token.install.source);
   const [relay, setRelay] = useState(initialRelay);
   const [aiFromWeb, setAiFromWeb] = useState(false);
@@ -659,7 +650,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
       </h3>
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>{t("install.downloadFrom")}</legend>
-        <SourceRadios name={sourceName} value={source} onChange={setSource} />
+        <SourceChoice label={t("install.downloadFrom")} value={source} onChange={setSource} />
       </fieldset>
       {source === "central" && central && !shared && (
         <p className={styles.fieldNote}>
@@ -709,7 +700,6 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
  */
 function RelayInstallCommand({ target }: { target: InstallTarget }) {
   const titleId = useId();
-  const sourceName = useId();
   const [source, setSource] = useState<InstallSource>(target.install.source);
   const [mirror, setMirror] = useState(false);
   const command = relayInstallCommand(target, source, pageOrigin(), mirror);
@@ -721,7 +711,7 @@ function RelayInstallCommand({ target }: { target: InstallTarget }) {
       </h3>
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>{t("install.downloadFrom")}</legend>
-        <SourceRadios name={sourceName} value={source} onChange={setSource} />
+        <SourceChoice label={t("install.downloadFrom")} value={source} onChange={setSource} />
       </fieldset>
       {source === "central" && central && "text" in command && (
         <p className={styles.fieldNote}>
@@ -742,7 +732,6 @@ function RelayInstallCommand({ target }: { target: InstallTarget }) {
 /** The server-wide default source (ADR-0054); global administrators change it. */
 export function DefaultInstallSource({ editable }: { editable: boolean }) {
   const titleId = useId();
-  const sourceName = useId();
   const [current, setCurrent] = useState<AgentInstall | null>(null);
   const [source, setSource] = useState<InstallSource>("github");
   const [customUrl, setCustomUrl] = useState("");
@@ -803,7 +792,7 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
                 {t("install.source.label")}{" "}
                 {current.source_from_config && <span className={styles.fieldNote}>{t("install.source.fromConfig")}</span>}
               </legend>
-              <SourceRadios name={sourceName} value={source} onChange={setSource} />
+              <SourceChoice label={t("install.source.label")} value={source} onChange={setSource} />
             </fieldset>
             <p className={styles.fieldNote}>
               {current.central

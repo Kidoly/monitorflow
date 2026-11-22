@@ -20,6 +20,7 @@ import {
 import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 import { Switch } from "@/components/ui/Switch";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import styles from "./AdminPages.module.css";
 import { describeGrant } from "./UsersAdmin";
@@ -498,14 +499,12 @@ function LdapFields({
     <>
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>{t("signIn.preset")}</legend>
-        <div className={styles.radios}>
-          {(["ad", "openldap"] as const).map((p) => (
-            <label key={p}>
-              <input type="radio" name="preset" checked={preset === p} onChange={() => update({ ...PRESETS[p] })} />{" "}
-              {t(`signIn.preset.${p}`)}
-            </label>
-          ))}
-        </div>
+        <SegmentedControl
+          label={t("signIn.preset")}
+          options={(["ad", "openldap"] as const).map((p) => ({ value: p, label: t(`signIn.preset.${p}`) }))}
+          value={preset}
+          onChange={(p) => update({ ...PRESETS[p] })}
+        />
       </fieldset>
       <label className={styles.field}>
         {t("signIn.url")}
@@ -525,26 +524,19 @@ function LdapFields({
       </label>
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>{t("signIn.security")}</legend>
-        <div className={styles.radios}>
-          <label>
-            <input
-              type="radio"
-              name="security"
-              checked={!settings.starttls}
-              onChange={() => update({ starttls: false, url: settings.url.replace(/^ldap:\/\//i, "ldaps://") })}
-            />{" "}
-            {t("signIn.ldaps")}
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="security"
-              checked={settings.starttls}
-              onChange={() => update({ starttls: true, url: settings.url.replace(/^ldaps:\/\//i, "ldap://") })}
-            />{" "}
-            {t("signIn.starttls")}
-          </label>
-        </div>
+        <SegmentedControl
+          label={t("signIn.security")}
+          options={[
+            { value: "ldaps", label: t("signIn.ldaps") },
+            { value: "starttls", label: t("signIn.starttls") },
+          ]}
+          value={settings.starttls ? "starttls" : "ldaps"}
+          onChange={(v) =>
+            v === "starttls"
+              ? update({ starttls: true, url: settings.url.replace(/^ldaps:\/\//i, "ldap://") })
+              : update({ starttls: false, url: settings.url.replace(/^ldap:\/\//i, "ldaps://") })
+          }
+        />
       </fieldset>
       {text("bind_dn", t("signIn.bindDn"), "cn=monitorflow,ou=services,dc=example,dc=com", t("signIn.bindDnNote"))}
       {text("user_base_dn", t("signIn.userBase"), "ou=people,dc=example,dc=com")}

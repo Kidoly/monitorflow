@@ -42,6 +42,7 @@ import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, StaleBanner } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
 import { Switch } from "@/components/ui/Switch";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import { ProbeSelect, probeLabel, probeValue, useProbes } from "./AddDevice";
 import { CheckRecommendations } from "./CheckRecommendations";
@@ -430,15 +431,16 @@ function ThresholdEditor({
       {target.kind === "server" && (
         <fieldset className={styles.scope}>
           <legend>{t("monitoring.applyTo")}</legend>
-          <label>
-            <input type="radio" name="scope" checked={scope === "own"} onChange={() => setScope("own")} />{" "}
-            {t("monitoring.origin.server")}
-          </label>
-          <label>
-            <input type="radio" name="scope" checked={scope === "site"} onChange={() => setScope("site")} />{" "}
-            {t("monitoring.everyServerOf", { site: target.siteName })}
-            {rule.origin === "server" && <span className={admin.dim}> {t("monitoring.keepsOwn")}</span>}
-          </label>
+          <SegmentedControl
+            label={t("monitoring.applyTo")}
+            options={[
+              { value: "own", label: t("monitoring.origin.server") },
+              { value: "site", label: t("monitoring.everyServerOf", { site: target.siteName }) },
+            ]}
+            value={scope}
+            onChange={setScope}
+          />
+          {scope === "site" && rule.origin === "server" && <span className={admin.dim}>{t("monitoring.keepsOwn")}</span>}
         </fieldset>
       )}
       <RulePreview target={preview} request={"request" in result ? result.request : null} metric={rule.metric} />
@@ -980,14 +982,15 @@ function CheckForm({
       {target.kind === "server" && !type.probe && !probe && (
         <fieldset className={styles.scope}>
           <legend>{t("monitoring.addTo")}</legend>
-          <label>
-            <input type="radio" name="add-scope" checked={scope === "own"} onChange={() => setScope("own")} />{" "}
-            {t("monitoring.origin.server")}
-          </label>
-          <label>
-            <input type="radio" name="add-scope" checked={scope === "site"} onChange={() => setScope("site")} />{" "}
-            {t("monitoring.everyServerOf", { site: target.siteName })}
-          </label>
+          <SegmentedControl
+            label={t("monitoring.addTo")}
+            options={[
+              { value: "own", label: t("monitoring.origin.server") },
+              { value: "site", label: t("monitoring.everyServerOf", { site: target.siteName }) },
+            ]}
+            value={scope}
+            onChange={setScope}
+          />
         </fieldset>
       )}
       <div className={styles.buttons}>
