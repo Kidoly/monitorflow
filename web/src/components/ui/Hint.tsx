@@ -1,6 +1,8 @@
 "use client";
 
-import { type ReactNode, useId } from "react";
+import { type CSSProperties, type ReactNode, useId, useRef, useState } from "react";
+
+import { floatingAt } from "./floating";
 
 import styles from "./Hint.module.css";
 import { Label } from "./StatusLabel";
@@ -39,10 +41,15 @@ export function InfoTip({ label, children }: { label: string; children: ReactNod
 /** Any short text with a longer one on hover or keyboard focus ("1 min · > 85%" and its sentence). */
 export function Tooltip({ text, children }: { text: ReactNode; children: ReactNode }) {
   const id = useId();
+  const ref = useRef<HTMLSpanElement>(null);
+  const [at, setAt] = useState<CSSProperties>();
+  const place = () => {
+    if (ref.current) setAt(floatingAt(ref.current.getBoundingClientRect(), 6));
+  };
   return (
-    <span className={styles.hint} tabIndex={0} aria-describedby={id}>
+    <span ref={ref} className={styles.hint} tabIndex={0} aria-describedby={id} onMouseEnter={place} onFocus={place}>
       {children}
-      <span role="tooltip" id={id} className={styles.tip}>
+      <span role="tooltip" id={id} className={styles.tip} style={at}>
         {text}
       </span>
     </span>

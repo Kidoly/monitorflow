@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { buttonClass } from "./Button";
 import { cx } from "./cx";
+import { floatingAt } from "./floating";
 import styles from "./RowMenu.module.css";
 
 export type RowMenuItem =
@@ -30,6 +31,7 @@ export function RowMenu({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [at, setAt] = useState<CSSProperties>();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const id = useId();
@@ -44,9 +46,24 @@ export function RowMenu({
         setOpen(false);
       }
     }
+    // Fixed in the window: scrolling would leave it behind, so it closes.
+    function scrolled(event: Event) {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    }
     document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
+    window.addEventListener("scroll", scrolled, true);
+    window.addEventListener("resize", scrolled);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      window.removeEventListener("scroll", scrolled, true);
+      window.removeEventListener("resize", scrolled);
+    };
   }, [open]);
+
+  function show() {
+    if (buttonRef.current) setAt(floatingAt(buttonRef.current.getBoundingClientRect(), 4, "right"));
+    setOpen(true);
+  }
 
   function close(refocus: boolean) {
     setOpen(false);
@@ -82,11 +99,11 @@ export function RowMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" && !open) {
             event.preventDefault();
-            setOpen(true);
+            show();
           }
         }}
       >
@@ -99,7 +116,7 @@ export function RowMenu({
         )}
       </button>
       {open && (
-        <div ref={menuRef} id={id} role="menu" aria-label={label} className={styles.menu} onKeyDown={onMenuKey}>
+        <div ref={menuRef} id={id} role="menu" aria-label={label} className={styles.menu} style={at} onKeyDown={onMenuKey}>
           {items.map((item) =>
             "href" in item ? (
               <Link
