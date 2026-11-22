@@ -1,10 +1,20 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 
 import { type PlainKey, t } from "@/i18n";
-import { type Customer, type Me, type Server, type Site, api, describeError, isAbortError } from "@/lib/api";
+import {
+  ApiError,
+  type CampaignDetail,
+  type Customer,
+  type Me,
+  type Server,
+  type Site,
+  api,
+  describeError,
+  isAbortError,
+} from "@/lib/api";
 import {
   type CampaignDraft,
   type UpdateKind,
@@ -15,6 +25,9 @@ import {
   THIRD_PARTY_MANAGERS,
   WEEKDAYS,
   campaignTargets,
+  canEdit,
+  copyName,
+  draftFromCampaign,
   managerFits,
   weekdayName,
   emptyDraft,
@@ -25,12 +38,13 @@ import {
 } from "@/lib/campaigns";
 import { formatDuration } from "@/lib/format";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
-import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
+import { CAMPAIGNS_PATH, campaignHref, copyCampaignHref } from "@/lib/routes";
+import { UUID } from "@/lib/uuid";
 
 import own from "./Campaigns.module.css";
 import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, ButtonLink, fieldClass } from "./ui/Button";
-import { Banner, EmptyState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
+import { Banner, EmptyState, LoadingBlock, NoPermission, NotFound, PageHeader } from "./ui/PageState";
 
 /** Command validity choices; the API takes 60 s to 7 days. */
 const TTLS = [900, 3600, 4 * 3600, 86_400, 604_800];
@@ -48,9 +62,12 @@ const UPDATE_KINDS: [UpdateKind, PlainKey][] = [
   ["agent", "campaigns.form.agent"],
 ];
 
-/** `/campaigns/new/`. */
+/** `/campaigns/new/`; `?edit=<id>` edits a campaign, `?from=<id>` starts a copy of one (ADR-0166). */
 export function NewCampaignPage() {
   const me = useMe();
+  const params = useSearchParams();
+  const editId = params.get("edit");
+  const sourceId = editId ?? params.get("from");
   if (!me || !administersCustomer(me)) {
     return (
       <NoPermission title={t("campaigns.form.adminTitle")}>
@@ -58,7 +75,61 @@ export function NewCampaignPage() {
       </NoPermission>
     );
   }
+  if (sourceId !== null) {
+    return <FromCampaign key={sourceId} id={sourceId} edit={editId !== null} me={me} />;
+  }
   return <CampaignForm me={me} />;
+}
+
+/** The form filled with the campaign `id`, to edit it or to create a copy. */
+function FromCampaign({ id, edit, me }: { id: string; edit: boolean; me: Me }) {
+  const valid = UUID.test(id);
+  /** Undefined until loaded, null when not found. */
+  const [campaign, setCampaign] = useState<CampaignDetail | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!valid) return;
+    const controller = new AbortController();
+    api.campaign(id, controller.signal).then(setCampaign, (e: unknown) => {
+      if (isAbortError(e)) return;
+      if (e instanceof ApiError && e.status === 404) setCampaign(null);
+      else setError(describeError(e));
+    });
+    return () => controller.abort();
+  }, [id, valid]);
+
+  if (!valid || campaign === null) {
+    return (
+      <NotFound
+        title={t("campaigns.notFound")}
+        actions={<ButtonLink href={CAMPAIGNS_PATH}>{t("campaigns.backToCampaigns")}</ButtonLink>}
+      >
+        {t("campaigns.notFoundText")}
+      </NotFound>
+    );
+  }
+  if (!campaign) {
+    return error ? <Banner tone="bad">{error}</Banner> : <LoadingBlock label={t("campaigns.form.loadingCampaign")} />;
+  }
+  if (edit && !canEdit(campaign)) {
+    return (
+      <EmptyState
+        actions={
+          <>
+            <ButtonLink variant="k" href={copyCampaignHref(campaign.id)}>
+              {t("campaigns.action.duplicate")}
+            </ButtonLink>
+            <ButtonLink href={campaignHref(campaign.id)}>{campaign.name}</ButtonLink>
+          </>
+        }
+      >
+        <strong>{t("campaigns.form.notEditableTitle")}</strong> {t("campaigns.form.notEditable", { name: campaign.name })}
+      </EmptyState>
+    );
+  }
+  const initial = draftFromCampaign(campaign);
+  if (!edit) initial.name = copyName(campaign.name);
+  return <CampaignForm me={me} initial={initial} source={campaign} edit={edit} />;
 }
 
 interface Inventory {
@@ -67,12 +138,24 @@ interface Inventory {
   servers: Server[];
 }
 
-export function CampaignForm({ me }: { me: Me }) {
+export function CampaignForm({
+  me,
+  initial,
+  source,
+  edit = false,
+}: {
+  me: Me;
+  /** The draft to start from; empty by default. */
+  initial?: CampaignDraft;
+  /** The campaign edited (with `edit`) or copied. */
+  source?: CampaignDetail;
+  edit?: boolean;
+}) {
   const router = useRouter();
   const [inventory, setInventory] = useState<Inventory | null>(null);
   // Agent versions the server holds (ADR-0053); none when unreadable.
   const [agentVersions, setAgentVersions] = useState<string[]>([]);
-  const [draft, setDraft] = useState<CampaignDraft>(emptyDraft());
+  const [draft, setDraft] = useState<CampaignDraft>(() => initial ?? emptyDraft());
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,19 +216,31 @@ export function CampaignForm({ me }: { me: Me }) {
     if (errors.length > 0) return;
     setBusy(true);
     try {
-      const created = await api.createCampaign(request);
-      router.push(campaignHref(created.id));
+      const saved = edit && source ? await api.updateCampaign(source.id, request) : await api.createCampaign(request);
+      router.push(campaignHref(saved.id));
     } catch (e) {
-      setError(t("campaigns.form.createFailed", { error: describeError(e) }));
+      setError(t(edit ? "campaigns.form.saveFailed" : "campaigns.form.createFailed", { error: describeError(e) }));
       setBusy(false);
     }
   }
 
+  const title = edit && source ? t("campaigns.form.editTitle", { name: source.name }) : t("campaigns.newCampaign");
+  const meta = edit
+    ? t("campaigns.form.editMeta")
+    : source
+      ? t("campaigns.form.copyMeta", { name: source.name })
+      : t("campaigns.form.meta");
+
   return (
     <div className={own.page}>
-      <Breadcrumb parents={[{ label: t("campaigns.label"), href: CAMPAIGNS_PATH }]} />
-      <PageHeader detail title={t("campaigns.newCampaign")} meta={t("campaigns.form.meta")} />
-      <form className={own.form} onSubmit={submit} aria-label={t("campaigns.newCampaign")} noValidate>
+      <Breadcrumb
+        parents={[
+          { label: t("campaigns.label"), href: CAMPAIGNS_PATH },
+          ...(source ? [{ label: source.name, href: campaignHref(source.id) }] : []),
+        ]}
+      />
+      <PageHeader detail title={title} meta={meta} />
+      <form className={own.form} onSubmit={submit} aria-label={title} noValidate>
         <div className={own.grid}>
           {multiCustomer(me) && (
             <label className={own.fld}>
@@ -319,7 +414,7 @@ export function CampaignForm({ me }: { me: Me }) {
             <label className={own.fld}>
               {t("campaigns.form.ttl")}
               <select className={fieldClass} value={draft.ttl} onChange={(e) => set({ ttl: Number(e.target.value) })}>
-                {TTLS.map((seconds) => (
+                {[...new Set([...TTLS, draft.ttl])].sort((a, b) => a - b).map((seconds) => (
                   <option key={seconds} value={seconds}>
                     {formatDuration(seconds)}
                   </option>
@@ -389,7 +484,7 @@ export function CampaignForm({ me }: { me: Me }) {
         {error && <Banner tone="bad">{error}</Banner>}
         <div className={own.row}>
           <Button variant="k" type="submit" disabled={busy}>
-            {t("campaigns.form.create")}
+            {edit ? t("campaigns.form.save") : t("campaigns.form.create")}
           </Button>
         </div>
       </form>

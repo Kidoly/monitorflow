@@ -186,6 +186,16 @@ export function relayHref(id: string): string {
 export const CAMPAIGNS_PATH = "/campaigns/";
 export const NEW_CAMPAIGN_PATH = "/campaigns/new/";
 
+/** The form editing the campaign `id`, which queued nothing yet (ADR-0166). */
+export function editCampaignHref(id: string): string {
+  return `${NEW_CAMPAIGN_PATH}?edit=${encodeURIComponent(id)}`;
+}
+
+/** The creation form, filled with a copy of the campaign `id`. */
+export function copyCampaignHref(id: string): string {
+  return `${NEW_CAMPAIGN_PATH}?from=${encodeURIComponent(id)}`;
+}
+
 /** Link to the page of the campaign `id`. */
 export function campaignHref(id: string): string {
   return `/campaigns/view/?id=${encodeURIComponent(id)}`;

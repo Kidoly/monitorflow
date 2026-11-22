@@ -3,7 +3,7 @@
 // state machine for the action buttons; and display strings.
 
 import { compareVersions } from "./agentVersion";
-import { browserTimeZone, localToIso } from "./clock";
+import { browserTimeZone, localToIso, toLocalInput } from "./clock";
 import type { Tone } from "@/components/ui/tone";
 import { t } from "@/i18n";
 import { activeLocale } from "@/i18n/locale";
@@ -11,6 +11,7 @@ import { activeLocale } from "@/i18n/locale";
 import type {
   Campaign,
   CampaignAction,
+  CampaignDetail,
   CampaignServerStatus,
   CampaignRequest,
   CampaignState,
@@ -101,6 +102,8 @@ export interface CampaignDraft {
   thresholdValue: string;
   thresholdUnit: FailureThreshold["unit"];
   windows: WindowDraft[];
+  /** Pinned snapshots of the campaign edited or copied, kept as they are: the form does not edit them. */
+  pin?: SourcesPin;
 }
 
 export function newWindow(kind: WindowDraft["kind"] = "weekly"): WindowDraft {
@@ -158,7 +161,81 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
     command_ttl_s: draft.ttl,
     failure_threshold: { value: Number(draft.thresholdValue), unit: draft.thresholdUnit },
     windows,
+    ...(draft.pin && os && !agent && { sources: draft.pin }),
   };
+}
+
+/** Whether the API lets `campaign` be edited: nothing queued yet, not finished (ADR-0166). */
+export function canEdit(campaign: Pick<Campaign, "state" | "current_wave">): boolean {
+  return !isFinal(campaign.state) && campaign.current_wave === null;
+}
+
+/** Whether the API may delete `campaign`: a draft or a finished one, once its commands ended. */
+export function canDelete(campaign: Pick<Campaign, "state" | "progress">): boolean {
+  return campaign.state === "draft" || (isFinal(campaign.state) && campaign.progress.in_progress === 0);
+}
+
+/** A `datetime-local` value of an ISO time, in the browser's time zone; "" when invalid. */
+function isoToLocal(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : toLocalInput(date);
+}
+
+/**
+ * The form's draft for `campaign`, to edit it or to start a copy. Without
+ * the request it was made from (before ADR-0166), its servers outside its
+ * site are named and its batches become sizes.
+ */
+export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {
+  const { spec } = campaign;
+  const targets = campaign.waves.flatMap((w) => w.servers);
+  const serverIds =
+    campaign.server_ids ?? targets.filter((s) => s.site_id !== campaign.site_id).map((s) => s.server_id);
+  const specs: WaveSpec[] =
+    campaign.wave_specs ?? campaign.waves.slice(0, -1).map((w) => ({ size: w.servers.length }));
+  const third = spec.third_party ?? [];
+  return {
+    customerId: campaign.customer_id,
+    name: campaign.name,
+    siteId: campaign.site_id ?? "",
+    serverIds,
+    waves: specs.map((w): WaveDraft =>
+      "servers" in w
+        ? { kind: "servers", value: "1", servers: w.servers }
+        : "size" in w
+          ? { kind: "size", value: String(w.size), servers: [] }
+          : { kind: "percent", value: String(w.percent), servers: [] },
+    ),
+    update: campaign.agent_version
+      ? "agent"
+      : spec.packages.length > 0
+        ? "packages"
+        : spec.security_only
+          ? "security"
+          : "all",
+    packages: spec.packages.join(" "),
+    sources: spec.include_os === false ? "apps" : third.length > 0 ? "both" : "os",
+    managers:
+      third.length > 0
+        ? THIRD_PARTY_MANAGERS.filter((m) => third.some((s) => s.manager === m))
+        : [...THIRD_PARTY_MANAGERS],
+    agentVersion: campaign.agent_version ?? "",
+    allowReboot: spec.allow_reboot,
+    ttl: campaign.command_ttl_s,
+    thresholdValue: String(campaign.failure_threshold.value),
+    thresholdUnit: campaign.failure_threshold.unit,
+    windows: campaign.windows.map((w): WindowDraft =>
+      w.kind === "weekly"
+        ? { ...newWindow("weekly"), weekdays: w.weekdays, start: w.start, end: w.end, timezone: w.timezone }
+        : { ...newWindow("once"), startsAt: isoToLocal(w.starts_at), endsAt: isoToLocal(w.ends_at) },
+    ),
+    ...(campaign.sources && { pin: campaign.sources }),
+  };
+}
+
+/** The name of a copy: "Copy of November updates", cut to the longest name the API takes. */
+export function copyName(name: string): string {
+  return [...t("campaigns.copyName", { name })].slice(0, MAX_NAME_LEN).join("").trim();
 }
 
 /**

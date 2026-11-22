@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { t } from "@/i18n";
@@ -16,10 +16,19 @@ import {
   describeError,
   isAbortError,
 } from "@/lib/api";
-import { canAct, describeSources, describeThreshold, describeUpdate, describeWindow, isFinal } from "@/lib/campaigns";
+import {
+  canAct,
+  canDelete,
+  canEdit,
+  describeSources,
+  describeThreshold,
+  describeUpdate,
+  describeWindow,
+  isFinal,
+} from "@/lib/campaigns";
 import { formatDateTime } from "@/lib/format";
 import { administersCustomer, multiCustomer, readsCustomers, useMe } from "@/lib/me";
-import { CAMPAIGNS_PATH, serverHref } from "@/lib/routes";
+import { CAMPAIGNS_PATH, copyCampaignHref, editCampaignHref, serverHref } from "@/lib/routes";
 import { usePolling } from "@/lib/usePolling";
 import { UUID } from "@/lib/uuid";
 
@@ -174,6 +183,7 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
 const actionLabel = (action: CampaignAction) => t(`campaigns.action.${action}`);
 
 function Actions({ campaign, onChange }: { campaign: CampaignDetail; onChange: (c: CampaignDetail) => void }) {
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -203,7 +213,10 @@ function Actions({ campaign, onChange }: { campaign: CampaignDetail; onChange: (
             {actionLabel(action)}
           </Button>
         ))}
-      {canAct("stop", campaign.state) && (
+      {canEdit(campaign) && <ButtonLink href={editCampaignHref(campaign.id)}>{t("campaigns.action.edit")}</ButtonLink>}
+      <ButtonLink href={copyCampaignHref(campaign.id)}>{t("campaigns.action.duplicate")}</ButtonLink>
+      {/* A draft is deleted rather than stopped. */}
+      {canAct("stop", campaign.state) && campaign.state !== "draft" && (
         <InlineConfirm
           trigger={t("campaigns.stop.trigger")}
           title={t("campaigns.stop.title", { name: campaign.name })}
@@ -212,6 +225,20 @@ function Actions({ campaign, onChange }: { campaign: CampaignDetail; onChange: (
           pendingLabel={t("campaigns.stop.pending")}
           onConfirm={async () => onChange(await api.campaignAction(campaign.id, "stop"))}
           describeError={(e) => t("campaigns.stop.failed", { error: describeError(e) })}
+        />
+      )}
+      {canDelete(campaign) && (
+        <InlineConfirm
+          trigger={t("campaigns.delete.trigger")}
+          title={t("campaigns.delete.title", { name: campaign.name })}
+          consequence={t("campaigns.delete.consequence")}
+          confirmLabel={t("campaigns.delete.confirm")}
+          pendingLabel={t("campaigns.delete.pending")}
+          onConfirm={async () => {
+            await api.deleteCampaign(campaign.id);
+            router.push(CAMPAIGNS_PATH);
+          }}
+          describeError={(e) => t("campaigns.delete.failed", { error: describeError(e) })}
         />
       )}
       {error && (

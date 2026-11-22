@@ -7,6 +7,8 @@ import { customerAdmin } from "@/test/admin";
 import { CAMPAIGN_ID, WEB1, WEB2, detail, server } from "@/test/campaigns";
 import { stubFetch } from "@/test/fetch";
 
+import { draftFromCampaign } from "@/lib/campaigns";
+
 import { CampaignForm } from "./CampaignForm";
 
 const push = vi.fn();
@@ -207,5 +209,32 @@ describe("CampaignForm", () => {
     render(<CampaignForm me={customerAdmin} />);
     await screen.findByRole("form", { name: "New campaign" });
     expect(screen.queryByRole("radio", { name: "The MonitorFlow agent" })).not.toBeInTheDocument();
+  });
+
+  it("saves an edited campaign as a whole, with its batches as they were written", async () => {
+    const user = userEvent.setup();
+    const source = detail({
+      state: "draft",
+      current_wave: null,
+      site_id: "site-1",
+      server_ids: [],
+      wave_specs: [{ percent: 50 }],
+      windows: [{ kind: "weekly", weekdays: [6], start: "22:00", end: "04:00", timezone: "Europe/Paris" }],
+    });
+    const fetchMock = stubFetch({ ...inventory, [`PUT /api/campaigns/${CAMPAIGN_ID}`]: { status: 200, body: source } });
+    render(<CampaignForm me={customerAdmin} initial={draftFromCampaign(source)} source={source} edit />);
+    const form = await screen.findByRole("form", { name: "Edit October updates" });
+    await user.clear(within(form).getByLabelText("Name"));
+    await user.type(within(form).getByLabelText("Name"), "November updates");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    const call = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(call?.[1]?.body as string)).toMatchObject({
+      name: "November updates",
+      site_id: "site-1",
+      waves: [{ percent: 50 }],
+      security_only: true,
+      windows: [{ kind: "weekly", weekdays: [6], start: "22:00", end: "04:00", timezone: "Europe/Paris" }],
+    });
+    expect(push).toHaveBeenCalledWith(expect.stringContaining(`id=${CAMPAIGN_ID}`));
   });
 });

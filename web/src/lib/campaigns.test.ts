@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
-import { campaign, server } from "@/test/campaigns";
+import { WEB1, WEB2, campaign, detail, server } from "@/test/campaigns";
 
 import type { CampaignRequest } from "./api";
 import {
   campaignSubline,
   campaignTargets,
   canAct,
+  canDelete,
+  canEdit,
+  copyName,
   describeThreshold,
   describeUpdate,
   describeWindow,
+  draftFromCampaign,
   emptyDraft,
   planWaves,
   shortWindow,
@@ -280,5 +284,42 @@ describe("in French", () => {
     expect(validateCampaign(valid({ waves: [{ size: 1 }, { size: 1 }] }), ["s1"])).toEqual([
       "Lots\u00a0: le lot 2 serait vide.",
     ]);
+  });
+});
+
+describe("editing and copying (ADR-0166)", () => {
+  it("edits what queued nothing and deletes drafts and finished campaigns", () => {
+    const idle = { ...detail().progress, in_progress: 0 };
+    expect(canEdit(campaign({ state: "draft", current_wave: null }))).toBe(true);
+    expect(canEdit(campaign({ state: "scheduled", current_wave: null }))).toBe(true);
+    expect(canEdit(campaign({ state: "paused", current_wave: 0 }))).toBe(false);
+    expect(canEdit(campaign({ state: "stopped", current_wave: null }))).toBe(false);
+    expect(canDelete(campaign({ state: "draft" }))).toBe(true);
+    expect(canDelete(campaign({ state: "completed", progress: idle }))).toBe(true);
+    expect(canDelete(campaign({ state: "stopped" }))).toBe(false);
+    expect(canDelete(campaign({ state: "running", progress: idle }))).toBe(false);
+  });
+
+  it("fills the form from a campaign, the request when kept, else its batches", () => {
+    const pin = { mode: "add" as const, mirrors: [{ name: "debian-12", snapshot: "s1" }] };
+    const kept = draftFromCampaign(
+      detail({ site_id: "site-1", server_ids: [WEB2], wave_specs: [{ servers: [WEB1] }], sources: pin }),
+    );
+    expect(kept).toMatchObject({ siteId: "site-1", serverIds: [WEB2], update: "security", sources: "os", pin });
+    expect(kept.waves).toEqual([{ kind: "servers", value: "1", servers: [WEB1] }]);
+    expect(toRequest(kept)).toMatchObject({ waves: [{ servers: [WEB1] }], security_only: true, sources: pin });
+    // Before ADR-0166: servers outside the site are named, batches become sizes.
+    const older = draftFromCampaign(detail({ site_id: null }));
+    expect(older.serverIds).toEqual([WEB1, WEB2]);
+    expect(older.waves).toEqual([{ kind: "size", value: "1", servers: [] }]);
+    expect(older.windows[0]).toMatchObject({ kind: "weekly", weekdays: [6, 7], timezone: "Europe/Paris" });
+    const appsOnly = { packages: [], security_only: false, allow_reboot: true, include_os: false };
+    const apps = draftFromCampaign(detail({ spec: { ...appsOnly, third_party: [{ manager: "snap", packages: [] }] } }));
+    expect(apps).toMatchObject({ sources: "apps", managers: ["snap"], update: "all", allowReboot: true });
+  });
+
+  it("names a copy within the longest name", () => {
+    expect(copyName("October")).toBe("Copy of October");
+    expect([...copyName("x".repeat(64))]).toHaveLength(64);
   });
 });

@@ -2800,6 +2800,9 @@ export interface Campaign {
   sources: SourcesPin | null;
   /** Set for an agent update campaign: the version agents update to (ADR-0053). */
   agent_version: string | null;
+  /** The request's `server_ids` and `waves` as last written; null before ADR-0166, absent from older servers. */
+  server_ids?: string[] | null;
+  wave_specs?: WaveSpec[] | null;
   wave_count: number;
   /** Index from 0; null until the first wave is queued. */
   current_wave: number | null;
@@ -2859,7 +2862,7 @@ export interface CampaignList {
   next_cursor: string | null;
 }
 
-/** Body of `POST /api/campaigns`; a `site_id` or `server_ids` is required. */
+/** Body of `POST /api/campaigns` and `PUT /api/campaigns/{id}`; a `site_id` or `server_ids` is required. */
 export interface CampaignRequest {
   customer_id: string;
   name: string;
@@ -2878,6 +2881,8 @@ export interface CampaignRequest {
   /** False: third-party apps only (ADR-0138). */
   include_os?: boolean;
   third_party?: ThirdPartySelection[];
+  /** Mirror snapshots to pin (ADR-0038); the form keeps those of the campaign it edits. */
+  sources?: SourcesPin;
 }
 
 /** A package of a server's latest report (ADR-0031). */
@@ -4887,6 +4892,13 @@ export const api = {
   /** Creates a draft campaign; customer administrators only. */
   createCampaign: (body: CampaignRequest) =>
     request<CampaignDetail>("/api/campaigns", { method: "POST", body }),
+
+  /** Replaces a campaign that queued nothing yet (ADR-0166); 409 once a batch was queued. */
+  updateCampaign: (id: string, body: CampaignRequest) =>
+    request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  /** Deletes a draft or finished campaign (ADR-0166); 409 while commands are in flight. */
+  deleteCampaign: (id: string) => request<void>(`/api/campaigns/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** 409 when the campaign's state does not allow `action`. */
   campaignAction: (id: string, action: CampaignAction) =>
