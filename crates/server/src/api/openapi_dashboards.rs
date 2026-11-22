@@ -13,13 +13,22 @@ use super::{dashboard_data, dashboards};
 #[openapi(
     paths(list, detail, create, update, delete, data, catalog),
     modifiers(&Common),
-    tags((name = "dashboards", description = "Pages of panels (charts, figures, top lists and \
-open alerts) kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a \
+    tags((name = "dashboards", description = "Pages of panels kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a \
 site or customer see its dashboards; any role above viewer makes, changes and deletes them; \
 anyone who can read makes their own. With a key, the \"dashboards\" area; a key sees, changes and \
 deletes its maker's \"Only me\" dashboards whatever its reach, but the data of any panel is only \
 ever read within the key's reach. A panel never shows more than the person asking may read: its \
 servers are resolved again on every read, and servers they cannot see are counted, not named.\n\n\
+A panel's `kind` says how it is drawn: `chart` (lines), `area` (areas, stacked when there is one \
+per server), `columns` (a column per step, stacked likewise), `figure` (one number), `gauge` (one \
+number on a dial), `top` (a list of the highest or lowest servers), `bars` (the same as \
+horizontal bars) and `alerts` (open alerts). Kinds that draw the same data take the same fields \
+and answer the same data shape: `area` and `columns` as `chart`, `gauge` as `figure`, `bars` as \
+`top`. Optional display fields, ignored by the data: `unit`, `min` and `max` of the scale, \
+`thresholds` (`warning`, `critical`) that colour figures, gauges and bars and draw lines on \
+charts, `legend` (charts over time only) and `color`, the first colour of the eight of the \
+palette. Alerts panels take none of them. Dashboards saved before these kinds and fields existed \
+read unchanged.\n\n\
 Display links, which show dashboards on a wall screen without signing in, are made, listed and \
 turned off only in the web interface, by an administrator of the dashboards' site or customer (or \
 of anything for their own). A link's secret is in the URL fragment, shown once; a screen trades it \
@@ -47,6 +56,11 @@ fn spec_example() -> serde_json::Value {
                 "id": "disks", "title": "Fullest disks", "kind": "top", "width": 1,
                 "servers": { "kind": "list", "ids": ["6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e"] },
                 "metric": "monitorflow_disk_used_ratio", "order": "highest", "count": 5
+            },
+            {
+                "id": "cpu-now", "title": "CPU now, busiest server", "kind": "gauge", "width": 1,
+                "servers": { "kind": "all" }, "metric": "monitorflow_cpu_usage_ratio", "instance": "total",
+                "combine": "max", "thresholds": { "warning": 0.8, "critical": 0.95 }
             },
             { "id": "alerts", "title": "Open alerts", "kind": "alerts", "width": 3, "servers": { "kind": "all" }, "count": 10 }
         ]
@@ -168,6 +182,7 @@ fn delete() {}
                 { "id": "disks", "servers": 1, "unavailable": 0, "kind": "top", "rows": [
                     { "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e", "hostname": "web-1", "instance": "/var", "value": 0.812 }
                 ] },
+                { "id": "cpu-now", "servers": 4, "unavailable": 0, "kind": "figure", "value": 0.83 },
                 { "id": "alerts", "servers": 4, "unavailable": 1, "kind": "alerts", "alerts": [
                     { "id": "2b3c4d5e-6f70-4a1b-9c2d-3e4f5a6b7c8d", "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
                       "hostname": "web-1", "metric": "monitorflow_disk_used_ratio", "instance": "/var",

@@ -104,15 +104,76 @@ pub enum Servers {
     },
 }
 
-/// `chart`: lines over the range. `figure`: one number now. `top`: the
-/// highest or lowest servers now. `alerts`: open incidents.
+/// What a panel draws (ADR-0095, ADR-0166). Several kinds draw the same
+/// data differently, so the data answer names its shape, the
+/// [`PanelKind::base`] kind: `chart` for `chart`, `area` and `columns`,
+/// `figure` for `figure` and `gauge`, `top` for `top` and `bars`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum PanelKind {
+    /// Lines over the range.
     Chart,
+    /// One number now.
     Figure,
+    /// The highest or lowest servers now.
     Top,
+    /// Open incidents.
     Alerts,
+    /// One number now on a dial between `min` and `max`.
+    Gauge,
+    /// The highest or lowest servers now, as horizontal bars.
+    Bars,
+    /// Areas over the range, stacked when there is one per server.
+    Area,
+    /// Columns over the range, one per step, stacked when there is one
+    /// per server.
+    Columns,
+}
+
+impl PanelKind {
+    /// The kind whose data this one draws.
+    pub fn base(self) -> Self {
+        match self {
+            Self::Area | Self::Columns => Self::Chart,
+            Self::Gauge => Self::Figure,
+            Self::Bars => Self::Top,
+            other => other,
+        }
+    }
+
+    /// Whether it draws over time, with a legend.
+    fn over_time(self) -> bool {
+        self.base() == Self::Chart
+    }
+}
+
+/// How values are written, when the metric's name does not say it well:
+/// `ratio` is shown as a percentage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = PanelUnit)]
+#[serde(rename_all = "snake_case")]
+pub enum Unit {
+    Ratio,
+    Bytes,
+    BytesPerSecond,
+    BitsPerSecond,
+    PerSecond,
+    Seconds,
+    Celsius,
+    Number,
+}
+
+/// Values at which a panel turns amber and red, in the metric's unit (a
+/// ratio from 0 to 1 for `_ratio` metrics). Above them, or below for
+/// metrics where low is bad (available, free).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = PanelThresholds)]
+#[serde(deny_unknown_fields)]
+pub struct Thresholds {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critical: Option<f64>,
 }
 
 /// How the servers' series become what a chart or figure shows: `each`
@@ -172,6 +233,25 @@ pub struct Panel {
     /// Rows of a top list or alerts panel, 1 to 20.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+    /// How values are written; from the metric's name when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<Unit>,
+    /// The low end of the scale; from the values when absent (0 to 1 for
+    /// ratios).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    /// The high end of the scale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// Lines on charts, colours of figures, gauges and bars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thresholds: Option<Thresholds>,
+    /// Whether a chart names its lines; `true` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend: Option<bool>,
+    /// The first colour of the palette it uses, 1 to 8; 1 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<u8>,
 }
 
 fn one() -> u8 {
@@ -257,12 +337,14 @@ fn check_panel(panel: &Panel) -> Result<(), String> {
         }
     }
     let count_ok = |count: Option<u32>| count.is_some_and(|c| (1..=MAX_COUNT).contains(&c));
+    check_options(panel)?;
     match panel.kind {
         PanelKind::Alerts => {
             if panel.metric.is_some()
                 || panel.instance.is_some()
                 || panel.combine.is_some()
                 || panel.order.is_some()
+                || has_options(panel)
             {
                 return Err("an alerts panel takes servers and a count only.".into());
             }
@@ -271,7 +353,7 @@ fn check_panel(panel: &Panel) -> Result<(), String> {
             }
             return Ok(());
         }
-        PanelKind::Chart => {
+        PanelKind::Chart | PanelKind::Area | PanelKind::Columns => {
             if panel.order.is_some() || panel.count.is_some() {
                 return Err("a chart takes no order or count.".into());
             }
@@ -279,7 +361,7 @@ fn check_panel(panel: &Panel) -> Result<(), String> {
                 return Err("say how servers combine: each, avg, max, min or sum.".into());
             }
         }
-        PanelKind::Figure => {
+        PanelKind::Figure | PanelKind::Gauge => {
             if panel.order.is_some() || panel.count.is_some() {
                 return Err("a figure takes no order or count.".into());
             }
@@ -287,7 +369,7 @@ fn check_panel(panel: &Panel) -> Result<(), String> {
                 return Err("say how servers combine: avg, max, min, sum or count.".into());
             }
         }
-        PanelKind::Top => {
+        PanelKind::Top | PanelKind::Bars => {
             if panel.combine.is_some() || panel.order.is_none() {
                 return Err("a top list takes an order, highest or lowest.".into());
             }
@@ -300,6 +382,48 @@ fn check_panel(panel: &Panel) -> Result<(), String> {
     check_metric(metric).map_err(|e| e.to_string())?;
     if let Some(instance) = &panel.instance {
         validate::instance(instance).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Whether any display option is set.
+fn has_options(panel: &Panel) -> bool {
+    panel.unit.is_some()
+        || panel.min.is_some()
+        || panel.max.is_some()
+        || panel.thresholds.is_some()
+        || panel.legend.is_some()
+        || panel.color.is_some()
+}
+
+/// Checks the display options on their own: finite numbers, a scale that
+/// goes up, a colour of the palette, a legend only over time.
+fn check_options(panel: &Panel) -> Result<(), String> {
+    let numbers = [
+        panel.min,
+        panel.max,
+        panel.thresholds.and_then(|t| t.warning),
+        panel.thresholds.and_then(|t| t.critical),
+    ];
+    if numbers.iter().flatten().any(|v| !v.is_finite()) {
+        return Err("its scale and thresholds are plain numbers.".into());
+    }
+    if let (Some(min), Some(max)) = (panel.min, panel.max) {
+        if min >= max {
+            return Err("the low end of its scale is below the high end.".into());
+        }
+    }
+    if panel
+        .thresholds
+        .is_some_and(|t| t.warning.is_none() && t.critical.is_none())
+    {
+        return Err("give a warning or critical threshold, or none.".into());
+    }
+    if panel.color.is_some_and(|c| !(1..=8).contains(&c)) {
+        return Err("its colour is 1 to 8.".into());
+    }
+    if panel.legend.is_some() && !panel.kind.over_time() {
+        return Err("only charts over time have a legend.".into());
     }
     Ok(())
 }
@@ -837,6 +961,14 @@ mod tests {
                    "order": "highest", "count": 5, "servers": {"kind": "list", "ids": [id]}}),
             json!({"id": "a", "title": "Alerts", "kind": "alerts", "count": 10,
                    "servers": {"kind": "customer", "id": id}}),
+            json!({"id": "a", "title": "CPU", "kind": "gauge", "metric": "monitorflow_cpu_usage_ratio",
+                   "combine": "max", "thresholds": {"warning": 0.8, "critical": 0.95}, "color": 3}),
+            json!({"id": "a", "title": "Disks", "kind": "bars", "metric": "monitorflow_disk_used_ratio",
+                   "order": "highest", "count": 8, "unit": "ratio", "min": 0, "max": 1}),
+            json!({"id": "a", "title": "Memory", "kind": "area", "metric": "monitorflow_memory_used_bytes",
+                   "combine": "each", "legend": false, "unit": "bytes"}),
+            json!({"id": "a", "title": "Traffic", "kind": "columns", "metric": "monitorflow_network_receive_bytes_per_second",
+                   "combine": "sum", "thresholds": {"critical": 1e9}}),
         ] {
             assert_eq!(panel(ok.clone()), Ok(()), "{ok}");
         }
@@ -869,7 +1001,17 @@ mod tests {
             chart(json!({"instance": "a\nb"})),
             chart(json!({"id": "a b"})),
             chart(json!({"query": "up"})),
-            chart(json!({"kind": "gauge"})),
+            chart(json!({"kind": "pizza"})),
+            chart(json!({"min": 1.0, "max": 1.0})),
+            chart(json!({"color": 9})),
+            chart(json!({"unit": "furlongs"})),
+            chart(json!({"thresholds": {}})),
+            chart(json!({"thresholds": {"warning": 1, "info": 2}})),
+            json!({"id": "a", "title": "x", "kind": "gauge", "metric": "monitorflow_cpu_usage_ratio", "combine": "each"}),
+            json!({"id": "a", "title": "x", "kind": "gauge", "metric": "monitorflow_cpu_usage_ratio", "combine": "avg", "legend": true}),
+            json!({"id": "a", "title": "x", "kind": "bars", "metric": "monitorflow_cpu_usage_ratio", "count": 5}),
+            json!({"id": "a", "title": "x", "kind": "area", "metric": "monitorflow_cpu_usage_ratio", "combine": "count"}),
+            json!({"id": "a", "title": "x", "kind": "alerts", "count": 5, "color": 2}),
             chart(json!({"servers": {"kind": "list", "ids": []}})),
             chart(json!({"servers": {"kind": "list", "ids": vec![Uuid::nil(); 51]}})),
             chart(json!({"servers": {"kind": "tag", "name": "db"}})),

@@ -5266,6 +5266,22 @@
                     "width": 1
                   },
                   {
+                    "combine": "max",
+                    "id": "cpu-now",
+                    "instance": "total",
+                    "kind": "gauge",
+                    "metric": "monitorflow_cpu_usage_ratio",
+                    "servers": {
+                      "kind": "all"
+                    },
+                    "thresholds": {
+                      "critical": 0.95,
+                      "warning": 0.8
+                    },
+                    "title": "CPU now, busiest server",
+                    "width": 1
+                  },
+                  {
                     "count": 10,
                     "id": "alerts",
                     "kind": "alerts",
@@ -5338,6 +5354,13 @@
                       ],
                       "servers": 1,
                       "unavailable": 0
+                    },
+                    {
+                      "id": "cpu-now",
+                      "kind": "figure",
+                      "servers": 4,
+                      "unavailable": 0,
+                      "value": 0.83
                     },
                     {
                       "alerts": [
@@ -5797,6 +5820,22 @@
                       "width": 1
                     },
                     {
+                      "combine": "max",
+                      "id": "cpu-now",
+                      "instance": "total",
+                      "kind": "gauge",
+                      "metric": "monitorflow_cpu_usage_ratio",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "thresholds": {
+                        "critical": 0.95,
+                        "warning": 0.8
+                      },
+                      "title": "CPU now, busiest server",
+                      "width": 1
+                    },
+                    {
                       "count": 10,
                       "id": "alerts",
                       "kind": "alerts",
@@ -5861,6 +5900,22 @@
                           "kind": "list"
                         },
                         "title": "Fullest disks",
+                        "width": 1
+                      },
+                      {
+                        "combine": "max",
+                        "id": "cpu-now",
+                        "instance": "total",
+                        "kind": "gauge",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "thresholds": {
+                          "critical": 0.95,
+                          "warning": 0.8
+                        },
+                        "title": "CPU now, busiest server",
                         "width": 1
                       },
                       {
@@ -6043,6 +6098,22 @@
                         "width": 1
                       },
                       {
+                        "combine": "max",
+                        "id": "cpu-now",
+                        "instance": "total",
+                        "kind": "gauge",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "thresholds": {
+                          "critical": 0.95,
+                          "warning": 0.8
+                        },
+                        "title": "CPU now, busiest server",
+                        "width": 1
+                      },
+                      {
                         "count": 10,
                         "id": "alerts",
                         "kind": "alerts",
@@ -6215,6 +6286,22 @@
                       "width": 1
                     },
                     {
+                      "combine": "max",
+                      "id": "cpu-now",
+                      "instance": "total",
+                      "kind": "gauge",
+                      "metric": "monitorflow_cpu_usage_ratio",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "thresholds": {
+                        "critical": 0.95,
+                        "warning": 0.8
+                      },
+                      "title": "CPU now, busiest server",
+                      "width": 1
+                    },
+                    {
                       "count": 10,
                       "id": "alerts",
                       "kind": "alerts",
@@ -6279,6 +6366,22 @@
                           "kind": "list"
                         },
                         "title": "Fullest disks",
+                        "width": 1
+                      },
+                      {
+                        "combine": "max",
+                        "id": "cpu-now",
+                        "instance": "total",
+                        "kind": "gauge",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "thresholds": {
+                          "critical": 0.95,
+                          "warning": 0.8
+                        },
+                        "title": "CPU now, busiest server",
                         "width": 1
                       },
                       {
@@ -53185,6 +53288,15 @@
           "kind"
         ],
         "properties": {
+          "color": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The first colour of the palette it uses, 1 to 8; 1 when absent.",
+            "minimum": 0
+          },
           "combine": {
             "oneOf": [
               {
@@ -53219,12 +53331,35 @@
           "kind": {
             "$ref": "#/components/schemas/PanelKind"
           },
+          "legend": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a chart names its lines; `true` when absent."
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The high end of the scale."
+          },
           "metric": {
             "type": [
               "string",
               "null"
             ],
             "description": "Full name, `monitorflow_…`; not for alerts."
+          },
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The low end of the scale; from the values when absent (0 to 1 for\nratios)."
           },
           "order": {
             "oneOf": [
@@ -53241,9 +53376,31 @@
             "$ref": "#/components/schemas/PanelServers",
             "description": "Every server of the dashboard when absent."
           },
+          "thresholds": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PanelThresholds",
+                "description": "Lines on charts, colours of figures, gauges and bars."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "title": {
             "type": "string",
             "description": "1 to 80 characters."
+          },
+          "unit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PanelUnit",
+                "description": "How values are written; from the metric's name when absent."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "width": {
             "type": "integer",
@@ -53300,12 +53457,16 @@
       },
       "PanelKind": {
         "type": "string",
-        "description": "`chart`: lines over the range. `figure`: one number now. `top`: the\nhighest or lowest servers now. `alerts`: open incidents.",
+        "description": "What a panel draws (ADR-0095, ADR-0166). Several kinds draw the same\ndata differently, so the data answer names its shape, the\n[`PanelKind::base`] kind: `chart` for `chart`, `area` and `columns`,\n`figure` for `figure` and `gauge`, `top` for `top` and `bars`.",
         "enum": [
           "chart",
           "figure",
           "top",
-          "alerts"
+          "alerts",
+          "gauge",
+          "bars",
+          "area",
+          "columns"
         ]
       },
       "PanelOrder": {
@@ -53430,7 +53591,7 @@
             }
           }
         ],
-        "description": "What a panel shows, by its `kind`."
+        "description": "What a panel shows. `kind` is the shape of the data, the panel's kind\nor the one it draws differently: `chart` for `chart`, `area` and\n`columns`; `figure` for `figure` and `gauge`; `top` for `top` and\n`bars` (ADR-0166)."
       },
       "PanelServers": {
         "oneOf": [
@@ -53512,6 +53673,41 @@
           }
         ],
         "description": "Which servers a panel shows, within the dashboard's sharing."
+      },
+      "PanelThresholds": {
+        "type": "object",
+        "description": "Values at which a panel turns amber and red, in the metric's unit (a\nratio from 0 to 1 for `_ratio` metrics). Above them, or below for\nmetrics where low is bad (available, free).",
+        "properties": {
+          "critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "warning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PanelUnit": {
+        "type": "string",
+        "description": "How values are written, when the metric's name does not say it well:\n`ratio` is shown as a percentage.",
+        "enum": [
+          "ratio",
+          "bytes",
+          "bytes_per_second",
+          "bits_per_second",
+          "per_second",
+          "seconds",
+          "celsius",
+          "number"
+        ]
       },
       "PendingHost": {
         "type": "object",
@@ -61123,7 +61319,7 @@
     },
     {
       "name": "dashboards",
-      "description": "Pages of panels (charts, figures, top lists and open alerts) kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a site or customer see its dashboards; any role above viewer makes, changes and deletes them; anyone who can read makes their own. With a key, the \"dashboards\" area; a key sees, changes and deletes its maker's \"Only me\" dashboards whatever its reach, but the data of any panel is only ever read within the key's reach. A panel never shows more than the person asking may read: its servers are resolved again on every read, and servers they cannot see are counted, not named.\n\nDisplay links, which show dashboards on a wall screen without signing in, are made, listed and turned off only in the web interface, by an administrator of the dashboards' site or customer (or of anything for their own). A link's secret is in the URL fragment, shown once; a screen trades it for a session of one hour. Whoever holds the URL sees the link's dashboards, up to 12, and nothing else: no other page, no settings, no change. Each screen request reads as the link's maker with their roles of the moment, so a maker who is disabled or loses the role stops their links. A link may expire or never; deleting a dashboard removes it from its links. Because a link reads with all its maker's roles and outlives a key, `/api/v1/display-links`, `/api/v1/dashboards/{id}/display-links` and `/api/v1/display` answer 404."
+      "description": "Pages of panels kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a site or customer see its dashboards; any role above viewer makes, changes and deletes them; anyone who can read makes their own. With a key, the \"dashboards\" area; a key sees, changes and deletes its maker's \"Only me\" dashboards whatever its reach, but the data of any panel is only ever read within the key's reach. A panel never shows more than the person asking may read: its servers are resolved again on every read, and servers they cannot see are counted, not named.\n\nA panel's `kind` says how it is drawn: `chart` (lines), `area` (areas, stacked when there is one per server), `columns` (a column per step, stacked likewise), `figure` (one number), `gauge` (one number on a dial), `top` (a list of the highest or lowest servers), `bars` (the same as horizontal bars) and `alerts` (open alerts). Kinds that draw the same data take the same fields and answer the same data shape: `area` and `columns` as `chart`, `gauge` as `figure`, `bars` as `top`. Optional display fields, ignored by the data: `unit`, `min` and `max` of the scale, `thresholds` (`warning`, `critical`) that colour figures, gauges and bars and draw lines on charts, `legend` (charts over time only) and `color`, the first colour of the eight of the palette. Alerts panels take none of them. Dashboards saved before these kinds and fields existed read unchanged.\n\nDisplay links, which show dashboards on a wall screen without signing in, are made, listed and turned off only in the web interface, by an administrator of the dashboards' site or customer (or of anything for their own). A link's secret is in the URL fragment, shown once; a screen trades it for a session of one hour. Whoever holds the URL sees the link's dashboards, up to 12, and nothing else: no other page, no settings, no change. Each screen request reads as the link's maker with their roles of the moment, so a maker who is disabled or loses the role stops their links. A link may expire or never; deleting a dashboard removes it from its links. Because a link reads with all its maker's roles and outlives a key, `/api/v1/display-links`, `/api/v1/dashboards/{id}/display-links` and `/api/v1/display` answer 404."
     },
     {
       "name": "plugins",

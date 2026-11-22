@@ -324,6 +324,42 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn new_kinds_and_display_options_are_kept_and_drawn_from_their_base(pool: PgPool) {
+        let w = world(&pool).await;
+        let admin = login(&w.app, "admin").await;
+        let cpu = "monitorflow_cpu_usage_ratio";
+        let panels = json!([
+            { "id": "g", "title": "CPU now", "kind": "gauge", "metric": cpu, "combine": "max",
+              "thresholds": { "warning": 0.8, "critical": 0.95 }, "min": 0.0, "max": 1.0, "color": 2,
+              "servers": { "kind": "all" }, "width": 1 },
+            { "id": "b", "title": "Busiest", "kind": "bars", "metric": cpu, "order": "highest", "count": 3,
+              "unit": "ratio", "servers": { "kind": "all" }, "width": 1 },
+            { "id": "a", "title": "CPU", "kind": "area", "metric": cpu, "combine": "each", "legend": false,
+              "servers": { "kind": "all" }, "width": 2 },
+            { "id": "c", "title": "CPU", "kind": "columns", "metric": cpu, "combine": "avg",
+              "servers": { "kind": "all" }, "width": 1 },
+        ]);
+        let (status, saved) = send(&w.app, &admin, "POST", "/api/dashboards",
+            Some(dashboard("Kinds", json!({ "kind": "personal" }), panels.clone()))).await;
+        assert_eq!(status, StatusCode::CREATED, "{saved}");
+        // What is stored is what was sent.
+        assert_eq!(saved["spec"]["panels"], panels);
+
+        let request = json!({ "range": "1h", "within": { "kind": "all" }, "panels": panels });
+        let (status, body) = send(&w.app, &admin, "POST", "/api/dashboard-data", Some(request)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let kinds: Vec<&str> = body["panels"].as_array().unwrap().iter().map(|p| p["kind"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["figure", "top", "chart", "chart"]);
+
+        // A display option of the wrong kind is refused with a sentence.
+        let alerts = json!([{ "id": "x", "title": "Alerts", "kind": "alerts", "count": 5, "color": 2 }]);
+        let (status, body) = send(&w.app, &admin, "POST", "/api/dashboards",
+            Some(dashboard("x", json!({ "kind": "personal" }), alerts))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("servers and a count only"), "{body}");
+    }
+
+    #[sqlx::test]
     async fn panels_show_only_what_the_viewer_reads(pool: PgPool) {
         let w = world(&pool).await;
         let viewer1 = login(&w.app, "viewer1").await;

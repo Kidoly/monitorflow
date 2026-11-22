@@ -176,7 +176,10 @@ pub struct UnreachableServer {
     pub note: super::dependencies::UnreachableNote,
 }
 
-/// What a panel shows, by its `kind`.
+/// What a panel shows. `kind` is the shape of the data, the panel's kind
+/// or the one it draws differently: `chart` for `chart`, `area` and
+/// `columns`; `figure` for `figure` and `gauge`; `top` for `top` and
+/// `bars` (ADR-0166).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum PanelResult {
@@ -391,7 +394,7 @@ pub fn build(panel: &Panel, selector: &str, range: TimeRange) -> Option<Call> {
     let metric = panel.metric.as_deref()?;
     let combine = panel.combine.unwrap_or(Combine::Avg);
     Some(match panel.kind {
-        PanelKind::Chart => {
+        PanelKind::Chart | PanelKind::Area | PanelKind::Columns => {
             let rolled = if range.rolls_up() {
                 format!("{}({selector}[{}s])", rollup(metric), range.step())
             } else {
@@ -405,11 +408,11 @@ pub fn build(panel: &Panel, selector: &str, range: TimeRange) -> Option<Call> {
                 other => format!("{}({rolled})", aggregation(other)),
             })
         }
-        PanelKind::Figure => Call::Instant(match combine {
+        PanelKind::Figure | PanelKind::Gauge => Call::Instant(match combine {
             Combine::Count => format!("count(count by (peer) ({selector}))"),
             other => format!("{}({selector})", aggregation(other)),
         }),
-        PanelKind::Top => {
+        PanelKind::Top | PanelKind::Bars => {
             let function = match panel.order {
                 Some(Order::Lowest) => "bottomk",
                 _ => "topk",
@@ -498,8 +501,8 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
     let by_peer: HashMap<&str, &Visible> =
         servers.iter().map(|s| (s.peer_id.as_str(), *s)).collect();
     let combine = panel.combine.unwrap_or(Combine::Avg);
-    let per_server = matches!(panel.kind, PanelKind::Top)
-        || (panel.kind == PanelKind::Chart && combine == Combine::Each);
+    let per_server = panel.kind.base() == PanelKind::Top
+        || (panel.kind.base() == PanelKind::Chart && combine == Combine::Each);
     // Defense in depth: a series of a peer outside the panel is dropped.
     let found: Vec<(Option<&Visible>, SeriesView)> = series(data)?
         .into_iter()
@@ -510,7 +513,7 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
         })
         .collect();
     Ok(match panel.kind {
-        PanelKind::Chart => {
+        PanelKind::Chart | PanelKind::Area | PanelKind::Columns => {
             let mut lines: Vec<ChartSeries> = found
                 .into_iter()
                 .map(|(server, s)| {
@@ -533,13 +536,13 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
             lines.sort_by(|a, b| a.label.cmp(&b.label));
             PanelResult::Chart { series: lines }
         }
-        PanelKind::Figure => PanelResult::Figure {
+        PanelKind::Figure | PanelKind::Gauge => PanelResult::Figure {
             value: found
                 .first()
                 .and_then(|(_, s)| s.points.last())
                 .and_then(|p| p.1),
         },
-        PanelKind::Top => {
+        PanelKind::Top | PanelKind::Bars => {
             let mut rows: Vec<TopRow> = found
                 .into_iter()
                 .filter_map(|(server, s)| {
@@ -665,9 +668,11 @@ pub(super) async fn compute(
         );
         let call = build(panel, &selector, range);
         let empty = || match panel.kind {
-            PanelKind::Chart => PanelResult::Chart { series: Vec::new() },
-            PanelKind::Figure => PanelResult::Figure { value: None },
-            PanelKind::Top => PanelResult::Top { rows: Vec::new() },
+            PanelKind::Chart | PanelKind::Area | PanelKind::Columns => {
+                PanelResult::Chart { series: Vec::new() }
+            }
+            PanelKind::Figure | PanelKind::Gauge => PanelResult::Figure { value: None },
+            PanelKind::Top | PanelKind::Bars => PanelResult::Top { rows: Vec::new() },
             PanelKind::Alerts => PanelResult::Alerts {
                 alerts: Vec::new(),
                 unreachable: Vec::new(),
@@ -1039,6 +1044,32 @@ mod tests {
         );
         let alerts = panel(json!({"id": "a", "title": "t", "kind": "alerts", "count": 3}));
         assert_eq!(build(&alerts, s, TimeRange::Hour), None);
+        // Kinds drawing the same data run the same query.
+        for (kind, base) in [("area", "chart"), ("columns", "chart")] {
+            let fields = json!({"id": "a", "title": "t", "metric": cpu, "combine": "each"});
+            let mut other = fields.clone();
+            other["kind"] = json!(kind);
+            let mut same = fields;
+            same["kind"] = json!(base);
+            assert_eq!(
+                build(&panel(other), s, TimeRange::Day),
+                build(&panel(same), s, TimeRange::Day)
+            );
+        }
+        let gauge = panel(
+            json!({"id": "a", "title": "t", "kind": "gauge", "metric": cpu, "combine": "max"}),
+        );
+        assert_eq!(
+            build(&gauge, s, TimeRange::Hour),
+            Some(Call::Instant(format!("max({s})")))
+        );
+        let bars = panel(
+            json!({"id": "a", "title": "t", "kind": "bars", "metric": free, "order": "lowest", "count": 4}),
+        );
+        assert_eq!(
+            build(&bars, s, TimeRange::Hour),
+            Some(Call::Instant(format!("bottomk(4, {s})")))
+        );
     }
 
     #[test]
@@ -1080,6 +1111,18 @@ mod tests {
         assert_eq!(
             (series[0].label.as_str(), series[0].server_id),
             ("Average", None)
+        );
+        // Bars draw top rows, a gauge a figure.
+        let bars = panel(json!({"id": "a", "title": "t", "kind": "bars",
+            "metric": "monitorflow_disk_used_ratio", "order": "highest", "count": 1}));
+        assert!(
+            matches!(convert(&bars, &servers, matrix).unwrap(), PanelResult::Top { rows } if rows.len() == 1)
+        );
+        let gauge = panel(json!({"id": "a", "title": "t", "kind": "gauge",
+            "metric": "monitorflow_disk_used_ratio", "combine": "max"}));
+        let one = json!({"result": [{"metric": {}, "values": [[1, "0.7"]]}]});
+        assert!(
+            matches!(convert(&gauge, &servers, one).unwrap(), PanelResult::Figure { value: Some(v) } if v == 0.7)
         );
     }
 
