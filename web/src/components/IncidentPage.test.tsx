@@ -29,13 +29,25 @@ const resolved: IncidentDetail = {
 };
 const ID = resolved.id;
 
-const REMEDIATION = `GET /api/remediation/incidents?alert_incident_id=${ID}&limit=1`;
+const REMEDIATION = `GET /api/remediation/incidents?alert_incident_id=${ID}&limit=20`;
+const RUN_STATUS = `GET /api/remediation/alerts/${ID}`;
+const RUN = `POST /api/remediation/alerts/${ID}/run`;
 const none = { status: 200, body: { incidents: [], next_cursor: null } };
+const noStatus = { status: 404, body: { error: "not found" } };
 
-function stubIncident(detail: IncidentDetail | { status: number; body: unknown }, remediation: { status: number; body: unknown } = none) {
+type Reply = { status: number; body: unknown };
+
+function stubIncident(
+  detail: IncidentDetail | Reply,
+  remediation: Reply = none,
+  run: Reply | Reply[] = noStatus,
+  extra: Record<string, Reply | Reply[]> = {},
+) {
   const fetchMock = stubFetch({
     [`GET /api/incidents/${ID}`]: "events" in detail ? { status: 200, body: detail } : detail,
     [REMEDIATION]: remediation,
+    [RUN_STATUS]: run,
+    ...extra,
   });
   fetchMock.mockImplementation(
     ((original) => async (input, init) => {
@@ -204,6 +216,104 @@ describe("IncidentPage", () => {
     render(<IncidentPage id={ID} />);
     const line = (await screen.findByText("AI remediation")).parentElement!;
     expect(line).toHaveTextContent(new RegExp(`AI remediation\\s*Awaiting approval\\s*4 events · opened ${clock("2026-10-19T11:00:20Z")}`));
+  });
+
+  describe("running AI again (ADR-0165)", () => {
+    const open = () => ({ ...resolved, ...incident(), events: resolved.events.slice(0, 1) });
+    const attempt = (id: string, state: string, opened: string) => ({
+      id, server_id: "s", hostname: "web-1", alert_incident_id: ID, metric: "m", instance: "", state,
+      opened_at: opened, closed_at: state === "escalated" ? opened : null, max_commands: 3, max_duration_s: 3600, event_count: 4,
+    });
+    const escalated = { status: 200, body: { incidents: [attempt("r1", "escalated", "2026-10-19T11:00:20Z")], next_cursor: null } };
+    const status = (fields: object) => ({
+      status: 200,
+      body: { alert_incident_id: ID, attempts: 1, latest_id: "r1", latest_state: "escalated", can_run: true, blocked: null, reason: null, refusal: null, ...fields },
+    });
+
+    it("offers it on an open alert whose last attempt ended, and starts one", async () => {
+      const started = status({ attempts: 2, latest_id: "r2", latest_state: "open", can_run: false, blocked: "in_progress" });
+      const after = { status: 200, body: { incidents: [attempt("r2", "open", "2026-10-19T11:59:00Z"), attempt("r1", "escalated", "2026-10-19T11:00:20Z")], next_cursor: null } };
+      const fetchMock = stubIncident(open(), escalated, [status({}), started], {
+        [RUN]: { status: 201, body: { id: "r2", alert_incident_id: ID, attempt: 2, previous_id: "r1", state: "open" } },
+      });
+      fetchMock.mockImplementation(
+        ((original) => async (input, init) => {
+          // The list once the new attempt exists.
+          if (String(input) === REMEDIATION.slice(4) && fetchMock.mock.calls.some(([, i]) => i?.method === "POST")) {
+            return new Response(JSON.stringify(after.body), { status: 200 });
+          }
+          return original(input, init);
+        })(fetchMock.getMockImplementation()!),
+      );
+      render(<IncidentPage id={ID} />);
+      const button = await screen.findByRole("button", { name: "Run AI again" });
+      expect(button).toBeEnabled();
+      await userEvent.click(button);
+      expect(fetchMock.mock.calls.some(([input, init]) => `${init?.method} ${String(input)}` === RUN)).toBe(true);
+      // The new attempt shows, numbered, with the earlier one under it, and no button while it runs.
+      const line = (await screen.findByText(/^Attempt 2 · /)).parentElement!;
+      expect(line).toHaveTextContent(/AI remediation\s*Open\s*Attempt 2 · 4 events/);
+      const earlier = screen.getByRole("list", { name: "Earlier attempts" });
+      expect(within(earlier).getByRole("link")).toHaveTextContent(/^Attempt 1: escalated, opened /);
+      expect(within(earlier).getByRole("link")).toHaveAttribute("href", expect.stringMatching(/^\/remediation\/audit\/?\?incident=r1$/));
+      expect(screen.queryByRole("button", { name: "Run AI again" })).not.toBeInTheDocument();
+    });
+
+    it("says why it cannot run before anyone clicks", async () => {
+      stubIncident(open(), escalated, status({ can_run: false, blocked: "commands_refused", refusal: "commands_off", reason: "AI commands are off" }));
+      render(<IncidentPage id={ID} />);
+      expect(await screen.findByRole("button", { name: "Run AI again" })).toBeDisabled();
+      expect(
+        screen.getByText("Not now: AI commands are off on this server. Run the installer there with MF_ALLOW_COMMANDS=1 to allow them."),
+      ).toBeInTheDocument();
+    });
+
+    it("says AI is off", async () => {
+      stubIncident(open(), escalated, status({ can_run: false, blocked: "ai_off" }));
+      render(<IncidentPage id={ID} />);
+      expect(await screen.findByRole("button", { name: "Run AI again" })).toBeDisabled();
+      expect(screen.getByText(/^AI is off\./)).toBeInTheDocument();
+    });
+
+    it("offers nothing while an attempt runs, to someone who may not, or once resolved", async () => {
+      for (const [detail, run] of [
+        [open(), status({ can_run: false, blocked: "in_progress" })],
+        [open(), status({ can_run: false, blocked: "role" })],
+        [resolved, status({})],
+      ] as const) {
+        stubIncident(detail, escalated, run);
+        const { unmount } = render(<IncidentPage id={ID} />);
+        await screen.findByText("AI remediation");
+        expect(screen.queryByRole("button", { name: /Run AI/ })).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+
+    it("offers the first run on an open alert that never had one", async () => {
+      stubIncident(open(), none, status({ attempts: 0, latest_id: null, latest_state: null }));
+      render(<IncidentPage id={ID} />);
+      expect(await screen.findByRole("button", { name: "Run AI" })).toBeEnabled();
+    });
+
+    it("shows the server's refusal when starting fails", async () => {
+      stubIncident(open(), escalated, status({}), {
+        [RUN]: { status: 409, body: { error: "an AI remediation of this alert is already running or waiting for approval" } },
+      });
+      render(<IncidentPage id={ID} />);
+      await userEvent.click(await screen.findByRole("button", { name: "Run AI again" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("already running or waiting for approval");
+    });
+
+    it("words it in French", async () => {
+      setActiveLocale("fr");
+      try {
+        stubIncident(open(), escalated, status({}));
+        render(<IncidentPage id={ID} />);
+        expect(await screen.findByRole("button", { name: "Relancer l’IA" })).toBeEnabled();
+      } finally {
+        setActiveLocale("en");
+      }
+    });
   });
 
   it("refreshes an open incident and stops once it is resolved", async () => {

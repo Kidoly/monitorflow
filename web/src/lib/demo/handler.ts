@@ -270,6 +270,18 @@ const ROUTES: [RegExp, Handler][] = [
     return { incidents: list.map(({ events, chain, site_name, customer_name, ...row }) => row), next_cursor: null };
   }],
   [/^\/api\/remediation\/incidents\/([^/]+)$/, ([id]) => found(REMEDIATIONS.find((r) => r.id === id))],
+  [/^\/api\/remediation\/alerts\/([^/]+)$/, ([id]) => {
+    const alert = found(INCIDENTS.find((i) => i.id === id));
+    const list = REMEDIATIONS.filter((r) => r.alert_incident_id === id);
+    const latest = list[0] ?? null;
+    const busy = latest !== null && !["resolved", "escalated", "failed"].includes(latest.state);
+    const blocked = alert.state !== "open" ? "alert_resolved" : busy ? "in_progress" : null;
+    // Offered, so the page shows "Run AI again"; starting it is refused like every change in the demo.
+    return {
+      alert_incident_id: id, attempts: list.length, latest_id: latest?.id ?? null, latest_state: latest?.state ?? null,
+      can_run: blocked === null, blocked, reason: null, refusal: null,
+    };
+  }],
   [/^\/api\/remediation\/events$/, (_, q) => {
     const events = AUDIT.filter(
       (e) =>
