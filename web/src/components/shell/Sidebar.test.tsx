@@ -131,16 +131,16 @@ describe("sidebar preferences", () => {
 
     it("hides an item and shows it again", async () => {
       const { user, main, fetchMock } = await renderEditor(admin);
-      await user.click(main.getByRole("checkbox", { name: "Audit log" }));
+      await user.click(main.getByRole("switch", { name: "Audit log" }));
       expect(within(nav()).queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
       expect(await saved(fetchMock)).toEqual({ hidden: ["audit"] });
-      await user.click(main.getByRole("checkbox", { name: "Audit log" }));
+      await user.click(main.getByRole("switch", { name: "Audit log" }));
       expect(within(nav()).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
     });
 
     it("never lets Settings be hidden", async () => {
       const { main } = await renderEditor(admin);
-      const settings = main.getByRole("checkbox", { name: "Settings" });
+      const settings = main.getByRole("switch", { name: "Settings" });
       expect(settings).toBeChecked();
       expect(settings).toBeDisabled();
       expect(settings).toHaveAccessibleDescription("Always shown");
@@ -192,9 +192,9 @@ describe("sidebar preferences", () => {
 
     it("lists only what the role shows", async () => {
       const { main } = await renderEditor(viewer);
-      expect(main.queryByRole("checkbox", { name: "Mirrors" })).not.toBeInTheDocument();
-      expect(main.queryByRole("checkbox", { name: "Campaigns" })).not.toBeInTheDocument();
-      expect(main.getByRole("checkbox", { name: "Fleet" })).toBeChecked();
+      expect(main.queryByRole("switch", { name: "Mirrors" })).not.toBeInTheDocument();
+      expect(main.queryByRole("switch", { name: "Campaigns" })).not.toBeInTheDocument();
+      expect(main.getByRole("switch", { name: "Fleet" })).toBeChecked();
     });
   });
 });

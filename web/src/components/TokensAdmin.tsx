@@ -12,6 +12,7 @@ import { Banner, EmptyState, ErrorState, NoPermission, PageHeader, StaleBanner }
 import { CopyButton, SecretField } from "@/components/ui/SecretField";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatAgo } from "@/components/ui/time";
+import { Switch } from "@/components/ui/Switch";
 import { rich, t } from "@/i18n";
 import {
   type AgentInstall,
@@ -684,10 +685,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
           {t("install.agent.relayInvalid")}
         </p>
       )}
-      <label className={styles.check}>
-        <input type="checkbox" checked={aiFromWeb} onChange={(e) => setAiFromWeb(e.target.checked)} />{" "}
-        {t("install.agent.aiFromWeb")} <span className={styles.fieldNote}>{t("install.agent.aiFromWebNote")}</span>
-      </label>
+      <Switch checked={aiFromWeb} onChange={setAiFromWeb} label={t("install.agent.aiFromWeb")} note={t("install.agent.aiFromWebNote")} />
       {shared ? (
         <Banner tone="warn">{shared}</Banner>
       ) : (
@@ -730,10 +728,7 @@ function RelayInstallCommand({ target }: { target: InstallTarget }) {
           {t("install.relay.central", { version: central.version })}
         </p>
       )}
-      <label className={styles.check}>
-        <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />{" "}
-        {t("install.relay.mirror")} <span className={styles.fieldNote}>{t("install.relay.mirrorNote")}</span>
-      </label>
+      <Switch checked={mirror} onChange={setMirror} label={t("install.relay.mirror")} note={t("install.relay.mirrorNote")} />
       {"text" in command ? (
         <InstallCommand name="Linux" note={t("install.linux.note")} text={command.text} />
       ) : (
@@ -940,10 +935,7 @@ function TokenTable({
           {t("install.tokens.title")}
         </h2>
         <span className={styles.dim}>{t("install.tokens.pending", { count: pending })}</span>
-        <label className={styles.check}>
-          <input type="checkbox" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} />{" "}
-          {t("install.tokens.hideDone")}
-        </label>
+        <Switch rowClassName={styles.check} checked={hideDone} onChange={setHideDone} label={t("install.tokens.hideDone")} />
       </div>
       {tokens && rows.length === 0 ? (
         <p className={styles.sectionNote}>{tokens.length === 0 ? t("install.tokens.none") : t("install.tokens.nonePending")}</p>

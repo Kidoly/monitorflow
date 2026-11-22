@@ -26,6 +26,7 @@ import {
 import { formatDuration } from "@/lib/format";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
+import { Switch } from "@/components/ui/Switch";
 
 import own from "./Campaigns.module.css";
 import { Breadcrumb } from "./ui/Breadcrumb";
@@ -311,10 +312,12 @@ export function CampaignForm({ me }: { me: Me }) {
           )}
           <div className={own.row}>
             {draft.update !== "agent" && (
-              <label className={own.inline}>
-                <input type="checkbox" checked={draft.allowReboot} onChange={(e) => set({ allowReboot: e.target.checked })} />
-                {t("campaigns.form.reboot")}
-              </label>
+              <Switch
+                rowClassName={own.inline}
+                checked={draft.allowReboot}
+                onChange={(allowReboot) => set({ allowReboot })}
+                label={t("campaigns.form.reboot")}
+              />
             )}
             <label className={own.fld}>
               {t("campaigns.form.ttl")}

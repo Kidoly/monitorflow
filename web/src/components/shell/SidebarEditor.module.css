@@ -20,9 +20,21 @@
   margin-bottom: 4px;
 }
 
-.radio,
-.check {
+.radio {
   display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A sidebar item's switch takes the free width, so the arrows line up on the right. */
+.check {
+  flex: 1;
+  width: auto;
+  align-items: center;
+}
+
+.item {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
 }

@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
+import { Switch } from "@/components/ui/Switch";
 
 import styles from "./AdminPages.module.css";
 import { describeGrant } from "./UsersAdmin";
@@ -558,14 +559,7 @@ function LdapFields({
         />
         <span className={styles.fieldNote}>{t("signIn.groupBaseNote")}</span>
       </label>
-      <label className={styles.check}>
-        <input
-          type="checkbox"
-          checked={settings.nested_groups}
-          onChange={(e) => update({ nested_groups: e.target.checked })}
-        />{" "}
-        {t("signIn.nested")}
-      </label>
+      <Switch checked={settings.nested_groups} onChange={(nested_groups) => update({ nested_groups })} label={t("signIn.nested")} />
       <details>
         <summary>{t("signIn.advanced")}</summary>
         <div className={styles.stack}>

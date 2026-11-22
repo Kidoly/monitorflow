@@ -41,6 +41,7 @@ import { cx } from "@/components/ui/cx";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, StaleBanner } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
+import { Switch } from "@/components/ui/Switch";
 
 import { ProbeSelect, probeLabel, probeValue, useProbes } from "./AddDevice";
 import { CheckRecommendations } from "./CheckRecommendations";
@@ -962,10 +963,11 @@ function CheckForm({
         <p className={admin.fieldNote}>{t("monitoring.pluginNoAlert")}</p>
       ) : (
         <>
-          <label className={styles.check}>
-            <input type="checkbox" checked={alert} onChange={(e) => setAlert(e.target.checked)} />{" "}
-            {type.severity === "critical" ? t("monitoring.raiseCritical") : t("monitoring.raiseWarning")}
-          </label>
+          <Switch
+            checked={alert}
+            onChange={setAlert}
+            label={type.severity === "critical" ? t("monitoring.raiseCritical") : t("monitoring.raiseWarning")}
+          />
           {alert && <SlowNote durationS={type.duration_s} intervalS={intervalMs / 1000} />}
         </>
       )}

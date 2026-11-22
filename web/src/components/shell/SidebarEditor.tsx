@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { t } from "@/i18n";
 import type { Me } from "@/lib/api";
 import { type SidebarPreferences, setPreference, usePreferences } from "@/lib/preferences";
@@ -124,15 +125,17 @@ export function SidebarEditor({ me }: { me: Me }) {
               const name = t(item.label);
               return (
                 <li key={item.id} className={styles.row}>
-                  <label className={styles.check}>
-                    <input
-                      type="checkbox"
-                      checked={!hidden.includes(item.id)}
-                      onChange={(e) => setShown(item.id, e.target.checked)}
-                    />
-                    <Icon name={item.icon} />
-                    {name}
-                  </label>
+                  <Switch
+                    rowClassName={styles.check}
+                    checked={!hidden.includes(item.id)}
+                    onChange={(shown) => setShown(item.id, shown)}
+                    label={
+                      <span className={styles.item}>
+                        <Icon name={item.icon} />
+                        {name}
+                      </span>
+                    }
+                  />
                   <Button
                     size="small"
                     ref={ref(`${item.id}:up`)}
@@ -161,11 +164,19 @@ export function SidebarEditor({ me }: { me: Me }) {
       ))}
       <ul className={styles.list}>
         <li className={styles.row}>
-          <label className={styles.check}>
-            <input type="checkbox" checked disabled aria-describedby="sidebar-settings-always" />
-            <Icon name={SETTINGS_ITEM.icon} />
-            {t(SETTINGS_ITEM.label)}
-          </label>
+          <Switch
+            rowClassName={styles.check}
+            checked
+            disabled
+            onChange={() => {}}
+            aria-describedby="sidebar-settings-always"
+            label={
+              <span className={styles.item}>
+                <Icon name={SETTINGS_ITEM.icon} />
+                {t(SETTINGS_ITEM.label)}
+              </span>
+            }
+          />
           <span className={styles.always} id="sidebar-settings-always">
             {t("shell.sidebar.alwaysShown")}
           </span>

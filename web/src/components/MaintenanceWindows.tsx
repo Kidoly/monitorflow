@@ -26,6 +26,7 @@ import { RowMenu } from "@/components/ui/RowMenu";
 import { Banner, EmptyState, ErrorState } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
 import { formatDay } from "@/components/ui/time";
+import { Switch } from "@/components/ui/Switch";
 
 import admin from "./AdminPages.module.css";
 import styles from "./Silences.module.css";
@@ -337,10 +338,11 @@ export function WindowForm({
           <fieldset className={admin.fieldset}>
             <legend className={admin.legend}>{t("maintenance.form.months")}</legend>
             <div className={styles.choices}>
-              <label>
-                <input type="checkbox" checked={draft.months.length === 0} onChange={() => set("months", draft.months.length === 0 ? [new Date().getMonth() + 1] : [])} />
-                {t("maintenance.form.everyMonth")}
-              </label>
+              <Switch
+                checked={draft.months.length === 0}
+                onChange={(every) => set("months", every ? [] : [new Date().getMonth() + 1])}
+                label={t("maintenance.form.everyMonth")}
+              />
               {draft.months.length > 0 &&
                 MONTHS.map((m) => (
                   <label key={m}>
