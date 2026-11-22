@@ -21336,6 +21336,7 @@
                       "fallback": [
                         "carol"
                       ],
+                      "follow_up_only": false,
                       "handoff_day": 1,
                       "handoff_time": "09:00",
                       "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -21500,7 +21501,7 @@
           "on-call"
         ],
         "summary": "Add an on-call schedule",
-        "description": "Administrators of its place. The first member is on call from the last\nhand-off, so someone is on call at once. With `people_per_turn` above\n1, that many members are on call together and all are told (ADR-0170). Audited as\n`on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`\nto retry.",
+        "description": "Administrators of its place. The first member is on call from the last\nhand-off, so someone is on call at once. With `people_per_turn` above\n1, that many members are on call together and all are told (ADR-0170).\nWith `follow_up_only`, its people hear only of alerts nobody\nacknowledged, through a follow-up step that names the schedule: a\nsecond level (ADR-0171). Audited as\n`on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`\nto retry.",
         "operationId": "create_on_call_schedule",
         "parameters": [
           {
@@ -21523,6 +21524,7 @@
               },
               "example": {
                 "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "follow_up_only": false,
                 "handoff_day": 1,
                 "handoff_time": "09:00",
                 "members": [
@@ -21554,6 +21556,7 @@
                   "fallback": [
                     "carol"
                   ],
+                  "follow_up_only": false,
                   "handoff_day": 1,
                   "handoff_time": "09:00",
                   "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -21771,6 +21774,7 @@
               },
               "example": {
                 "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "follow_up_only": false,
                 "handoff_day": 1,
                 "handoff_time": "09:00",
                 "members": [
@@ -21802,6 +21806,7 @@
                   "fallback": [
                     "carol"
                   ],
+                  "follow_up_only": false,
                   "handoff_day": 1,
                   "handoff_time": "09:00",
                   "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -22166,6 +22171,7 @@
                   "fallback": [
                     "carol"
                   ],
+                  "follow_up_only": false,
                   "handoff_day": 1,
                   "handoff_time": "09:00",
                   "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -52942,6 +52948,7 @@
           "handoff_time",
           "members",
           "people_per_turn",
+          "follow_up_only",
           "overrides",
           "now_all",
           "next_all",
@@ -52975,6 +52982,10 @@
               "type": "string"
             },
             "description": "Who is told during a gap; empty when nobody can be, and for members\nwho do not manage it."
+          },
+          "follow_up_only": {
+            "type": "boolean",
+            "description": "Told only when a follow-up step names it, never of an alert's\nfirst message: a second level (ADR-0171)."
           },
           "handoff_day": {
             "type": [
@@ -53127,6 +53138,10 @@
             ],
             "format": "uuid",
             "description": "The customer it is for; with `site_id` also `null`, everything."
+          },
+          "follow_up_only": {
+            "type": "boolean",
+            "description": "`true`: its people are told only by the follow-up steps that name\nit, when nobody acknowledged in time, never of an alert's first\nmessage (ADR-0171). `false` by default."
           },
           "handoff_day": {
             "type": [
