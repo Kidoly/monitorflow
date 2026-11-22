@@ -3445,6 +3445,43 @@ export interface IntegrationDeliveryList {
 /** One event by its ID, or every event from `from` to `to` (now when absent). */
 export type IntegrationReplay = { event_id: string } | { from: string; to?: string };
 
+/** The PSA connection of `GET /api/psa/connection` (ADR-0164, ADR-0166). Never its secret. */
+export interface PsaConnection {
+  kind: "halopsa";
+  base_url: string;
+  tenant: string | null;
+  client_id: string;
+  /** Why the saved secret does not open; null when it does. */
+  secret_error: string | null;
+  enabled: boolean;
+  /** The PSA agent the application acts as, from the last success. */
+  agent_name: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PsaConnectionState {
+  connection: PsaConnection | null;
+}
+
+/** Body of `PUT /api/psa/connection` and of its test; an empty secret keeps the saved one for the same address. */
+export interface PsaConnectionRequest {
+  base_url?: string;
+  tenant?: string | null;
+  client_id?: string;
+  client_secret?: string;
+  enabled?: boolean;
+}
+
+export interface PsaConnectionTest {
+  ok: boolean;
+  agent_name: string | null;
+  error: string | null;
+}
+
 /** A channel run by a plugin (ADR-0103); its secret settings never come back. */
 export interface PluginChannelSettings {
   plugin: string;
@@ -4560,6 +4597,18 @@ export const api = {
 
   replayIntegration: (id: string, body: IntegrationReplay) =>
     request<{ queued: number }>(`/api/integrations/${encodeURIComponent(id)}/replay`, { method: "POST", body }),
+
+  /** The PSA connection, global administrators only (ADR-0164). */
+  psaConnection: (signal?: AbortSignal) => request<PsaConnectionState>("/api/psa/connection", { signal }),
+
+  savePsaConnection: (body: PsaConnectionRequest) =>
+    request<PsaConnection>("/api/psa/connection", { method: "PUT", body }),
+
+  deletePsaConnection: () => request<void>("/api/psa/connection", { method: "DELETE" }),
+
+  /** Signs in to the PSA with the form's values, the saved ones filling the gaps; changes nothing there. */
+  testPsaConnection: (body: PsaConnectionRequest) =>
+    request<PsaConnectionTest>("/api/psa/connection/test", { method: "POST", body }),
 
   /** Install keys and hosts waiting for approval, of the customers the user administers (ADR-0073). */
   installKeys: (signal?: AbortSignal) =>

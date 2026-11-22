@@ -24,8 +24,8 @@ use crate::notify::Coverage;
 
 pub use deliver::Deliverer;
 
-/// The page of integrations, under the web interface's URL.
-pub const PAGE: &str = "/settings/integrations/";
+/// The page of custom webhooks, under the web interface's URL.
+pub const PAGE: &str = "/settings/integrations/webhooks/";
 /// Version of the payload; fields are only ever added.
 pub const PAYLOAD_VERSION: u32 = 1;
 /// Says a delivery is a replay of an event already sent.

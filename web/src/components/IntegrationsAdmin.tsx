@@ -43,10 +43,12 @@ import {
   scopeName,
   scopeValue,
 } from "@/lib/notifications";
+import { INTEGRATIONS_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./AdminPages.module.css";
 import own from "./IntegrationsAdmin.module.css";
+import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, fieldClass } from "./ui/Button";
 import { type Column, DataTable } from "./ui/DataTable";
 import { InlineConfirm } from "./ui/InlineConfirm";
@@ -62,7 +64,7 @@ import { RelativeTime } from "./ui/RelativeTime";
 import { SecretField } from "./ui/SecretField";
 import { Label } from "./ui/StatusLabel";
 
-/** `/settings/integrations/`: administrators, each of what they administer, like the API (ADR-0102). */
+/** `/settings/integrations/webhooks/`: administrators, each of what they administer, like the API (ADR-0102). */
 export function IntegrationsPage() {
   const me = useMe();
   if (!isAdministrator(me)) {
@@ -132,7 +134,10 @@ function Integrations() {
   }
 
   const header = (
-    <PageHeader title={t("integrations.title")} />
+    <>
+      <Breadcrumb parents={[{ label: t("integrations.title"), href: INTEGRATIONS_PATH }]} />
+      <PageHeader title={t("integrations.webhooksTitle")} />
+    </>
   );
   if (error instanceof ApiError && error.status === 403) {
     return (
