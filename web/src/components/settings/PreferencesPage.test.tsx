@@ -82,10 +82,10 @@ describe("PreferencesPage", () => {
   it("holds the sidebar editor, for every role", async () => {
     await open();
     expect(screen.getByRole("heading", { level: 2, name: "Sidebar" })).toHaveAttribute("id", "sidebar");
-    expect(screen.getByRole("checkbox", { name: "Fleet" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Fleet" })).toBeChecked();
     expect(screen.getByRole("button", { name: "Reset to default" })).toBeDisabled();
     // Pages a role cannot open are not listed: saying so adds nothing.
-    expect(screen.getByText("Untick what you do not use.")).toBeInTheDocument();
+    expect(screen.getByText("Turn off what you do not use.")).toBeInTheDocument();
   });
 
   it("says when a change could not be saved", async () => {

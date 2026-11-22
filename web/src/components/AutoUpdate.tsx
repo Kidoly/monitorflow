@@ -284,7 +284,13 @@ function Settings({
       <div className={styles.sectionHead}>
         <h2 className={styles.sectionTitle}>{t("autoUpdate.settings")}</h2>
       </div>
-      <p className={styles.sectionNote}>{t("autoUpdate.explain")}</p>
+      <div className={styles.sectionNote}>
+        <p className={styles.learnText}>{t("autoUpdate.explain")}</p>
+        <details className={styles.learnMore}>
+          <summary>{t("autoUpdate.learnMore")}</summary>
+          <p className={styles.learnText}>{t("autoUpdate.explainMore")}</p>
+        </details>
+      </div>
       <div className={styles.buttons}>
         <span>
           {t("autoUpdate.serverWide")} <strong>{settings.enabled ? t("autoUpdate.on") : t("autoUpdate.off")}</strong>

@@ -3,12 +3,9 @@ import type { Catalog, Translation } from "../catalog";
 /** The Sites settings page: sites, customers and their automatic updates. */
 export const en = {
   online: { one: "{count} online", other: "{count} online" },
-  permanentCustomers:
-    "Sites cannot be renamed or moved to another customer, because the site name labels every stored metric. Choose names that will still make sense in two years.",
-  permanent:
-    "Sites cannot be renamed, because the site name labels every stored metric. Choose names that will still make sense in two years.",
-  autoUpdateNote:
-    "A site follows the server-wide setting for automatic updates unless it is set here. How they roll out: {link}.",
+  permanentCustomers: "A site keeps its name and customer for good: the name labels every stored metric.",
+  permanent: "A site keeps its name for good: it labels every stored metric.",
+  autoUpdateNote: "Its updates follow the server-wide setting ({link}) unless it has its own.",
   autoUpdateLink: "Automatic updates",
   what: "sites",
   loading: "Loading sites",
@@ -62,12 +59,9 @@ export const en = {
 
 export const fr: Translation<typeof en> = {
   online: { one: "{count} en ligne", other: "{count} en ligne" },
-  permanentCustomers:
-    "Un site ne peut être ni renommé ni déplacé vers un autre client, car son nom étiquette chaque métrique stockée. Choisissez des noms qui auront encore du sens dans deux ans.",
-  permanent:
-    "Un site ne peut pas être renommé, car son nom étiquette chaque métrique stockée. Choisissez des noms qui auront encore du sens dans deux ans.",
-  autoUpdateNote:
-    "Un site suit le réglage général des mises à jour automatiques, sauf s’il est réglé ici. Leur déroulement : {link}.",
+  permanentCustomers: "Un site garde pour toujours son nom et son client : le nom étiquette chaque métrique stockée.",
+  permanent: "Un site garde pour toujours son nom : il étiquette chaque métrique stockée.",
+  autoUpdateNote: "Ses mises à jour suivent le réglage général ({link}), sauf s’il a le sien.",
   autoUpdateLink: "Mises à jour automatiques",
   what: "les sites",
   loading: "Chargement des sites",

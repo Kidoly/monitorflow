@@ -17,6 +17,7 @@ import {
 import { administersCustomer, administersEverything, administersSite, useMe, useMultiCustomer } from "@/lib/me";
 import { API_DOCS_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
+import { Switch } from "@/components/ui/Switch";
 
 import { AdminLayout } from "./AdminLayout";
 import admin from "./AdminPages.module.css";
@@ -290,9 +291,7 @@ function NewKey({
       )}
       <fieldset className={admin.fieldset}>
         <legend className={admin.legend}>{t("apiKeys.areas")}</legend>
-        <label>
-          <input type="checkbox" checked={limited} onChange={(e) => setLimited(e.target.checked)} /> {t("apiKeys.someAreas")}
-        </label>
+        <Switch checked={limited} onChange={setLimited} label={t("apiKeys.someAreas")} />
         {limited &&
           AREAS.map((area) => (
             <label key={area}>

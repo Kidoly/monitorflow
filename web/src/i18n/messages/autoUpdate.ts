@@ -35,8 +35,10 @@ export const en = {
   relaysRollouts: "Relays rollouts",
   agentsRollouts: "Agents rollouts",
   settings: "Settings",
-  explain:
-    "The server moves relays, then agents, to the newest stable release it holds, never newer than itself and never backwards: one per site first, then a quarter of the site at a time. Each is tried once per release. An update restarts the agent or relay for a few seconds, never the server, so it is not held for a maintenance window; for servers that must only change in a window, turn their site off under Sites and update them with a campaign.",
+  explain: "The server brings relays, then agents, up to the release it holds, a few at a time.",
+  learnMore: "Learn more",
+  explainMore:
+    "It never installs a release newer than itself and never goes back. Each site gets one server first, then a quarter of its servers at a time, and each server is tried once per release. An update restarts the agent or relay for a few seconds, never the server, so it does not wait for a maintenance window. For servers that may only change in a window, turn their site off under Sites and update them with a campaign.",
   serverWide: "Server-wide:",
   on: "On",
   off: "Off",
@@ -127,8 +129,10 @@ export const fr: Translation<typeof en> = {
   relaysRollouts: "Déploiements des relais",
   agentsRollouts: "Déploiements des agents",
   settings: "Paramètres",
-  explain:
-    "Le serveur fait passer les relais, puis les agents, à la dernière version stable qu’il détient, jamais plus récente que lui et jamais en arrière : un par site d’abord, puis un quart du site à la fois. Chacun est tenté une fois par version. Une mise à jour redémarre l’agent ou le relais quelques secondes, jamais le serveur, elle n’attend donc pas de fenêtre de maintenance ; pour des serveurs qui ne doivent changer que dans une fenêtre, désactivez leur site sous Sites et mettez-les à jour avec une campagne.",
+  explain: "Le serveur met les relais, puis les agents, à la version qu’il détient, quelques-uns à la fois.",
+  learnMore: "En savoir plus",
+  explainMore:
+    "Il n’installe jamais une version plus récente que lui et ne revient jamais en arrière. Chaque site reçoit d’abord un serveur, puis un quart de ses serveurs à la fois, et chaque serveur est tenté une fois par version. Une mise à jour redémarre l’agent ou le relais quelques secondes, jamais le serveur\u00a0: elle n’attend donc pas de fenêtre de maintenance. Pour des serveurs qui ne doivent changer que dans une fenêtre, désactivez leur site sous Sites et mettez-les à jour avec une campagne.",
   serverWide: "Pour tout le serveur :",
   on: "Activées",
   off: "Désactivées",

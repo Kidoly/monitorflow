@@ -6,6 +6,7 @@ import { Fragment, type KeyboardEvent, useEffect, useId, useRef, useState } from
 import { t } from "@/i18n";
 
 import styles from "./Breadcrumb.module.css";
+import { cx } from "./cx";
 import { SkeletonLines } from "./PageState";
 
 /** A page next to the current one: another server of the site, another sensor of the server. */
@@ -30,12 +31,13 @@ export interface Crumb {
 }
 
 /**
- * "Fleet › web-01 ▾ › ▾": links to the parents. The page's own name is
+ * "Fleet › web-01 ▾ › Other sensors of web-01 ▾": links to the parents. The page's own name is
  * left out when the title right below says it; pass `current` only for
  * something the title does not show (an incident's short id), and it
  * carries `aria-current="page"`. A crumb with `siblings` gets a ▾ that
  * lists them, to jump to one without going back; the current page's
- * siblings get a ▾ of their own at the end.
+ * siblings get a button of their own at the end, which says what it lists
+ * ("Other servers of paris ▾") when no `current` name stands before it.
  */
 export function Breadcrumb({
   parents,
@@ -66,7 +68,7 @@ export function Breadcrumb({
               {current}
             </span>
           )}
-          {siblings && <SiblingMenu siblings={siblings} />}
+          {siblings && <SiblingMenu siblings={siblings} named={current === undefined} />}
         </span>
       )}
     </nav>
@@ -81,7 +83,7 @@ const FILTER_FROM = 8;
  * it or a click elsewhere closes it, and the click still lands; ↑ ↓ move
  * between its links.
  */
-function SiblingMenu({ siblings }: { siblings: Siblings }) {
+function SiblingMenu({ siblings, named = false }: { siblings: Siblings; named?: boolean }) {
   const [open, setOpen] = useState(false);
   const [list, setList] = useState<Sibling[] | "error" | null>(null);
   const [filter, setFilter] = useState("");
@@ -159,13 +161,17 @@ function SiblingMenu({ siblings }: { siblings: Siblings }) {
       <button
         ref={button}
         type="button"
-        className={styles.toggle}
-        aria-label={siblings.label}
+        className={cx(styles.toggle, named && styles.named)}
+        aria-label={named ? undefined : siblings.label}
+        title={named ? undefined : siblings.label}
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen(!open)}
       >
-        ▾
+        {named && siblings.label}
+        <span className={styles.chevron} aria-hidden="true">
+          ▾
+        </span>
       </button>
       {open && (
         <div ref={panel} id={id} className={styles.panel}>

@@ -37,6 +37,20 @@
   cursor: pointer;
 }
 
+/* The current page's siblings, named: "Other servers of paris ▾". */
+.toggle.named {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+
+.chevron {
+  font-size: 12px;
+}
+
 .toggle:hover,
 .toggle[aria-expanded="true"] {
   background: var(--hl);

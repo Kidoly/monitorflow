@@ -120,7 +120,7 @@ describe("InlineConfirm", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "Emergency change…" }));
-    const check = screen.getByRole("checkbox", { name: "I understand" });
+    const check = screen.getByRole("switch", { name: "I understand" });
     expect(check).toHaveFocus();
     const confirm = screen.getByRole("button", { name: "Start the emergency change" });
     expect(confirm).toBeDisabled();

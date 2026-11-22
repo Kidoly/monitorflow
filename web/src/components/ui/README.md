@@ -13,6 +13,8 @@ The shared pieces of the design handoff (`docs/design/`). Each file has a doc co
 | `FactsBox` | The two-column facts list of detail pages. |
 | `TableBox` | A titled box around a `bare` `DataTable` ("Incidents on this sensor", "Timeline"). |
 | `Breadcrumb`, `Tabs`, `TabPanel` | Detail page navigation. |
+| `Switch` | Every yes/no choice: `<Switch checked onChange label note />`, a `role="switch"` button inside a label. Real checkboxes stay for picking items in a list. |
+| `SegmentedControl` | One choice among two to five short options (theme, source, scope): grouped buttons, the chosen one filled with the accent; a radio group with arrow keys. Longer or variable lists stay a select. |
 | `InlineConfirm` | In-place confirmation with a reason and a danger button naming the target. |
 | `SecretField` | A secret shown once, with Copy. |
 | `RelativeTime` | `<time>` reading "12 s ago", exact time in the title. `time.ts` also has `formatDuration` ("2 h 52 min") and `formatDay` ("10:12 today"). |

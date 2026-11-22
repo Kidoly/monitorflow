@@ -165,7 +165,7 @@ describe("SitesAdmin", () => {
     expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent(/paris\s*Alerts and checks\s*3 · 1 online\s*1 · relay-paris-1/);
     const globex = screen.getByRole("region", { name: "globex" });
     expect(within(globex).queryByRole("form")).not.toBeInTheDocument();
-    expect(screen.getByText(/cannot be renamed or moved to another customer/)).toBeInTheDocument();
+    expect(screen.getByText(/keeps its name and customer for good/)).toBeInTheDocument();
 
     const form = within(acme).getByRole("form", { name: "New site for acme" });
     await userEvent.type(within(form).getByLabelText("New site name"), " nice ");
@@ -190,7 +190,7 @@ describe("SitesAdmin", () => {
     render(<SitesAdmin me={single(customerAdmin)} />);
     const own = await screen.findByRole("region", { name: "Sites" });
     expect(within(own).getByRole("row", { name: /paris/ })).toHaveTextContent(/Alertes et contrôles\s*3 · 1 en ligne/);
-    expect(screen.getByText(/Un site ne peut pas être renommé/)).toBeInTheDocument();
+    expect(screen.getByText(/Un site garde pour toujours son nom/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Mises à jour automatiques" })).toHaveAttribute("href", "/admin/updates");
   });
 

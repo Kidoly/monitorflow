@@ -83,6 +83,27 @@
   font-weight: 500;
 }
 
+/* The Settings sidebar: its title, a full-size search, and the line when nothing matches. */
+.settingsTitle {
+  padding: 12px 10px 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settingsSearch {
+  flex: none;
+  width: 100%;
+  height: var(--control-h);
+  margin-bottom: 4px;
+}
+
+.noMatch {
+  margin: 8px 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .count {
   margin-left: auto;
   font-size: 12px;
