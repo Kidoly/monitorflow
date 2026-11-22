@@ -11,10 +11,12 @@ import { administersEverything, multiCustomer, multiSite, useMe } from "@/lib/me
 import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref, incidentsHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { incidentValue } from "@/lib/rules";
+import { useBulkRunner, useSelection } from "@/lib/bulk";
 import { usePolledData } from "@/lib/usePolledData";
 import { replaceParams } from "@/lib/urlState";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { ButtonLink } from "@/components/ui/Button";
+import { BulkBar } from "@/components/ui/BulkBar";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
@@ -128,6 +130,9 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     await api.acknowledgeIncidents(ids, note);
     refresh();
   }
+  const selection = useSelection();
+  const rowName = (i: Incident) => t("incidents.bulk.row", { title: incidentTitle(i), host: i.hostname });
+  const bulk = useBulkRunner<Incident>(selection, (i) => i.id, rowName, refresh);
 
   const me = useMe();
   const inScope = scopeSites(scope, sites);
@@ -211,6 +216,21 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     },
   ];
 
+  // Checked rows a filter or a refresh took away are out of reach.
+  const chosen = incidents.filter((i) => selection.selected.has(i.id));
+  // One at a time, so each succeeds or fails on its own (the route refuses a whole batch for one read-only site).
+  const acknowledgeChosen = (note: string) =>
+    bulk.run(chosen, {
+      done: (count) => t("incidents.bulk.acknowledged", { count }),
+      skipped: (count) => t("incidents.bulk.alreadyAcknowledged", { count }),
+      allowed: (i) => i.state !== "open" || Boolean(i.acknowledged_at) || Boolean(i.can_acknowledge),
+      act: async (i) => {
+        if (i.state !== "open" || i.acknowledged_at) return "skipped";
+        const { acknowledged } = await api.acknowledgeIncidents([i.id], note);
+        return acknowledged.length > 0 ? "done" : "skipped";
+      },
+    });
+
   const acknowledgeable = incidents.filter((i) => i.state === "open" && i.can_acknowledge && !i.acknowledged_at);
   return (
     <Page>
@@ -284,16 +304,30 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
           </EmptyState>
         )
       ) : (
-        <DataTable
-          label={t("incidents.title")}
-          columns={columns}
-          rows={incidents}
-          rowKey={(i) => i.id}
-          rowMuted={(i) => i.state === "resolved"}
-          loading={!data}
-          hasMore={Boolean(data?.more) && limit < MAX_LIMIT}
-          onLoadMore={() => setLimit((n) => Math.min(MAX_LIMIT, n + PAGE_SIZE))}
-        />
+        // One block, so the bar takes no gap of the page while it is empty.
+        <div>
+          <BulkBar count={chosen.length} onClear={selection.clear} summary={bulk.summary} onDismiss={bulk.dismiss}>
+            <AcknowledgeButton
+              size="small"
+              variant="k"
+              name={t("incidents.bulk.acknowledgeName", { count: chosen.length })}
+              disabled={bulk.busy}
+              onAcknowledge={acknowledgeChosen}
+              describeError={describeError}
+            />
+          </BulkBar>
+          <DataTable
+            label={t("incidents.title")}
+            columns={columns}
+            rows={incidents}
+            rowKey={(i) => i.id}
+            rowMuted={(i) => i.state === "resolved"}
+            loading={!data}
+            hasMore={Boolean(data?.more) && limit < MAX_LIMIT}
+            onLoadMore={() => setLimit((n) => Math.min(MAX_LIMIT, n + PAGE_SIZE))}
+            selection={{ selected: selection.selected, onChange: selection.change, rowLabel: rowName }}
+          />
+        </div>
       )}
     </Page>
   );

@@ -80,6 +80,16 @@ Every error answers with a status and a JSON body:
 | `metrics_timeout` | 504 | The metrics database did not answer in time |
 | `logs_timeout` | 504 | The logs database did not answer in time |
 
+## Acting on many at once
+
+The checkboxes of the web interface's incident and fleet lists act on many items with the routes of one item, called once per item, a few at a time. Each item then succeeds or fails on its own, and the summary says how many went through and why the others did not ("4 acknowledged, 1 refused: insufficient rights"). A script does the same, and a 403 or 404 on one item leaves the others done. The web interface applies these one item at a time:
+
+| Action | Route, once per item |
+| --- | --- |
+| Acknowledge incidents | `POST /api/v1/incidents/acknowledge` with one ID in `incident_ids` |
+
+`POST /api/v1/incidents/acknowledge` also takes up to 500 incidents in one request, but all or none: one incident on a site the key may only read refuses the whole request with 403, before anything is written. Send one at a time when some may be out of reach.
+
 ## Idempotency keys
 
 A `POST`, `PUT` or `DELETE` made with a key may carry `Idempotency-Key`: 1 to 255 visible ASCII characters, a UUID usually. The first request with a value runs and its answer is kept for 24 hours. The same request again (same method, path, query and body) gets that answer back with `Idempotent-Replayed: true`, instead of running a second time. A script that lost its connection can then retry without opening two silences or queuing two updates.

@@ -215,6 +215,58 @@ describe("IncidentList", () => {
     ]);
   });
 
+  it("acts on the checked incidents, each on its own, and says how it went", async () => {
+    const a = incident({ id: "1a6a9a3e-5b7c-4d8e-9f01-23456789abcd", hostname: "web-a", can_acknowledge: true });
+    const b = incident({ id: "1b6a9a3e-5b7c-4d8e-9f01-23456789abcd", hostname: "web-b", can_acknowledge: true });
+    // Read-only for this user: refused without a request.
+    const c = incident({ id: "1c6a9a3e-5b7c-4d8e-9f01-23456789abcd", hostname: "web-c", can_acknowledge: false });
+    const d = incident({
+      id: "1d6a9a3e-5b7c-4d8e-9f01-23456789abcd",
+      hostname: "web-d",
+      acknowledged_by: "bob",
+      acknowledged_at: new Date(2026, 9, 19, 13, 50).toISOString(),
+    });
+    const fetchMock = stubFetch({
+      ...options,
+      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [a, b, c, d], next_cursor: null } },
+      "POST /api/incidents/acknowledge": [
+        { status: 200, body: { acknowledged: [a.id] } },
+        { status: 500, body: { error: "internal error", code: "internal" } },
+      ],
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<IncidentList filters={NO_FILTERS} />);
+    await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(5));
+    const bar = screen.getByRole("region", { name: "Bulk actions" });
+    expect(within(bar).queryByRole("button")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: "Select Disk used /var on web-a" }));
+    expect(within(bar).getByText("1 selected")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Select every row shown" }));
+    expect(within(bar).getByText("4 selected")).toBeInTheDocument();
+
+    await user.click(within(bar).getByRole("button", { name: "Acknowledge the 4 selected incidents" }));
+    await user.type(within(bar).getByRole("textbox", { name: "What are you doing about it?" }), "on it{Enter}");
+    expect(await within(bar).findByRole("status")).toHaveTextContent(
+      /^1 acknowledged, 1 already acknowledged or resolved, 1 refused: insufficient rights \(Disk used \/var on web-c\), 1 failed: The server could not handle the request\. Try again later\. \(Disk used \/var on web-b\)/,
+    );
+    const bodies = fetchMock.mock.calls
+      .filter(([url]) => url === "/api/incidents/acknowledge")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies).toEqual([
+      { incident_ids: [a.id], note: "on it" },
+      { incident_ids: [b.id], note: "on it" },
+    ]);
+    // What did not go through stays checked, to try again.
+    expect(within(bar).getByText("2 selected")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select Disk used /var on web-b" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select Disk used /var on web-a" })).not.toBeChecked();
+    await user.click(within(bar).getByRole("button", { name: "Deselect" }));
+    expect(screen.getByRole("checkbox", { name: "Select every row shown" })).not.toBeChecked();
+    await user.click(within(bar).getByRole("button", { name: "Hide" }));
+    expect(within(bar).getByRole("status")).toBeEmptyDOMElement();
+  });
+
   it("keeps the scope's customer only", async () => {
     setUrl(`/incidents/?customer=${ACME}`);
     stubFetch({
