@@ -128,6 +128,28 @@ describe("ApprovalQueue", () => {
     expect(screen.queryByRole("link", { name: "Turn on AI" })).not.toBeInTheDocument();
   });
 
+  it("explains an empty queue: what arrives here and how", async () => {
+    stubFetch({ [LIST]: list() });
+    render(<ApprovalQueue />);
+    expect(await screen.findByText("Nothing waiting for approval")).toBeInTheDocument();
+    expect(screen.getByText(/Commands that only read run on their own/)).toBeInTheDocument();
+    expect(screen.getByText("How a command gets here")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+    expect(screen.getByRole("link", { name: "See what the AI did" })).toHaveAttribute(
+      "href",
+      expect.stringMatching(/^\/remediation\/audit\/?$/),
+    );
+  });
+
+  it("explains an empty queue in French", async () => {
+    setActiveLocale("fr");
+    stubFetch({ [LIST]: list() });
+    render(<ApprovalQueue />);
+    expect(await screen.findByText("Rien en attente d’approbation")).toBeInTheDocument();
+    expect(screen.getByText("Comment une commande arrive ici")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Voir ce qu’a fait l’IA" })).toBeInTheDocument();
+  });
+
   it("says nothing about AI while it is on", async () => {
     stubFetch({
       [LIST]: list(),
