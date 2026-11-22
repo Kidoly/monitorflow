@@ -458,10 +458,10 @@ fn resume_campaign() {}
 
 /// Stop a campaign
 ///
-/// Any state but a final one → `stopped`, for good: this is how a
-/// campaign is cancelled. Commands still `queued` are cancelled; those
-/// already sent or running finish. A stopped campaign cannot be started
-/// again: copy it into another, or delete it.
+/// Any state but a final one → `stopped`: this is how a campaign is
+/// cancelled. Commands still `queued` are cancelled; those already sent
+/// or running finish. A stopped campaign is not resumed: run it again
+/// (see "Run a campaign again"), edit it for its next run, or delete it.
 ///
 /// Needs an administrator role on the customer as a whole and the key
 /// area "updates". Audited as `campaign.stop`. Stopping a `stopped`,
