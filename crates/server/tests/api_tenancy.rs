@@ -1450,6 +1450,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("PUT", "/api/settings/server")
         | ("PUT", "/api/settings/retention")
         | ("GET", "/api/auto-update/{kind}/peers")
+        | ("GET", "/api/auto-update/{kind}/versions/peers")
         | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
             let uri = path
                 .replace("{kind}/peers", "agent/peers?state=waiting")

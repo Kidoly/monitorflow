@@ -807,6 +807,11 @@ mod tests {
             (&get, "/api/settings/auto-update", Some(Area::Updates)),
             (&get, "/api/auto-update/{kind}/peers", Some(Area::Updates)),
             (
+                &get,
+                "/api/auto-update/{kind}/versions/peers",
+                Some(Area::Updates),
+            ),
+            (
                 &post,
                 "/api/sites/{id}/ai-commands",
                 Some(Area::Remediation),

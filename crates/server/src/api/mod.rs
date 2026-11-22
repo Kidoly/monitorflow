@@ -133,6 +133,7 @@
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
 //! | GET | `/api/auto-update/{kind}/peers` | global administrator | `state` (`up_to_date`, `waiting`, `pending` or `failed`), `site_id`, `limit`, `offset`; [`auto_update::PeerList`]: the agents or relays behind one total |
+//! | GET | `/api/auto-update/{kind}/versions/peers` | global administrator | `version` (absent: not reported yet), `site_id`, `limit`, `offset`; [`auto_update_versions::VersionPeerList`]: the agents or relays on one version |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
 //! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
 //! | GET | `/api/settings/ai` | any session | [`ai::AiView`]: whether AI is on, its provider, whether a key is stored, the address, the model and Anthropic's models; never the key |
@@ -720,6 +721,7 @@ pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
 pub mod auto_update;
+pub mod auto_update_versions;
 pub mod availability;
 pub mod backups;
 pub mod business_services;
@@ -1224,6 +1226,10 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/auto-update", get(auto_update::status))
         .route("/api/auto-update/{kind}/peers", get(auto_update::peers))
+        .route(
+            "/api/auto-update/{kind}/versions/peers",
+            get(auto_update_versions::peers),
+        )
         .route(
             "/api/settings/auto-update",
             get(auto_update::get_settings).put(auto_update::set_settings),
