@@ -29,10 +29,9 @@
   outline-offset: 2px;
 }
 
+/* Fixed where the button puts it (floating.ts), so it never makes a table scroll. */
 .menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
+  position: fixed;
   z-index: 20;
   min-width: 160px;
   padding: 4px;

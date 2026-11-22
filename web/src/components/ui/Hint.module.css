@@ -11,10 +11,9 @@
   opacity: 0.8;
 }
 
+/* Fixed where the hover puts it (floating.ts), so a hidden tip never makes a table scroll. */
 .tip {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  position: fixed;
   z-index: 30;
   width: max-content;
   max-width: 320px;
