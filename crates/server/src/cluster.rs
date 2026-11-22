@@ -45,7 +45,7 @@ pub const COMMANDS_CHANNEL: &str = "monitorflow_commands";
 pub const RELAY_COMMANDS_CHANNEL: &str = "monitorflow_relay_commands";
 
 /// Moves the central server's heartbeat to now and, when it was older
-/// than `$1` seconds, records the time in between as a gap (ADR-0173):
+/// than `$1` seconds, records the time in between as a gap (ADR-0176):
 /// no instance ran then. Returns the gap's start, when there was one.
 const GAP: &str = "WITH prev AS (
          SELECT at FROM central_server_heartbeat WHERE id FOR UPDATE

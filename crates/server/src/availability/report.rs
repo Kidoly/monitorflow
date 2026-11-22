@@ -57,7 +57,7 @@ pub struct Numbers {
     /// Planned maintenance, left out of the count, seconds.
     pub maintenance_seconds: f64,
     /// Time the central server was not running, so nothing was watched:
-    /// left out of the count too, seconds (ADR-0173).
+    /// left out of the count too, seconds (ADR-0176).
     pub unobserved_seconds: f64,
     pub outages: usize,
     pub longest_seconds: f64,

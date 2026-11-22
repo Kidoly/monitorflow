@@ -125,7 +125,7 @@ impl<C> Outage<C> {
 pub struct Timeline {
     pub down: Spans,
     pub maintenance: Spans,
-    /// When the central server was not running (ADR-0173), outside planned
+    /// When the central server was not running (ADR-0176), outside planned
     /// maintenance: nothing was watched, so it is neither up nor down.
     pub unobserved: Spans,
 }
@@ -140,7 +140,7 @@ pub struct Measured<C> {
     /// Planned maintenance, seconds, left out of `counted`.
     pub maintenance: f64,
     /// Time the central server was not running, seconds, left out of
-    /// `counted` too (ADR-0173).
+    /// `counted` too (ADR-0176).
     pub unobserved: f64,
     pub outages: Vec<Outage<C>>,
     pub timeline: Timeline,

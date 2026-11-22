@@ -4048,7 +4048,7 @@ export interface AvailabilityNumbers {
   counted_seconds: number;
   down_seconds: number;
   maintenance_seconds: number;
-  /** Time the central server was not running, left out of the count (ADR-0173). */
+  /** Time the central server was not running, left out of the count (ADR-0176). */
   unobserved_seconds: number;
   outages: number;
   longest_seconds: number;

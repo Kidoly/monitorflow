@@ -119,7 +119,7 @@ pub struct Data {
     /// Every check name the central server knows, to tell which check
     /// wrote a metric (ADR-0151).
     pub names: Vec<String>,
-    /// When the central server was not running (ADR-0173).
+    /// When the central server was not running (ADR-0176).
     pub gaps: Spans,
 }
 

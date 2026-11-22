@@ -1,4 +1,4 @@
-# ADR-0173: Time the central server was stopped is not counted
+# ADR-0176: Time the central server was stopped is not counted
 
 Date: 2026-11-22
 Status: accepted; amends what counts in ADR-0155 and ADR-0172

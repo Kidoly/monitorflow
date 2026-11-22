@@ -101,7 +101,7 @@ pub fn period(at: DateTime<Utc>) -> Span {
 
 /// Counted, down and maintenance seconds of `timeline` over `window`,
 /// within `life`; the time the central server was not running is not
-/// counted (ADR-0173).
+/// counted (ADR-0176).
 pub fn slice(life: Span, timeline: &Timeline, window: Span) -> (f64, f64, f64) {
     let alive = Spans::one(life.0.max(window.0), life.1.min(window.1));
     let maintenance = timeline.maintenance.intersect(&alive).seconds();
