@@ -6,7 +6,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::model::{CampaignState, PinnedMirror, Window};
-use super::store::{CampaignRow, WindowRow, COLUMNS, WINDOW_COLUMNS};
+use super::store::{CampaignRow, RunSettings, WindowRow, COLUMNS, WINDOW_COLUMNS};
 use crate::commands::State as CommandState;
 
 /// What `GET /api/campaigns` filters on.
@@ -150,28 +150,33 @@ struct WindowWithCampaign {
 /// commands, skipped servers and updates whose sources could not be
 /// restored, as [`TargetRow::status`].
 pub async fn counts(pool: &PgPool, campaigns: &[Uuid]) -> Result<Vec<WaveCounts>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT t.campaign_id, t.wave, count(*) AS total,
-             count(*) FILTER (WHERE t.command_id IS NULL AND t.error IS NULL) AS pending,
-             count(*) FILTER (WHERE c.state IN ('queued', 'sent', 'running')) AS in_progress,
-             count(*) FILTER (WHERE c.state = 'succeeded' AND NOT r.failed) AS succeeded,
-             count(*) FILTER (WHERE (t.command_id IS NULL AND t.error IS NOT NULL)
-                              OR c.state IN ('failed', 'expired')
-                              OR (c.state = 'succeeded' AND r.failed)) AS failed,
-             count(*) FILTER (WHERE c.state = 'cancelled') AS cancelled
-         FROM campaign_targets t LEFT JOIN commands c ON c.id = t.command_id
-         CROSS JOIN LATERAL (
-             SELECT COALESCE(bool_or(state IN ('failed', 'expired', 'cancelled')), false) AS failed
-             FROM commands WHERE id = t.restore_command_id
-         ) r
+    // SQL-safe: interpolates only the constant COUNTS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{COUNTS} FROM campaign_targets t {COUNTS_JOINS}
          WHERE t.campaign_id = ANY($1)
          GROUP BY t.campaign_id, t.wave
-         ORDER BY t.campaign_id, t.wave",
-    )
+         ORDER BY t.campaign_id, t.wave"
+    )))
     .bind(campaigns)
     .fetch_all(pool)
     .await
 }
+
+/// The columns of [`WaveCounts`] over targets `t`, with [`COUNTS_JOINS`].
+const COUNTS: &str = "SELECT t.campaign_id, t.wave, count(*) AS total,
+     count(*) FILTER (WHERE t.command_id IS NULL AND t.error IS NULL) AS pending,
+     count(*) FILTER (WHERE c.state IN ('queued', 'sent', 'running')) AS in_progress,
+     count(*) FILTER (WHERE c.state = 'succeeded' AND NOT r.failed) AS succeeded,
+     count(*) FILTER (WHERE (t.command_id IS NULL AND t.error IS NOT NULL)
+                      OR c.state IN ('failed', 'expired')
+                      OR (c.state = 'succeeded' AND r.failed)) AS failed,
+     count(*) FILTER (WHERE c.state = 'cancelled') AS cancelled";
+
+const COUNTS_JOINS: &str = "LEFT JOIN commands c ON c.id = t.command_id
+     CROSS JOIN LATERAL (
+         SELECT COALESCE(bool_or(state IN ('failed', 'expired', 'cancelled')), false) AS failed
+         FROM commands WHERE id = t.restore_command_id
+     ) r";
 
 pub async fn waves(pool: &PgPool, campaign: Uuid) -> Result<Vec<WaveRow>, sqlx::Error> {
     sqlx::query_as(
@@ -185,25 +190,103 @@ pub async fn waves(pool: &PgPool, campaign: Uuid) -> Result<Vec<WaveRow>, sqlx::
 
 /// The campaign's servers by wave and hostname.
 pub async fn targets(pool: &PgPool, campaign: Uuid) -> Result<Vec<TargetRow>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT t.wave, t.server_id, s.peer_id, s.hostname, s.site_id, t.command_id,
-             c.state AS command_state, c.exit_code,
-             COALESCE(t.error, c.error,
-                      CASE WHEN r.state IN ('failed', 'expired', 'cancelled')
-                           THEN 'restoring sources ' || r.state
-                                || COALESCE(': ' || r.error, '') END) AS error,
-             c.finished_at, t.sources_command_id, t.restore_command_id,
-             r.state AS restore_state, t.snapshot_command_id
-         FROM campaign_targets t
-         JOIN servers s ON s.id = t.server_id
-         LEFT JOIN commands c ON c.id = t.command_id
-         LEFT JOIN commands r ON r.id = t.restore_command_id
+    // SQL-safe: interpolates only the constant TARGETS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{TARGETS} FROM campaign_targets t {TARGETS_JOINS}
          WHERE t.campaign_id = $1
-         ORDER BY t.wave, s.hostname, s.peer_id",
+         ORDER BY t.wave, s.hostname, s.peer_id"
+    )))
+    .bind(campaign)
+    .fetch_all(pool)
+    .await
+}
+
+/// The columns of [`TargetRow`] over targets `t`, with [`TARGETS_JOINS`].
+const TARGETS: &str = "SELECT t.wave, t.server_id, s.peer_id, s.hostname, s.site_id, t.command_id,
+     c.state AS command_state, c.exit_code,
+     COALESCE(t.error, c.error,
+              CASE WHEN r.state IN ('failed', 'expired', 'cancelled')
+                   THEN 'restoring sources ' || r.state
+                        || COALESCE(': ' || r.error, '') END) AS error,
+     c.finished_at, t.sources_command_id, t.restore_command_id,
+     r.state AS restore_state, t.snapshot_command_id";
+
+const TARGETS_JOINS: &str = "JOIN servers s ON s.id = t.server_id
+     LEFT JOIN commands c ON c.id = t.command_id
+     LEFT JOIN commands r ON r.id = t.restore_command_id";
+
+/// A past run of a campaign (ADR-0173).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RunRow {
+    pub number: i32,
+    pub state: CampaignState,
+    pub error: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: DateTime<Utc>,
+    pub settings: sqlx::types::Json<RunSettings>,
+}
+
+/// The past runs of `campaign`, newest first.
+pub async fn runs(pool: &PgPool, campaign: Uuid) -> Result<Vec<RunRow>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT number, state, error, started_at, finished_at, settings
+         FROM campaign_runs WHERE campaign_id = $1 ORDER BY number DESC",
     )
     .bind(campaign)
     .fetch_all(pool)
     .await
+}
+
+/// How many past runs each of `campaigns` has.
+pub async fn run_counts(
+    pool: &PgPool,
+    campaigns: &[Uuid],
+) -> Result<Vec<(Uuid, i64)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT campaign_id, count(*) FROM campaign_runs
+         WHERE campaign_id = ANY($1) GROUP BY campaign_id",
+    )
+    .bind(campaigns)
+    .fetch_all(pool)
+    .await
+}
+
+/// The batches, counts and servers of the past run `run` of `campaign`,
+/// as [`waves`], [`counts`] and [`targets`] read the current one.
+pub async fn run_detail(
+    pool: &PgPool,
+    campaign: Uuid,
+    run: i32,
+) -> Result<(Vec<WaveRow>, Vec<WaveCounts>, Vec<TargetRow>), sqlx::Error> {
+    let waves = sqlx::query_as(
+        "SELECT position, started_at, finished_at FROM campaign_run_waves
+         WHERE campaign_id = $1 AND run = $2 ORDER BY position",
+    )
+    .bind(campaign)
+    .bind(run)
+    .fetch_all(pool)
+    .await?;
+    // SQL-safe: interpolates only the constant COUNTS and TARGETS.
+    let counts = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{COUNTS} FROM campaign_run_targets t {COUNTS_JOINS}
+         WHERE t.campaign_id = $1 AND t.run = $2
+         GROUP BY t.campaign_id, t.wave ORDER BY t.wave"
+    )))
+    .bind(campaign)
+    .bind(run)
+    .fetch_all(pool)
+    .await?;
+    // SQL-safe: interpolates only the constant TARGETS.
+    let targets = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{TARGETS} FROM campaign_run_targets t {TARGETS_JOINS}
+         WHERE t.campaign_id = $1 AND t.run = $2
+         ORDER BY t.wave, s.hostname, s.peer_id"
+    )))
+    .bind(campaign)
+    .bind(run)
+    .fetch_all(pool)
+    .await?;
+    Ok((waves, counts, targets))
 }
 
 /// Pinned snapshots of `campaigns`, each campaign's by mirror name.

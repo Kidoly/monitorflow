@@ -2711,6 +2711,7 @@
                       "finished_at": null,
                       "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
                       "name": "November updates",
+                      "previous_runs": 0,
                       "progress": {
                         "cancelled": 0,
                         "failed": 0,
@@ -2901,6 +2902,7 @@
                   "finished_at": null,
                   "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
                   "name": "November updates",
+                  "previous_runs": 0,
                   "progress": {
                     "cancelled": 0,
                     "failed": 0,
@@ -3139,6 +3141,7 @@
                   "finished_at": null,
                   "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
                   "name": "November updates",
+                  "previous_runs": 0,
                   "progress": {
                     "cancelled": 0,
                     "failed": 0,
@@ -3317,7 +3320,7 @@
           "campaigns"
         ],
         "summary": "Edit a campaign",
-        "description": "Replaces the whole campaign with the body, which is the body of a\ncreation: fields left out take their defaults, not the campaign's\nvalues. Its servers are frozen again into batches, as at creation. The\nstate, who made it and when stay.\n\nOnly a campaign that queued nothing yet changes: a `draft`, or a\n`scheduled` or `paused` one whose first batch is still waiting for a\nmaintenance window. Once a batch was queued, or once finished, it is\n409: copy it into a new campaign instead (see \"Create a campaign\").\n\nNeeds an administrator role on the campaign's customer, and on the\ncustomer of the body when it moves it, as a whole, and the key area\n\"updates\". Audited as `campaign.update`.",
+        "description": "Replaces the whole campaign with the body, which is the body of a\ncreation: fields left out take their defaults, not the campaign's\nvalues. Its servers are frozen again into batches, as at creation. The\nstate, who made it and when stay.\n\nWhat may change depends on where the campaign is (ADR-0173):\n\n- **Nothing queued yet** (a `draft`, or a `scheduled` or `paused`\n  campaign whose first batch waits for a window): everything.\n- **A run under way** (a batch was queued, not finished): only `name`,\n  `windows` and `failure_threshold`; they apply to what is still to be\n  queued. Every other field must be as the campaign has it, read with\n  `GET`, or it is 409 naming what differs. Stop it, or wait for it to\n  end, to change the rest.\n- **Finished** (`stopped`, `completed` or `failed`): everything, for its\n  next run. The run that ended moves to `/campaigns/{id}/runs`, its\n  servers are frozen again into new batches and the campaign is a\n  `draft` again, to start when ready. A change of `name` alone renames\n  it and leaves it as it is. Refused while some of its commands are in\n  flight or package sources are still to be put back, as a deletion.\n\nNeeds an administrator role on the campaign's customer, and on the\ncustomer of the body when it moves it, as a whole, and the key area\n\"updates\". Audited as `campaign.update`.",
         "operationId": "update_campaign",
         "parameters": [
           {
@@ -3398,6 +3401,7 @@
                   "finished_at": null,
                   "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
                   "name": "November updates",
+                  "previous_runs": 0,
                   "progress": {
                     "cancelled": 0,
                     "failed": 0,
@@ -3542,7 +3546,7 @@
             }
           },
           "409": {
-            "description": "`conflict`: `cannot edit a campaign that is <state>` once it is finished, `cannot edit a campaign that queued commands already: duplicate it instead`, or a `sources` conflict as for a creation; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "description": "`conflict`: `cannot change <fields> while the campaign runs: ...` for a run under way, `the campaign still has commands in flight: edit it once they end` or `the package sources of some servers are not restored yet` for a finished one, or a `sources` conflict as for a creation; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -3771,6 +3775,7 @@
                   "finished_at": null,
                   "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
                   "name": "November updates",
+                  "previous_runs": 0,
                   "progress": {
                     "cancelled": 0,
                     "failed": 0,
@@ -3965,6 +3970,269 @@
         }
       }
     },
+    "/api/v1/campaigns/{id}/relaunch": {
+      "post": {
+        "tags": [
+          "campaigns"
+        ],
+        "summary": "Run a campaign again",
+        "description": "A `stopped`, `completed` or `failed` campaign runs again with its\ncurrent settings: its last run moves to `/campaigns/{id}/runs` with its\nbatches and results, its servers are frozen again into batches, and it\nis `scheduled`, queued at the next maintenance window. With\n`{\"servers\": \"failed\"}`, only the servers whose update failed, expired\nor was cancelled in the last run, still there, run again, in one batch;\nthe campaign's own targets stay as they are for later runs.\n\nRefused while some of its commands are in flight or package sources\nare still to be put back, as a deletion. To change the settings first,\nedit it: that prepares the next run as a `draft` to start.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.relaunch`, with the number of the\nrun kept.",
+        "operationId": "relaunch_campaign",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The campaign",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignRelaunchRequest"
+              },
+              "example": {
+                "servers": "failed"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Scheduled again, with its new batches",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignDetail"
+                },
+                "example": {
+                  "agent_version": null,
+                  "command_ttl_s": 3600,
+                  "created_at": "2026-11-06T10:30:00Z",
+                  "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
+                  "current_wave": null,
+                  "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                  "customer_name": "acme",
+                  "error": null,
+                  "failure_threshold": {
+                    "unit": "count",
+                    "value": 0
+                  },
+                  "finished_at": null,
+                  "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
+                  "name": "November updates",
+                  "previous_runs": 1,
+                  "progress": {
+                    "cancelled": 0,
+                    "failed": 0,
+                    "in_progress": 0,
+                    "pending": 2,
+                    "succeeded": 0,
+                    "total": 2
+                  },
+                  "server_ids": [],
+                  "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "sources": null,
+                  "spec": {
+                    "allow_reboot": false,
+                    "include_os": true,
+                    "packages": [],
+                    "security_only": true,
+                    "third_party": []
+                  },
+                  "started_at": "2026-11-08T22:00:04Z",
+                  "state": "scheduled",
+                  "wave_count": 2,
+                  "wave_specs": [
+                    {
+                      "size": 1
+                    }
+                  ],
+                  "waves": [
+                    {
+                      "finished_at": null,
+                      "index": 0,
+                      "progress": {
+                        "cancelled": 0,
+                        "failed": 0,
+                        "in_progress": 0,
+                        "pending": 1,
+                        "succeeded": 0,
+                        "total": 1
+                      },
+                      "servers": [
+                        {
+                          "command_id": null,
+                          "error": null,
+                          "exit_code": null,
+                          "finished_at": null,
+                          "hostname": "web-1",
+                          "peer_id": "web-1.paris.acme",
+                          "restore_command_id": null,
+                          "server_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                          "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                          "snapshot_command_id": null,
+                          "sources_command_id": null,
+                          "status": "pending"
+                        }
+                      ],
+                      "started_at": null,
+                      "state": "pending"
+                    },
+                    {
+                      "finished_at": null,
+                      "index": 1,
+                      "progress": {
+                        "cancelled": 0,
+                        "failed": 0,
+                        "in_progress": 0,
+                        "pending": 1,
+                        "succeeded": 0,
+                        "total": 1
+                      },
+                      "servers": [
+                        {
+                          "command_id": null,
+                          "error": null,
+                          "exit_code": null,
+                          "finished_at": null,
+                          "hostname": "web-2",
+                          "peer_id": "web-2.paris.acme",
+                          "restore_command_id": null,
+                          "server_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                          "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                          "snapshot_command_id": null,
+                          "sources_command_id": null,
+                          "status": "pending"
+                        }
+                      ],
+                      "started_at": null,
+                      "state": "pending"
+                    }
+                  ],
+                  "windows": [
+                    {
+                      "end": "04:00",
+                      "kind": "weekly",
+                      "start": "22:00",
+                      "timezone": "Europe/Paris",
+                      "weekdays": [
+                        6
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: the body, or the settings no longer fit, as for a creation (a site or snapshot gone)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the customer without administering it as a whole. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such campaign, or one of a customer the caller does not read as a whole",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: `cannot relaunch a campaign that is <state>` before it is finished, `no server of the campaign failed in its last run`, `the campaign still has commands in flight: relaunch it once they end`, or `the package sources of some servers are not restored yet`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/campaigns/{id}/resume": {
       "post": {
         "tags": [
@@ -4020,6 +4288,7 @@
                   "finished_at": null,
                   "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
                   "name": "November updates",
+                  "previous_runs": 0,
                   "progress": {
                     "cancelled": 0,
                     "failed": 0,
@@ -4214,6 +4483,224 @@
         }
       }
     },
+    "/api/v1/campaigns/{id}/runs": {
+      "get": {
+        "tags": [
+          "campaigns"
+        ],
+        "summary": "List a campaign's past runs",
+        "description": "Every run that ended before the campaign was edited or run again,\nnewest first, each with the settings it ran with and its batches and\nservers as they ended. The current or last run is the campaign itself\n(`GET /campaigns/{id}`).\n\nNeeds any role on the campaign's customer as a whole and the key area\n\"updates\".",
+        "operationId": "campaign_runs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The campaign",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Its past runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignRuns"
+                },
+                "example": {
+                  "runs": [
+                    {
+                      "error": "stopped by user",
+                      "finished_at": "2026-11-08T22:20:31Z",
+                      "number": 1,
+                      "progress": {
+                        "cancelled": 0,
+                        "failed": 0,
+                        "in_progress": 0,
+                        "pending": 1,
+                        "succeeded": 1,
+                        "total": 2
+                      },
+                      "settings": {
+                        "agent_version": null,
+                        "command_ttl_s": 3600,
+                        "failure_threshold": {
+                          "unit": "count",
+                          "value": 0
+                        },
+                        "name": "November updates",
+                        "server_ids": [],
+                        "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                        "sources": null,
+                        "spec": {
+                          "allow_reboot": false,
+                          "include_os": true,
+                          "packages": [],
+                          "security_only": true,
+                          "third_party": []
+                        },
+                        "wave_specs": [
+                          {
+                            "size": 1
+                          }
+                        ],
+                        "windows": [
+                          {
+                            "end": "04:00",
+                            "kind": "weekly",
+                            "start": "22:00",
+                            "timezone": "Europe/Paris",
+                            "weekdays": [
+                              6
+                            ]
+                          }
+                        ]
+                      },
+                      "started_at": "2026-11-08T22:00:04Z",
+                      "state": "stopped",
+                      "waves": [
+                        {
+                          "finished_at": "2026-11-08T22:20:31Z",
+                          "index": 0,
+                          "progress": {
+                            "cancelled": 0,
+                            "failed": 0,
+                            "in_progress": 0,
+                            "pending": 0,
+                            "succeeded": 1,
+                            "total": 1
+                          },
+                          "servers": [
+                            {
+                              "command_id": "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+                              "error": null,
+                              "exit_code": 0,
+                              "finished_at": "2026-11-08T22:20:31Z",
+                              "hostname": "web-1",
+                              "peer_id": "web-1.paris.acme",
+                              "restore_command_id": null,
+                              "server_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                              "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                              "snapshot_command_id": null,
+                              "sources_command_id": null,
+                              "status": "succeeded"
+                            }
+                          ],
+                          "started_at": "2026-11-08T22:00:04Z",
+                          "state": "done"
+                        },
+                        {
+                          "finished_at": null,
+                          "index": 1,
+                          "progress": {
+                            "cancelled": 0,
+                            "failed": 0,
+                            "in_progress": 0,
+                            "pending": 1,
+                            "succeeded": 0,
+                            "total": 1
+                          },
+                          "servers": [
+                            {
+                              "command_id": null,
+                              "error": null,
+                              "exit_code": null,
+                              "finished_at": null,
+                              "hostname": "web-2",
+                              "peer_id": "web-2.paris.acme",
+                              "restore_command_id": null,
+                              "server_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                              "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                              "snapshot_command_id": null,
+                              "sources_command_id": null,
+                              "status": "pending"
+                            }
+                          ],
+                          "started_at": null,
+                          "state": "pending"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such campaign, or one of a customer the caller does not read as a whole",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/campaigns/{id}/start": {
       "post": {
         "tags": [
@@ -4269,6 +4756,7 @@
                   "finished_at": null,
                   "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
                   "name": "November updates",
+                  "previous_runs": 0,
                   "progress": {
                     "cancelled": 0,
                     "failed": 0,
@@ -4469,7 +4957,7 @@
           "campaigns"
         ],
         "summary": "Stop a campaign",
-        "description": "Any state but a final one → `stopped`, for good: this is how a\ncampaign is cancelled. Commands still `queued` are cancelled; those\nalready sent or running finish. A stopped campaign cannot be started\nagain: copy it into another, or delete it.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.stop`. Stopping a `stopped`,\n`completed` or `failed` campaign is 409.",
+        "description": "Any state but a final one → `stopped`: this is how a campaign is\ncancelled. Commands still `queued` are cancelled; those already sent\nor running finish. A stopped campaign is not resumed: run it again\n(see \"Run a campaign again\"), edit it for its next run, or delete it.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.stop`. Stopping a `stopped`,\n`completed` or `failed` campaign is 409.",
         "operationId": "stop_campaign",
         "parameters": [
           {
@@ -4518,6 +5006,7 @@
                   "finished_at": "2026-11-08T22:20:31Z",
                   "id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
                   "name": "November updates",
+                  "previous_runs": 0,
                   "progress": {
                     "cancelled": 0,
                     "failed": 0,
@@ -28178,6 +28667,154 @@
         }
       }
     },
+    "/api/v1/remediation/ai-commands": {
+      "post": {
+        "tags": [
+          "remediation"
+        ],
+        "summary": "Turn AI commands on or off on every server",
+        "description": "Does `POST /api/v1/sites/{id}/ai-commands` for every site the caller administers at once: every server whose AI commands are not as asked is queued or skipped on its own, with why; servers already as asked are in neither list. As for one server, \"on\" only reaches the servers whose machine allowed AI commands to be turned on from the web interface; the others are skipped with what to do there. Each switch is audited and notified as for one server.\n\n**Who**: an administrator of at least one site (or customer, or a global one); only the servers of the sites it administers change. **Area**: `remediation`.",
+        "operationId": "fleet_ai_commands",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiCommandsRequest"
+              },
+              "example": {
+                "on": true
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What was queued and skipped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSourcesChange"
+                },
+                "example": {
+                  "queued": [
+                    "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  ],
+                  "skipped": [
+                    {
+                      "hostname": "db-1",
+                      "id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a",
+                      "reason": "this server only lets AI commands be turned on on the server itself; to allow it here, run the installer there with MF_AI_COMMANDS_FROM_WEB=1"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key administers no site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/remediation/alerts/{id}": {
       "get": {
         "tags": [
@@ -48062,6 +48699,7 @@
           "windows",
           "wave_count",
           "progress",
+          "previous_runs",
           "created_at"
         ],
         "properties": {
@@ -48127,6 +48765,11 @@
           },
           "name": {
             "type": "string"
+          },
+          "previous_runs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many earlier runs it has, read with `/campaigns/{id}/runs`\n(ADR-0173)."
           },
           "progress": {
             "$ref": "#/components/schemas/CampaignProgress"
@@ -48330,6 +48973,25 @@
           }
         }
       },
+      "CampaignRelaunchRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/campaigns/{id}/relaunch`.",
+        "properties": {
+          "servers": {
+            "$ref": "#/components/schemas/CampaignRelaunchServers",
+            "description": "`all` by default."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CampaignRelaunchServers": {
+        "type": "string",
+        "description": "Which servers `POST /api/campaigns/{id}/relaunch` runs again.",
+        "enum": [
+          "all",
+          "failed"
+        ]
+      },
       "CampaignRequest": {
         "type": "object",
         "description": "Body of `POST /api/campaigns` and `PUT /api/campaigns/{id}`. Only\n`customer_id`, `name` and a target (`site_id` and/or `server_ids`) are\nrequired.",
@@ -48435,6 +49097,149 @@
           }
         },
         "additionalProperties": false
+      },
+      "CampaignRun": {
+        "type": "object",
+        "description": "One past run of a campaign (ADR-0173).",
+        "required": [
+          "number",
+          "state",
+          "finished_at",
+          "settings",
+          "progress",
+          "waves"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it stopped or failed; `null` otherwise."
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 for the first run."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/CampaignProgress"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/CampaignRunSettings",
+            "description": "The settings it ran with."
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CampaignState",
+            "description": "`stopped`, `completed` or `failed`."
+          },
+          "waves": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CampaignWave"
+            },
+            "description": "Its batches and servers, as they ended."
+          }
+        }
+      },
+      "CampaignRunSettings": {
+        "type": "object",
+        "description": "The settings a campaign ran with, kept with each past run (ADR-0173):\nits request as `PUT /api/campaigns/{id}` takes it.",
+        "required": [
+          "name",
+          "server_ids",
+          "wave_specs",
+          "spec",
+          "command_ttl_s",
+          "failure_threshold",
+          "windows"
+        ],
+        "properties": {
+          "agent_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set for an agent update campaign (ADR-0053)."
+          },
+          "command_ttl_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failure_threshold": {
+            "$ref": "#/components/schemas/CampaignFailureThreshold"
+          },
+          "name": {
+            "type": "string"
+          },
+          "server_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sources": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CampaignSources"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spec": {
+            "$ref": "#/components/schemas/CampaignUpdateSpec"
+          },
+          "wave_specs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CampaignWaveSpec"
+            }
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CampaignWindow"
+            }
+          }
+        }
+      },
+      "CampaignRuns": {
+        "type": "object",
+        "description": "Body of `GET /api/campaigns/{id}/runs`.",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CampaignRun"
+            },
+            "description": "Newest first. The run in progress or last finished is the campaign\nitself, not listed here."
+          }
+        }
       },
       "CampaignServer": {
         "type": "object",
@@ -66135,7 +66940,7 @@
     },
     {
       "name": "campaigns",
-      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. A campaign is edited until its first batch is queued and deleted as a draft or once finished; to run one again, copy it: read it and create another from its fields. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\"."
+      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. A campaign is edited at any time: fully before its first batch, only its name, windows and failure threshold while a run is under way, and fully once finished, for its next run. A finished campaign runs again, all its servers or only those that failed, and keeps each past run under `/campaigns/{id}/runs`. It is deleted as a draft or once finished. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\"."
     },
     {
       "name": "automatic updates",

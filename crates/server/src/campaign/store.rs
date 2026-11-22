@@ -8,13 +8,15 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command;
 use monitorflow_common::third_party;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use super::model::{
-    plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, SourcesMode,
-    SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_TARGETS, MAX_WINDOWS,
+    plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, PinnedMirror,
+    SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_TARGETS,
+    MAX_WINDOWS,
 };
 use crate::api::audit::{self, Event};
 use crate::api::commands::unfit_message;
@@ -219,10 +221,17 @@ impl CampaignStore {
         Ok(row)
     }
 
-    /// Replaces everything of the campaign `id` by `new`, but its state and
-    /// who made it, audited as `campaign.update`. Only a campaign that
-    /// queued nothing yet changes: a draft, or a scheduled or paused one
-    /// whose first batch is still waiting (ADR-0166).
+    /// Edits the campaign `id` to `new`, audited as `campaign.update`
+    /// (ADR-0166, ADR-0173). What changes depends on where it is:
+    ///
+    /// - before its first batch is queued, everything but its state and
+    ///   who made it;
+    /// - while a run is under way (a batch was queued and it is not
+    ///   final), only its name, windows and failure threshold: the rest is
+    ///   what its batches are running, and a change to it is refused;
+    /// - once finished, everything, for its next run: its last run moves
+    ///   to the history and it becomes a draft again with new batches. A
+    ///   change of its name alone renames it and leaves it as it is.
     pub async fn update(
         &self,
         id: Uuid,
@@ -232,65 +241,122 @@ impl CampaignStore {
         let windows = check(new)?;
         let mut tx = self.pool.begin().await?;
         let row = lock(&mut tx, id).await?.ok_or(CampaignError::NotFound)?;
+        let started = started(&mut tx, &row).await?;
         if row.state.is_final() {
+            settled(&mut tx, id, "edit").await?;
+            let current = request_of(&mut tx, &row).await?;
+            if locked_changes(&current, new, true).is_empty()
+                && current.windows == windows
+                && current.failure_threshold == new.failure_threshold
+            {
+                let row = rename(&mut tx, &row, &new.name, actor).await?;
+                tx.commit().await?;
+                return Ok(row);
+            }
+            let run = match started {
+                true => Some(archive(&mut tx, &row, &current).await?),
+                false => None,
+            };
+            replace(&mut tx, id, new, windows, actor, run).await?;
+            // SQL-safe: interpolates only the constant COLUMNS.
+            let row: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "UPDATE campaigns SET state = 'draft', current_wave = NULL, error = NULL,
+                     started_at = NULL, finished_at = NULL
+                 WHERE id = $1
+                 RETURNING {COLUMNS}"
+            )))
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return Ok(row);
+        }
+        if started {
+            let current = request_of(&mut tx, &row).await?;
+            let locked = locked_changes(&current, new, row.requested_server_ids.is_some());
+            if !locked.is_empty() {
+                return Err(CampaignError::Busy(format!(
+                    "cannot change {} while the campaign runs: only its name, windows and \
+                     failure threshold change now; stop it, or wait for it to end, then edit it \
+                     for its next run",
+                    locked.join(", ")
+                )));
+            }
+            let row = edit_running(&mut tx, &row, new, windows, actor).await?;
+            tx.commit().await?;
+            return Ok(row);
+        }
+        let row = replace(&mut tx, id, new, windows, actor, None).await?;
+        tx.commit().await?;
+        Ok(row)
+    }
+
+    /// Runs the finished campaign `id` again, audited as
+    /// `campaign.relaunch` (ADR-0173): its last run moves to the history,
+    /// its targets are planned again from its settings, or only the
+    /// servers that failed with `failed_only`, in one batch, and it is
+    /// `scheduled` until a window opens.
+    pub async fn relaunch(
+        &self,
+        id: Uuid,
+        failed_only: bool,
+        actor: Actor<'_>,
+    ) -> Result<CampaignRow, CampaignError> {
+        let mut tx = self.pool.begin().await?;
+        let row = lock(&mut tx, id).await?.ok_or(CampaignError::NotFound)?;
+        if !row.state.is_final() {
             return Err(CampaignError::Transition {
-                action: "edit",
+                action: "relaunch",
                 state: row.state,
             });
         }
-        let queued: bool =
-            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM commands WHERE campaign_id = $1)")
-                .bind(id)
-                .fetch_one(&mut *tx)
-                .await?;
-        if row.current_wave.is_some() || queued {
-            return Err(CampaignError::Busy(
-                "cannot edit a campaign that queued commands already: duplicate it instead".into(),
-            ));
+        settled(&mut tx, id, "relaunch").await?;
+        let from = row.state;
+        let current = request_of(&mut tx, &row).await?;
+        let mut next = current.clone();
+        if failed_only {
+            let failed = failed_servers(&mut tx, id).await?;
+            if failed.is_empty() {
+                return Err(CampaignError::Busy(
+                    "no server of the campaign failed in its last run".into(),
+                ));
+            }
+            next.site_id = None;
+            next.server_ids = failed;
+            next.waves = Vec::new();
         }
-        // Before planning, so its own pins do not count twice.
-        for table in [
-            "campaign_targets",
-            "campaign_waves",
-            "campaign_windows",
-            "campaign_snapshots",
-        ] {
-            // SQL-safe: interpolates only the constant table names above.
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "DELETE FROM {table} WHERE campaign_id = $1"
-            )))
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        }
-        let plan = plan(&mut tx, new, windows).await?;
+        let windows = check(&next)?;
+        let run = match started(&mut tx, &row).await? {
+            true => Some(archive(&mut tx, &row, &current).await?),
+            false => None,
+        };
+        clear_plan(&mut tx, id).await?;
+        let plan = plan(&mut tx, &next, windows).await?;
+        write_plan(&mut tx, id, &next, &plan).await?;
         // SQL-safe: interpolates only the constant COLUMNS.
-        let row: CampaignRow = bind_fields(
-            sqlx::query_as(sqlx::AssertSqlSafe(format!(
-                "UPDATE campaigns SET customer_id = $1, name = $2, site_id = $3, packages = $4,
-                     security_only = $5, allow_reboot = $6, command_ttl_s = $7,
-                     failure_threshold = $8, failure_threshold_unit = $9, sources_mode = $10,
-                     agent_version = $11, include_os = $12, third_party = $13,
-                     requested_server_ids = $14, requested_waves = $15
-                 WHERE id = $16
-                 RETURNING {COLUMNS}"
-            ))),
-            new,
-        )
+        let row: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "UPDATE campaigns SET state = 'scheduled', current_wave = NULL, error = NULL,
+                 started_at = now(), finished_at = NULL
+             WHERE id = $1
+             RETURNING {COLUMNS}"
+        )))
         .bind(id)
         .fetch_one(&mut *tx)
         .await?;
-        write_plan(&mut tx, id, new, &plan).await?;
-        let mut details = details(&row, new, &plan);
-        details["state"] = json!(row.state.as_str());
         audit::record(
             &mut *tx,
             Event {
                 actor_kind: actor.0,
                 actor_id: actor.1,
-                action: "campaign.update",
+                action: "campaign.relaunch",
                 target: Some(("campaign", &id.to_string())),
-                details,
+                details: json!({
+                    "from": from.as_str(),
+                    "archived_run": run,
+                    "failed_only": failed_only,
+                    "servers": plan.waves.iter().map(Vec::len).sum::<usize>(),
+                    "waves": plan.waves.iter().map(Vec::len).collect::<Vec<_>>(),
+                }),
             },
         )
         .await?;
@@ -311,31 +377,12 @@ impl CampaignStore {
                 state: row.state,
             });
         }
-        let (in_flight, unrestored, servers): (bool, bool, i64) = sqlx::query_as(
-            "SELECT
-                 EXISTS (SELECT 1 FROM commands
-                         WHERE campaign_id = $1 AND state IN ('queued', 'sent', 'running')),
-                 EXISTS (SELECT 1 FROM campaign_targets t
-                         JOIN commands cfg ON cfg.id = t.sources_command_id
-                         JOIN servers s ON s.id = t.server_id
-                         WHERE t.campaign_id = $1 AND t.restore_command_id IS NULL
-                           AND s.revoked_at IS NULL
-                           AND (cfg.sent_at IS NOT NULL OR cfg.state = 'queued')),
-                 (SELECT count(*) FROM campaign_targets WHERE campaign_id = $1)",
-        )
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if in_flight {
-            return Err(CampaignError::Busy(
-                "the campaign still has commands in flight: delete it once they end".into(),
-            ));
-        }
-        if unrestored {
-            return Err(CampaignError::Busy(
-                "the package sources of some servers are not restored yet".into(),
-            ));
-        }
+        settled(&mut tx, id, "delete").await?;
+        let servers: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM campaign_targets WHERE campaign_id = $1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
         sqlx::query("DELETE FROM campaigns WHERE id = $1")
             .bind(id)
             .execute(&mut *tx)
@@ -612,6 +659,398 @@ fn details(row: &CampaignRow, new: &NewCampaign, plan: &Plan) -> serde_json::Val
         "windows": plan.windows,
         "sources": new.sources,
     })
+}
+
+/// The settings a campaign ran with, kept with each past run (ADR-0173):
+/// its request as `PUT /api/campaigns/{id}` takes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignRunSettings)]
+pub struct RunSettings {
+    pub name: String,
+    pub site_id: Option<Uuid>,
+    pub server_ids: Vec<Uuid>,
+    pub wave_specs: Vec<WaveSpec>,
+    pub spec: UpdateSpec,
+    /// Set for an agent update campaign (ADR-0053).
+    pub agent_version: Option<String>,
+    pub command_ttl_s: u64,
+    pub failure_threshold: FailureThreshold,
+    pub windows: Vec<Window>,
+    pub sources: Option<SourcesPin>,
+}
+
+impl From<&NewCampaign> for RunSettings {
+    fn from(new: &NewCampaign) -> Self {
+        Self {
+            name: new.name.clone(),
+            site_id: new.site_id,
+            server_ids: new.server_ids.clone(),
+            wave_specs: new.waves.clone(),
+            spec: new.spec.clone(),
+            agent_version: new.agent_version.as_ref().map(ToString::to_string),
+            command_ttl_s: new.command_ttl.as_secs(),
+            failure_threshold: new.failure_threshold,
+            windows: new.windows.clone(),
+            sources: new.sources.clone(),
+        }
+    }
+}
+
+/// Whether the campaign's run queued anything: a batch started, or a
+/// server got a command or an error.
+async fn started(conn: &mut PgConnection, row: &CampaignRow) -> Result<bool, sqlx::Error> {
+    if row.current_wave.is_some() {
+        return Ok(true);
+    }
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM campaign_targets WHERE campaign_id = $1
+                        AND (command_id IS NOT NULL OR sources_command_id IS NOT NULL
+                             OR snapshot_command_id IS NOT NULL OR error IS NOT NULL))",
+    )
+    .bind(row.id)
+    .fetch_one(conn)
+    .await
+}
+
+/// Refuses to `verb` a finished campaign while some of its commands are
+/// in flight or a server's package sources are still to be put back, the
+/// condition the runner keeps restoring under (ADR-0166).
+async fn settled(conn: &mut PgConnection, id: Uuid, verb: &str) -> Result<(), CampaignError> {
+    let (in_flight, unrestored): (bool, bool) = sqlx::query_as(
+        "SELECT
+             EXISTS (SELECT 1 FROM commands
+                     WHERE campaign_id = $1 AND state IN ('queued', 'sent', 'running')),
+             EXISTS (SELECT 1 FROM campaign_targets t
+                     JOIN commands cfg ON cfg.id = t.sources_command_id
+                     JOIN servers s ON s.id = t.server_id
+                     WHERE t.campaign_id = $1 AND t.restore_command_id IS NULL
+                       AND s.revoked_at IS NULL
+                       AND (cfg.sent_at IS NOT NULL OR cfg.state = 'queued'))",
+    )
+    .bind(id)
+    .fetch_one(conn)
+    .await?;
+    if in_flight {
+        return Err(CampaignError::Busy(format!(
+            "the campaign still has commands in flight: {verb} it once they end"
+        )));
+    }
+    if unrestored {
+        return Err(CampaignError::Busy(
+            "the package sources of some servers are not restored yet".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The request the campaign `row` holds now. For a campaign made before
+/// its request was kept (ADR-0166): its site, the other servers of its
+/// batches still there, and the size of each batch but the last, as the
+/// web interface reads it.
+async fn request_of(
+    conn: &mut PgConnection,
+    row: &CampaignRow,
+) -> Result<NewCampaign, sqlx::Error> {
+    let (server_ids, waves) = match (&row.requested_server_ids, &row.requested_waves) {
+        (Some(ids), Some(waves)) => (ids.clone(), waves.0.clone()),
+        _ => {
+            let frozen: Vec<(Uuid, i32, bool)> = sqlx::query_as(
+                "SELECT t.server_id, t.wave,
+                     s.revoked_at IS NULL AND s.site_id IS DISTINCT FROM $2
+                 FROM campaign_targets t JOIN servers s ON s.id = t.server_id
+                 WHERE t.campaign_id = $1 ORDER BY t.wave",
+            )
+            .bind(row.id)
+            .bind(row.site_id)
+            .fetch_all(&mut *conn)
+            .await?;
+            let ids = frozen.iter().filter(|t| t.2).map(|t| t.0).collect();
+            let last = frozen.last().map_or(0, |t| t.1);
+            let sizes = (0..last)
+                .map(|w| WaveSpec::Size(frozen.iter().filter(|t| t.1 == w).count() as u32))
+                .collect();
+            (ids, sizes)
+        }
+    };
+    // SQL-safe: interpolates only the constant WINDOW_COLUMNS.
+    let windows: Vec<WindowRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {WINDOW_COLUMNS}
+         FROM campaign_windows WHERE campaign_id = $1 ORDER BY position"
+    )))
+    .bind(row.id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mirrors: Vec<(String, String)> = sqlx::query_as(
+        "SELECT mirror_name, snapshot_name FROM campaign_snapshots
+         WHERE campaign_id = $1 ORDER BY mirror_name",
+    )
+    .bind(row.id)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(NewCampaign {
+        customer_id: row.customer_id,
+        name: row.name.clone(),
+        site_id: row.site_id,
+        server_ids,
+        waves,
+        spec: row.spec(),
+        command_ttl: Duration::from_secs(row.command_ttl_s.max(0) as u64),
+        failure_threshold: row.threshold(),
+        windows: windows.into_iter().filter_map(WindowRow::window).collect(),
+        sources: row.sources_mode.map(|mode| SourcesPin {
+            mode,
+            mirrors: mirrors
+                .into_iter()
+                .map(|(name, snapshot)| PinnedMirror { name, snapshot })
+                .collect(),
+        }),
+        agent_version: row.agent_version.as_deref().and_then(|v| v.parse().ok()),
+        created_by: row.created_by,
+    })
+}
+
+/// What `new` changes of `current` that a run under way holds fixed, in
+/// words for the error; its targets only with `targets`.
+fn locked_changes(current: &NewCampaign, new: &NewCampaign, targets: bool) -> Vec<&'static str> {
+    let mut changed = Vec::new();
+    if new.customer_id != current.customer_id {
+        changed.push("the customer");
+    }
+    if targets
+        && (new.site_id != current.site_id
+            || new.server_ids != current.server_ids
+            || new.waves != current.waves)
+    {
+        changed.push("the servers or batches");
+    }
+    if new.spec != current.spec || new.agent_version != current.agent_version {
+        changed.push("the update");
+    }
+    if new.sources != current.sources {
+        changed.push("the pinned snapshots");
+    }
+    if new.command_ttl != current.command_ttl {
+        changed.push("how long a command may wait");
+    }
+    changed
+}
+
+/// Renames the campaign `row` and nothing else.
+async fn rename(
+    conn: &mut PgConnection,
+    row: &CampaignRow,
+    name: &str,
+    actor: Actor<'_>,
+) -> Result<CampaignRow, CampaignError> {
+    // SQL-safe: interpolates only the constant COLUMNS.
+    let renamed: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "UPDATE campaigns SET name = $2 WHERE id = $1 RETURNING {COLUMNS}"
+    )))
+    .bind(row.id)
+    .bind(name)
+    .fetch_one(&mut *conn)
+    .await?;
+    audit::record(
+        &mut *conn,
+        Event {
+            actor_kind: actor.0,
+            actor_id: actor.1,
+            action: "campaign.update",
+            target: Some(("campaign", &row.id.to_string())),
+            details: json!({
+                "name": name,
+                "previous_name": row.name,
+                "state": row.state.as_str(),
+            }),
+        },
+    )
+    .await?;
+    Ok(renamed)
+}
+
+/// Changes the name, windows and failure threshold of the campaign `row`
+/// under way; the rest of `new` was checked to be unchanged.
+async fn edit_running(
+    conn: &mut PgConnection,
+    row: &CampaignRow,
+    new: &NewCampaign,
+    windows: Vec<Window>,
+    actor: Actor<'_>,
+) -> Result<CampaignRow, CampaignError> {
+    check_timezones(&mut *conn, &windows).await?;
+    sqlx::query("DELETE FROM campaign_windows WHERE campaign_id = $1")
+        .bind(row.id)
+        .execute(&mut *conn)
+        .await?;
+    for (position, window) in windows.iter().enumerate() {
+        insert_window(&mut *conn, row.id, position as i32, window).await?;
+    }
+    // SQL-safe: interpolates only the constant COLUMNS.
+    let edited: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "UPDATE campaigns SET name = $2, failure_threshold = $3, failure_threshold_unit = $4
+         WHERE id = $1 RETURNING {COLUMNS}"
+    )))
+    .bind(row.id)
+    .bind(&new.name)
+    .bind(new.failure_threshold.value as i32)
+    .bind(new.failure_threshold.unit)
+    .fetch_one(&mut *conn)
+    .await?;
+    audit::record(
+        &mut *conn,
+        Event {
+            actor_kind: actor.0,
+            actor_id: actor.1,
+            action: "campaign.update",
+            target: Some(("campaign", &row.id.to_string())),
+            details: json!({
+                "name": new.name,
+                "state": row.state.as_str(),
+                "failure_threshold": new.failure_threshold,
+                "windows": windows,
+            }),
+        },
+    )
+    .await?;
+    Ok(edited)
+}
+
+/// Deletes the batches, targets, windows and pins of the campaign `id`,
+/// before planning it again, so its own pins do not count twice.
+async fn clear_plan(conn: &mut PgConnection, id: Uuid) -> Result<(), sqlx::Error> {
+    for table in [
+        "campaign_targets",
+        "campaign_waves",
+        "campaign_windows",
+        "campaign_snapshots",
+    ] {
+        // SQL-safe: interpolates only the constant table names above.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE campaign_id = $1"
+        )))
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Replaces everything of the campaign `id` by `new` but its state and
+/// who made it, audited as `campaign.update`; `archived_run` names the
+/// run just moved to the history, if any.
+async fn replace(
+    conn: &mut PgConnection,
+    id: Uuid,
+    new: &NewCampaign,
+    windows: Vec<Window>,
+    actor: Actor<'_>,
+    archived_run: Option<i32>,
+) -> Result<CampaignRow, CampaignError> {
+    clear_plan(&mut *conn, id).await?;
+    let plan = plan(&mut *conn, new, windows).await?;
+    // SQL-safe: interpolates only the constant COLUMNS.
+    let row: CampaignRow = bind_fields(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "UPDATE campaigns SET customer_id = $1, name = $2, site_id = $3, packages = $4,
+                 security_only = $5, allow_reboot = $6, command_ttl_s = $7,
+                 failure_threshold = $8, failure_threshold_unit = $9, sources_mode = $10,
+                 agent_version = $11, include_os = $12, third_party = $13,
+                 requested_server_ids = $14, requested_waves = $15
+             WHERE id = $16
+             RETURNING {COLUMNS}"
+        ))),
+        new,
+    )
+    .bind(id)
+    .fetch_one(&mut *conn)
+    .await?;
+    write_plan(&mut *conn, id, new, &plan).await?;
+    let mut details = details(&row, new, &plan);
+    details["state"] = json!(row.state.as_str());
+    if let Some(run) = archived_run {
+        details["archived_run"] = json!(run);
+    }
+    audit::record(
+        &mut *conn,
+        Event {
+            actor_kind: actor.0,
+            actor_id: actor.1,
+            action: "campaign.update",
+            target: Some(("campaign", &id.to_string())),
+            details,
+        },
+    )
+    .await?;
+    Ok(row)
+}
+
+/// Moves the last run of the finished campaign `row`, which ran with
+/// `settings`, to the history, and returns its number (ADR-0173). Its
+/// batches and servers leave `campaign_waves` and `campaign_targets`.
+async fn archive(
+    conn: &mut PgConnection,
+    row: &CampaignRow,
+    settings: &NewCampaign,
+) -> Result<i32, sqlx::Error> {
+    let number: i32 = sqlx::query_scalar(
+        "INSERT INTO campaign_runs
+             (campaign_id, number, state, error, started_at, finished_at, settings)
+         SELECT $1, COALESCE(max(number), 0) + 1, $2, $3, $4, $5, $6
+         FROM campaign_runs WHERE campaign_id = $1
+         RETURNING number",
+    )
+    .bind(row.id)
+    .bind(row.state)
+    .bind(&row.error)
+    .bind(row.started_at)
+    .bind(row.finished_at.unwrap_or_else(Utc::now))
+    .bind(sqlx::types::Json(RunSettings::from(settings)))
+    .fetch_one(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO campaign_run_waves (campaign_id, run, position, started_at, finished_at)
+         SELECT campaign_id, $2, position, started_at, finished_at
+         FROM campaign_waves WHERE campaign_id = $1",
+    )
+    .bind(row.id)
+    .bind(number)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO campaign_run_targets (campaign_id, run, server_id, wave, command_id, error,
+             sources_command_id, restore_command_id, snapshot_command_id)
+         SELECT campaign_id, $2, server_id, wave, command_id, error,
+             sources_command_id, restore_command_id, snapshot_command_id
+         FROM campaign_targets WHERE campaign_id = $1",
+    )
+    .bind(row.id)
+    .bind(number)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM campaign_waves WHERE campaign_id = $1")
+        .bind(row.id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(number)
+}
+
+/// The servers of the campaign's run that failed, as `failed` counts
+/// them, still there, by hostname.
+async fn failed_servers(conn: &mut PgConnection, id: Uuid) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT t.server_id FROM campaign_targets t
+         JOIN servers s ON s.id = t.server_id
+         LEFT JOIN commands c ON c.id = t.command_id
+         LEFT JOIN commands r ON r.id = t.restore_command_id
+         WHERE t.campaign_id = $1 AND s.revoked_at IS NULL
+           AND (t.error IS NOT NULL
+                OR c.state IN ('failed', 'expired', 'cancelled')
+                OR (c.state = 'succeeded' AND r.state IN ('failed', 'expired', 'cancelled')))
+         ORDER BY s.hostname, s.peer_id",
+    )
+    .bind(id)
+    .fetch_all(conn)
+    .await
 }
 
 /// The campaign `id`, locked until the end of the transaction.
@@ -976,4 +1415,66 @@ async fn insert_window(
     };
     query.execute(conn).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new() -> NewCampaign {
+        NewCampaign {
+            customer_id: Uuid::nil(),
+            name: "october".into(),
+            site_id: Some(Uuid::nil()),
+            server_ids: Vec::new(),
+            waves: vec![WaveSpec::Size(1)],
+            spec: UpdateSpec::default(),
+            command_ttl: Duration::from_secs(3600),
+            failure_threshold: FailureThreshold::default(),
+            windows: Vec::new(),
+            sources: None,
+            agent_version: None,
+            created_by: None,
+        }
+    }
+
+    #[test]
+    fn a_run_under_way_keeps_what_its_batches_run() {
+        let current = new();
+        let mut edited = new();
+        edited.name = "renamed".into();
+        edited.failure_threshold.value = 3;
+        assert!(locked_changes(&current, &edited, true).is_empty());
+        edited.waves = Vec::new();
+        edited.spec.allow_reboot = true;
+        edited.command_ttl = Duration::from_secs(60);
+        assert_eq!(
+            locked_changes(&current, &edited, true),
+            [
+                "the servers or batches",
+                "the update",
+                "how long a command may wait"
+            ]
+        );
+        // A campaign made before its request was kept: targets are not compared.
+        assert_eq!(
+            locked_changes(&current, &edited, false),
+            ["the update", "how long a command may wait"]
+        );
+    }
+
+    #[test]
+    fn run_settings_keep_the_request() {
+        let mut campaign = new();
+        campaign.agent_version = Some("0.3.1".parse().unwrap());
+        let settings = RunSettings::from(&campaign);
+        assert_eq!(settings.agent_version.as_deref(), Some("0.3.1"));
+        assert_eq!(settings.wave_specs, [WaveSpec::Size(1)]);
+        assert_eq!(settings.command_ttl_s, 3600);
+        let json = serde_json::to_value(&settings).unwrap();
+        assert_eq!(
+            serde_json::from_value::<RunSettings>(json).unwrap(),
+            settings
+        );
+    }
 }

@@ -9,6 +9,7 @@ import {
   ApiError,
   type CampaignAction,
   type CampaignDetail,
+  type CampaignRun,
   type CampaignServer,
   type CampaignWave,
   type Me,
@@ -19,11 +20,12 @@ import {
 import {
   canAct,
   canDelete,
-  canEdit,
+  canRelaunch,
   describeSources,
   describeThreshold,
   describeUpdate,
   describeWindow,
+  failedServers,
   isFinal,
 } from "@/lib/campaigns";
 import { formatDateTime } from "@/lib/format";
@@ -176,7 +178,67 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
           several={campaign.waves.length > 1}
         />
       ))}
+      {(campaign.previous_runs ?? 0) > 0 && (
+        <EarlierRuns key={campaign.previous_runs} id={campaign.id} />
+      )}
     </div>
+  );
+}
+
+/** The runs that ended before the campaign was edited or run again (ADR-0173), newest first. */
+function EarlierRuns({ id }: { id: string }) {
+  const [runs, setRuns] = useState<CampaignRun[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    api.campaignRuns(id, controller.signal).then(
+      (list) => setRuns(list.runs),
+      (e: unknown) => {
+        if (!isAbortError(e)) setError(describeError(e));
+      },
+    );
+    return () => controller.abort();
+  }, [id]);
+  return (
+    <section aria-labelledby="campaign-runs-title" className={own.runs}>
+      <h2 id="campaign-runs-title" className={own.runsTitle}>
+        {t("campaigns.runs.title")}
+      </h2>
+      {error ? (
+        <Banner tone="warn">{t("campaigns.runs.failed", { error })}</Banner>
+      ) : !runs ? (
+        <LoadingBlock label={t("campaigns.runs.loading")} />
+      ) : (
+        runs.map((run) => <Run key={run.number} run={run} />)
+      )}
+    </section>
+  );
+}
+
+function Run({ run }: { run: CampaignRun }) {
+  const title = t("campaigns.runs.run", { number: run.number });
+  const { succeeded, total } = run.progress;
+  return (
+    <details className={own.wave} aria-label={title}>
+      <summary>
+        <strong>{title}</strong>
+        <CampaignStateLabel state={run.state} />
+        <span>{t("campaigns.runs.succeeded", { succeeded, total })}</span>
+        <span className={own.dim}>
+          {run.started_at && t("campaigns.wave.started", { time: formatDateTime(run.started_at) })}
+          {t("campaigns.wave.finished", { time: formatDateTime(run.finished_at) })}
+        </span>
+      </summary>
+      <div className={own.runBody}>
+        <p className={own.dim}>
+          {run.settings.name} · {describeUpdate(run.settings.spec, run.settings.agent_version)}
+        </p>
+        {run.error && <p className={own.dim}>{run.error}</p>}
+        {run.waves.map((wave) => (
+          <Wave key={wave.index} wave={wave} current={false} several={run.waves.length > 1} />
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -213,8 +275,35 @@ function Actions({ campaign, onChange }: { campaign: CampaignDetail; onChange: (
             {actionLabel(action)}
           </Button>
         ))}
-      {canEdit(campaign) && <ButtonLink href={editCampaignHref(campaign.id)}>{t("campaigns.action.edit")}</ButtonLink>}
+      {/* Always offered: the form says what can change now (ADR-0173). */}
+      <ButtonLink href={editCampaignHref(campaign.id)}>{t("campaigns.action.edit")}</ButtonLink>
       <ButtonLink href={copyCampaignHref(campaign.id)}>{t("campaigns.action.duplicate")}</ButtonLink>
+      {canRelaunch(campaign) && failedServers(campaign) > 0 && (
+        <InlineConfirm
+          trigger={t("campaigns.relaunchFailed.trigger", { count: failedServers(campaign) })}
+          title={t("campaigns.relaunchFailed.title", { name: campaign.name })}
+          consequence={t("campaigns.relaunchFailed.consequence")}
+          confirmLabel={t("campaigns.relaunchFailed.confirm")}
+          triggerVariant="default"
+          confirmVariant="k"
+          pendingLabel={t("campaigns.relaunch.pending")}
+          onConfirm={async () => onChange(await api.relaunchCampaign(campaign.id, "failed"))}
+          describeError={(e) => t("campaigns.relaunch.failed", { error: describeError(e) })}
+        />
+      )}
+      {canRelaunch(campaign) && (
+        <InlineConfirm
+          trigger={t("campaigns.relaunch.trigger")}
+          title={t("campaigns.relaunch.title", { name: campaign.name })}
+          consequence={t("campaigns.relaunch.consequence")}
+          confirmLabel={t("campaigns.relaunch.confirm")}
+          triggerVariant="default"
+          confirmVariant="k"
+          pendingLabel={t("campaigns.relaunch.pending")}
+          onConfirm={async () => onChange(await api.relaunchCampaign(campaign.id, "all"))}
+          describeError={(e) => t("campaigns.relaunch.failed", { error: describeError(e) })}
+        />
+      )}
       {/* A draft is deleted rather than stopped. */}
       {canAct("stop", campaign.state) && campaign.state !== "draft" && (
         <InlineConfirm

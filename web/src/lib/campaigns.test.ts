@@ -9,15 +9,18 @@ import {
   campaignTargets,
   canAct,
   canDelete,
-  canEdit,
+  canRelaunch,
   copyName,
   describeThreshold,
   describeUpdate,
   describeWindow,
   draftFromCampaign,
+  editMode,
   emptyDraft,
+  failedServers,
   newWindow,
   planWaves,
+  requestFromCampaign,
   searchServers,
   updateSources,
   shortWindow,
@@ -290,17 +293,55 @@ describe("in French", () => {
   });
 });
 
-describe("editing and copying (ADR-0166)", () => {
-  it("edits what queued nothing and deletes drafts and finished campaigns", () => {
+describe("editing and copying (ADR-0166, ADR-0173)", () => {
+  it("edits every campaign, as far as where it is allows, and deletes drafts and finished ones", () => {
     const idle = { ...detail().progress, in_progress: 0 };
-    expect(canEdit(campaign({ state: "draft", current_wave: null }))).toBe(true);
-    expect(canEdit(campaign({ state: "scheduled", current_wave: null }))).toBe(true);
-    expect(canEdit(campaign({ state: "paused", current_wave: 0 }))).toBe(false);
-    expect(canEdit(campaign({ state: "stopped", current_wave: null }))).toBe(false);
+    expect(editMode(campaign({ state: "draft", current_wave: null }))).toBe("full");
+    expect(editMode(campaign({ state: "scheduled", current_wave: null }))).toBe("full");
+    expect(editMode(campaign({ state: "paused", current_wave: 0 }))).toBe("running");
+    expect(editMode(campaign({ state: "stopped", current_wave: null, progress: idle }))).toBe("next");
+    expect(editMode(campaign({ state: "failed" }))).toBe("busy");
     expect(canDelete(campaign({ state: "draft" }))).toBe(true);
     expect(canDelete(campaign({ state: "completed", progress: idle }))).toBe(true);
     expect(canDelete(campaign({ state: "stopped" }))).toBe(false);
     expect(canDelete(campaign({ state: "running", progress: idle }))).toBe(false);
+  });
+
+  it("runs finished campaigns again once their commands ended", () => {
+    const ended = { total: 3, pending: 0, in_progress: 0, succeeded: 1, failed: 1, cancelled: 1 };
+    expect(canRelaunch(campaign({ state: "failed", progress: ended }))).toBe(true);
+    expect(canRelaunch(campaign({ state: "failed" }))).toBe(false);
+    expect(canRelaunch(campaign({ state: "running", progress: ended }))).toBe(false);
+    expect(failedServers(campaign({ progress: ended }))).toBe(2);
+  });
+
+  it("sends what a run under way holds fixed exactly as the campaign has it", () => {
+    const pin = { mode: "add" as const, mirrors: [{ name: "debian-12", snapshot: "s1" }] };
+    const running = detail({
+      site_id: "site-1",
+      server_ids: [WEB2],
+      wave_specs: [{ size: 1 }],
+      spec: { packages: ["openssl"], security_only: false, allow_reboot: true, include_os: true, third_party: [] },
+      sources: pin,
+    });
+    // The form's draft drops the package order and the pin of a non-OS update; the request keeps them.
+    const draft = { ...draftFromCampaign(running), packages: "zlib", allowReboot: false };
+    const request = requestFromCampaign(running, draft);
+    expect(request).toMatchObject({
+      site_id: "site-1",
+      server_ids: [WEB2],
+      waves: [{ size: 1 }],
+      packages: ["openssl"],
+      allow_reboot: true,
+      sources: pin,
+      command_ttl_s: 3600,
+    });
+    expect(request).not.toHaveProperty("include_os");
+    expect(request).not.toHaveProperty("third_party");
+    // Before the request was kept, the draft's servers stand in.
+    expect(requestFromCampaign(detail({ server_ids: null, wave_specs: null }), draft).server_ids).toEqual(
+      draft.serverIds,
+    );
   });
 
   it("fills the form from a campaign, the request when kept, else its batches", () => {

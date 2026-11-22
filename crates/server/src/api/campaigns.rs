@@ -1,6 +1,6 @@
 //! Update campaigns (ADR-0033): list, create, read with waves and
-//! per-server status, start, pause, resume or stop, and edit before the
-//! first batch or delete once over (ADR-0166).
+//! per-server status, start, pause, resume or stop, edit or delete
+//! (ADR-0166), and run again once over, keeping past runs (ADR-0173).
 //!
 //! Campaigns span sites, so reading one needs a role on its customer as a
 //! whole (global or customer grant); creating and acting need an
@@ -26,10 +26,10 @@ use super::customers::validate_name;
 use super::sensors::{body, parse_id};
 use super::servers::{decode_cursor, encode_cursor, page_limit};
 use super::{ApiError, ApiState};
-use crate::campaign::query::{self, ListFilter, Listed, WaveCounts};
+use crate::campaign::query::{self, ListFilter, Listed, TargetRow, WaveCounts, WaveRow};
 use crate::campaign::{
-    Action, CampaignError, CampaignState, CampaignStore, FailureThreshold, NewCampaign, SourcesPin,
-    ThirdPartySpec, UpdateSpec, WaveSpec, Window,
+    Action, CampaignError, CampaignState, CampaignStore, FailureThreshold, NewCampaign,
+    RunSettings, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
 };
 use crate::commands::sources::{self, KeyLookupError};
 
@@ -145,6 +145,9 @@ pub struct CampaignView {
     /// queued.
     pub current_wave: Option<i32>,
     pub progress: Progress,
+    /// How many earlier runs it has, read with `/campaigns/{id}/runs`
+    /// (ADR-0173).
+    pub previous_runs: i64,
     /// The user who made it; `null` once that user is deleted.
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
@@ -270,6 +273,10 @@ async fn views(state: &ApiState, rows: Vec<Listed>) -> Result<Vec<CampaignView>,
     for (id, mirror) in query::pins(&state.pool, &ids).await? {
         pins.entry(id).or_default().push(mirror);
     }
+    let runs: HashMap<Uuid, i64> = query::run_counts(&state.pool, &ids)
+        .await?
+        .into_iter()
+        .collect();
     let mut counts: HashMap<Uuid, (Progress, usize)> = HashMap::new();
     for wave in query::counts(&state.pool, &ids).await? {
         let entry = counts.entry(wave.campaign_id).or_default();
@@ -297,6 +304,7 @@ async fn views(state: &ApiState, rows: Vec<Listed>) -> Result<Vec<CampaignView>,
                     wave_specs: c.requested_waves.map(|w| w.0),
                     wave_count,
                     progress,
+                    previous_runs: runs.get(&c.id).copied().unwrap_or(0),
                     id: c.id,
                     customer_id: c.customer_id,
                     customer_name,
@@ -326,12 +334,24 @@ async fn detail_of(state: &ApiState, id: Uuid) -> Result<CampaignDetail, ApiErro
         .pop()
         .ok_or(ApiError::NotFound)?;
     let counts = query::counts(&state.pool, &[id]).await?;
-    let mut targets = query::targets(&state.pool, id)
-        .await?
-        .into_iter()
-        .peekable();
-    let mut waves = Vec::new();
-    for wave in query::waves(&state.pool, id).await? {
+    let targets = query::targets(&state.pool, id).await?;
+    let waves = query::waves(&state.pool, id).await?;
+    Ok(CampaignDetail {
+        campaign,
+        waves: wave_views(waves, &counts, targets),
+    })
+}
+
+/// The batches `waves` with their `counts` and servers, `targets` in
+/// batch order.
+fn wave_views(
+    waves: Vec<WaveRow>,
+    counts: &[WaveCounts],
+    targets: Vec<TargetRow>,
+) -> Vec<WaveView> {
+    let mut targets = targets.into_iter().peekable();
+    let mut views = Vec::new();
+    for wave in waves {
         let mut progress = Progress::default();
         if let Some(c) = counts.iter().find(|c| c.wave == wave.position) {
             progress.add(c);
@@ -358,7 +378,7 @@ async fn detail_of(state: &ApiState, id: Uuid) -> Result<CampaignDetail, ApiErro
             (Some(_), None) => "running",
             (None, None) => "pending",
         };
-        waves.push(WaveView {
+        views.push(WaveView {
             index: wave.position,
             state,
             started_at: wave.started_at,
@@ -367,7 +387,7 @@ async fn detail_of(state: &ApiState, id: Uuid) -> Result<CampaignDetail, ApiErro
             servers,
         });
     }
-    Ok(CampaignDetail { campaign, waves })
+    views
 }
 
 /// `GET /api/campaigns`.
@@ -468,8 +488,9 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(detail_of(&state, row.id).await?)))
 }
 
-/// `PUT /api/campaigns/{id}`: the whole campaign again, while it queued
-/// nothing (ADR-0166).
+/// `PUT /api/campaigns/{id}`: the whole campaign again. While a run is
+/// under way only its name, windows and threshold may differ; once over,
+/// it is prepared for its next run (ADR-0166, ADR-0173).
 pub async fn update(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -510,6 +531,108 @@ pub async fn delete(
         .await?;
     tracing::info!(user = %user.id, campaign = %id, "campaign deleted");
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Which servers `POST /api/campaigns/{id}/relaunch` runs again.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignRelaunchServers)]
+#[serde(rename_all = "lowercase")]
+pub enum RelaunchServers {
+    /// Every target of the campaign, planned again from its settings.
+    #[default]
+    All,
+    /// Only the servers that failed in the last run, in one batch.
+    Failed,
+}
+
+/// Body of `POST /api/campaigns/{id}/relaunch`.
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignRelaunchRequest)]
+#[serde(deny_unknown_fields)]
+pub struct RelaunchRequest {
+    /// `all` by default.
+    #[serde(default)]
+    pub servers: RelaunchServers,
+}
+
+/// `POST /api/campaigns/{id}/relaunch`: a finished campaign runs again
+/// with its current settings; its last run stays in the history
+/// (ADR-0173).
+pub async fn relaunch(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    request: Result<Json<RelaunchRequest>, JsonRejection>,
+) -> Result<Json<CampaignDetail>, ApiError> {
+    let id = parse_id(&id)?;
+    let customer = customer_of(&state, &user, id).await?;
+    authorize_customer(&user, customer, true)?;
+    let RelaunchRequest { servers } = body(request)?;
+    let actor = user.id.to_string();
+    CampaignStore::new(state.pool.clone())
+        .relaunch(id, servers == RelaunchServers::Failed, ("user", &actor))
+        .await?;
+    if let Some(runner) = &state.campaigns {
+        runner.wake();
+    }
+    tracing::info!(user = %user.id, campaign = %id, ?servers, "campaign relaunched");
+    Ok(Json(detail_of(&state, id).await?))
+}
+
+/// One past run of a campaign (ADR-0173).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CampaignRun)]
+pub struct RunView {
+    /// 1 for the first run.
+    pub number: i32,
+    /// `stopped`, `completed` or `failed`.
+    pub state: CampaignState,
+    /// Why it stopped or failed; `null` otherwise.
+    pub error: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: DateTime<Utc>,
+    /// The settings it ran with.
+    pub settings: RunSettings,
+    pub progress: Progress,
+    /// Its batches and servers, as they ended.
+    pub waves: Vec<WaveView>,
+}
+
+/// Body of `GET /api/campaigns/{id}/runs`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CampaignRuns)]
+pub struct RunList {
+    /// Newest first. The run in progress or last finished is the campaign
+    /// itself, not listed here.
+    pub runs: Vec<RunView>,
+}
+
+/// `GET /api/campaigns/{id}/runs`.
+pub async fn runs(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<RunList>, ApiError> {
+    let id = parse_id(&id)?;
+    let customer = customer_of(&state, &user, id).await?;
+    authorize_customer(&user, customer, false)?;
+    let mut runs = Vec::new();
+    for run in query::runs(&state.pool, id).await? {
+        let (waves, counts, targets) = query::run_detail(&state.pool, id, run.number).await?;
+        let mut progress = Progress::default();
+        counts.iter().for_each(|c| progress.add(c));
+        runs.push(RunView {
+            number: run.number,
+            state: run.state,
+            error: run.error,
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+            settings: run.settings.0,
+            progress,
+            waves: wave_views(waves, &counts, targets),
+        });
+    }
+    Ok(Json(RunList { runs }))
 }
 
 /// 409 unless the server can build `configure_sources` commands, as

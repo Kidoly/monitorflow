@@ -242,9 +242,54 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
   };
 }
 
-/** Whether the API lets `campaign` be edited: nothing queued yet, not finished (ADR-0166). */
-export function canEdit(campaign: Pick<Campaign, "state" | "current_wave">): boolean {
-  return !isFinal(campaign.state) && campaign.current_wave === null;
+/**
+ * How the API edits `campaign` now (ADR-0166, ADR-0173): `full` before its first batch is queued;
+ * `running` while a run is under way, when only its name, windows and failure threshold change;
+ * `next` once over, when saving prepares its next run; `busy` while commands of a finished run
+ * still run, when it waits for them.
+ */
+export type EditMode = "full" | "running" | "next" | "busy";
+
+export function editMode(campaign: Pick<Campaign, "state" | "current_wave" | "progress">): EditMode {
+  if (isFinal(campaign.state)) return campaign.progress.in_progress > 0 ? "busy" : "next";
+  return campaign.current_wave === null ? "full" : "running";
+}
+
+/** Whether the API runs `campaign` again: a finished one whose commands all ended (ADR-0173). */
+export function canRelaunch(campaign: Pick<Campaign, "state" | "progress">): boolean {
+  return isFinal(campaign.state) && campaign.progress.in_progress === 0;
+}
+
+/** Servers of the last run that `{"servers": "failed"}` runs again. */
+export function failedServers(campaign: Pick<Campaign, "progress">): number {
+  return campaign.progress.failed + campaign.progress.cancelled;
+}
+
+/**
+ * The request `campaign` holds, field for field, so that a run under way can be edited without
+ * the API seeing a change of what it holds fixed. `draft` gives the servers of a campaign made
+ * before its request was kept, which the API does not compare.
+ */
+export function requestFromCampaign(campaign: CampaignDetail, draft: CampaignDraft): CampaignRequest {
+  const fallback = toRequest(draft);
+  const { spec } = campaign;
+  return {
+    customer_id: campaign.customer_id,
+    name: campaign.name,
+    ...(campaign.site_id && { site_id: campaign.site_id }),
+    server_ids: campaign.server_ids ?? fallback.server_ids,
+    waves: campaign.wave_specs ?? fallback.waves,
+    packages: spec.packages,
+    security_only: spec.security_only,
+    allow_reboot: spec.allow_reboot,
+    ...(campaign.agent_version && { agent_version: campaign.agent_version }),
+    ...(spec.include_os === false && { include_os: false }),
+    ...(spec.third_party?.length && { third_party: spec.third_party }),
+    command_ttl_s: campaign.command_ttl_s,
+    failure_threshold: campaign.failure_threshold,
+    windows: campaign.windows,
+    ...(campaign.sources && { sources: campaign.sources }),
+  };
 }
 
 /** Whether the API may delete `campaign`: a draft or a finished one, once its commands ended. */

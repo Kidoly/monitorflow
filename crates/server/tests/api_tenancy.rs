@@ -1017,6 +1017,20 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(queued, 1, "only B's own fixture command");
         }
+        ("POST", "/api/remediation/ai-commands") => {
+            // A's administrator switches A's servers, never B's.
+            let body = Some(json!({ "on": false }));
+            let (status, change) = ctx.call(method, path, body).await;
+            assert_eq!(status, StatusCode::OK, "{change}");
+            assert!(!Ctx::mentions(&change, b.server), "{change}");
+            let queued: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM commands WHERE server_id = $1")
+                    .bind(b.server)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(queued, 1, "only B's own fixture command");
+        }
         ("POST", "/api/servers/{id}/sources") | ("DELETE", "/api/servers/{id}/sources") => {
             let uri = path.replace("{id}", &b.server.to_string());
             let body = method
@@ -1139,7 +1153,9 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         ("POST", "/api/campaigns/{id}/start")
         | ("POST", "/api/campaigns/{id}/pause")
         | ("POST", "/api/campaigns/{id}/resume")
-        | ("POST", "/api/campaigns/{id}/stop") => {
+        | ("POST", "/api/campaigns/{id}/stop")
+        | ("POST", "/api/campaigns/{id}/relaunch")
+        | ("GET", "/api/campaigns/{id}/runs") => {
             let uri = path.replace("{id}", &b.campaign.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
             let state: String = sqlx::query_scalar("SELECT state FROM campaigns WHERE id = $1")

@@ -120,7 +120,7 @@ describe("AiSettingsPage", () => {
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveValue("");
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveAttribute("placeholder", "Saved; leave empty to keep it");
     // AI commands are turned on from each server's page now (ADR-0098).
-    expect(await screen.findByText(/Turn AI commands on or off from each server/)).toBeInTheDocument();
+    expect(await screen.findByText(/Turn AI commands on or off for every server at once/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Command that allows AI commands")).not.toBeInTheDocument();
   });
 
@@ -151,6 +151,30 @@ describe("AiSettingsPage", () => {
     // Not reporting is its own group, even from an agent that reports other kinds.
     expect(screen.getByText(/^Not known yet/)).toHaveTextContent(/web-3, web-5$/);
     expect(screen.getByText(/^Their agent is too old/)).toHaveTextContent(/web-4$/);
+  });
+
+  it("turns AI commands on on every server after confirmation, and lists those that cannot", async () => {
+    const fetchMock = stubFetch({
+      [`GET ${AI}`]: ok(settings({ enabled: true, has_key: true })),
+      "GET /api/settings/agent-install": install,
+      "GET /api/settings/public-address": address,
+      "GET /api/servers": {
+        status: 200,
+        body: { servers: [{ id: "1", hostname: "web-1", command_kinds: { shell: "off" } }], next_cursor: null },
+      },
+      "POST /api/remediation/ai-commands": {
+        status: 200,
+        body: { queued: ["1"], skipped: [{ id: "2", hostname: "db-1", reason: "run the installer there" }] },
+      },
+    });
+    page();
+    await userEvent.click(await screen.findByRole("button", { name: "Turn on on every server…" }));
+    expect(screen.getByText("Turn AI commands on on every server?")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Turn on for all" }));
+    expect(await screen.findByText(/Turning on on 1 server\./)).toBeInTheDocument();
+    expect(screen.getByText("db-1: run the installer there")).toBeInTheDocument();
+    expect(sent(fetchMock, "POST")).toEqual({ on: true });
+    expect(screen.getByRole("button", { name: "Turn off on every server…" })).toBeInTheDocument();
   });
 
   it("says no server accepts AI commands without listing them all", async () => {
@@ -188,7 +212,7 @@ describe("AiSettingsPage", () => {
       "GET /api/servers": { status: 500, body: { error: "database unavailable" } },
     });
     page();
-    expect(await screen.findByText(/Turn AI commands on or off from each server/)).toBeInTheDocument();
+    expect(await screen.findByText(/Turn AI commands on or off for every server at once/)).toBeInTheDocument();
     expect(screen.queryByText(/accept AI commands\./)).not.toBeInTheDocument();
   });
 

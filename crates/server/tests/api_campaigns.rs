@@ -9,7 +9,7 @@ use monitorflow_common::redact::Secret;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
-use monitorflow_server::campaign::Runner;
+use monitorflow_server::campaign::{Runner, Step};
 use monitorflow_server::grpc::Registry;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -176,7 +176,7 @@ db_tests! {
             keys(&created),
             [
                 "agent_version", "command_ttl_s", "created_at", "created_by", "current_wave", "customer_id",
-                "customer_name", "error", "failure_threshold", "finished_at", "id", "name",
+                "customer_name", "error", "failure_threshold", "finished_at", "id", "name", "previous_runs",
                 "progress", "server_ids", "site_id", "sources", "spec", "started_at", "state",
                 "wave_count", "wave_specs", "waves", "windows"
             ]
@@ -381,10 +381,36 @@ db_tests! {
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"], "cannot delete a campaign that is scheduled");
         let uuid: Uuid = id.parse().unwrap();
-        Runner::new(pool.clone()).advance(uuid, Utc::now()).await.unwrap();
-        let (status, body) = h.send("PUT", &detail, &admin, Some(edited.clone())).await;
+        // The refused DELETE's rollback may still hold the row a moment:
+        // the runner skips it then, as it would until its next tick.
+        for _ in 0..50 {
+            let step = Runner::new(pool.clone()).advance(uuid, Utc::now()).await.unwrap();
+            if step != Step::Idle {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        // Under way: the name, windows and threshold change, nothing else.
+        let mut renamed = edited.clone();
+        renamed["name"] = json!("Running");
+        renamed["windows"] = h.body()["windows"].clone();
+        let (status, body) = h.send("PUT", &detail, &admin, Some(renamed.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!((body["name"].as_str(), body["state"].as_str()), (Some("Running"), Some("running")));
+        assert_eq!(body["windows"].as_array().unwrap().len(), 1);
+        assert_eq!(body["waves"][0]["servers"][0]["status"], "queued");
+        let mut changed = renamed.clone();
+        changed["security_only"] = json!(false);
+        changed["server_ids"] = json!(h.servers);
+        let (status, body) = h.send("PUT", &detail, &admin, Some(changed)).await;
         assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(body["error"], "cannot edit a campaign that queued commands already: duplicate it instead");
+        assert!(
+            body["error"].as_str().unwrap().starts_with(
+                "cannot change the servers or batches, the update while the campaign runs"
+            ),
+            "{body}"
+        );
+        let edited = renamed;
 
         // Stopped with its command sent: deleted once that ends.
         let command: Uuid = sqlx::query_scalar("SELECT id FROM commands WHERE campaign_id = $1")
@@ -404,7 +430,7 @@ db_tests! {
         assert_eq!(body["error"], "the campaign still has commands in flight: delete it once they end");
         let (status, body) = h.send("PUT", &detail, &admin, Some(edited)).await;
         assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(body["error"], "cannot edit a campaign that is stopped");
+        assert_eq!(body["error"], "the campaign still has commands in flight: edit it once they end");
         sqlx::query("UPDATE commands SET state = 'succeeded', finished_at = now() WHERE id = $1")
             .bind(command)
             .execute(&pool)
@@ -430,7 +456,7 @@ db_tests! {
         assert_eq!(
             actions,
             ["campaign.create", "campaign.update", "campaign.start", "campaign.update",
-             "campaign.queue", "campaign.stop", "campaign.delete"]
+             "campaign.queue", "campaign.update", "campaign.stop", "campaign.delete"]
         );
         let details: Value = sqlx::query_scalar(
             "SELECT details FROM audit_log WHERE target_id = $1 AND action = 'campaign.delete'",
@@ -439,12 +465,144 @@ db_tests! {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!((details["name"].as_str(), details["state"].as_str()), (Some("Edited"), Some("stopped")));
+        assert_eq!((details["name"].as_str(), details["state"].as_str()), (Some("Running"), Some("stopped")));
         assert_eq!(details["servers"], 1);
 
         // A draft is deleted at once.
         let (_, draft) = h.send("POST", "/api/campaigns", &admin, Some(h.body())).await;
         let draft = format!("/api/campaigns/{}", draft["id"].as_str().unwrap());
         assert_eq!(h.send("DELETE", &draft, &admin, None).await.0, StatusCode::NO_CONTENT);
+    }
+
+    #[sqlx::test]
+    async fn finished_campaigns_run_again_and_keep_their_runs(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let viewer = h.login("viewer", Role::Viewer, GrantScope::Customer(h.customer)).await;
+        let mut body = h.body();
+        body["waves"] = json!([]);
+        body["windows"] = json!([]);
+        let (_, created) = h.send("POST", "/api/campaigns", &admin, Some(body.clone())).await;
+        let id = created["id"].as_str().unwrap().to_owned();
+        let uuid: Uuid = id.parse().unwrap();
+        let detail = format!("/api/campaigns/{id}");
+        let relaunch = format!("{detail}/relaunch");
+        let runs = format!("{detail}/runs");
+        let runner = Runner::new(pool.clone());
+        // Each command of the campaign not ended yet ends: web-1 well, web-2 not.
+        let end_commands = || async {
+            sqlx::query(
+                "UPDATE commands c SET state = CASE WHEN s.hostname = 'web-1' THEN 'succeeded'
+                                                    ELSE 'failed' END,
+                     sent_at = now(), finished_at = now()
+                 FROM servers s
+                 WHERE s.id = c.server_id AND c.campaign_id = $1 AND c.state = 'queued'",
+            )
+            .bind(uuid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+
+        let (status, refused) = h.send("POST", &relaunch, &admin, Some(json!({}))).await;
+        assert_eq!((status, refused["error"].as_str()), (StatusCode::CONFLICT, Some("cannot relaunch a campaign that is draft")));
+        h.send("POST", &format!("{detail}/start"), &admin, None).await;
+        runner.advance(uuid, Utc::now()).await.unwrap();
+        end_commands().await;
+        runner.advance(uuid, Utc::now()).await.unwrap();
+        let (_, failed) = h.send("GET", &detail, &admin, None).await;
+        assert_eq!(failed["state"], "failed");
+        assert_eq!(failed["previous_runs"], 0);
+
+        // Renaming a finished campaign keeps it as it is.
+        let mut renamed = body.clone();
+        renamed["name"] = json!("Renamed");
+        let (status, view) = h.send("PUT", &detail, &admin, Some(renamed.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!((view["name"].as_str(), view["state"].as_str()), (Some("Renamed"), Some("failed")));
+        assert_eq!(view["progress"]["failed"], 1);
+
+        // Only the failed server runs again; the run that failed is kept.
+        assert_eq!(h.send("POST", &relaunch, &viewer, Some(json!({}))).await.0, StatusCode::FORBIDDEN);
+        assert_eq!(
+            h.send("POST", &relaunch, &admin, Some(json!({"servers": "some"}))).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        let (status, view) = h.send("POST", &relaunch, &admin, Some(json!({"servers": "failed"}))).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["state"], "scheduled");
+        assert_eq!(view["previous_runs"], 1);
+        assert_eq!((view["error"].clone(), view["finished_at"].clone()), (Value::Null, Value::Null));
+        assert_eq!(view["waves"].as_array().unwrap().len(), 1);
+        assert_eq!(view["waves"][0]["servers"].as_array().unwrap().len(), 1);
+        assert_eq!(view["waves"][0]["servers"][0]["server_id"], json!(h.servers[1]));
+        assert_eq!(view["server_ids"], json!([]));
+        let (status, list) = h.send("GET", &runs, &viewer, None).await;
+        assert_eq!(status, StatusCode::OK, "{list}");
+        let run = &list["runs"][0];
+        assert_eq!((run["number"].as_i64(), run["state"].as_str()), (Some(1), Some("failed")));
+        assert_eq!(run["settings"]["name"], "Renamed");
+        assert_eq!((run["progress"]["succeeded"].as_i64(), run["progress"]["failed"].as_i64()), (Some(1), Some(1)));
+        assert_eq!(run["waves"][0]["servers"][1]["status"], "failed");
+        assert_eq!(run["error"], failed["error"]);
+        let (status, again) = h.send("POST", &relaunch, &admin, Some(json!({}))).await;
+        assert_eq!((status, again["error"].as_str()), (StatusCode::CONFLICT, Some("cannot relaunch a campaign that is scheduled")));
+
+        // Stopped before anything was queued: editing it changes everything
+        // and keeps no empty run.
+        h.send("POST", &format!("{detail}/stop"), &admin, None).await;
+        let mut edited = renamed.clone();
+        edited["security_only"] = json!(false);
+        let (status, view) = h.send("PUT", &detail, &admin, Some(edited)).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!((view["state"].as_str(), view["previous_runs"].as_i64()), (Some("draft"), Some(1)));
+        assert_eq!(view["spec"]["security_only"], false);
+        assert_eq!(view["waves"][0]["servers"].as_array().unwrap().len(), 2);
+
+        // Completed: no server failed; all of them run again.
+        h.send("POST", &format!("{detail}/start"), &admin, None).await;
+        runner.advance(uuid, Utc::now()).await.unwrap();
+        sqlx::query("UPDATE commands SET state = 'succeeded', sent_at = now(), finished_at = now()
+                     WHERE campaign_id = $1 AND state = 'queued'")
+            .bind(uuid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        runner.advance(uuid, Utc::now()).await.unwrap();
+        let (status, refused) = h.send("POST", &relaunch, &admin, Some(json!({"servers": "failed"}))).await;
+        assert_eq!((status, refused["error"].as_str()), (StatusCode::CONFLICT, Some("no server of the campaign failed in its last run")));
+        let (status, view) = h.send("POST", &relaunch, &admin, Some(json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["previous_runs"], 2);
+        assert_eq!(view["progress"]["pending"], 2);
+        let (_, list) = h.send("GET", &runs, &admin, None).await;
+        let states: Vec<&str> = list["runs"].as_array().unwrap().iter().map(|r| r["state"].as_str().unwrap()).collect();
+        assert_eq!(states, ["completed", "failed"]);
+        assert_eq!(list["runs"][0]["settings"]["spec"]["security_only"], false);
+
+        // Editing a finished run prepares the next one as a draft.
+        h.send("POST", &format!("{detail}/stop"), &admin, None).await;
+        let mut next = body.clone();
+        next["name"] = json!("Next");
+        next["allow_reboot"] = json!(true);
+        // Nothing ran since the relaunch: no new run is kept.
+        let (_, view) = h.send("PUT", &detail, &admin, Some(next)).await;
+        assert_eq!((view["state"].as_str(), view["previous_runs"].as_i64()), (Some("draft"), Some(2)));
+
+        let actions: Vec<String> = sqlx::query_scalar(
+            "SELECT action FROM audit_log WHERE target_id = $1 AND action LIKE 'campaign.relaunch' ORDER BY id",
+        )
+        .bind(&id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(actions.len(), 2);
+        // Deleting it removes its runs with it.
+        assert_eq!(h.send("DELETE", &detail, &admin, None).await.0, StatusCode::NO_CONTENT);
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM campaign_run_targets")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
     }
 }

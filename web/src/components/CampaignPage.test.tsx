@@ -155,21 +155,68 @@ describe("CampaignPage", () => {
     expect(push).toHaveBeenCalledWith("/campaigns/");
   });
 
-  it("only copies or stops a running campaign, and only copies or deletes a finished one", async () => {
+  it("always offers Edit; stops a running campaign, and runs again or deletes a finished one", async () => {
     stubFetch({ [`GET ${PATH}`]: { status: 200, body: detail() } });
     const { unmount } = render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
     expect(await screen.findByRole("link", { name: "Duplicate" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop…" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute("href", expect.stringContaining("edit="));
     expect(screen.queryByRole("button", { name: "Delete…" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run again…" })).not.toBeInTheDocument();
     unmount();
     const idle = { ...detail().progress, in_progress: 0 };
     stubFetch({
-      [`GET ${PATH}`]: { status: 200, body: detail({ state: "failed", finished_at: "2026-10-23T10:00:00Z", progress: idle }) },
+      [`GET ${PATH}`]: { status: 200, body: detail({ state: "completed", finished_at: "2026-10-23T10:00:00Z", progress: idle }) },
     });
     render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
     expect(await screen.findByRole("button", { name: "Delete…" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run again…" })).toBeInTheDocument();
+    // Nothing failed: nothing to retry.
+    expect(screen.queryByRole("button", { name: /failed server/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop…" })).not.toBeInTheDocument();
+  });
+
+  it("runs the failed servers again after confirmation and lists the earlier runs", async () => {
+    const ended = { total: 2, pending: 0, in_progress: 0, succeeded: 1, failed: 1, cancelled: 0 };
+    const failed = detail({ state: "failed", error: "wave 0: 1 of 2 servers failed", finished_at: "2026-10-23T10:00:00Z", progress: ended });
+    const scheduled = detail({ state: "scheduled", current_wave: null, previous_runs: 1, finished_at: null });
+    const run = {
+      number: 1,
+      state: "failed",
+      error: failed.error,
+      started_at: failed.started_at,
+      finished_at: "2026-10-23T10:00:00Z",
+      settings: {
+        name: "October updates",
+        site_id: null,
+        server_ids: [WEB1],
+        wave_specs: [],
+        spec: failed.spec,
+        agent_version: null,
+        command_ttl_s: 3600,
+        failure_threshold: failed.failure_threshold,
+        windows: failed.windows,
+        sources: null,
+      },
+      progress: ended,
+      waves: failed.waves,
+    };
+    const fetchMock = stubFetch({
+      // Polled again once scheduled.
+      [`GET ${PATH}`]: [{ status: 200, body: failed }, { status: 200, body: scheduled }],
+      [`POST ${PATH}/relaunch`]: { status: 200, body: scheduled },
+      [`GET ${PATH}/runs`]: { status: 200, body: { runs: [run] } },
+    });
+    render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Run the failed server again…" }));
+    expect(screen.getByText(/Only the servers whose update failed/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Run them again" }));
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/relaunch"));
+    expect(JSON.parse(call?.[1]?.body as string)).toEqual({ servers: "failed" });
+    const runs = await screen.findByRole("region", { name: "Earlier runs" });
+    expect(await within(runs).findByText("Run 1")).toBeInTheDocument();
+    expect(within(runs).getByText("1 of 2 succeeded")).toBeInTheDocument();
+    expect(within(runs).getByText("wave 0: 1 of 2 servers failed")).toBeInTheDocument();
   });
 });

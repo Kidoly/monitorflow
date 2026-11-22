@@ -147,7 +147,7 @@ db_tests! {
                 "auto_rollouts",
         "business_service_members",
         "business_services",
-                "campaign_snapshots",
+                "campaign_run_targets", "campaign_run_waves", "campaign_runs", "campaign_snapshots",
                 "campaign_targets",
                 "campaign_waves",
                 "campaign_windows",

@@ -11,13 +11,14 @@ import {
   type AiSettings,
   type ChannelTestResult,
   type Server,
+  type SiteSourcesChange,
   ApiError,
   api,
   describeError,
 } from "@/lib/api";
 import { type Acceptance, aiCommands } from "@/lib/commandKinds";
 import { administersEverything, useMe } from "@/lib/me";
-import { serverHref } from "@/lib/routes";
+import { AI_COMMANDS_SECTION, serverHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
@@ -25,6 +26,7 @@ import styles from "./AdminPages.module.css";
 import { Button, fieldClass } from "./ui/Button";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
+import { SwitchResult } from "./SiteAiCommands";
 import { Label } from "./ui/StatusLabel";
 
 /** `/settings/ai/`: global administrators only, like the API (ADR-0064). */
@@ -420,15 +422,48 @@ function ModelsLine({ query, listed }: { query: ModelQuery | null; listed: Model
   return <span className={styles.fieldNote}>{t("ai.models", { count: listed.models.length })}</span>;
 }
 
-/** Where each server stands; AI commands are turned on per server, from its page (ADR-0098). */
+/**
+ * Where each server stands, and AI commands on or off for every server at once (ADR-0173); per site
+ * and per server from their pages (ADR-0098).
+ */
 function AllowCommands() {
   const fetcher = useCallback((signal: AbortSignal) => api.servers(signal), []);
-  const { data } = usePolledData(fetcher);
+  const { data, refresh } = usePolledData(fetcher);
+  const [result, setResult] = useState<{ on: boolean; change: SiteSourcesChange } | null>(null);
+  // Linked from the approval queue: the section shows once the settings are read, after the browser looked for it.
+  useEffect(() => {
+    if (window.location.hash === `#${AI_COMMANDS_SECTION}`) {
+      document.getElementById(AI_COMMANDS_SECTION)?.scrollIntoView?.();
+    }
+  }, []);
+  const action = (on: boolean) => (
+    <InlineConfirm
+      trigger={on ? t("ai.all.onTrigger") : t("ai.all.offTrigger")}
+      triggerVariant={on ? "default" : "danger"}
+      title={on ? t("ai.all.onTitle") : t("ai.all.offTitle")}
+      consequence={on ? t("fleet.siteAi.onConsequence") : t("fleet.siteAi.offConsequence")}
+      confirmLabel={on ? t("fleet.siteAi.onConfirm") : t("fleet.siteAi.offConfirm")}
+      confirmVariant={on ? "k" : "danger"}
+      pendingLabel={t("fleet.siteAi.sending")}
+      onConfirm={async () => {
+        setResult({ on, change: await api.switchAllAiCommands(on) });
+        refresh();
+      }}
+      describeError={(e) => t("fleet.siteAi.failed", { error: describeError(e) })}
+    />
+  );
   return (
-    <section className={styles.panel} aria-label={t("ai.allowLabel")}>
+    <section id={AI_COMMANDS_SECTION} className={styles.panel} aria-label={t("ai.allowLabel")}>
       <h2 className={styles.sectionTitle}>{t("ai.allowTitle")}</h2>
       <p className={styles.footnote}>{t("ai.allowBody")}</p>
       {data && data.servers.length > 0 && <ServersAccepting servers={data.servers} />}
+      {result && <SwitchResult {...result} />}
+      {data && data.servers.length > 0 && (
+        <div className={styles.buttons}>
+          {action(true)}
+          {action(false)}
+        </div>
+      )}
     </section>
   );
 }

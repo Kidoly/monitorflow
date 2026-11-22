@@ -141,6 +141,25 @@ describe("ApprovalQueue", () => {
     );
   });
 
+  it("links a global administrator to turning AI commands on on every server", async () => {
+    stubFetch({ [LIST]: list() });
+    const { unmount } = render(
+      <As user={me({ role: "administrator", customer_id: null, site_id: null })}>
+        <ApprovalQueue />
+      </As>,
+    );
+    const link = await screen.findByRole("link", { name: "Turn them on on every server at once." });
+    expect(link).toHaveAttribute("href", expect.stringMatching(/^\/settings\/ai\/?#ai-commands$/));
+    unmount();
+    render(
+      <As user={me({ role: "administrator", customer_id: CUSTOMER_ID, site_id: null })}>
+        <ApprovalQueue />
+      </As>,
+    );
+    expect(await screen.findByText("How a command gets here")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /every server/ })).not.toBeInTheDocument();
+  });
+
   it("explains an empty queue in French", async () => {
     setActiveLocale("fr");
     stubFetch({ [LIST]: list() });

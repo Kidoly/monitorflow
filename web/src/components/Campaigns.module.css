@@ -73,6 +73,30 @@
   border-radius: 0 0 var(--radius-panel) var(--radius-panel);
 }
 
+/* Earlier runs (ADR-0173): each a closed <details> holding its batches. */
+.runs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.runsTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.runBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.runBody p {
+  margin: 0;
+}
+
 /* The creation form (08-admin-enrollment-tokens' form). */
 .form {
   display: flex;
