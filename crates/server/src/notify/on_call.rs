@@ -86,6 +86,9 @@ pub struct Rota {
     pub anchor_position: usize,
     /// In order; `None` is the turn of a removed user.
     pub members: Vec<Option<Uuid>>,
+    /// People on call together in each turn (ADR-0170): turn *k* takes
+    /// the members from `anchor_position + k * per_turn` on, in order.
+    pub per_turn: usize,
 }
 
 impl Rota {
@@ -116,11 +119,25 @@ impl Rota {
         turn
     }
 
-    /// The position in `members` of turn `turn`; `None` without members.
+    /// The position in `members` of the first person of turn `turn`;
+    /// `None` without members.
     pub fn position(&self, turn: i64) -> Option<usize> {
+        self.seat_position(turn, 0)
+    }
+
+    /// How many people are on call at once: `per_turn`, at least one and
+    /// never more than the members, so nobody holds two places.
+    pub fn seats(&self) -> usize {
+        self.per_turn.clamp(1, self.members.len().max(1))
+    }
+
+    /// The position in `members` of place `seat` of turn `turn`.
+    pub fn seat_position(&self, turn: i64, seat: usize) -> Option<usize> {
         let count = i64::try_from(self.members.len()).ok().filter(|n| *n > 0)?;
         let start = i64::try_from(self.anchor_position).unwrap_or(0);
-        usize::try_from((start + turn).rem_euclid(count)).ok()
+        let per = i64::try_from(self.seats()).unwrap_or(1);
+        let seat = i64::try_from(seat).unwrap_or(0);
+        usize::try_from((start + turn * per + seat).rem_euclid(count)).ok()
     }
 
     /// The anchor of the latest hand-off at or before `now`, with these
@@ -150,6 +167,8 @@ impl Rota {
 pub struct Override {
     pub id: Uuid,
     pub user: Uuid,
+    /// The place in the turn it covers, 0 for the first person.
+    pub seat: usize,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
@@ -174,6 +193,8 @@ pub enum Source {
 /// One period with the same person on call for the same reason.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Span {
+    /// The place in the turn, 0 for the first person.
+    pub seat: usize,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
     /// `None` for a removed user or a schedule without members.
@@ -191,26 +212,43 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    /// Who is on call at `at`, and why. The newest override covering `at`
-    /// wins; the rotation otherwise.
+    /// Who holds the first place of the turn at `at`, and why.
     pub fn on_call(&self, at: DateTime<Utc>) -> (Option<Uuid>, Source) {
+        self.on_call_seat(at, 0)
+    }
+
+    /// Everyone on call at `at`, one per place of the turn.
+    pub fn on_call_all(&self, at: DateTime<Utc>) -> Vec<(Option<Uuid>, Source)> {
+        (0..self.rota.seats())
+            .map(|seat| self.on_call_seat(at, seat))
+            .collect()
+    }
+
+    /// Who holds place `seat` at `at`, and why. The newest override of
+    /// that place covering `at` wins; the rotation otherwise.
+    pub fn on_call_seat(&self, at: DateTime<Utc>, seat: usize) -> (Option<Uuid>, Source) {
         let newest = self
             .overrides
             .iter()
-            .filter(|o| o.covers(at))
+            .filter(|o| o.seat == seat && o.covers(at))
             .max_by_key(|o| (o.created_at, o.id));
         if let Some(o) = newest {
             return (Some(o.user), Source::Override(o.id));
         }
-        match self.rota.position(self.rota.turn_at(at)) {
+        match self.rota.seat_position(self.rota.turn_at(at), seat) {
             Some(position) => (self.rota.members[position], Source::Rotation(position)),
             None => (None, Source::Nobody),
         }
     }
 
-    /// Who is on call from `from` to `to`, in order, without two neighbours
-    /// alike.
+    /// Who holds the first place from `from` to `to`.
     pub fn spans(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Span> {
+        self.seat_spans(from, to, 0)
+    }
+
+    /// Who holds place `seat` from `from` to `to`, in order, without two
+    /// neighbours alike.
+    pub fn seat_spans(&self, from: DateTime<Utc>, to: DateTime<Utc>, seat: usize) -> Vec<Span> {
         let mut cuts = vec![from, to];
         if !self.rota.members.is_empty() {
             let mut turn = self.rota.turn_at(from) + 1;
@@ -223,7 +261,7 @@ impl Schedule {
                 turn += 1;
             }
         }
-        for o in &self.overrides {
+        for o in self.overrides.iter().filter(|o| o.seat == seat) {
             cuts.extend(
                 [o.starts_at, o.ends_at]
                     .into_iter()
@@ -234,12 +272,13 @@ impl Schedule {
         cuts.dedup();
         let mut spans: Vec<Span> = Vec::new();
         for pair in cuts.windows(2) {
-            let (user, source) = self.on_call(pair[0]);
+            let (user, source) = self.on_call_seat(pair[0], seat);
             match spans.last_mut() {
                 Some(last) if last.user == user && last.source == source => {
                     last.ends_at = pair[1];
                 }
                 _ => spans.push(Span {
+                    seat,
                     starts_at: pair[0],
                     ends_at: pair[1],
                     user,
@@ -494,6 +533,7 @@ type OverrideRow = (
     DateTime<Utc>,
     DateTime<Utc>,
     DateTime<Utc>,
+    i16,
 );
 
 /// Every schedule, or only `only`, with the overrides that end after
@@ -505,7 +545,7 @@ pub async fn schedules(
 ) -> Result<Vec<Schedule>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT id, customer_id, site_id, time_zone, rotation, handoff_time, anchor_date,
-                anchor_position
+                anchor_position, people_per_turn
          FROM on_call_schedules WHERE $1::uuid IS NULL OR id = $1 ORDER BY created_at, id",
     )
     .bind(only)
@@ -522,16 +562,17 @@ pub async fn schedules(
     }
     let mut overrides: HashMap<Uuid, Vec<Override>> = HashMap::new();
     let rows_o: Vec<OverrideRow> = sqlx::query_as(
-        "SELECT schedule_id, id, user_id, starts_at, ends_at, created_at
+        "SELECT schedule_id, id, user_id, starts_at, ends_at, created_at, seat
              FROM on_call_overrides WHERE ends_at > $1 ORDER BY starts_at, id",
     )
     .bind(from)
     .fetch_all(&mut *db)
     .await?;
-    for (schedule, id, user, starts_at, ends_at, created_at) in rows_o {
+    for (schedule, id, user, starts_at, ends_at, created_at, seat) in rows_o {
         overrides.entry(schedule).or_default().push(Override {
             id,
             user,
+            seat: usize::try_from(seat).unwrap_or(0),
             starts_at,
             ends_at,
             created_at,
@@ -552,6 +593,7 @@ pub async fn schedules(
         });
         let rotation: String = row.try_get("rotation")?;
         let position: i32 = row.try_get("anchor_position")?;
+        let per_turn: i16 = row.try_get("people_per_turn")?;
         out.push(Schedule {
             id,
             coverage,
@@ -562,6 +604,7 @@ pub async fn schedules(
                 anchor: row.try_get("anchor_date")?,
                 anchor_position: usize::try_from(position).unwrap_or(0),
                 members: members.remove(&id).unwrap_or_default(),
+                per_turn: usize::try_from(per_turn).unwrap_or(1),
             },
             overrides: overrides.remove(&id).unwrap_or_default(),
         });
@@ -569,19 +612,27 @@ pub async fn schedules(
     Ok(out)
 }
 
-/// Who gets a schedule's messages at `now`: the person on call, or during
-/// a gap its [`Directory::fallback`].
+/// Who gets a schedule's messages at `now`: everyone on call, and for
+/// each place in a gap its [`Directory::fallback`], each person once.
 pub fn recipients(
     schedule: &Schedule,
     directory: &Directory,
     mail: bool,
     now: DateTime<Utc>,
 ) -> Vec<Uuid> {
-    let (user, _) = schedule.on_call(now);
-    match directory.problem(user, schedule.coverage, mail) {
-        None => user.into_iter().collect(),
-        Some(_) => directory.fallback(schedule.coverage, mail),
+    let mut out: Vec<Uuid> = Vec::new();
+    for (user, _) in schedule.on_call_all(now) {
+        let told = match directory.problem(user, schedule.coverage, mail) {
+            None => user.into_iter().collect(),
+            Some(_) => directory.fallback(schedule.coverage, mail),
+        };
+        for id in told {
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
     }
+    out
 }
 
 /// The destinations that reach `person` in person: email through `mail`'s
@@ -761,6 +812,7 @@ mod tests {
             anchor: date(anchor),
             anchor_position: 0,
             members: vec![Some(ALICE), Some(BOB), Some(CAROL)],
+            per_turn: 1,
         }
     }
 
@@ -777,6 +829,7 @@ mod tests {
         Override {
             id: Uuid::from_u128(id),
             user,
+            seat: 0,
             starts_at: utc(from),
             ends_at: utc(to),
             created_at: utc(created),
@@ -944,6 +997,84 @@ mod tests {
         );
         let spans = s.spans(utc("2026-11-03T00:00:00Z"), utc("2026-11-10T00:00:00Z"));
         assert_eq!(spans.len(), 1);
+    }
+
+    const DAN: Uuid = Uuid::from_u128(4);
+
+    #[test]
+    fn several_people_take_each_turn_together_in_order() {
+        let mut r = rota(Paris, Rotation::Weekly, time(9, 0), "2026-11-02");
+        r.members.push(Some(DAN));
+        r.per_turn = 2;
+        let s = schedule(r);
+        let who = |at| -> Vec<Option<Uuid>> {
+            s.on_call_all(utc(at)).into_iter().map(|(u, _)| u).collect()
+        };
+        assert_eq!(who("2026-11-02T08:00:00Z"), vec![Some(ALICE), Some(BOB)]);
+        assert_eq!(who("2026-11-09T08:00:00Z"), vec![Some(CAROL), Some(DAN)]);
+        assert_eq!(who("2026-11-16T08:00:00Z"), vec![Some(ALICE), Some(BOB)]);
+        // The first place is what `on_call` answers.
+        assert_eq!(s.on_call(utc("2026-11-09T08:00:00Z")).0, Some(CAROL));
+    }
+
+    #[test]
+    fn an_odd_number_of_people_wraps_around_and_nobody_holds_two_places() {
+        let mut r = rota(Paris, Rotation::Weekly, time(9, 0), "2026-11-02");
+        r.per_turn = 2;
+        let s = schedule(r.clone());
+        let who = |at| -> Vec<Option<Uuid>> {
+            s.on_call_all(utc(at)).into_iter().map(|(u, _)| u).collect()
+        };
+        assert_eq!(who("2026-11-09T08:00:00Z"), vec![Some(CAROL), Some(ALICE)]);
+        assert_eq!(who("2026-11-16T08:00:00Z"), vec![Some(BOB), Some(CAROL)]);
+        r.per_turn = 5;
+        assert_eq!(r.seats(), 3);
+        r.members.clear();
+        assert_eq!(r.seats(), 1);
+    }
+
+    #[test]
+    fn a_cover_replaces_one_place_only() {
+        let mut r = rota(Paris, Rotation::Weekly, time(9, 0), "2026-11-02");
+        r.members.push(Some(DAN));
+        r.per_turn = 2;
+        let mut s = schedule(r);
+        let mut c = cover(
+            7,
+            DAN,
+            "2026-11-03T00:00:00Z",
+            "2026-11-04T00:00:00Z",
+            "2026-11-01T00:00:00Z",
+        );
+        c.seat = 1;
+        s.overrides.push(c);
+        let all = s.on_call_all(utc("2026-11-03T12:00:00Z"));
+        assert_eq!(all[0], (Some(ALICE), Source::Rotation(0)));
+        assert_eq!(all[1], (Some(DAN), Source::Override(Uuid::from_u128(7))));
+        let spans = s.seat_spans(utc("2026-11-02T08:00:00Z"), utc("2026-11-09T08:00:00Z"), 1);
+        assert_eq!(spans.len(), 3);
+        assert!(spans.iter().all(|span| span.seat == 1));
+        assert_eq!(
+            s.spans(utc("2026-11-02T08:00:00Z"), utc("2026-11-09T08:00:00Z"))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn everyone_on_call_is_told_and_a_gap_goes_to_the_administrators_once() {
+        let admin = Uuid::from_u128(9);
+        let d = directory(vec![
+            person(ALICE, vec![(false, Some(CUSTOMER), None)], true),
+            person(BOB, vec![(false, Some(CUSTOMER), None)], false),
+            person(admin, vec![(true, Some(CUSTOMER), None)], true),
+        ]);
+        let mut r = rota(Paris, Rotation::Weekly, time(9, 0), "2026-11-02");
+        r.members = vec![Some(ALICE), Some(BOB)];
+        r.per_turn = 2;
+        let s = schedule(r);
+        let told = recipients(&s, &d, true, utc("2026-11-03T12:00:00Z"));
+        assert_eq!(told, vec![ALICE, admin]);
     }
 
     #[test]

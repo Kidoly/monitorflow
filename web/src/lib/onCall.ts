@@ -74,6 +74,24 @@ export function formatWhen(date: Date): string {
   });
 }
 
+/** Everyone on call now, one per place; `now` alone with one person per turn. */
+export function onCallNow(schedule: Pick<OnCallSchedule, "now" | "now_all" | "people_per_turn">): OnCallTurn[] {
+  if (schedule.people_per_turn > 1 && schedule.now_all.length > 0) return schedule.now_all;
+  return schedule.now ? [schedule.now] : [];
+}
+
+/** Who takes over next, at the earliest coming hand-off; `next` alone with one person per turn. */
+export function onCallNext(schedule: Pick<OnCallSchedule, "next" | "next_all" | "people_per_turn">): OnCallTurn[] {
+  if (schedule.people_per_turn <= 1 || schedule.next_all.length === 0) return schedule.next ? [schedule.next] : [];
+  const first = schedule.next_all.reduce((a, b) => (b.starts_at < a ? b.starts_at : a), schedule.next_all[0]!.starts_at);
+  return schedule.next_all.filter((turn) => turn.starts_at === first);
+}
+
+/** "alice and bob", "alice et bob". */
+export function names(items: string[]): string {
+  return new Intl.ListFormat(activeLocale(), { type: "conjunction" }).format(items);
+}
+
 /** Who is on call in a turn, for a sentence: "alice", or "nobody" in a gap without a person. */
 export function who(turn: Pick<OnCallTurn, "username" | "user_id">): string {
   return turn.username ?? (turn.user_id ? t("onCall.removedUser") : t("onCall.nobody"));

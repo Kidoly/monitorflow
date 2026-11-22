@@ -23,6 +23,9 @@ import {
   gaps,
   handoffRule,
   move,
+  names,
+  onCallNext,
+  onCallNow,
   placeName,
   problemText,
   timeZones,
@@ -231,6 +234,8 @@ function CoverForm({
   );
   const now = new Date();
   const [user, setUser] = useState("");
+  const places = onCallNow(schedule);
+  const [seat, setSeat] = useState(turn?.seat ?? 0);
   const [from, setFrom] = useState(toLocalInput(turn ? new Date(Math.max(Date.parse(turn.starts_at), now.getTime())) : now));
   const [until, setUntil] = useState(toLocalInput(new Date(turn ? turn.ends_at : now.getTime() + 86_400_000)));
   const [busy, setBusy] = useState(false);
@@ -249,7 +254,7 @@ function CoverForm({
     setBusy(true);
     setError(null);
     try {
-      await api.addOnCallOverride(schedule.id, { user_id: user, starts_at: start?.toISOString(), ends_at: end.toISOString() });
+      await api.addOnCallOverride(schedule.id, { user_id: user, seat, starts_at: start?.toISOString(), ends_at: end.toISOString() });
       onDone();
     } catch (e) {
       setError(describeError(e));
@@ -274,6 +279,18 @@ function CoverForm({
           </select>
           {turn?.username && <span className={admin.fieldNote}>{t("onCall.cover.insteadOf", { name: turn.username })}</span>}
         </label>
+        {!turn && places.length > 1 && (
+          <label className={admin.field}>
+            {t("onCall.cover.whosePlace")}
+            <select className={fieldClass} value={seat} onChange={(e) => setSeat(Number(e.target.value))}>
+              {places.map((p) => (
+                <option key={p.seat} value={p.seat}>
+                  {who(p)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className={admin.field}>
           {t("onCall.from")}
           <input className={fieldClass} type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -324,6 +341,7 @@ function ScheduleForm({
   const [members, setMembers] = useState<{ id: string; username: string }[]>(
     (schedule?.members ?? []).flatMap((m) => (m.user_id && m.username ? [{ id: m.user_id, username: m.username }] : [])),
   );
+  const [perTurn, setPerTurn] = useState(schedule?.people_per_turn ?? 1);
   const [rotation, setRotation] = useState<OnCallScheduleRequest["rotation"]>(schedule?.rotation ?? "weekly");
   const [day, setDay] = useState(schedule?.handoff_day ?? 1);
   const [time, setTime] = useState(schedule?.handoff_time ?? "09:00");
@@ -354,6 +372,7 @@ function ScheduleForm({
       handoff_time: time,
       handoff_day: rotation === "weekly" ? day : null,
       members: members.map((m) => m.id),
+      people_per_turn: Math.min(perTurn, Math.max(members.length, 1)),
     };
     try {
       if (schedule) await api.updateOnCallSchedule(schedule.id, body);
@@ -434,6 +453,26 @@ function ScheduleForm({
             </select>
           </label>
         )}
+        {members.length > 1 && (
+          <label className={admin.field}>
+            {t("onCall.form.atOnce")}
+            <select className={fieldClass} value={Math.min(perTurn, members.length)} onChange={(e) => setPerTurn(Number(e.target.value))}>
+              {Array.from({ length: Math.min(5, members.length) }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <span className={admin.fieldNote}>
+              {Math.min(perTurn, members.length) > 1
+                ? t("onCall.form.atOnceExample", {
+                    count: Math.min(perTurn, members.length),
+                    first: names(members.slice(0, Math.min(perTurn, members.length)).map((m) => m.username)),
+                  })
+                : t("onCall.form.atOnceNote")}
+            </span>
+          </label>
+        )}
         {missing.length > 0 && (
           <p className={admin.fieldNote}>
             {t("onCall.form.missingContact", { count: missing.length, names: missing.map((m) => m.username).join(", ") })}
@@ -502,9 +541,11 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const place = placeName(schedule, several, useMultiCustomer());
-  const { now, next } = schedule;
+  const now = onCallNow(schedule);
+  const next = onCallNext(schedule);
   const ahead = gaps(schedule);
-  const isNow = (turn: OnCallTurn) => turn.starts_at === now?.starts_at;
+  const isNow = (turn: OnCallTurn) => now.some((n) => n.seat === turn.seat && n.starts_at === turn.starts_at);
+  const together = (turns: OnCallTurn[]) => names(turns.map(who));
   const why = (turn: OnCallTurn) => (turn.problem ? problemText(turn.problem, turn.username, place) : "");
   const fallback = schedule.fallback.length
     ? t("onCall.fallback.told", { count: schedule.fallback.length, names: schedule.fallback.join(", ") })
@@ -544,25 +585,28 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
         <span className={admin.sectionTitle}>{schedule.name}</span>
         <span className={admin.dim}>
           {place} · {handoffRule(schedule)}
+          {schedule.people_per_turn > 1 && ` · ${t("onCall.card.atOnce", { count: schedule.people_per_turn })}`}
         </span>
       </div>
       <div className={styles.body}>
         <div className={styles.nowNext}>
           <div>
             <span className={styles.label}>{t("onCall.card.now")}</span>
-            <strong className={now?.problem ? styles.bad : undefined}>{now ? who(now) : t("onCall.nobodyStart")}</strong>
-            {now && <span className={admin.dim}>{t("onCall.card.until", { when: formatWhen(new Date(now.ends_at)) })}</span>}
+            <strong className={now.some((n) => n.problem) ? styles.bad : undefined}>
+              {now.length ? together(now) : t("onCall.nobodyStart")}
+            </strong>
+            {now[0] && <span className={admin.dim}>{t("onCall.card.until", { when: formatWhen(new Date(now[0].ends_at)) })}</span>}
           </div>
-          {next && (
+          {next[0] && (
             <div>
               <span className={styles.label}>{t("onCall.card.next")}</span>
-              <strong className={next.problem ? styles.bad : undefined}>{who(next)}</strong>
-              <span className={admin.dim}>{t("onCall.card.from", { when: formatWhen(new Date(next.starts_at)) })}</span>
+              <strong className={next.some((n) => n.problem) ? styles.bad : undefined}>{together(next)}</strong>
+              <span className={admin.dim}>{t("onCall.card.from", { when: formatWhen(new Date(next[0].starts_at)) })}</span>
             </div>
           )}
         </div>
         {ahead.map((gap) => (
-          <Banner key={gap.starts_at} tone={isNow(gap) ? "bad" : "warn"}>
+          <Banner key={`${gap.seat}-${gap.starts_at}`} tone={isNow(gap) ? "bad" : "warn"}>
             <strong>
               {isNow(gap)
                 ? t("onCall.gap.now")
@@ -603,7 +647,7 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
           </thead>
           <tbody>
             {schedule.turns.map((turn) => (
-              <tr key={turn.starts_at}>
+              <tr key={`${turn.seat}-${turn.starts_at}`}>
                 <td>{isNow(turn) ? t("onCall.now") : formatWhen(new Date(turn.starts_at))}</td>
                 <td>{formatWhen(new Date(turn.ends_at))}</td>
                 <td>{who(turn)}</td>

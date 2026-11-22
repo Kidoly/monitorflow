@@ -41,12 +41,17 @@ pub const MAX_OVERRIDE_DAYS: i64 = 90;
 const MAX_OVERRIDE_START_DAYS: i64 = 366;
 /// Most members of one schedule.
 pub const MAX_MEMBERS: usize = 50;
+/// Most people on call at once in one schedule (ADR-0170).
+pub const MAX_PER_TURN: usize = 5;
 const MAX_NAME: usize = 80;
 
 /// One period with one person on call.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 #[schema(as = OnCallTurn)]
 pub struct TurnView {
+    /// The place in the turn, 0 for the first person; always 0 with one
+    /// person per turn (ADR-0170).
+    pub seat: u32,
     /// Start of the period; in the past for the turn running now.
     pub starts_at: DateTime<Utc>,
     /// End of the period, at a hand-off or an end of a cover.
@@ -82,6 +87,8 @@ pub struct OverrideView {
     pub id: Uuid,
     /// Who is on call during it.
     pub user_id: Uuid,
+    /// The place of the turn it covers, 0 for the first person.
+    pub seat: u32,
     /// Name of `user_id`; `null` once the user is removed.
     pub username: Option<String>,
     /// Start of the cover.
@@ -117,15 +124,22 @@ pub struct ScheduleView {
     pub handoff_day: Option<u32>,
     /// In the order of their turns.
     pub members: Vec<MemberView>,
+    /// How many people are on call at once, 1 to 5 (ADR-0170).
+    pub people_per_turn: u32,
     /// Covers not over yet, by start.
     pub overrides: Vec<OverrideView>,
-    /// Who is on call now; `null` only without members.
+    /// Who holds the first place now; `null` only without members.
     pub now: Option<TurnView>,
-    /// The next one who takes over; `null` when nobody else does within
+    /// Who takes the first place next; `null` when nobody else does within
     /// the horizon.
     pub next: Option<TurnView>,
-    /// The turns that start within the next 28 days, the one running
-    /// now first.
+    /// Everyone on call now, one per place, the first being `now`.
+    pub now_all: Vec<TurnView>,
+    /// Who takes each place next, in the order of the places; a place
+    /// nobody else takes within the horizon is left out.
+    pub next_all: Vec<TurnView>,
+    /// The turns that start within the next 28 days, the ones running
+    /// now first, by start and then by place.
     pub turns: Vec<TurnView>,
     /// Who is told during a gap; empty when nobody can be, and for members
     /// who do not manage it.
@@ -171,6 +185,11 @@ pub struct ScheduleRequest {
     /// see all of the place (see `GET /api/v1/on-call/people`); members
     /// already on it may stay.
     pub members: Vec<Uuid>,
+    /// How many people are on call at once: 1 (the default) to 5, and at
+    /// most the number of members. Turns take them in order: with 2,
+    /// the first and second members, then the third and fourth.
+    #[serde(default)]
+    pub people_per_turn: Option<u32>,
 }
 
 /// Body of `POST /api/on-call/schedules/{id}/overrides`.
@@ -180,6 +199,10 @@ pub struct ScheduleRequest {
 pub struct OverrideRequest {
     /// Who covers: a member, or someone who could be one.
     pub user_id: Uuid,
+    /// Which place of the turn they cover, 0 (the default) for the first
+    /// person; below the schedule's `people_per_turn`.
+    #[serde(default)]
+    pub seat: Option<u32>,
     /// Now when absent or past.
     #[serde(default)]
     pub starts_at: Option<DateTime<Utc>>,
@@ -316,6 +339,7 @@ fn view(
         _ => directory.problem(user, coverage, mail.is_some()),
     };
     let turn = |span: &on_call::Span| TurnView {
+        seat: u32::try_from(span.seat).unwrap_or(0),
         starts_at: span.starts_at,
         ends_at: span.ends_at,
         user_id: span.user,
@@ -336,20 +360,29 @@ fn view(
     } else {
         rota.handoff(rota.turn_at(horizon) + 1)
     };
-    let spans = schedule.spans(back, to);
-    let turns: Vec<TurnView> = spans
-        .iter()
-        .filter(|s| s.ends_at > now && s.starts_at < horizon)
-        .map(turn)
-        .collect();
-    let current = turns.first().cloned();
-    let next = current.as_ref().and_then(|c| {
-        turns
+    let mut now_all = Vec::new();
+    let mut next_all = Vec::new();
+    let mut turns: Vec<TurnView> = Vec::new();
+    for seat in 0..rota.seats() {
+        let seat_turns: Vec<TurnView> = schedule
+            .seat_spans(back, to, seat)
             .iter()
-            .skip(1)
-            .find(|t| t.user_id != c.user_id || t.problem != c.problem)
-            .cloned()
-    });
+            .filter(|s| s.ends_at > now && s.starts_at < horizon)
+            .map(turn)
+            .collect();
+        if let Some(current) = seat_turns.first() {
+            now_all.push(current.clone());
+            let next = seat_turns
+                .iter()
+                .skip(1)
+                .find(|t| t.user_id != current.user_id || t.problem != current.problem);
+            next_all.extend(next.cloned());
+        }
+        turns.extend(seat_turns);
+    }
+    turns.sort_by_key(|t| (t.starts_at, t.seat));
+    let current = now_all.first().cloned();
+    let next = next_all.first().filter(|t| t.seat == 0).cloned();
     let (fallback, mail_host) = if can_manage {
         let fallback = directory
             .fallback(coverage, mail.is_some())
@@ -386,6 +419,7 @@ fn view(
                 problem: directory.problem(*user, coverage, mail.is_some()),
             })
             .collect(),
+        people_per_turn: u32::try_from(rota.seats()).unwrap_or(1),
         overrides: schedule
             .overrides
             .iter()
@@ -393,6 +427,7 @@ fn view(
             .map(|o| OverrideView {
                 id: o.id,
                 user_id: o.user,
+                seat: u32::try_from(o.seat).unwrap_or(0),
                 username: username(directory, Some(o.user)),
                 starts_at: o.starts_at,
                 ends_at: o.ends_at,
@@ -400,6 +435,8 @@ fn view(
             .collect(),
         now: current,
         next,
+        now_all,
+        next_all,
         turns,
         fallback,
         mail_host,
@@ -497,6 +534,7 @@ struct Valid {
     handoff: NaiveTime,
     weekday: Weekday,
     members: Vec<Uuid>,
+    per_turn: usize,
 }
 
 /// Checks a request; `current` holds the members already on the schedule,
@@ -543,6 +581,17 @@ async fn validate(
             "At most {MAX_MEMBERS} people per schedule."
         )));
     }
+    let per_turn = usize::try_from(request.people_per_turn.unwrap_or(1)).unwrap_or(0);
+    if !(1..=MAX_PER_TURN).contains(&per_turn) {
+        return Err(ApiError::Invalid(format!(
+            "Put 1 to {MAX_PER_TURN} people on call at once."
+        )));
+    }
+    if per_turn > request.members.len() {
+        return Err(ApiError::Invalid(format!(
+            "Add at least {per_turn} people to have {per_turn} on call at once."
+        )));
+    }
     let mut seen = std::collections::HashSet::new();
     if !request.members.iter().all(|m| seen.insert(*m)) {
         return Err(ApiError::Invalid("Each person takes one turn.".into()));
@@ -577,6 +626,7 @@ async fn validate(
         handoff,
         weekday,
         members: request.members,
+        per_turn,
     })
 }
 
@@ -633,6 +683,7 @@ fn audited(valid: &Valid) -> Value {
         "rotation": valid.rotation.as_str(),
         "handoff_time": valid.handoff.format("%H:%M").to_string(),
         "members": valid.members,
+        "people_per_turn": valid.per_turn,
     })
 }
 
@@ -700,8 +751,8 @@ pub async fn create(
     let (customer_id, site_id) = valid.coverage.columns();
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO on_call_schedules (name, customer_id, site_id, time_zone, rotation,
-                                        handoff_time, anchor_date, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+                                        handoff_time, anchor_date, created_by, people_per_turn)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
     )
     .bind(&valid.name)
     .bind(customer_id)
@@ -711,6 +762,7 @@ pub async fn create(
     .bind(valid.handoff)
     .bind(anchor)
     .bind(user.id)
+    .bind(i16::try_from(valid.per_turn).unwrap_or(1))
     .fetch_one(&mut *tx)
     .await?;
     write_members(&mut tx, id, &valid.members).await?;
@@ -761,7 +813,7 @@ pub async fn update(
     sqlx::query(
         "UPDATE on_call_schedules
          SET name = $2, customer_id = $3, site_id = $4, time_zone = $5, rotation = $6,
-             handoff_time = $7, anchor_date = $8, anchor_position = $9
+             handoff_time = $7, anchor_date = $8, anchor_position = $9, people_per_turn = $10
          WHERE id = $1",
     )
     .bind(id)
@@ -773,6 +825,7 @@ pub async fn update(
     .bind(valid.handoff)
     .bind(anchor)
     .bind(i32::try_from(anchor_position).unwrap_or(0))
+    .bind(i16::try_from(valid.per_turn).unwrap_or(1))
     .execute(&mut *tx)
     .await?;
     write_members(&mut tx, id, &valid.members).await?;
@@ -844,6 +897,14 @@ pub async fn add_override(
     if starts_at > now + TimeDelta::days(MAX_OVERRIDE_START_DAYS) {
         return Err(ApiError::Invalid("Start within a year.".into()));
     }
+    let seat = usize::try_from(request.seat.unwrap_or(0)).unwrap_or(usize::MAX);
+    if seat >= schedule.rota.seats() {
+        return Err(ApiError::Invalid(format!(
+            "This schedule has {} people on call at once: cover place 0 to {}.",
+            schedule.rota.seats(),
+            schedule.rota.seats() - 1
+        )));
+    }
     let member = schedule.rota.members.contains(&Some(request.user_id));
     if !member
         && !candidates(&mut *tx, &user, schedule.coverage)
@@ -856,18 +917,19 @@ pub async fn add_override(
         ));
     }
     let created: Uuid = sqlx::query_scalar(
-        "INSERT INTO on_call_overrides (schedule_id, user_id, starts_at, ends_at, created_by)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        "INSERT INTO on_call_overrides (schedule_id, user_id, starts_at, ends_at, created_by, seat)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     )
     .bind(id)
     .bind(request.user_id)
     .bind(starts_at)
     .bind(ends_at)
     .bind(user.id)
+    .bind(i16::try_from(seat).unwrap_or(0))
     .fetch_one(&mut *tx)
     .await?;
     let details = json!({
-        "schedule_id": id, "user_id": request.user_id,
+        "schedule_id": id, "user_id": request.user_id, "seat": seat,
         "starts_at": starts_at, "ends_at": ends_at,
     });
     record(
@@ -1239,10 +1301,12 @@ mod tests {
                 anchor: "2026-11-02".parse().unwrap(),
                 anchor_position: 0,
                 members: vec![Some(alice), Some(bob), None],
+                per_turn: 1,
             },
             overrides: vec![Override {
                 id: Uuid::from_u128(50),
                 user: gone,
+                seat: 0,
                 starts_at: utc("2026-11-20T00:00:00Z"),
                 ends_at: utc("2026-11-21T00:00:00Z"),
                 created_at: utc("2026-11-01T00:00:00Z"),

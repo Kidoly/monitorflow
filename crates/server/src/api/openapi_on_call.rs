@@ -69,14 +69,15 @@ fn list_on_call_schedules() {}
 /// Add an on-call schedule
 ///
 /// Administrators of its place. The first member is on call from the last
-/// hand-off, so someone is on call at once. Audited as
+/// hand-off, so someone is on call at once. With `people_per_turn` above
+/// 1, that many members are on call together and all are told (ADR-0170). Audited as
 /// `on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`
 /// to retry.
 #[utoipa::path(post, path = "/api/v1/on-call/schedules", tag = "on-call",
     request_body(content = on_call::ScheduleRequest, example = json!(schedule_request())),
     responses(
         (status = 201, description = "Added", body = on_call::ScheduleView, example = json!(schedule())),
-        (status = 400, description = "`invalid`: no name or one over 80 characters, an unknown time zone, a rotation other than `daily` or `weekly`, a time not `HH:MM`, no day for a weekly hand-off, no members, over 50, the same one twice, someone who does not see all of the place, a customer and a site together, an unknown customer or site", body = ErrorBody),
+        (status = 400, description = "`invalid`: no name or one over 80 characters, an unknown time zone, a rotation other than `daily` or `weekly`, a time not `HH:MM`, no day for a weekly hand-off, no members, over 50, the same one twice, `people_per_turn` outside 1 to 5 or above the number of members, someone who does not see all of the place, a customer and a site together, an unknown customer or site", body = ErrorBody),
         (status = 403, description = "`forbidden`: not an administrator of its place; `api_key_scope`", body = ErrorBody),
     ))]
 fn create_on_call_schedule() {}
@@ -116,20 +117,22 @@ fn delete_on_call_schedule() {}
 /// Add a cover
 ///
 /// Puts a member, or anyone who could be one, on call for a period,
-/// whatever the rotation says: for a holiday or a swap. A start absent or
-/// past is now. Administrators of the schedule's place. Answers the
+/// whatever the rotation says: for a holiday or a swap. With several
+/// people on call at once, `seat` says whose place it takes, 0 for the
+/// first person of the turn. A start absent or past is now. Administrators of the schedule's place. Answers the
 /// schedule. Audited as `on_call.override_create`. Not safe to repeat:
 /// send `Idempotency-Key` to retry.
 #[utoipa::path(post, path = "/api/v1/on-call/schedules/{id}/overrides", tag = "on-call",
     params(("id" = uuid::Uuid, Path, description = "The schedule")),
     request_body(content = on_call::OverrideRequest, example = json!({
         "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+        "seat": 0,
         "starts_at": "2026-12-24T18:00:00Z",
         "ends_at": "2026-12-27T08:00:00Z",
     })),
     responses(
         (status = 201, description = "Added; the schedule", body = on_call::ScheduleView, example = json!(schedule())),
-        (status = 400, description = "`invalid`: an end not after the start, over 90 days, a start over a year away, someone who does not see all of the place", body = ErrorBody),
+        (status = 400, description = "`invalid`: an end not after the start, over 90 days, a start over a year away, a `seat` not below the schedule's `people_per_turn`, someone who does not see all of the place", body = ErrorBody),
         (status = 403, description = NOT_ADMIN, body = ErrorBody),
         (status = 404, description = "`not_found`: no such schedule, or not one the key's maker administers", body = ErrorBody),
     ))]
@@ -244,6 +247,7 @@ fn schedule_request() -> serde_json::Value {
         "handoff_time": "09:00",
         "handoff_day": 1,
         "members": ["5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f", "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"],
+        "people_per_turn": 1,
     })
 }
 
@@ -252,7 +256,7 @@ fn schedule() -> serde_json::Value {
     let bob = "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e";
     let turn = |starts: &str, ends: &str, id: &str, name: &str, problem: Option<&str>| {
         json!({
-            "starts_at": starts, "ends_at": ends, "user_id": id, "username": name,
+            "seat": 0, "starts_at": starts, "ends_at": ends, "user_id": id, "username": name,
             "override_id": null, "problem": problem,
         })
     };
@@ -285,9 +289,12 @@ fn schedule() -> serde_json::Value {
             { "user_id": alice, "username": "alice", "problem": null },
             { "user_id": bob, "username": "bob", "problem": "no_contact" },
         ],
+        "people_per_turn": 1,
         "overrides": [],
         "now": now,
         "next": next,
+        "now_all": [now],
+        "next_all": [next],
         "turns": [now, next],
         "fallback": ["carol"],
         "mail_host": "smtp.example.com",

@@ -3554,6 +3554,8 @@ export type OnCallProblem = "nobody" | "removed" | "disabled" | "no_access" | "n
 
 /** One period with one person on call. */
 export interface OnCallTurn {
+  /** The place in the turn, 0 for the first person (ADR-0170). */
+  seat: number;
   starts_at: string;
   ends_at: string;
   /** Null for a removed user's turn or a schedule without people. */
@@ -3567,6 +3569,8 @@ export interface OnCallTurn {
 export interface OnCallOverride {
   id: string;
   user_id: string;
+  /** The place of the turn it covers. */
+  seat: number;
   username: string | null;
   starts_at: string;
   ends_at: string;
@@ -3589,9 +3593,15 @@ export interface OnCallSchedule {
   /** 1 for Monday to 7 for Sunday; null when daily. */
   handoff_day: number | null;
   members: { user_id: string | null; username: string | null; problem: OnCallProblem | null }[];
+  /** How many people are on call at once, 1 to 5. */
+  people_per_turn: number;
   overrides: OnCallOverride[];
   now: OnCallTurn | null;
   next: OnCallTurn | null;
+  /** Everyone on call now, one per place. */
+  now_all: OnCallTurn[];
+  /** Who takes each place next. */
+  next_all: OnCallTurn[];
   /** From now to four weeks ahead. */
   turns: OnCallTurn[];
   /** Who is told during a gap; empty when nobody can be. Empty too for members who do not manage it. */
@@ -3611,6 +3621,8 @@ export interface OnCallScheduleRequest {
   handoff_day: number | null;
   /** In order of their turns. */
   members: string[];
+  /** 1 to 5, at most the number of members. */
+  people_per_turn: number;
 }
 
 /** Someone the user may put on a schedule. */
@@ -4426,7 +4438,7 @@ export const api = {
     request<void>(`/api/on-call/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Puts `user_id` on call instead of the rotation for a while. */
-  addOnCallOverride: (id: string, body: { user_id: string; starts_at?: string; ends_at: string }) =>
+  addOnCallOverride: (id: string, body: { user_id: string; seat?: number; starts_at?: string; ends_at: string }) =>
     request<OnCallSchedule>(`/api/on-call/schedules/${encodeURIComponent(id)}/overrides`, { method: "POST", body }),
 
   deleteOnCallOverride: (id: string) => request<void>(`/api/on-call/overrides/${encodeURIComponent(id)}`, { method: "DELETE" }),
