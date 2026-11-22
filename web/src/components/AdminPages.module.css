@@ -186,6 +186,23 @@ tr td.wrap {
   align-items: end;
 }
 
+/*
+ * A grid of fields only: each field spans three shared rows (label, input,
+ * note), so the inputs of a line stay level whether or not their neighbours
+ * carry a note under them or a label on two lines.
+ */
+.formGrid:not(:has(> :not(.field))) {
+  row-gap: 14px;
+}
+
+.formGrid:not(:has(> :not(.field))) > .field {
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  row-gap: 4px;
+  align-items: start;
+}
+
 .fieldset {
   border: 0;
   padding: 0;
