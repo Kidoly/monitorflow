@@ -2310,6 +2310,38 @@ export interface RemediationIncidentList {
   next_cursor: string | null;
 }
 
+/** Why AI remediation cannot run on an alert now (ADR-0165). */
+export type RemediationRunBlocked =
+  | "alert_resolved"
+  | "no_agent"
+  | "in_progress"
+  | "ai_off"
+  | "commands_refused"
+  | "role"
+  | "changed";
+
+/** `GET /api/remediation/alerts/{id}`: an alert's attempts and whether the user may start one. */
+export interface RemediationRunStatus {
+  alert_incident_id: string;
+  attempts: number;
+  latest_id: string | null;
+  latest_state: RemediationState | null;
+  can_run: boolean;
+  blocked: RemediationRunBlocked | null;
+  /** `blocked` in English. */
+  reason: string | null;
+  /** With `commands_refused`: `commands_off`, `commands_off_windows`, `system_unsupported` or `agent_too_old`. */
+  refusal: string | null;
+}
+
+export interface RemediationRunStarted {
+  id: string;
+  alert_incident_id: string;
+  attempt: number;
+  previous_id: string | null;
+  state: RemediationState;
+}
+
 export type RemediationEventKind =
   | "context_sent"
   | "ai_proposal"
@@ -3949,6 +3981,9 @@ export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+/** The attempts of AI remediation an incident's page lists. */
+export const MAX_ATTEMPTS_SHOWN = 20;
+
 /** A short English sentence for showing `error` to the user. */
 export function describeError(error: unknown): string {
   if (!(error instanceof ApiError)) {
@@ -5172,12 +5207,22 @@ export const api = {
       signal,
     }),
 
-  /** The remediation incidents a threshold incident opened, newest first. */
+  /** The remediation incidents of a threshold incident, one per attempt, newest first. */
   remediationIncidents: (alertIncidentId: string, signal?: AbortSignal) =>
     request<RemediationIncidentList>(
-      `/api/remediation/incidents?alert_incident_id=${encodeURIComponent(alertIncidentId)}&limit=1`,
+      `/api/remediation/incidents?alert_incident_id=${encodeURIComponent(alertIncidentId)}&limit=${MAX_ATTEMPTS_SHOWN}`,
       { signal },
     ),
+
+  /** Whether the user may run AI remediation again on an alert, and why not (ADR-0165). */
+  remediationRunStatus: (alertIncidentId: string, signal?: AbortSignal) =>
+    request<RemediationRunStatus>(`/api/remediation/alerts/${encodeURIComponent(alertIncidentId)}`, { signal }),
+
+  /** Starts a new AI remediation of an open alert; 409 with the reason when it cannot. */
+  runRemediation: (alertIncidentId: string) =>
+    request<RemediationRunStarted>(`/api/remediation/alerts/${encodeURIComponent(alertIncidentId)}/run`, {
+      method: "POST",
+    }),
 
   /** Every command waiting for approval in the user's sites, nearest deadline first. */
   approvals: (signal?: AbortSignal) =>

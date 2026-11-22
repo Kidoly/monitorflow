@@ -39,9 +39,8 @@
 /* "AI remediation  Awaiting approval  3 events · opened 11:40". */
 .remediation {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
   padding: 12px 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
@@ -49,9 +48,26 @@
   box-shadow: var(--shadow-panel);
 }
 
-.remediation > span:last-child {
+.remediationLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.remediationLine > span:last-child,
+.remediationEarlier {
   color: var(--muted);
   font-size: 13px;
+}
+
+.remediationEarlier {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.remediationLine > .remediationError {
+  color: var(--bad);
 }
 
 .underline {

@@ -14,6 +14,7 @@ use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use super::closing::CloseReason;
+use super::earlier;
 use super::hook::Change;
 use super::progress::{self, head, Next, Progress};
 use super::store::{self, Incident};
@@ -170,13 +171,25 @@ async fn send_context(shared: &Shared, incident: &Incident) -> Result<Pass, Driv
     )
     .await
     .and_then(|context| Ok((context.render()?, context.redactions)));
-    let (rendered, redactions) = match gathered {
+    let (mut rendered, redactions) = match gathered {
         Ok(gathered) => gathered,
         Err(error) => {
             let reason = CloseReason::ContextFailed(error.to_string());
             return finish(shared, incident, IncidentState::Failed, reason).await;
         }
     };
+    // A new attempt on an alert still open learns how the ones before it
+    // went (ADR-0165).
+    if let Some(alert) = incident.alert_incident_id {
+        let attempts = earlier::of(&shared.pool, alert, incident.id).await?;
+        if !attempts.is_empty() {
+            rendered.push_str(&context::block(
+                earlier::BLOCK,
+                &earlier::render(&attempts),
+                shared.settings.context_limits.section_bytes,
+            ));
+        }
+    }
     let event = NewEvent::context_sent(
         &shared.model,
         json!({ "rendered": rendered, "redactions": redactions }),

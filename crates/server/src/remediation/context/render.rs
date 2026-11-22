@@ -221,7 +221,7 @@ fn section<T>(section: &Section<T>, render: fn(&T) -> String) -> String {
 }
 
 /// One delimited block, its body cut to `max` bytes at a line end.
-fn block(name: &str, body: &str, max: usize) -> String {
+pub(crate) fn block(name: &str, body: &str, max: usize) -> String {
     let mut body = body.to_owned();
     if body.len() > max {
         let mut end = max;

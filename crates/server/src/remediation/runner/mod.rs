@@ -1,11 +1,13 @@
 //! The incident loop (architecture §8 Flow, ADR-0043).
 //!
 //! A supervisor polls PostgreSQL. It opens a remediation incident for each
-//! new threshold alert, drives every `open` or `running` incident no live
-//! process holds a lease on, and sweeps incidents waiting for approval
-//! (their duration limit, their alert resolving). Driving an incident is a
-//! series of passes ([`drive`]): read its events, take the next action,
-//! record it. Every pass is one or a few transactions, so a server stopped
+//! new threshold alert, and a new attempt for an open alert whose last one
+//! stopped because its server refused AI commands, once the server accepts
+//! them ([`retry`], ADR-0165). It drives every `open` or `running`
+//! incident no live process holds a lease on, and sweeps incidents waiting
+//! for approval (their duration limit, their alert resolving). Driving an
+//! incident is a series of passes ([`drive`]): read its events, take the
+//! next action, record it. Every pass is one or a few transactions, so a server stopped
 //! anywhere resumes from the events, and the lease keeps two processes off
 //! one incident.
 //!
@@ -18,9 +20,11 @@
 
 mod closing;
 mod drive;
+pub mod earlier;
 pub mod hook;
 pub mod progress;
 pub mod prompt;
+pub mod retry;
 pub mod store;
 
 use std::collections::HashSet;
@@ -191,6 +195,9 @@ impl Remediation {
         if let Err(error) = self.open_new().await {
             tracing::warn!(%error, "could not open remediation incidents; will retry");
         }
+        if let Err(error) = self.retry_refused().await {
+            tracing::warn!(%error, "could not start new remediation attempts; will retry");
+        }
         if let Err(error) = self.sweep_parked().await {
             tracing::warn!(%error, "could not sweep parked remediation incidents; will retry");
         }
@@ -220,6 +227,37 @@ impl Remediation {
                 Err(AuditError::Database(sqlx::Error::Database(e)))
                     if e.code().as_deref() == Some(UNIQUE_VIOLATION) => {}
                 Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Opens a new attempt on each open alert whose last remediation
+    /// stopped because the server refused AI commands, once the server
+    /// accepts them: once per change, since the new attempt ends after it.
+    async fn retry_refused(&self) -> Result<(), DriveError> {
+        let shared = &self.shared;
+        let settings = &shared.settings;
+        for (alert, after) in retry::refused_then_accepted(&shared.pool, 100).await? {
+            let attempt = retry::Attempt {
+                trigger: retry::Trigger::CommandsAccepted,
+                after: Some(after),
+                max_commands: settings.max_commands,
+                max_duration: settings.max_duration,
+            };
+            let mut tx = shared.pool.begin().await?;
+            match retry::open(&mut tx, alert, attempt).await {
+                Ok(opened) => {
+                    tx.commit().await?;
+                    tracing::info!(incident = %opened.id, %alert, attempt = opened.attempt, "remediation attempt opened: the server accepts AI commands now");
+                }
+                // Another process, or a person, started one first.
+                Err(retry::RetryError::Blocked(_) | retry::RetryError::NotFound) => {}
+                Err(retry::RetryError::Database(sqlx::Error::Database(e)))
+                | Err(retry::RetryError::Audit(AuditError::Database(sqlx::Error::Database(e))))
+                    if e.code().as_deref() == Some(UNIQUE_VIOLATION) => {}
+                Err(retry::RetryError::Audit(error)) => return Err(error.into()),
+                Err(retry::RetryError::Database(error)) => return Err(error.into()),
             }
         }
         Ok(())

@@ -48,6 +48,9 @@ export const en = {
   "summary.noResult": "no result",
   "summary.failed": "Failed: {reason}",
   "summary.stateChange": "{from} → {to}",
+  "summary.attemptByHand": "Attempt {number}, started by hand",
+  "summary.attemptAccepted": "Attempt {number}, started because the server now accepts AI commands",
+  "summary.attemptAfter": ". The one before: {reason}",
   "close.sensor_normal": "The sensor returned to normal",
   "close.duration_limit": {
     one: "The duration limit of {count} second was reached",
@@ -249,6 +252,9 @@ export const fr: Translation<typeof en> = {
   "summary.noResult": "aucun résultat",
   "summary.failed": "En échec : {reason}",
   "summary.stateChange": "{from} → {to}",
+  "summary.attemptByHand": "Tentative {number}, lancée à la main",
+  "summary.attemptAccepted": "Tentative {number}, lancée car le serveur accepte désormais les commandes IA",
+  "summary.attemptAfter": ". La précédente : {reason}",
   "close.sensor_normal": "Le capteur est revenu à la normale",
   "close.duration_limit": {
     one: "La durée limite de {count} seconde a été atteinte",

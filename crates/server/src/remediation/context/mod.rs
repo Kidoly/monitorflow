@@ -13,6 +13,8 @@
 mod render;
 mod sources;
 
+pub(crate) use render::block;
+
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, Utc};
