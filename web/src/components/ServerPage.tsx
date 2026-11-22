@@ -271,6 +271,8 @@ export function ServerPage({ id }: { id: string | null }) {
             onChanged={refresh}
             checkSilences={silences.checkSilences}
             onSilenceCheck={silences.silenceCheck}
+            onPauseCheck={silences.pauseCheck}
+            onPaused={silences.refreshSilences}
           />
         )}
         {!device && tab === "logs" && <ServerLogsTab server={server} />}

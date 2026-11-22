@@ -772,6 +772,59 @@ describe("ServerPage", () => {
       );
     });
 
+    it("pauses the checked sensors with a reason, once per check", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const fetchMock = open(operator, {
+        [`GET /api/silences?server_id=${ID}`]: ok({ silences: [] }),
+        "POST /api/silences": { status: 201, body: {} },
+      });
+      await user.click(await screen.findByRole("checkbox", { name: "Select every row shown" }));
+      const bar = screen.getByRole("region", { name: "Bulk actions" });
+      expect(within(bar).getByText("3 selected")).toBeInTheDocument();
+      await user.click(within(bar).getByRole("button", { name: "Pause the 3 selected sensors" }));
+      const form = within(bar).getByRole("form", { name: "Pause the 3 selected sensors" });
+      expect(within(form).getByRole("textbox", { name: "Why" })).toHaveFocus();
+      await user.type(within(form).getByRole("textbox", { name: "Why" }), "kernel upgrade");
+      await user.selectOptions(within(form).getByRole("combobox", { name: "For" }), "1 week");
+      await user.click(within(form).getByRole("button", { name: "Pause" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^3 paused/);
+      const bodies = fetchMock.mock.calls
+        .filter(([input, init]) => init?.method === "POST" && String(input) === "/api/silences")
+        .map(([, init]) => JSON.parse(String(init?.body)));
+      // The two disks are one check: one silence for them.
+      expect(bodies.map((b) => b.checks[0].name).sort()).toEqual(["cpu", "disk"]);
+      expect(bodies.every((b) => b.checks.length === 1 && b.checks[0].instance === "")).toBe(true);
+      expect(bodies[0]).toMatchObject({ scope: "server", target_id: ID, reason: "kernel upgrade" });
+      expect(Date.parse(bodies[0].ends_at) - Date.now()).toBeGreaterThan(6.9 * 86_400_000);
+    });
+
+    it("turns off the checked sensors after a confirmation with the count", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const fetchMock = open(operator, {
+        [`GET /api/servers/${ID}/thresholds`]: ok({ entries: [] }),
+        [`POST /api/servers/${ID}/thresholds`]: { status: 201, body: {} },
+        [`POST /api/servers/${ID}/sensor_configs`]: { status: 201, body: {} },
+      });
+      await user.click(await screen.findByRole("checkbox", { name: "Select CPU usage" }));
+      await user.click(screen.getByRole("checkbox", { name: "Select Disk used /var" }));
+      const bar = screen.getByRole("region", { name: "Bulk actions" });
+      await user.click(within(bar).getByRole("button", { name: "More actions for the 2 selected sensors" }));
+      await user.click(screen.getByRole("menuitem", { name: "Turn off…" }));
+      expect(within(bar).getByText("Turn off the 2 selected sensors?")).toBeInTheDocument();
+      expect(sent(fetchMock, "POST", `/api/servers/${ID}/sensor_configs`)).toBeUndefined();
+      await user.click(within(bar).getByRole("button", { name: "Turn off 2 sensors" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^2 turned off/);
+      // The disk keeps being measured, its alert off; the CPU stops being checked.
+      expect(sent(fetchMock, "POST", `/api/servers/${ID}/thresholds`)).toMatchObject({ instance: "/var", enabled: false });
+      expect(sent(fetchMock, "POST", `/api/servers/${ID}/sensor_configs`)).toMatchObject({ kind: "cpu", enabled: false });
+    });
+
+    it("gives readers no checkboxes", async () => {
+      open(me({ role: "viewer", site_id: "site-1" }));
+      expect(await screen.findByRole("button", { name: "Actions for CPU usage" })).toBeInTheDocument();
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    });
+
     it("adds a check, which waits for its first value", async () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
       const port = { origin: "server" as const, entry_id: "p1", kind: "port", name: "port_443", instance: "", interval_ms: 60_000, timeout_ms: null, params: { port: "443", host: "127.0.0.1" } };

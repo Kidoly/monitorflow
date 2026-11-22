@@ -6,7 +6,7 @@ import { setActiveLocale } from "@/i18n/locale";
 import { en } from "@/i18n/messages";
 import type { Server, ServerState } from "@/lib/api";
 import { isServerState, SERVER_STATES, stateWord } from "@/lib/serverState";
-import { As, customerAdmin, oneSite, single as oneCustomer, viewer } from "@/test/admin";
+import { As, customerAdmin, me, oneSite, single as oneCustomer, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
@@ -130,7 +130,8 @@ describe("FleetOverview", () => {
     });
     stubFetch(reply([quiet, taken, web1, db1, mail], []));
     render(<FleetOverview />);
-    const order = (await rows()).map((r) => within(r).getAllByRole("cell")[1]!.textContent);
+    // After the checkbox and the host.
+    const order = (await rows()).map((r) => within(r).getAllByRole("cell")[2]!.textContent);
     expect(order).toEqual(["Critical", "Offline", "OK", "Acknowledged", "Silenced"]);
     // Who took them out of the problems, until when, and why (ADR-0130).
     // The status label already says Silenced or Acknowledged.
@@ -310,13 +311,129 @@ describe("FleetOverview", () => {
     expect(container.textContent).not.toMatch(CATALOG_KEY);
   });
 
+  it("checks the servers shown and acknowledges their alerts, each server on its own", async () => {
+    const berlin = server({ id: "s5", hostname: "web-9", site_id: "site-2", site_name: "berlin" });
+    const fetchMock = stubFetch({
+      ...reply([web1, db1, server({ id: "s3", hostname: "web-2" }), berlin]),
+      "POST /api/incidents/acknowledge": { status: 200, body: { acknowledged: [disk.id] } },
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <As user={customerAdmin}>
+        <FleetOverview />
+      </As>,
+    );
+    await table();
+    // paris shows its two problems, web-2 folds away as OK and berlin is folded: neither is checked.
+    await user.click(screen.getByRole("checkbox", { name: "Select every row shown" }));
+    const bar = screen.getByRole("region", { name: "Bulk actions" });
+    expect(within(bar).getByText("2 selected")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select web-1" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select db-1" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Select web-9" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select web-2" })).not.toBeInTheDocument();
+
+    await user.click(within(bar).getByRole("button", { name: "Acknowledge the alerts of the 2 selected servers" }));
+    await user.type(within(bar).getByRole("textbox", { name: "What are you doing about it? (optional)" }), "on it{Enter}");
+    expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 acknowledged, 1 with no alert to acknowledge/);
+    const bodies = fetchMock.mock.calls
+      .filter(([url]) => url === "/api/incidents/acknowledge")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies).toEqual([{ incident_ids: [disk.id], note: "on it" }]);
+    expect(within(bar).queryByText(/selected/)).not.toBeInTheDocument();
+  });
+
+  it("silences the checked servers the user may change", async () => {
+    const other = server({ id: "s5", hostname: "db-2", site_id: "site-2", site_name: "berlin", state: "critical", open_incidents: 1 });
+    const fetchMock = stubFetch({ ...reply([web1, other]), "POST /api/silences": { status: 201, body: {} } });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <As user={me({ role: "operator", customer_id: null, site_id: "site-1" })}>
+        <FleetOverview />
+      </As>,
+    );
+    await user.click(await screen.findByRole("checkbox", { name: "Select web-1" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select db-2" }));
+    await user.click(screen.getByRole("button", { name: "Silence the 2 selected servers" }));
+    await user.click(screen.getByRole("menuitem", { name: "Until tomorrow, 8:00" }));
+    expect(await screen.findByText(/^1 silenced, 1 refused: insufficient rights \(db-2\)/)).toBeInTheDocument();
+    const bodies = fetchMock.mock.calls.filter(([url]) => url === "/api/silences").map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies).toEqual([
+      { scope: "server", target_id: "s1", ends_at: new Date(2026, 9, 23, 8).toISOString(), reason: "Planned maintenance" },
+    ]);
+    // The refused one stays checked.
+    expect(screen.getByRole("checkbox", { name: "Select db-2" })).toBeChecked();
+  });
+
+  describe("administration of the checked servers", () => {
+    const admin = me({ role: "administrator", customer_id: "c1", site_id: null });
+    const other = server({ id: "s5", hostname: "db-2", customer_id: "c2", customer_name: "globex", site_id: "site-2", site_name: "berlin", state: "critical", open_incidents: 1 });
+    const device = server({ id: "s6", hostname: "switch-1", kind: "device", agent_version: null, state: "critical", open_incidents: 1 });
+    const current = server({ id: "s7", hostname: "web-7", agent_version: "0.2.0", state: "critical", open_incidents: 1, offline_alerts: false });
+    const releases = { "GET /api/agent-releases": { status: 200, body: { versions: ["0.2.0", "0.1.0"], latest: "0.2.0" } } };
+
+    async function checkAll(servers: Server[], routes: Record<string, { status: number; body?: unknown }>) {
+      const fetchMock = stubFetch({ ...reply(servers, []), ...releases, ...routes });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(
+        <As user={admin}>
+          <FleetOverview />
+        </As>,
+      );
+      await table();
+      await user.click(screen.getByRole("checkbox", { name: "Select every row shown" }));
+      const bar = screen.getByRole("region", { name: "Bulk actions" });
+      await user.click(within(bar).getByRole("button", { name: `More actions for the ${servers.length} selected servers` }));
+      return { fetchMock, user, bar };
+    }
+    const posted = (fetchMock: ReturnType<typeof stubFetch>, method: string) =>
+      fetchMock.mock.calls.filter(([, init]) => init?.method === method).map(([url]) => url);
+
+    it("removes them after a confirmation that gives the count", async () => {
+      const { fetchMock, user, bar } = await checkAll([web1, other], {
+        "POST /api/servers/s1/revoke": { status: 200, body: {} },
+      });
+      await user.click(screen.getByRole("menuitem", { name: "Remove…" }));
+      expect(within(bar).getByText("Remove the 2 selected servers?")).toBeInTheDocument();
+      expect(posted(fetchMock, "POST")).toEqual([]);
+      await user.click(within(bar).getByRole("button", { name: "Remove 2 servers" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 removed, 1 refused: insufficient rights \(db-2\)/);
+      expect(posted(fetchMock, "POST")).toEqual(["/api/servers/s1/revoke"]);
+    });
+
+    it("updates the agents that are behind", async () => {
+      const { fetchMock, user, bar } = await checkAll([web1, device, current], {
+        "POST /api/servers/s1/commands": { status: 201, body: {} },
+      });
+      await user.click(screen.getByRole("menuitem", { name: "Update agents to 0.2.0…" }));
+      await user.click(within(bar).getByRole("button", { name: "Update 3 servers" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 queued for update, 2 already up to date or without an agent/);
+      expect(posted(fetchMock, "POST")).toEqual(["/api/servers/s1/commands"]);
+    });
+
+    it("turns offline alerts off where they are on", async () => {
+      const { fetchMock, user, bar } = await checkAll([web1, current], {
+        "PUT /api/servers/s1/offline-alerts": { status: 200, body: { enabled: false } },
+      });
+      await user.click(screen.getByRole("menuitem", { name: "Turn off offline alerts" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 changed, 1 already that way/);
+      expect(posted(fetchMock, "PUT")).toEqual(["/api/servers/s1/offline-alerts"]);
+    });
+
+    it("keeps a maintenance window to one site", async () => {
+      const { user, bar } = await checkAll([web1, other], {});
+      await user.click(screen.getByRole("menuitem", { name: "Maintenance window…" }));
+      expect(await within(bar).findByRole("status")).toHaveTextContent(/^A maintenance window covers servers of one site\./);
+    });
+  });
+
   it("falls back to the servers' counts when incidents cannot be read", async () => {
     stubFetch({ ...reply([web1]), [OPEN]: { status: 500, body: { error: "internal error" } } });
     render(<FleetOverview />);
     const [row] = await rows();
     expect(within(row!).getByRole("link", { name: "1 open incident" })).toHaveAttribute(
       "href",
-      expect.stringMatching(/^\/incidents\/?\?state=open&server=s1$/),
+      expect.stringMatching(/^\/incidents\/?\?server=s1$/),
     );
   });
 
@@ -364,7 +481,10 @@ describe("FleetOverview", () => {
     expect(await screen.findByRole("link", { name: "db-1" })).toBeInTheDocument();
 
     await act(() => vi.advanceTimersByTimeAsync(REFRESH_MS));
-    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(/Refresh failed.*last data received/);
+    // The bulk bar's live region is a status too, empty until an action runs.
+    await vi.waitFor(() =>
+      expect(screen.getAllByRole("status").map((s) => s.textContent)).toContainEqual(expect.stringMatching(/Refresh failed.*last data received/)),
+    );
     expect(screen.getByRole("table")).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/servers")).toHaveLength(3);
   });

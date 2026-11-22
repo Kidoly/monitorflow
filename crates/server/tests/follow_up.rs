@@ -498,9 +498,16 @@ db_tests! {
         assert_eq!(detail["follow_up"]["state"], "waiting");
         assert_eq!(detail["follow_up"]["next"], json!(["boss"]));
         assert_eq!(detail["follow_up"]["policy"], "default");
-        // Signed in, a note is required (ADR-0130).
-        let (status, _) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(ask)).await;
+        // A note is optional (ADR-0166), but not a long one.
+        let long = json!({ "incident_ids": [incident], "note": "x".repeat(501) });
+        let (status, _) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(long)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        let other = disk(&pool, a.site, "db-2", "critical").await;
+        let bare = json!({ "incident_ids": [other] });
+        let (status, body) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(bare)).await;
+        assert_eq!((status, &body["acknowledged"]), (StatusCode::OK, &json!([other])));
+        let (_, detail) = call(&pool, "GET", &format!("/api/incidents/{other}"), Some(&cookie), None).await;
+        assert_eq!((&detail["acknowledged_by"], &detail["acknowledged_note"]), (&json!("alice"), &Value::Null));
         let ask = json!({ "incident_ids": [incident], "note": " replacing the disk " });
         let (status, body) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(ask.clone())).await;
         assert_eq!(status, StatusCode::OK);

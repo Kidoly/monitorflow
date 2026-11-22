@@ -80,6 +80,26 @@ Every error answers with a status and a JSON body:
 | `metrics_timeout` | 504 | The metrics database did not answer in time |
 | `logs_timeout` | 504 | The logs database did not answer in time |
 
+## Acting on many at once
+
+The checkboxes of the web interface's incident and fleet lists act on many items with the routes of one item, called once per item, a few at a time. Each item then succeeds or fails on its own, and the summary says how many went through and why the others did not ("4 acknowledged, 1 refused: insufficient rights"). A script does the same, and a 403 or 404 on one item leaves the others done. The web interface applies these one item at a time:
+
+| Action | Route, once per item |
+| --- | --- |
+| Acknowledge incidents | `POST /api/v1/incidents/acknowledge` with one ID in `incident_ids` |
+| Pause the sensors of incidents | `GET /api/v1/servers/{id}/sensors` once per server to find the check behind each incident's metric, then `POST /api/v1/silences` with `scope` `server` and that check in `checks`, once per check |
+| Silence the servers of incidents | `POST /api/v1/silences` with `scope` `server` (`relay` for a relay's offline incident), once per server however many incidents it has |
+| Acknowledge the alerts of servers | `POST /api/v1/incidents/acknowledge` with the server's open incidents nobody acknowledged, once per server (they share its site) |
+| Silence servers | `POST /api/v1/silences` with `scope` `server`, once per server |
+| Update the agents of servers | `POST /api/v1/servers/{id}/commands` with `kind` `self_update`, once per server whose agent is behind |
+| Turn offline alerts on or off | `PUT /api/v1/servers/{id}/offline-alerts`, once per server |
+| Maintenance window for servers of one site | `POST /api/v1/maintenance-windows` once, with them all in `server_ids` |
+| Remove servers | `POST /api/v1/servers/{id}/revoke`, once per server |
+| Pause a server's sensors | `POST /api/v1/silences` with `scope` `server` and the sensor in `checks`, once per check, with the reason and end typed; at most 30 days |
+| Turn off a server's sensors | once per sensor: `POST /api/v1/servers/{id}/sensor_configs` with `enabled` `false`; for one disk of several, `POST /api/v1/servers/{id}/thresholds` with `enabled` `false`; for a check added on that server, `DELETE /api/v1/sensor_configs/{id}` and its rows of `DELETE /api/v1/thresholds/{id}` |
+
+`POST /api/v1/incidents/acknowledge` also takes up to 500 incidents in one request, but all or none: one incident on a site the key may only read refuses the whole request with 403, before anything is written. Send one at a time when some may be out of reach.
+
 ## Idempotency keys
 
 A `POST`, `PUT` or `DELETE` made with a key may carry `Idempotency-Key`: 1 to 255 visible ASCII characters, a UUID usually. The first request with a value runs and its answer is kept for 24 hours. The same request again (same method, path, query and body) gets that answer back with `Idempotent-Replayed: true`, instead of running a second time. A script that lost its connection can then retry without opening two silences or queuing two updates.

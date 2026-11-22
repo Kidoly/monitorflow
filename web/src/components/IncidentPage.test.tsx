@@ -430,11 +430,12 @@ describe("IncidentPage acknowledgement", () => {
     // The follow-up line says what acknowledging stops: no second explanation.
     expect(screen.queryByText("Says you are on it: nobody else is told next.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Acknowledge" }));
-    // A note first, in place: the button waits for it.
-    const field = () => screen.getByRole("textbox", { name: "What are you doing about it?" });
+    // A note, in place and optional (ADR-0166).
+    const field = () => screen.getByRole("textbox", { name: "What are you doing about it? (optional)" });
     expect(field()).toHaveFocus();
+    expect(field()).not.toBeRequired();
     const confirm = within(screen.getByRole("form", { name: "Acknowledge" })).getByRole("button", { name: "Acknowledge" });
-    expect(confirm).toBeDisabled();
+    expect(confirm).toBeEnabled();
     await user.type(field(), "  Replacing the disk ");
     await user.click(confirm);
     expect(await screen.findByText(/from the notification link/)).toBeInTheDocument();

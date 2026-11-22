@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useSelection } from "@/lib/bulk";
 import { setUrl } from "@/test/navigation";
 
 import { type Column, DataTable, PrimaryCell, nextSort, parseSort, useUrlSort } from "./DataTable";
@@ -152,6 +153,45 @@ describe("DataTable", () => {
     rerender(<DataTable label="Incidents" columns={COLUMNS} rows={HOSTS} rowKey={(h) => h.name} hasMore={false} onLoadMore={onLoadMore} />);
     expect(screen.getByRole("link", { name: HOSTS[2]!.name })).toHaveFocus();
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  });
+
+  it("checks rows one by one or every row shown, with the keyboard too", async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 60 }, (_, i) => host(`web-${String(i).padStart(3, "0")}`));
+    function Picker() {
+      const selection = useSelection();
+      return (
+        <>
+          <p>{selection.selected.size} checked</p>
+          <DataTable
+            label="Servers"
+            columns={COLUMNS}
+            rows={many}
+            rowKey={(h) => h.name}
+            selection={{ selected: selection.selected, onChange: selection.change, rowLabel: (h) => h.name }}
+          />
+        </>
+      );
+    }
+    render(<Picker />);
+    const all = screen.getByRole("checkbox", { name: "Select every row shown" });
+    await user.click(screen.getByRole("checkbox", { name: "Select web-001" }));
+    expect(screen.getByText("1 checked")).toBeInTheDocument();
+    expect(all).not.toBeChecked();
+    expect(all).toHaveProperty("indeterminate", true);
+    // The header checks the 50 rows on screen, not the 10 behind "Load more".
+    all.focus();
+    await user.keyboard(" ");
+    expect(screen.getByText("50 checked")).toBeInTheDocument();
+    expect(all).toBeChecked();
+    expect(all).toHaveProperty("indeterminate", false);
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    expect(all).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select web-055" })).not.toBeChecked();
+    await user.click(all);
+    expect(screen.getByText("60 checked")).toBeInTheDocument();
+    await user.click(all);
+    expect(screen.getByText("0 checked")).toBeInTheDocument();
   });
 
   it("draws skeleton rows on the first load", () => {

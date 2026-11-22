@@ -9,7 +9,8 @@ import { certificateProblem, certificateState } from "@/lib/certificates";
 import { endWords } from "@/lib/dependencies";
 import { formatOs } from "@/lib/format";
 import { incidentTitle, isOffline } from "@/lib/incidents";
-import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
+import { useBulkRunner, useSelection } from "@/lib/bulk";
+import { administersCustomer, modifiesSite, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { ADD_DEVICE_PATH, DISCOVERY_PATH, incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { incidentValue } from "@/lib/rules";
@@ -17,6 +18,7 @@ import { isServerState, SERVER_STATES, STATE_TONES, serverState, stateWord, stat
 import { REFRESH_MS, usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
+import { BulkBar } from "@/components/ui/BulkBar";
 import { type Column, DataTable, PrimaryCell, useUrlSort } from "@/components/ui/DataTable";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
@@ -25,6 +27,9 @@ import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
+import { AcknowledgeButton } from "./AcknowledgeButton";
+import { BulkSilence, type SilencePeriod } from "./BulkSilence";
+import { FleetAdminActions } from "./FleetAdminActions";
 import styles from "./FleetOverview.module.css";
 import { FleetTree, type TreeRow } from "./FleetTree";
 
@@ -142,6 +147,34 @@ export function FleetOverview() {
   );
   const anyFilter = ["state", "status", "site", "os", "incidents", "q"].some((k) => params.get(k));
 
+  const selection = useSelection();
+  const bulk = useBulkRunner<Server>(selection, (s) => s.id, (s) => s.hostname, refresh);
+  // Checked servers a filter took away are out of reach.
+  const chosen = filtered.filter((r) => selection.selected.has(r.key)).map((r) => r.server);
+  const writable = (s: Server) => modifiesSite(me, s.customer_id, s.site_id);
+  // Its open incidents nobody acknowledged yet, all on its site: one request per server.
+  const acknowledgeChosen = (note: string) =>
+    bulk.run(chosen, {
+      done: (count) => t("fleet.bulk.acknowledged", { count }),
+      skipped: (count) => t("fleet.bulk.nothingToAcknowledge", { count }),
+      allowed: writable,
+      act: async (s) => {
+        const ids = (data?.incidents ?? []).filter((i) => i.server_id === s.id && !i.acknowledged_at).map((i) => i.id);
+        if (ids.length === 0) return "skipped";
+        const { acknowledged } = await api.acknowledgeIncidents(ids, note);
+        return acknowledged.length > 0 ? "done" : "skipped";
+      },
+    });
+  const silenceChosen = (period: SilencePeriod) =>
+    bulk.run(chosen, {
+      done: (count) => t("fleet.bulk.silenced", { count }),
+      allowed: writable,
+      act: async (s) => {
+        await api.createSilence({ scope: "server", target_id: s.id, ...period });
+        return "done";
+      },
+    });
+
   const sites = [...new Map(all.map((r) => [r.server.site_id, r.server.site_name])).entries()].sort((a, b) =>
     byName.compare(a[1], b[1]),
   );
@@ -253,21 +286,46 @@ export function FleetOverview() {
               {t("fleet.noMatch")}
             </NoMatches>
           ) : (
-            <FleetTree
-              rows={filtered}
-              columns={columns}
-              sort={sort}
-              onSortChange={setSort}
-              defaultOrder={problemsFirst}
-              multiCustomer={multiCustomer(me)}
-              filtered={anyFilter}
-              groupedOut={["site"]}
-              stateHref={(state, place) =>
-                "siteId" in place
-                  ? scopedHref(`${stateHref(state)}&site=${place.siteId}`, scope)
-                  : scopedHref(stateHref(state), { customerId: place.customerId, siteId: null })
-              }
-            />
+            // One block, so the bar takes no gap of the page while it is empty.
+            <div>
+              <BulkBar count={chosen.length} onClear={selection.clear} summary={bulk.summary} onDismiss={bulk.dismiss}>
+                {/* Without the incidents list, which ones are open is unknown. */}
+                {data.incidents && (
+                  <AcknowledgeButton
+                    size="small"
+                    variant="k"
+                    label={t("fleet.bulk.acknowledge")}
+                    name={t("fleet.bulk.acknowledgeName", { count: chosen.length })}
+                    disabled={bulk.busy}
+                    onAcknowledge={acknowledgeChosen}
+                    describeError={describeError}
+                  />
+                )}
+                <BulkSilence
+                  label={t("fleet.bulk.silenceName", { count: chosen.length })}
+                  submitLabel={t("fleet.bulk.silenceSubmit")}
+                  disabled={bulk.busy}
+                  onSilence={silenceChosen}
+                />
+                <FleetAdminActions servers={chosen} bulk={bulk} onChanged={refresh} />
+              </BulkBar>
+              <FleetTree
+                rows={filtered}
+                columns={columns}
+                sort={sort}
+                onSortChange={setSort}
+                defaultOrder={problemsFirst}
+                multiCustomer={multiCustomer(me)}
+                filtered={anyFilter}
+                groupedOut={["site"]}
+                stateHref={(state, place) =>
+                  "siteId" in place
+                    ? scopedHref(`${stateHref(state)}&site=${place.siteId}`, scope)
+                    : scopedHref(stateHref(state), { customerId: place.customerId, siteId: null })
+                }
+                selection={{ selected: selection.selected, onChange: selection.change, rowLabel: (r) => r.server.hostname }}
+              />
+            </div>
           )}
           {data && anyFilter && filtered.length > 0 && (
             <p className={styles.summary}>

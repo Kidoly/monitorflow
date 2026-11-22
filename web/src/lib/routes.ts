@@ -43,7 +43,8 @@ export function incidentPeerHref(incident: { server_id: string | null; relay_id?
 
 /** Link to the incidents list with `filters` (see `lib/incidents.ts`). */
 export function incidentsHref(filters: Partial<IncidentFilters> = {}): string {
-  const query = filtersToQuery({ ...NO_FILTERS, ...filters });
+  // What one notification sent stays whole, resolved incidents included.
+  const query = filtersToQuery({ ...NO_FILTERS, ...(filters.groupId && { state: "all" as const }), ...filters });
   return query ? `/incidents/?${query}` : "/incidents/";
 }
 
