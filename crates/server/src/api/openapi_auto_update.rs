@@ -7,6 +7,7 @@
 use utoipa::OpenApi;
 
 use super::auto_update;
+use super::auto_update_versions;
 use super::openapi::{Common, ErrorBody};
 use crate::auto_update::policy::{Settings, SitePhase};
 use crate::auto_update::store::{Kind, Rollout, RolloutState};
@@ -14,11 +15,13 @@ use crate::auto_update::PeerState;
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(auto_update_status, auto_update_peers, resume_rollout),
+    paths(auto_update_status, auto_update_peers, auto_update_version_peers, resume_rollout),
     components(schemas(
         Settings, SitePhase, Kind, Rollout, RolloutState, auto_update::KindView,
         auto_update::Totals, auto_update::SiteView, PeerState, auto_update::PeerList,
         auto_update::PeerView, auto_update::HistoryRollout, auto_update::Outcome,
+        auto_update_versions::VersionCount, auto_update_versions::VersionPeerList,
+        auto_update_versions::VersionPeer,
     )),
     modifiers(&Common),
     tags(
@@ -37,8 +40,10 @@ pub struct Doc;
 /// The settings as they apply, the central server's version (agents and
 /// relays never move past it), and for agents and for relays: the newest
 /// stable release held, the `target` they move to, its rollout, totals,
-/// each site's phase and totals, and the last 10 rollouts with their
-/// `outcome`. Relays are updated before the agents behind them.
+/// each site's phase and totals, the last 10 rollouts with their
+/// `outcome`, and `versions`: how many agents or relays run each version,
+/// newest first, which `GET /api/v1/auto-update/{kind}/versions/peers`
+/// lists. Relays are updated before the agents behind them.
 ///
 /// MonitorFlow sends each server or relay that needs it a signed
 /// `self_update` command, with no person's approval: one per site first
@@ -87,7 +92,11 @@ pub struct Doc;
                     "kind": "agent", "version": "0.3.0", "state": "rolling",
                     "started_at": "2026-11-02T08:00:00Z", "halted_at": null, "reason": null,
                     "counted_from": "2026-11-02T08:00:00Z", "outcome": "superseded"
-                }]
+                }],
+                "versions": [
+                    {"version": "0.3.1", "count": 3, "up_to_date": true},
+                    {"version": "0.3.0", "count": 5, "up_to_date": false}
+                ]
             },
             "relays": {
                 "latest": "0.3.1",
@@ -109,7 +118,8 @@ pub struct Doc;
                         "succeeded": 0, "failed": 0
                     }
                 }],
-                "history": []
+                "history": [],
+                "versions": [{"version": "0.3.1", "count": 1, "up_to_date": true}]
             }
         })),
         (status = 403, body = ErrorBody, description = "`forbidden`: not a global administrator. \
@@ -158,6 +168,44 @@ a `site_id` that is not a UUID, or `limit` outside 1 to 500"),
         (status = 404, body = ErrorBody, description = "`not_found`: `kind` is not `agent` or `relay`"),
     ))]
 fn auto_update_peers() {}
+
+/// List the agents or relays on one version
+///
+/// The servers with an agent (for `agent`) or relays (for `relay`) that
+/// run `version`, one of the `versions` of `GET /api/v1/auto-update`, so
+/// `total` equals its `count`. Without `version`, those that have not
+/// reported one yet. With `site_id`, only that site's. Each has its
+/// `state` towards the target, as the totals count it (`null` when there
+/// is no target). By customer, site and name.
+///
+/// Needs a global administrator role and the key area "updates".
+#[utoipa::path(get, path = "/api/v1/auto-update/{kind}/versions/peers", tag = "automatic updates",
+    params(
+        ("kind" = Kind, Path, description = "`agent` or `relay`; anything else is 404"),
+        auto_update_versions::VersionPeersParams,
+    ),
+    responses(
+        (status = 200, description = "One page of the peers on that version", body = auto_update_versions::VersionPeerList, example = json!({
+            "version": "0.3.0",
+            "target": "0.3.1",
+            "total": 1,
+            "peers": [{
+                "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+                "name": "web-01",
+                "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                "site_name": "paris",
+                "customer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                "customer_name": "acme",
+                "state": "waiting"
+            }]
+        })),
+        (status = 400, body = ErrorBody, description = "`invalid`: a `site_id` that is not a UUID, \
+or `limit` outside 1 to 500"),
+        (status = 403, body = ErrorBody, description = "`forbidden`: not a global administrator. \
+`api_key_scope`: the key lacks the area"),
+        (status = 404, body = ErrorBody, description = "`not_found`: `kind` is not `agent` or `relay`"),
+    ))]
+fn auto_update_version_peers() {}
 
 /// Resume a halted rollout
 ///

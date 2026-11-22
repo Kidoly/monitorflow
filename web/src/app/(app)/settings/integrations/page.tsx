@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
-import { IntegrationsPage } from "@/components/IntegrationsAdmin";
+import { IntegrationsCatalogue } from "@/components/IntegrationsCatalogue";
 
 export const metadata: Metadata = { title: "Integrations · MonitorFlow" };
 
 export default function Integrations() {
-  return <IntegrationsPage />;
+  return <IntegrationsCatalogue />;
 }

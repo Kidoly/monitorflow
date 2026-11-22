@@ -169,10 +169,9 @@ describe("AppShell", () => {
       "Fleet",
       "Dashboards",
       "Incidents",
-      "Silences",
       "On call",
       "Reports",
-      "Mirrors",
+      "Linux mirrors",
       "Automatic updates",
       "Campaigns",
       "Approvals",
@@ -191,7 +190,7 @@ describe("AppShell", () => {
     const links = within(nav())
       .getAllByRole("link")
       .map((a) => a.textContent);
-    expect(links.slice(1, 6)).toEqual(["Parc", "Tableaux de bord", "Incidents", "Silences", "Astreinte"]);
+    expect(links.slice(1, 6)).toEqual(["Parc", "Tableaux de bord", "Incidents", "Astreinte", "Rapports"]);
     expect(within(nav()).getByText("Supervision")).toBeInTheDocument();
     expect(await within(nav()).findByLabelText("3 incidents ouverts")).toHaveTextContent("3");
     expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeInTheDocument();

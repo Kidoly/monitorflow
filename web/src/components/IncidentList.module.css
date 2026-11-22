@@ -19,3 +19,10 @@ td.state.state {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* The tab's filters, banners and table, spaced like the page. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}

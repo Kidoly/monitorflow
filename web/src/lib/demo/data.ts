@@ -615,7 +615,7 @@ function onCallTurns(): OnCallTurn[] {
     const from = new Date(start.getTime() + w * 7 * 86_400_000);
     const to = new Date(from.getTime() + 7 * 86_400_000);
     const name = ROTATION[(w + 1) % ROTATION.length]!;
-    turns.push({ starts_at: from.toISOString(), ends_at: to.toISOString(), user_id: user(name).id, username: name, override_id: null, problem: null });
+    turns.push({ seat: 0, starts_at: from.toISOString(), ends_at: to.toISOString(), user_id: user(name).id, username: name, override_id: null, problem: null });
   }
   return turns;
 }
@@ -626,7 +626,7 @@ export function onCallSchedule(): OnCallSchedule {
     id: demoId(20, 1), name: "Infrastructure", customer_id: CUSTOMER.id, customer_name: CUSTOMER.name, site_id: null, site_name: null,
     time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", rotation: "weekly", handoff_time: "09:00", handoff_day: 1,
     members: ROTATION.map((name) => ({ user_id: user(name).id, username: name, problem: null })),
-    overrides: [], now: turns[0]!, next: turns[1]!, turns, fallback: ["ops@example.com"], mail_host: "smtp.example.com", can_manage: true,
+    people_per_turn: 1, follow_up_only: false, overrides: [], now: turns[0]!, next: turns[1]!, now_all: [turns[0]!], next_all: [turns[1]!], turns, fallback: ["ops@example.com"], mail_host: "smtp.example.com", can_manage: true,
   };
 }
 

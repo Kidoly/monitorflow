@@ -98,3 +98,17 @@
   color: var(--bad);
   font-weight: 600;
 }
+
+.emptyText {
+  margin: 0;
+  max-width: 560px;
+}
+
+.howList {
+  margin: 0;
+  padding-left: 20px;
+  max-width: 560px;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+}

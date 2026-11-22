@@ -39,6 +39,8 @@ import { formatDuration } from "@/lib/format";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, campaignHref, copyCampaignHref } from "@/lib/routes";
 import { UUID } from "@/lib/uuid";
+import { Switch } from "@/components/ui/Switch";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import { CampaignServerPicker } from "./CampaignServerPicker";
 import { CampaignWindowCard } from "./CampaignWindowCard";
@@ -314,26 +316,20 @@ export function CampaignForm({
         <Fieldset legend={t("campaigns.form.update")}>
           {!agentUpdate && (
             <div className={own.row} role="group" aria-label={t("campaigns.form.sources")}>
-              <label className={own.inline}>
-                <input
-                  type="checkbox"
-                  checked={includesOs(draft.sources)}
-                  onChange={(e) => {
-                    const sources = updateSources(e.target.checked, includesApps(draft.sources));
-                    // Security updates and package lists are the OS's.
-                    set({ sources, ...(!includesOs(sources) && { update: "all" as const }) });
-                  }}
-                />
-                {t("campaigns.form.sources.os")}
-              </label>
-              <label className={own.inline}>
-                <input
-                  type="checkbox"
-                  checked={includesApps(draft.sources)}
-                  onChange={(e) => set({ sources: updateSources(includesOs(draft.sources), e.target.checked) })}
-                />
-                {t("campaigns.form.sources.apps")}
-              </label>
+              <Switch
+                checked={includesOs(draft.sources)}
+                onChange={(checked) => {
+                  const sources = updateSources(checked, includesApps(draft.sources));
+                  // Security updates and package lists are the OS's.
+                  set({ sources, ...(!includesOs(sources) && { update: "all" as const }) });
+                }}
+                label={t("campaigns.form.sources.os")}
+              />
+              <Switch
+                checked={includesApps(draft.sources)}
+                onChange={(checked) => set({ sources: updateSources(includesOs(draft.sources), checked) })}
+                label={t("campaigns.form.sources.apps")}
+              />
             </div>
           )}
           {!agentUpdate && includesApps(draft.sources) && (
@@ -361,16 +357,14 @@ export function CampaignForm({
               </p>
             </>
           )}
-          <div className={own.row} role="radiogroup" aria-label={t("campaigns.form.updateKind")}>
-            {UPDATE_KINDS.filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
+          <SegmentedControl
+            label={t("campaigns.form.updateKind")}
+            options={UPDATE_KINDS.filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
               .filter(([kind]) => includesOs(draft.sources) || kind === "all" || kind === "agent")
-              .map(([kind, label]) => (
-                <label key={kind} className={own.inline}>
-                  <input type="radio" name="update" checked={draft.update === kind} onChange={() => set({ update: kind })} />
-                  {t(label)}
-                </label>
-              ))}
-          </div>
+              .map(([value, label]) => ({ value, label: t(label) }))}
+            value={draft.update}
+            onChange={(update) => set({ update })}
+          />
           {draft.update === "agent" && (
             <label className={own.fld}>
               {t("campaigns.form.agentVersion")}
@@ -397,10 +391,12 @@ export function CampaignForm({
           )}
           <div className={own.row}>
             {draft.update !== "agent" && (
-              <label className={own.inline}>
-                <input type="checkbox" checked={draft.allowReboot} onChange={(e) => set({ allowReboot: e.target.checked })} />
-                {t("campaigns.form.reboot")}
-              </label>
+              <Switch
+                rowClassName={own.inline}
+                checked={draft.allowReboot}
+                onChange={(allowReboot) => set({ allowReboot })}
+                label={t("campaigns.form.reboot")}
+              />
             )}
             <label className={own.fld}>
               {t("campaigns.form.ttl")}

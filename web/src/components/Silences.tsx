@@ -36,7 +36,7 @@ export interface SilenceTarget {
  * The way to silence a form's values: reason, an optional start, an end.
  * `onSubmit` rejecting keeps the form open with the error.
  */
-function SilenceForm({
+export function SilenceForm({
   submitLabel,
   onSubmit,
   onCancel,
@@ -157,6 +157,9 @@ export function useSilenceBar(target: SilenceTarget | null): {
   checkSilences: Silence[];
   /** Silences `check` until `end` in one click; rejects with the API's error. */
   silenceCheck: (check: SilencedCheck, end: Date) => Promise<void>;
+  /** Pauses `check` with a reason until an end, without reloading: call `refreshSilences` after a batch. */
+  pauseCheck: (check: SilencedCheck, pause: Pick<SilenceRequest, "ends_at" | "reason">) => Promise<void>;
+  refreshSilences: () => void;
 } {
   const multiCustomer = useMultiCustomer();
   const me = useMe();
@@ -280,7 +283,10 @@ export function useSilenceBar(target: SilenceTarget | null): {
       {windows.form}
     </>
   );
-  return { notices, menu, form, checkSilences, silenceCheck };
+  async function pauseCheck(check: SilencedCheck, pause: Pick<SilenceRequest, "ends_at" | "reason">) {
+    await api.createSilence({ scope, target_id: id, ...pause, checks: [check] });
+  }
+  return { notices, menu, form, checkSilences, silenceCheck, pauseCheck, refreshSilences: refresh };
 }
 
 /** Notices, the "Silence ▾" menu and the custom form, one under the other. */

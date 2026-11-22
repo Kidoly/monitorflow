@@ -7,6 +7,7 @@ import { Button, fieldClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { Page } from "@/components/ui/Page";
 import { Banner, PageHeader } from "@/components/ui/PageState";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { t } from "@/i18n";
 import { LOCALES, LOCALE_NAMES, type Locale } from "@/i18n/locale";
 import { useLocale } from "@/i18n/LocaleProvider";
@@ -83,18 +84,12 @@ export function PreferencesPage() {
         </h2>
         <fieldset className={styles.choices}>
           <legend className={styles.choiceLegend}>{t("settings.preferences.theme")}</legend>
-          {THEMES.map((option) => (
-            <label key={option} className={styles.choice}>
-              <input
-                type="radio"
-                name="theme"
-                value={option}
-                checked={theme === option}
-                onChange={() => setTheme(option)}
-              />
-              {t(`shell.theme.${option}`)}
-            </label>
-          ))}
+          <SegmentedControl
+            label={t("settings.preferences.theme")}
+            options={THEMES.map((option) => ({ value: option, label: t(`shell.theme.${option}`) }))}
+            value={theme}
+            onChange={setTheme}
+          />
         </fieldset>
       </section>
 

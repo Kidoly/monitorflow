@@ -554,6 +554,10 @@ pub const NOTES: &[(&str, &str)] = &[
         "Checked by the server's own agent, not from a probe: a network problem between them is not seen.",
     ),
     (
+        "prtg_port_only",
+        "MonitorFlow checks that port {port} accepts connections; PRTG also spoke {protocol} to it.",
+    ),
+    (
         "prtg_sensor_type",
         "MonitorFlow has no check like this PRTG sensor ({type}).",
     ),

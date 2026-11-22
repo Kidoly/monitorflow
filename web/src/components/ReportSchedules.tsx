@@ -15,6 +15,7 @@ import { RowMenu } from "@/components/ui/RowMenu";
 import { Banner, EmptyState, ErrorState } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
 import { formatExact } from "@/components/ui/time";
+import { Switch } from "@/components/ui/Switch";
 
 import admin from "./AdminPages.module.css";
 import styles from "./Reports.module.css";
@@ -190,18 +191,9 @@ function ScheduleForm({
         <span className={admin.fieldNote}>{t("reports.schedule.recipientsNote")}</span>
       </label>
       <div className={styles.choices}>
-        <label className={styles.choice}>
-          <input type="checkbox" checked={draft.pdf} onChange={(e) => set("pdf", e.target.checked)} />
-          PDF
-        </label>
-        <label className={styles.choice}>
-          <input type="checkbox" checked={draft.csv} onChange={(e) => set("csv", e.target.checked)} />
-          CSV
-        </label>
-        <label className={styles.choice}>
-          <input type="checkbox" checked={draft.enabled} onChange={(e) => set("enabled", e.target.checked)} />
-          {t("reports.schedule.enabled")}
-        </label>
+        <Switch checked={draft.pdf} onChange={(on) => set("pdf", on)} label="PDF" />
+        <Switch checked={draft.csv} onChange={(on) => set("csv", on)} label="CSV" />
+        <Switch checked={draft.enabled} onChange={(on) => set("enabled", on)} label={t("reports.schedule.enabled")} />
       </div>
       <div className={admin.formFoot}>
         <Button type="submit" variant="k" disabled={busy}>

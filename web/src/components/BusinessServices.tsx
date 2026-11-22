@@ -13,6 +13,7 @@ import { type Column, DataTable } from "@/components/ui/DataTable";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { RowMenu } from "@/components/ui/RowMenu";
 import { EmptyState, ErrorState } from "@/components/ui/PageState";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import admin from "./AdminPages.module.css";
 import styles from "./Reports.module.css";
@@ -208,13 +209,16 @@ function ServiceForm({
       </fieldset>
       <fieldset className={styles.fieldset}>
         <legend>{t("reports.service.rule")}</legend>
-        <label className={styles.choice}>
-          <input type="radio" name="rule" checked={!draft.atLeast} onChange={() => set("atLeast", false)} />
-          {t("reports.service.ruleAllLong")}
-        </label>
-        <label className={styles.choice}>
-          <input type="radio" name="rule" checked={draft.atLeast} onChange={() => set("atLeast", true)} />
-          {t("reports.service.ruleAtLeastLong")}
+        <div className={styles.choice}>
+          <SegmentedControl
+            label={t("reports.service.rule")}
+            options={[
+              { value: "all", label: t("reports.service.ruleAllLong") },
+              { value: "atLeast", label: t("reports.service.ruleAtLeastLong") },
+            ]}
+            value={draft.atLeast ? "atLeast" : "all"}
+            onChange={(v) => set("atLeast", v === "atLeast")}
+          />
           <input
             className={fieldClass}
             type="number"
@@ -225,7 +229,7 @@ function ServiceForm({
             disabled={!draft.atLeast}
             onChange={(e) => set("count", Number(e.target.value))}
           />
-        </label>
+        </div>
       </fieldset>
       <label className={admin.field}>
         {t("reports.service.target")}

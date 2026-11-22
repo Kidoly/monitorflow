@@ -16,7 +16,7 @@ const HOUR = 3_600_000;
 const at = (hours: number) => new Date(Date.now() + hours * HOUR).toISOString();
 
 function turn(username: string | null, from: number, to: number, overrides: Partial<OnCallTurn> = {}): OnCallTurn {
-  return { starts_at: at(from), ends_at: at(to), user_id: username && `id-${username}`, username, override_id: null, problem: null, ...overrides };
+  return { seat: 0, starts_at: at(from), ends_at: at(to), user_id: username && `id-${username}`, username, override_id: null, problem: null, ...overrides };
 }
 
 const NOW_TURN = turn("alice", -24, 144);
@@ -39,9 +39,13 @@ function schedule(overrides: Partial<OnCallSchedule> = {}): OnCallSchedule {
       { user_id: "id-alice", username: "alice", problem: null },
       { user_id: "id-bob", username: "bob", problem: null },
     ],
+    people_per_turn: 1,
+    follow_up_only: false,
     overrides: [],
     now: NOW_TURN,
     next: NEXT_TURN,
+    now_all: [NOW_TURN],
+    next_all: [NEXT_TURN],
     turns,
     fallback: ["boss"],
     mail_host: "smtp.example.com",
@@ -199,8 +203,110 @@ describe("OnCallPage", () => {
       handoff_day: 5,
       handoff_time: "09:00",
       members: ["id-carol", "id-bob"],
+      people_per_turn: 1,
+      follow_up_only: false,
     });
     expect(typeof body.time_zone).toBe("string");
+  });
+
+  it("makes a second level told only when nobody acknowledges, and adds its step", async () => {
+    const second = schedule({ id: "s2", name: "Second level", follow_up_only: true });
+    const administrators = { after_minutes: 15, on_call: [], users: [], channels: [], administrators: true };
+    const fetchMock = stubFetch({
+      "GET /api/on-call/schedules": { status: 200, body: { schedules: [second] } },
+      "GET /api/on-call/contact": { status: 200, body: contact },
+      "GET /api/follow-up/policies": {
+        status: 200,
+        body: { policies: [], default_steps: [administrators], schedules: [{ id: "s2", name: "Second level", customer_id: "c1", site_id: null }], channels: [] },
+      },
+      "PUT /api/follow-up/policies": { status: 200, body: {} },
+    });
+    render(
+      <As user={customerAdmin}>
+        <OnCallPage />
+      </As>,
+    );
+    const card = await screen.findByRole("region", { name: "Second level" });
+    expect(within(card).getByText(/Only for follow-ups/)).toBeInTheDocument();
+    expect(await within(card).findByText("Nobody on it is told yet.")).toBeInTheDocument();
+    await userEvent.click(within(card).getByRole("button", { name: "Tell them after 15 minutes" }));
+    const body = bodyOf(fetchMock.mock.calls.find((c) => c[1]?.method === "PUT"));
+    // The place had the default: the administrators still come after.
+    expect(body).toEqual({
+      customer_id: "c1",
+      site_id: null,
+      steps: [{ after_minutes: 15, on_call: ["s2"], users: [], channels: [], administrators: false }, administrators],
+    });
+  });
+
+  it("says which step tells a second level", async () => {
+    const second = schedule({ id: "s2", name: "Second level", follow_up_only: true });
+    const step = { after_minutes: 10, on_call: [{ id: "s2", name: "Second level" }], users: [], channels: [], administrators: false };
+    const policy = { id: "p1", customer_id: "c1", customer_name: "acme", site_id: null, site_name: null, steps: [{ ...step, on_call: [] }, step], updated_at: at(-1) };
+    stubFetch({
+      "GET /api/on-call/schedules": { status: 200, body: { schedules: [second] } },
+      "GET /api/on-call/contact": { status: 200, body: contact },
+      "GET /api/follow-up/policies": { status: 200, body: { policies: [policy], default_steps: [], schedules: [], channels: [] } },
+    });
+    render(
+      <As user={customerAdmin}>
+        <OnCallPage />
+      </As>,
+    );
+    const card = await screen.findByRole("region", { name: "Second level" });
+    expect(await within(card).findByText("Told after 20 minutes without acknowledgement: step 2 of the follow-up of acme.")).toBeInTheDocument();
+  });
+
+  it("puts several people on call at once and covers one of them", async () => {
+    const bob = turn("bob", -24, 144, { seat: 1 });
+    const carol = turn("carol", 144, 312);
+    const dan = turn("dan", 144, 312, { seat: 1 });
+    const pair = schedule({
+      people_per_turn: 2,
+      members: ["alice", "bob", "carol", "dan"].map((n) => ({ user_id: `id-${n}`, username: n, problem: null })),
+      now_all: [NOW_TURN, bob],
+      next_all: [carol, dan],
+      next: carol,
+      turns: [NOW_TURN, bob, carol, dan],
+    });
+    const fetchMock = stubFetch({
+      "GET /api/on-call/schedules": { status: 200, body: { schedules: [pair] } },
+      "GET /api/on-call/contact": { status: 200, body: contact },
+      "GET /api/on-call/people?customer_id=c1": people,
+      "POST /api/on-call/schedules/s1/overrides": { status: 201, body: pair },
+      "PUT /api/on-call/schedules/s1": { status: 200, body: pair },
+      "GET /api/customers": { status: 200, body: { customers: [{ id: "c1", name: "acme", site_count: 1 }] } },
+      "GET /api/sites": { status: 200, body: { sites: [] } },
+    });
+    render(
+      <As user={customerAdmin}>
+        <OnCallPage />
+      </As>,
+    );
+    const card = await screen.findByRole("region", { name: "Ops" });
+    expect(within(card).getByText(/2 people at once/)).toBeInTheDocument();
+    expect(within(card).getByText("On call now").nextSibling).toHaveTextContent("alice and bob");
+    expect(within(card).getByText("Next").nextSibling).toHaveTextContent("carol and dan");
+
+    // Covering without a turn asks whose place.
+    await userEvent.click(within(card).getByRole("button", { name: "Someone else covers…" }));
+    const form = screen.getByRole("form", { name: "Someone else covers" });
+    await userEvent.selectOptions(within(form).getByLabelText("In the place of"), "bob");
+    await screen.findByRole("option", { name: "carol" });
+    await userEvent.selectOptions(within(form).getByLabelText(/Who covers/), "carol");
+    await userEvent.click(within(form).getByRole("button", { name: "Cover" }));
+    const cover = bodyOf(fetchMock.mock.calls.find((c) => c[1]?.method === "POST"));
+    expect(cover).toMatchObject({ user_id: "id-carol", seat: 1 });
+
+    // The form keeps the number and says how turns go.
+    await userEvent.click(await within(card).findByRole("button", { name: "Edit" }));
+    const edit = await screen.findByRole("form", { name: "Edit Ops" });
+    expect(within(edit).getByLabelText(/^On call at once/)).toHaveValue("2");
+    expect(within(edit).getByText(/alice and bob first, then the next 2/)).toBeInTheDocument();
+    await userEvent.selectOptions(within(edit).getByLabelText(/^On call at once/), "3");
+    await userEvent.click(within(edit).getByRole("button", { name: "Save" }));
+    const saved = bodyOf(fetchMock.mock.calls.find((c) => c[1]?.method === "PUT"));
+    expect(saved.people_per_turn).toBe(3);
   });
 
   it("lets a member look without managing, and asks how to reach them", async () => {

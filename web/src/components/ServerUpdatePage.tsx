@@ -7,6 +7,8 @@ import { rich, t } from "@/i18n";
 import {
   ApiError,
   type ServerUpdateCheck,
+  type ServerUpdateHistoryEntry,
+  type ServerUpdateResult,
   type ServerUpdateRun,
   type ServerUpdateView,
   api,
@@ -14,18 +16,33 @@ import {
 } from "@/lib/api";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { BACKUPS_PATH } from "@/lib/routes";
-import { changeLines, imageText, inProgress, isFinal, restoreCommand, STATE_TONES, stateWord } from "@/lib/serverUpdate";
+import {
+  changeLines,
+  imageText,
+  inProgress,
+  isFinal,
+  type MilestoneMark,
+  milestoneMarks,
+  milestoneWord,
+  restoreCommand,
+  STATE_TONES,
+  stateWord,
+} from "@/lib/serverUpdate";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { ReleaseImport } from "./ReleaseImport";
 import styles from "./ServerUpdate.module.css";
 import { Button } from "./ui/Button";
+import { type Column, DataTable } from "./ui/DataTable";
 import { FactsBox } from "./ui/FactsBox";
+import { Hint } from "./ui/Hint";
+import { Missing } from "./ui/Missing";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader, RefreshLine } from "./ui/PageState";
 import { RelativeTime } from "./ui/RelativeTime";
 import { Label } from "./ui/StatusLabel";
 import { formatClock } from "./ui/time";
+import type { Tone } from "./ui/tone";
 
 /** Polling while an update runs: the restart is short, the page follows it closely. */
 const ACTIVE_MS = 3_000;
@@ -109,9 +126,11 @@ function ServerUpdate() {
       ) : (
         <CheckResult view={data} check={check} busy={busy} onStarted={refresh} />
       )}
-      {data.update && <LastUpdate run={data.update} requested={data.requested} loadedAt={loadedAt} />}
+      {data.update && <LastUpdate run={data.update} view={data} loadedAt={loadedAt} />}
       {!data.update && data.requested && <Banner tone="info">{t("serverUpdate.waiting")}</Banner>}
+      <UpdateHistory key={data.update?.state ?? ""} />
       <ReleaseImport source={data.source} />
+      {data.update && data.update.steps.length > 0 && <RawLog run={data.update} />}
     </div>
   );
 }
@@ -254,7 +273,8 @@ function CheckResult({
   );
 }
 
-function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; requested: boolean; loadedAt: Date }) {
+function LastUpdate({ run, view, loadedAt }: { run: ServerUpdateRun; view: ServerUpdateView; loadedAt: Date }) {
+  const requested = view.requested;
   const word = stateWord(run.state);
   const tone = STATE_TONES[run.state];
   const now = new Date();
@@ -312,9 +332,46 @@ function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; reques
         </Banner>
       )}
       {requested && <p className={styles.note}>{t("serverUpdate.last.another")}</p>}
-      {/* The updater writes these lines itself, untranslated: shown as its raw log. */}
-      {run.steps.length > 0 && <p className={styles.note}>{t("serverUpdate.last.rawLog")}</p>}
-      <ol className={styles.steps} aria-label={t("serverUpdate.last.steps")}>
+      {view.milestones.length > 0 && (
+        <ol className={styles.milestones} aria-label={t("serverUpdate.last.steps")}>
+          {milestoneMarks(view.milestones, run).map((m) => (
+            <li key={m.kind} className={MARK_CLASSES[m.mark]}>
+              <span className={styles.mark} aria-hidden="true">
+                {MARK_ICONS[m.mark]}
+              </span>
+              <span>{milestoneWord(m.kind)}</span>
+              <span className="visually-hidden"> ({t(`serverUpdate.mark.${m.mark}`)})</span>
+              {m.at && (
+                <time dateTime={m.at} className={styles.dim}>
+                  {formatClock(new Date(m.at))}
+                </time>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+const MARK_ICONS: Record<MilestoneMark, string> = { done: "✓", current: "…", failed: "✕", todo: "○" };
+const MARK_CLASSES: Record<MilestoneMark, string | undefined> = {
+  done: styles.done,
+  current: styles.current,
+  failed: styles.failed,
+  todo: styles.todo,
+};
+
+/**
+ * The updater's own lines, untranslated, closed at the bottom of the page:
+ * for support, the milestones above are what a person follows.
+ */
+function RawLog({ run }: { run: ServerUpdateRun }) {
+  return (
+    <details className={styles.rawLog}>
+      <summary>{t("serverUpdate.last.rawLog")}</summary>
+      <p className={styles.note}>{t("serverUpdate.last.rawLogNote")}</p>
+      <ol className={styles.steps} aria-label={t("serverUpdate.last.rawLog")}>
         {run.steps.map((step, i) => (
           <li key={i}>
             <time dateTime={step.at} className={styles.dim}>
@@ -324,6 +381,96 @@ function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; reques
           </li>
         ))}
       </ol>
+    </details>
+  );
+}
+
+const RESULT_TONES: Record<ServerUpdateResult, Tone> = {
+  in_progress: "info",
+  succeeded: "ok",
+  failed: "bad",
+  rolled_back: "bad",
+  unknown: "neutral",
+};
+
+/**
+ * The server's updates, newest first (ADR-0172). Read again when the last
+ * update changes state, through its `key`.
+ */
+function UpdateHistory() {
+  const { data, error, refresh } = usePolledData(api.serverUpdateHistory);
+  let body;
+  if (!data) {
+    body = error ? (
+      <Banner tone="bad">
+        <strong>{t("ui.page.loadFailed", { what: t("serverUpdate.history.what") })}</strong> {describeError(error)}{" "}
+        <Button size="small" onClick={refresh}>
+          {t("ui.page.retry")}
+        </Button>
+      </Banner>
+    ) : (
+      <LoadingBlock />
+    );
+  } else if (data.updates.length === 0) {
+    body = <p className={styles.note}>{t("serverUpdate.history.empty")}</p>;
+  } else {
+    const now = new Date();
+    const columns: Column<ServerUpdateHistoryEntry>[] = [
+      {
+        key: "version",
+        header: t("serverUpdate.history.column.version"),
+        cell: (u) => (
+          <>
+            {u.from && <span className={styles.dim}>{u.from} → </span>}
+            <strong>{u.to}</strong>
+          </>
+        ),
+      },
+      {
+        key: "date",
+        header: t("serverUpdate.history.column.date"),
+        cell: (u) => <RelativeTime value={u.started_at} now={now} />,
+      },
+      {
+        key: "who",
+        header: t("serverUpdate.history.column.who"),
+        // Null for an update from the command line, or a user since removed.
+        cell: (u) => u.requested_by ?? <Missing word="unknown" className={styles.dim} />,
+      },
+      {
+        key: "result",
+        header: t("serverUpdate.history.column.result"),
+        cell: (u) => (
+          <>
+            {u.inferred ? (
+              <Hint tone={RESULT_TONES[u.result]} label={t(`serverUpdate.history.result.${u.result}`)}>
+                {t("serverUpdate.history.inferred")}
+              </Hint>
+            ) : (
+              <Label tone={RESULT_TONES[u.result]}>{t(`serverUpdate.history.result.${u.result}`)}</Label>
+            )}
+            {/* The updater's words, as on the last update. */}
+            {u.error && <span className={styles.dim}> {u.error}</span>}
+          </>
+        ),
+      },
+    ];
+    body = (
+      <DataTable
+        bare
+        label={t("serverUpdate.history.title")}
+        columns={columns}
+        rows={data.updates}
+        rowKey={(u) => u.id}
+      />
+    );
+  }
+  return (
+    <section className={styles.box} aria-labelledby="history-title">
+      <h2 id="history-title" className={styles.title}>
+        {t("serverUpdate.history.title")}
+      </h2>
+      {body}
     </section>
   );
 }

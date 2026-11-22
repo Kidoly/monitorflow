@@ -8,7 +8,7 @@ import { rich, t } from "@/i18n";
 import { cx } from "@/components/ui/cx";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Label } from "@/components/ui/StatusLabel";
-import { Banner, ErrorState, LoadingBlock, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
+import { ErrorState, LoadingBlock, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { ApiError, type Customer, type Me, type Relay, type Server, type Site, api, describeError } from "@/lib/api";
 import { administersCustomer, administersEverything, multiCustomer, useRefreshMe } from "@/lib/me";
 import { AUTO_UPDATE_PATH, siteHref } from "@/lib/routes";
@@ -69,12 +69,10 @@ export function SitesAdmin({ me }: { me: Me }) {
           data || error ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : undefined
         }
       />
-      <Banner tone="info">
-        {multi ? t("sites.permanentCustomers") : t("sites.permanent")}
-      </Banner>
-      <Banner tone="info">
+      <p className={styles.sectionNote}>
+        {multi ? t("sites.permanentCustomers") : t("sites.permanent")}{" "}
         {rich("sites.autoUpdateNote", { link: <Link href={AUTO_UPDATE_PATH}>{t("sites.autoUpdateLink")}</Link> })}
-      </Banner>
+      </p>
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}

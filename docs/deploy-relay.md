@@ -58,7 +58,7 @@ The relay runs as `monitorflow-relay` and needs root for one thing only: replaci
 
 ## Mirrors
 
-With the checkbox of Add relay (`MF_MIRROR=1`, or `[mirror] enabled = true`), the relay copies the server's package mirrors and agent releases and serves them on port 7480[^0034][^0037]: agents of the site then download from it. A copy takes 50 to 400 GiB per distribution under `/var/lib/monitorflow/relay/mirrors`; `mirror.mirrors` limits it to some. Which mirrors the server holds is chosen under Mirrors. Agents reach the relay's copy at its first server name on port 7480 unless `mirror.public_url` says otherwise.
+With the checkbox of Add relay (`MF_MIRROR=1`, or `[mirror] enabled = true`), the relay copies the server's package mirrors and agent releases and serves them on port 7480[^0034][^0037]: agents of the site then download from it. A copy takes 50 to 400 GiB per distribution under `/var/lib/monitorflow/relay/mirrors`; `mirror.mirrors` limits it to some. Which mirrors the server holds is chosen under Linux mirrors. Agents reach the relay's copy at its first server name on port 7480 unless `mirror.public_url` says otherwise.
 
 ## Self-update
 

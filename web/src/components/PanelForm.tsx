@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { type Combine, type Panel, type PanelServers, type Server, type Within, api, describeError, isAbortError } from "@/lib/api";
 import {
@@ -21,6 +21,7 @@ import { t } from "@/i18n";
 import { useMultiCustomer } from "@/lib/me";
 import { metricTitle, shortMetric } from "@/lib/metrics";
 import { Button, fieldClass } from "@/components/ui/Button";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import admin from "./AdminPages.module.css";
 import styles from "./Dashboards.module.css";
@@ -82,7 +83,6 @@ export function PanelForm({
   onCancel: () => void;
 }) {
   const multiCustomer = useMultiCustomer();
-  const id = useId();
   const [draft, setDraft] = useState(initial);
   const [titleTyped, setTitleTyped] = useState(!isNew && initial.title !== suggestedTitle(initial));
   const [instanceChosen, setInstanceChosen] = useState(!isNew);
@@ -148,14 +148,12 @@ export function PanelForm({
     >
       <fieldset className={admin.fieldset}>
         <legend className={admin.legend}>{t("dashboards.form.shows")}</legend>
-        <div className={styles.choices}>
-          {PANEL_KINDS.map((kind) => (
-            <label key={kind}>
-              <input type="radio" name={`${id}-kind`} checked={panel.kind === kind} onChange={() => change(withKind(panel, kind))} />
-              {kindLabel(kind)}
-            </label>
-          ))}
-        </div>
+        <SegmentedControl
+          label={t("dashboards.form.shows")}
+          options={PANEL_KINDS.map((kind) => ({ value: kind, label: kindLabel(kind) }))}
+          value={panel.kind}
+          onChange={(kind) => change(withKind(panel, kind))}
+        />
       </fieldset>
 
       <div className={admin.formGrid}>

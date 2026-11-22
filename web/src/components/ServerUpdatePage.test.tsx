@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
-import type { ServerUpdateCheck, ServerUpdateRun, ServerUpdateView } from "@/lib/api";
+import type { ServerUpdateCheck, ServerUpdateHistoryEntry, ServerUpdateRun, ServerUpdateView } from "@/lib/api";
 import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { setUrl } from "@/test/navigation";
@@ -27,11 +27,24 @@ function view(overrides: Partial<ServerUpdateView> = {}): ServerUpdateView {
       running: { version: "0.1.0", server_image: null, web_image: WEB, updater_image: null },
     },
     update: null,
+    milestones: [],
     requested: false,
     available: null,
     ...overrides,
   };
 }
+
+const MILESTONES: ServerUpdateView["milestones"] = [
+  { kind: "verified", done_at: "2026-10-27T10:00:00Z" },
+  { kind: "images_pulled", done_at: null },
+  { kind: "backed_up", done_at: "2026-10-27T10:01:00Z" },
+  { kind: "database_migrated", done_at: null },
+  { kind: "server_restarted", done_at: null },
+  { kind: "agents_ready", done_at: null },
+];
+
+/** Every page asks for the history; most tests need none. */
+const HISTORY = { "GET /api/server-update/history": { status: 200, body: { updates: [] } } };
 
 function run(overrides: Partial<ServerUpdateRun> = {}): ServerUpdateRun {
   return {
@@ -81,7 +94,8 @@ describe("ServerUpdatePage", () => {
   beforeEach(() => setUrl("/settings/server-update/"));
 
   it("is for global administrators only", () => {
-    stubFetch({});
+    stubFetch({
+      ...HISTORY,});
     renderPage(customerAdmin);
     expect(screen.getByText("Server updates need a global administrator")).toBeInTheDocument();
   });
@@ -90,7 +104,8 @@ describe("ServerUpdatePage", () => {
     setActiveLocale("fr");
     const user = userEvent.setup();
     stubFetch({
-      "GET /api/server-update": { status: 200, body: view({ update: run() }) },
+      ...HISTORY,
+      "GET /api/server-update": { status: 200, body: view({ update: run(), milestones: MILESTONES }) },
       "POST /api/server-update/check": { status: 200, body: available },
       "GET /api/agent-releases": { status: 200, body: { versions: [] } },
     });
@@ -101,7 +116,16 @@ describe("ServerUpdatePage", () => {
     // The version is in the facts and the heading: no green box repeats it.
     expect(screen.queryByText("Le serveur est en version 0.2.0.")).not.toBeInTheDocument();
     expect(screen.getByText("Programme de mise à jour")).toBeInTheDocument();
-    expect(screen.getByText(/Journal brut du programme de mise à jour/)).toBeInTheDocument();
+    expect(screen.getByText("Journal du programme de mise à jour")).toBeInTheDocument();
+    const steps = within(screen.getByRole("list", { name: "Étapes" })).getAllByRole("listitem");
+    expect(steps.map((li) => li.textContent?.replace(/[\d:]+$/, ""))).toEqual([
+      "✓Version vérifiée (Fait)",
+      "○Images téléchargées (Non fait)",
+      "✓Sauvegarde créée (Fait)",
+      "○Base migrée (Non fait)",
+      "○Serveur redémarré (Non fait)",
+      "○Agents prêts (Non fait)",
+    ]);
     // The check is a button of the page header, not a section of its own.
     expect(screen.queryByRole("heading", { name: "Mises à jour" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Rechercher des mises à jour" }));
@@ -114,6 +138,7 @@ describe("ServerUpdatePage", () => {
   it("checks for an update, shows what changes and starts it after confirmation", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({
+      ...HISTORY,
       "GET /api/server-update": [
         { status: 200, body: view() },
         { status: 200, body: view({ requested: true }) },
@@ -150,6 +175,7 @@ describe("ServerUpdatePage", () => {
   it("explains an offline server and a release that does not verify", async () => {
     const user = userEvent.setup();
     stubFetch({
+      ...HISTORY,
       "GET /api/server-update": { status: 200, body: view() },
       "POST /api/server-update/check": [
         { status: 200, body: { ...available, reachable: false, latest: null, error: "https://github.com/…/VERSION: dns error" } },
@@ -172,6 +198,7 @@ describe("ServerUpdatePage", () => {
   it("does not offer an update without a running updater", async () => {
     const user = userEvent.setup();
     stubFetch({
+      ...HISTORY,
       "GET /api/server-update": {
         status: 200,
         body: view({ updater: { ...view().updater!, alive: false, heartbeat_at: "2026-10-27T08:00:00Z" } }),
@@ -187,6 +214,7 @@ describe("ServerUpdatePage", () => {
 
   it("goes straight to the update when the daily check saw a release", async () => {
     stubFetch({
+      ...HISTORY,
       "GET /api/server-update": {
         status: 200,
         body: view({ available: { version: "0.2.0", release_notes_url: null, first_seen_at: "2026-10-27T10:00:00Z" } }),
@@ -200,6 +228,7 @@ describe("ServerUpdatePage", () => {
   it("imports the chosen release files and says what is on the server", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({
+      ...HISTORY,
       "GET /api/server-update": { status: 200, body: view() },
       "GET /api/agent-releases": [
         { status: 200, body: { versions: [], latest: null } },
@@ -230,6 +259,7 @@ describe("ServerUpdatePage", () => {
   it("imports from a URL and shows a refusal as it is", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({
+      ...HISTORY,
       "GET /api/server-update": { status: 200, body: view() },
       "GET /api/agent-releases": { status: 200, body: { versions: [], latest: null } },
       "POST /api/agent-releases/import-url": [
@@ -248,16 +278,84 @@ describe("ServerUpdatePage", () => {
   });
 
   it("says when the server is not set up for updates", async () => {
-    stubFetch({ "GET /api/server-update": { status: 200, body: view({ enabled: false, updater: null }) } });
+    stubFetch({
+      ...HISTORY, "GET /api/server-update": { status: 200, body: view({ enabled: false, updater: null }) } });
     renderPage();
     expect(await screen.findByText(/not set up for updates from the web interface/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
   });
 
+  it("tells the steps in words, with the updater's own log closed at the bottom", async () => {
+    stubFetch({
+      ...HISTORY,
+      "GET /api/server-update": {
+        status: 200,
+        body: view({ update: run({ state: "rolled_back", error: "the new version did not start" }), milestones: MILESTONES }),
+      },
+    });
+    renderPage();
+    const steps = await screen.findByRole("list", { name: "Steps" });
+    const items = within(steps).getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual([
+      expect.stringMatching(/^✓Version verified \(Done\)[\d:]+$/),
+      "✕Images downloaded (Stopped here)",
+      expect.stringMatching(/^✓Backup created \(Done\)[\d:]+$/),
+      "○Database migrated (Not done)",
+      "○Server restarted (Not done)",
+      "○Agents ready (Not done)",
+    ]);
+    // The raw lines are not in the middle of the page any more.
+    expect(steps).not.toHaveTextContent("database and server data saved");
+    const log = screen.getByText("Updater log").closest("details")!;
+    expect(log).not.toHaveAttribute("open");
+    expect(log).toHaveTextContent("database and server data saved to monitorflow-backup-20261027T100100Z-update.tar.gz");
+    expect(log.parentElement!.lastElementChild).toBe(log);
+  });
+
+  it("lists the server's versions, newest first, with who asked and how each ended", async () => {
+    const entry = (overrides: Partial<ServerUpdateHistoryEntry>): ServerUpdateHistoryEntry => ({
+      id: "u1",
+      from: "0.9.0",
+      to: "0.9.1",
+      requested_by: "admin",
+      started_at: "2026-11-21T21:05:57Z",
+      finished_at: "2026-11-21T21:06:56Z",
+      result: "succeeded",
+      error: null,
+      inferred: false,
+      ...overrides,
+    });
+    stubFetch({
+      "GET /api/server-update": { status: 200, body: view({ update: run() }) },
+      "GET /api/server-update/history": {
+        status: 200,
+        body: {
+          updates: [
+            entry({}),
+            entry({ id: "u2", from: "0.8.0", to: "0.9.0", result: "rolled_back", error: "the new version did not start" }),
+            entry({ id: "u3", from: null, to: "0.8.0", requested_by: null, result: "succeeded", inferred: true }),
+          ],
+        },
+      },
+    });
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Server version history" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows[0]).toHaveTextContent("0.9.0 → 0.9.1");
+    expect(rows[0]).toHaveTextContent("admin");
+    expect(rows[0]).toHaveTextContent("Updated");
+    expect(rows[1]).toHaveTextContent("Rolled back the new version did not start");
+    expect(rows[2]).toHaveTextContent("0.8.0");
+    expect(rows[2]).toHaveTextContent("Unknown");
+    // A deduced result says so.
+    expect(within(rows[2]!).getByText(/^Updated/).closest("[tabindex]")).toHaveAccessibleDescription(/deduced from the version/);
+  });
+
   it("follows an update through the restart", async () => {
     stubFetch({
+      ...HISTORY,
       "GET /api/server-update": [
-        { status: 200, body: view({ update: run({ state: "updating", finished_at: null }) }) },
+        { status: 200, body: view({ update: run({ state: "updating", finished_at: null }), milestones: MILESTONES }) },
         { status: 502, body: { error: "bad gateway" } },
       ],
     });
@@ -269,7 +367,8 @@ describe("ServerUpdatePage", () => {
       await vi.advanceTimersByTimeAsync(3_500);
       expect(await screen.findByText(/Reconnecting…/)).toBeInTheDocument();
       // The last status stays on screen.
-      expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("release 0.2.0 verified");
+      const steps = screen.getByRole("list", { name: "Steps" });
+      expect(steps).toHaveTextContent("Version verified");
     } finally {
       vi.useRealTimers();
     }
@@ -277,6 +376,7 @@ describe("ServerUpdatePage", () => {
 
   it("gives the restore command after a rollback that followed migrations", async () => {
     stubFetch({
+      ...HISTORY,
       "GET /api/server-update": {
         status: 200,
         body: view({ update: run({ state: "rolled_back", migrated: true, error: "the new version did not start" }) }),
@@ -291,6 +391,7 @@ describe("ServerUpdatePage", () => {
 
   it("reports a rollback without migrations as complete", async () => {
     stubFetch({
+      ...HISTORY,
       "GET /api/server-update": {
         status: 200,
         body: view({ update: run({ state: "rolled_back", error: "the new version did not start: unhealthy" }) }),

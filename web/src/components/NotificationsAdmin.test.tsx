@@ -777,7 +777,7 @@ describe("Notify about", () => {
     page();
     expect(await screen.findByText(/only for follow-ups/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Edit" }));
-    const box = screen.getByRole("checkbox", { name: /Only for follow-ups/ });
+    const box = screen.getByRole("switch", { name: /Only for follow-ups/ });
     expect(box).toBeChecked();
     await user.click(box);
     await user.click(screen.getByRole("button", { name: "Save and send test" }));

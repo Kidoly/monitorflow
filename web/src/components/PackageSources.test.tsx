@@ -110,7 +110,7 @@ describe("PackageSources", () => {
     stubFetch({ [`GET ${PATH}`]: ok({ ...own, problem, problem_code: "no_mirror", add_mirror: true }) });
     show();
     // The label and the button say it: no sentence, in English or not.
-    expect(await screen.findByRole("link", { name: "Add Debian 12 (bookworm) on the Mirrors page" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "Add Debian 12 (bookworm) on the Linux mirrors page" })).toHaveAttribute(
       "href",
       "/admin/mirrors",
     );
@@ -132,8 +132,8 @@ describe("PackageSources", () => {
   it("points people who cannot add mirrors to someone who can", async () => {
     stubFetch({ [`GET ${PATH}`]: ok({ ...own, problem: "No mirror.", add_mirror: true }) });
     show(viewer);
-    expect(await screen.findByText("A global administrator can add it on the Mirrors page.")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Mirrors page/ })).not.toBeInTheDocument();
+    expect(await screen.findByText("A global administrator can add it on the Linux mirrors page.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /mirrors page/ })).not.toBeInTheDocument();
   });
 
   it("offers nothing without the role, or while a campaign has the sources", async () => {

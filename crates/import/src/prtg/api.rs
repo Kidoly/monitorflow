@@ -96,7 +96,13 @@ pub fn objects(body: &str, kind: Kind) -> Result<Vec<Object>, ReadError> {
         };
         let name = text(&row, "name").unwrap_or_else(|| format!("#{id}"));
         let parent = match kind {
-            Kind::Probe => None,
+            // A probe is a child of the root. Without a filter, PRTG's
+            // `probenodes` table lists every node of the tree too, and
+            // some versions ignore the filter: those rows are left out.
+            Kind::Probe => match int(&row, "parentid") {
+                Some(p) if p != 0 => continue,
+                _ => None,
+            },
             _ => int(&row, "parentid"),
         };
         let mut object = Object::new(id, kind, name, parent);
@@ -119,8 +125,12 @@ pub fn property(body: &str) -> Option<String> {
     let start = body.find("<result>")? + "<result>".len();
     let end = start + body[start..].find("</result>")?;
     let value = unescape(body[start..end].trim());
-    let missing =
-        value.is_empty() || value.starts_with("(Property not found)") || value == "(Not found)";
+    // PRTG 24 answers `Not found`, without parentheses, for a channel
+    // property the channel does not have, like `valuelookup`.
+    let missing = value.is_empty()
+        || value.starts_with("(Property not found)")
+        || value == "(Not found)"
+        || value == "Not found";
     (!missing).then_some(value)
 }
 
@@ -175,7 +185,7 @@ pub fn setting_date(text: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(text.trim(), "%Y-%m-%d-%H-%M-%S").ok()
 }
 
-/// PRTG's clock as shown by `getstatus.json`, in its local time, in the
+/// PRTG's clock as shown by `status.json`, in its local time, in the
 /// formats its languages use.
 pub fn clock(text: &str) -> Option<NaiveDateTime> {
     const FORMATS: &[&str] = &[
@@ -512,47 +522,74 @@ where
     Ok(out.into_iter().flatten().collect())
 }
 
+/// How far PRTG's local time is ahead of UTC, from a `status.json`
+/// answer: its local `Clock` against `jsClock`, the same instant in Unix
+/// seconds, or against `now` when it has no `jsClock`.
+pub fn status_offset(status: &str, now: DateTime<Utc>) -> Option<Duration> {
+    let status: Value = serde_json::from_str(status).ok()?;
+    let local = status
+        .get("Clock")
+        .and_then(Value::as_str)
+        .and_then(clock)?;
+    let at = status
+        .get("jsClock")
+        .and_then(Value::as_i64)
+        .and_then(|s| DateTime::from_timestamp(s, 0))
+        .unwrap_or(now);
+    Some(utc_offset(local, at))
+}
+
 /// Reads the whole installation. `now` is used to learn PRTG's time
 /// zone from its clock, for maintenance windows.
 pub async fn read(fetch: Arc<dyn Fetch>, now: DateTime<Utc>) -> Result<Tree, ReadError> {
-    let status = fetch.get("/api/getstatus.json", &[]).await?;
-    let offset = serde_json::from_str::<Value>(&status)
-        .ok()
-        .and_then(|v| v.get("Clock").and_then(Value::as_str).and_then(clock))
-        .map(|c| utc_offset(c, now))
-        .unwrap_or_else(Duration::zero);
-    let table = |content: &'static str, columns: &'static str| {
+    // `status.json` is PRTG's status; `getstatus.json` does not exist and
+    // answers 404. Only the time zone comes from it: when it cannot be
+    // read, windows are read as UTC, but refused credentials stop here.
+    let offset = match fetch.get("/api/status.json", &[]).await {
+        Ok(status) => status_offset(&status, now),
+        Err(e @ ReadError::Refused(_)) => return Err(e),
+        Err(e) => {
+            tracing::debug!(error = %e, "PRTG's status does not read");
+            None
+        }
+    }
+    .unwrap_or_else(Duration::zero);
+    let table = |content: &'static str,
+                 columns: &'static str,
+                 filter: Option<(&'static str, &'static str)>| {
         let fetch = fetch.clone();
         async move {
-            fetch
-                .get(
-                    "/api/table.json",
-                    &[
-                        ("content", content.into()),
-                        ("columns", columns.into()),
-                        ("count", "*".into()),
-                    ],
-                )
-                .await
+            let mut query = vec![
+                ("content", content.to_owned()),
+                ("columns", columns.to_owned()),
+                ("count", "*".to_owned()),
+            ];
+            query.extend(filter.map(|(k, v)| (k, v.to_owned())));
+            fetch.get("/api/table.json", &query).await
         }
     };
     let probes = objects(
-        &table("probenodes", "objid,name,status").await?,
+        &table(
+            "probenodes",
+            "objid,name,parentid,status",
+            Some(("filter_parentid", "0")),
+        )
+        .await?,
         Kind::Probe,
     )?;
     let groups: Vec<Object> = objects(
-        &table("groups", "objid,name,parentid,status").await?,
+        &table("groups", "objid,name,parentid,status", None).await?,
         Kind::Group,
     )?
     .into_iter()
     .filter(|g| !probes.iter().any(|p| p.id == g.id))
     .collect();
     let devices = objects(
-        &table("devices", "objid,name,parentid,host,status").await?,
+        &table("devices", "objid,name,parentid,host,status", None).await?,
         Kind::Device,
     )?;
     let sensors = objects(
-        &table("sensors", "objid,name,parentid,type,interval,status").await?,
+        &table("sensors", "objid,name,parentid,type,interval,status", None).await?,
         Kind::Sensor,
     )?;
 

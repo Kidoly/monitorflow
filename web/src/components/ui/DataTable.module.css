@@ -140,3 +140,14 @@
   color: var(--muted);
   font-size: 13px;
 }
+
+/* The checkbox column of a table with bulk actions. */
+.table th.select,
+.table td.select {
+  width: 1%;
+  padding-right: 0;
+}
+
+.table tbody tr.picked td {
+  background: var(--hl);
+}

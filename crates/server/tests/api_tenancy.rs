@@ -824,6 +824,17 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 StatusCode::FORBIDDEN
             );
         }
+        // Server-wide: one PSA connection serves every customer, so only
+        // global administrators manage it (ADR-0164).
+        ("GET", "/api/psa/connection")
+        | ("PUT", "/api/psa/connection")
+        | ("DELETE", "/api/psa/connection")
+        | ("POST", "/api/psa/connection/test") => {
+            let body = matches!(method, "PUT" | "POST").then(|| {
+                json!({ "base_url": "https://halo.example.com", "client_id": "x", "client_secret": "y" })
+            });
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         // Personal (ADR-0137): only the signed-in person's own preferences,
         // no customer or site in them.
         ("GET", "/api/me/preferences") => {
@@ -1397,8 +1408,13 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             };
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // Tickets of every customer's incidents: global administrators.
+        ("GET", "/api/psa/tickets") => {
+            assert_eq!(ctx.status(method, path, None).await, StatusCode::FORBIDDEN);
+        }
         // The server is shared: updating it is for global administrators.
         ("GET", "/api/server-update")
+        | ("GET", "/api/server-update/history")
         | ("POST", "/api/server-update")
         | ("POST", "/api/server-update/check") => {
             let body = method.eq("POST").then(|| json!({ "version": "99.0.0" }));
@@ -1487,6 +1503,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("PUT", "/api/settings/server")
         | ("PUT", "/api/settings/retention")
         | ("GET", "/api/auto-update/{kind}/peers")
+        | ("GET", "/api/auto-update/{kind}/versions/peers")
         | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
             let uri = path
                 .replace("{kind}/peers", "agent/peers?state=waiting")
@@ -1560,6 +1577,21 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         // Integration endpoints (ADR-0102): channels' rules, and B's events
         // cannot be replayed to A's endpoint.
+        // The PSA's clients and the site matching: global administrators
+        // only, even for a site of their own customer (ADR-0166).
+        ("GET", "/api/psa/clients")
+        | ("GET", "/api/psa/clients/{id}/sites")
+        | ("GET", "/api/psa/site-links")
+        | ("PUT", "/api/psa/site-links/{site_id}")
+        | ("DELETE", "/api/psa/site-links/{site_id}") => {
+            for site in [a.site, b.site] {
+                let uri = path
+                    .replace("{id}", "10")
+                    .replace("{site_id}", &site.to_string());
+                let body = method.eq("PUT").then(|| json!({ "client_id": 10 }));
+                assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+            }
+        }
         ("GET", "/api/integrations") => {
             let other = ctx.integration(json!(b.customer)).await;
             let (status, body) = ctx.call(method, path, None).await;
@@ -1807,6 +1839,18 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             }
             let (_, body) = ctx.call(method, path, None).await;
             assert!(Ctx::mentions(&body, a.remediation), "{body}");
+        }
+        ("GET", "/api/remediation/alerts/{id}") | ("POST", "/api/remediation/alerts/{id}/run") => {
+            let uri = path.replace("{id}", &b.incident.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM remediation_incidents WHERE alert_incident_id = $1",
+            )
+            .bind(b.incident)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            assert!(count <= 1, "a new attempt opened across customers: {count}");
         }
         ("GET", "/api/remediation/incidents/{id}") => {
             let uri = format!("/api/remediation/incidents/{}", b.remediation);
@@ -2274,6 +2318,14 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         ("GET", "/api/availability/report") => {
             let uri = format!("{path}?format=csv&customer_id={}", b.customer);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("GET", "/api/availability/uptime") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.server), "{body}");
+            assert!(!Ctx::mentions(&body, b.server), "{body}");
+            assert!(!Ctx::mentions(&body, b.business_service), "{body}");
+            let uri = format!("{path}?customer_id={}", b.customer);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
         // Report schedules (ADR-0155): B's are not listed and do not exist
@@ -2883,6 +2935,16 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .extend(reach.as_object().unwrap().clone());
                 assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
             }
+        }
+        // What tickets the PSA connection opens: global administrators.
+        ("GET", "/api/psa/ticket-types")
+        | ("GET", "/api/psa/categories")
+        | ("GET", "/api/psa/statuses")
+        | ("PUT", "/api/psa/ticket-settings") => {
+            let body = method
+                .eq("PUT")
+                .then(|| json!({ "min_severity": "warning" }));
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
         ("GET", "/api/dashboard-metrics") => {
             let uri = format!("{path}?site_id={}", b.site);

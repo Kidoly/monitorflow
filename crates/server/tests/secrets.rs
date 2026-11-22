@@ -154,6 +154,7 @@ db_tests! {
                 Column::SensorConfigs,
                 Column::NetworkScans,
                 Column::VmwareCredentials,
+                Column::PsaConnections,
             ]
         );
         let channels = "SELECT secret FROM notification_channels ORDER BY settings->>'url'";
@@ -180,6 +181,7 @@ db_tests! {
                 "integration_endpoints.secret",
                 "network_scans.snmp_secret",
                 "notification_channels.secret",
+                "psa_connections.client_secret",
                 "sensor_configs.secret",
                 "server_settings.ai_api_key",
                 "snmp_credentials.secret",

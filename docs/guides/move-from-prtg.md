@@ -22,6 +22,7 @@ Retyping hundreds of devices, sensors and limits is the hardest part of switchin
 | Disk free and volume sensors, with limits on a percent free channel | Disk space threshold for that drive or mount point | Approximated: read as space used |
 | Windows service sensor | Windows service check, critical when it stops | Exact |
 | Port sensor | Port check of the device's address | Approximated: checked by the server's own agent, not from a probe |
+| Remote Desktop, SMTP, IMAP and POP3 sensors | Port check of their port on the device's address | Approximated: MonitorFlow checks that the port accepts connections, without speaking the protocol |
 | HTTP and HTTP advanced sensors | Website check of the page: its method, the keyword it must or must not hold, custom headers and timeout, with the response time limits as a threshold | Exact; approximated for a POST, a keyword given as a regular expression or Windows authentication. A password is not imported: set it in the check afterwards |
 | SSL certificate sensor | Website check of its host and port, with its days limits on the days left. A page of the same site checked already takes them instead | Approximated: the check also requests the page, whatever it answers |
 | Event log sensors | Event log check of the same log, levels, sources and event IDs | Exact, or approximated when a message filter or a count limit cannot be moved |
@@ -40,7 +41,9 @@ You need to be an administrator of the site the servers go to, and one of:
 - **A user name and its passhash.** In PRTG, open **Setup › Account Settings › My Account** and click **Show passhash**.
 - **The configuration file**, `PRTG Configuration.dat`, copied from `C:\ProgramData\Paessler\PRTG Network Monitor\` on the PRTG core server. It holds every setting, channel limits included; its maintenance times are read as UTC, since the file does not say PRTG's time zone.
 
-The token or passhash is used for this one reading only: MonitorFlow never stores it nor writes it to a log. Use an `https://` address so it does not travel in clear text.
+If PRTG sits behind a reverse proxy or a web application firewall that asks for a user and password (HTTP basic authentication) before PRTG's own login, fill in **Proxy user** and **Proxy password** too (`proxy_user` and `proxy_password` in the API). Both go with every request, beside the token or passhash.
+
+The token, passhash and proxy password are used for this one reading only: MonitorFlow never stores them nor writes them to a log. Use an `https://` address so it does not travel in clear text.
 
 ## Read and preview
 

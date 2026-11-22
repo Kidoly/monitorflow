@@ -164,3 +164,8 @@
   color: var(--muted);
   font-size: 12px;
 }
+
+/* Turn off for the checked sensors: its own line under the bar's actions. */
+.bulkConfirm {
+  flex-basis: 100%;
+}

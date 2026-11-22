@@ -123,6 +123,22 @@ export function closeReason(payload: Record<string, unknown>, fallback: string):
   });
 }
 
+/**
+ * The note that starts an attempt (ADR-0165): its number, why it started
+ * (the actor column says who), and how the one before ended.
+ */
+function attemptText(p: Record<string, unknown>): string {
+  const number = typeof p.attempt === "number" ? p.attempt : 1;
+  const started =
+    p.trigger === "commands_accepted"
+      ? t("remediation.summary.attemptAccepted", { number })
+      : t("remediation.summary.attemptByHand", { number });
+  const previous = p.previous && typeof p.previous === "object" ? (p.previous as Record<string, unknown>) : null;
+  if (!previous) return started;
+  const before = closeReason(previous, text(previous, "reason")) || stateName(previous.state) || "";
+  return before ? started + t("remediation.summary.attemptAfter", { reason: before }) : started;
+}
+
 /** The agent's refusal of shell commands, the start of its English message. */
 const AGENT_SHELL_OFF = "shell commands are disabled on this agent";
 
@@ -218,7 +234,7 @@ export function eventSummary(event: Pick<RemediationEvent, "kind" | "actor_kind"
         to: stateName(p.to) ?? text(p, "to"),
       });
     case "note":
-      return closeReason(p, text(p, "text"));
+      return p.code === "attempt" ? attemptText(p) : closeReason(p, text(p, "text"));
   }
 }
 

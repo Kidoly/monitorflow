@@ -23,6 +23,7 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { Page } from "@/components/ui/Page";
 import { PageHeader } from "@/components/ui/PageState";
+import { Switch } from "@/components/ui/Switch";
 
 import styles from "./AdminPages.module.css";
 import { NEW_CREDENTIALS, SnmpFields, snmpProblem, snmpRequest } from "./SnmpCredentials";
@@ -272,15 +273,9 @@ export function AddDevice() {
           </select>
         </label>
       )}
-      <label className={styles.check}>
-        <input type="checkbox" checked={ping} onChange={(e) => setPing(e.target.checked)} /> {t("devices.add.ping")}
-      </label>
-      <label className={styles.check}>
-        <input type="checkbox" checked={snmp} onChange={(e) => setSnmp(e.target.checked)} /> {t("devices.snmp.watch")}
-      </label>
-      <label className={styles.check}>
-        <input type="checkbox" checked={vmware} onChange={(e) => setVmware(e.target.checked)} /> {t("virtualization.vmware.watch")}
-      </label>
+      <Switch checked={ping} onChange={setPing} label={t("devices.add.ping")} />
+      <Switch checked={snmp} onChange={setSnmp} label={t("devices.snmp.watch")} />
+      <Switch checked={vmware} onChange={setVmware} label={t("virtualization.vmware.watch")} />
       {(ping || snmp || vmware) && siteId && (
         <ProbeSelect key={siteId} siteId={siteId} value={probe} onChange={setProbe} label={t("devices.add.from")} />
       )}

@@ -20,6 +20,7 @@ import { move, placeName } from "@/lib/onCall";
 import { usePolledData } from "@/lib/usePolledData";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
+import { Switch } from "@/components/ui/Switch";
 
 import admin from "./AdminPages.module.css";
 import styles from "./OnCall.module.css";
@@ -172,10 +173,11 @@ function FollowUpForm({
                 {t("followUp.remove")}
               </Button>
             </div>
-            <label>
-              <input type="checkbox" checked={step.administrators} onChange={(e) => change(i, { administrators: e.target.checked })} />{" "}
-              {t("followUp.administratorsLabel")}
-            </label>
+            <Switch
+              checked={step.administrators}
+              onChange={(administrators) => change(i, { administrators })}
+              label={t("followUp.administratorsLabel")}
+            />
             <Checks
               legend={t("followUp.personOnCallOf")}
               options={list.schedules.filter(fits)}

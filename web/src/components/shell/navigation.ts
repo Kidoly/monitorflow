@@ -11,7 +11,6 @@ import {
   ON_CALL_PATH,
   REPORTS_PATH,
   SETTINGS_PATH,
-  SILENCES_PATH,
 } from "@/lib/routes";
 
 import type { IconName } from "./icons";
@@ -42,6 +41,7 @@ export interface NavSection {
  * The daily work of the handoff's route table, in its order. Routes the web
  * interface does not have yet are null and hidden until their page lands.
  * Administration pages are under Settings, pinned at the bottom (ADR-0133).
+ * Silences has no item: the Silenced count of the status strip opens it.
  */
 export const NAVIGATION: NavSection[] = [
   {
@@ -50,7 +50,6 @@ export const NAVIGATION: NavSection[] = [
       { id: "fleet", label: "shell.nav.fleet", href: "/", icon: "fleet", alsoCurrent: ["/servers/"] },
       { id: "dashboards", label: "shell.nav.dashboards", href: DASHBOARDS_PATH, icon: "dashboards" },
       { id: "incidents", label: "shell.nav.incidents", href: "/incidents/", icon: "incidents", incidentCount: true },
-      { id: "silences", label: "shell.nav.silences", href: SILENCES_PATH, icon: "bell" },
       { id: "onCall", label: "shell.nav.onCall", href: ON_CALL_PATH, icon: "users" },
       { id: "reports", label: "shell.nav.reports", href: REPORTS_PATH, icon: "reports" },
     ],

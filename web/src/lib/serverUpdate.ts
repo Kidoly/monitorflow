@@ -1,6 +1,13 @@
 // Server update display helpers without React (ADR-0056).
 
-import type { ReleaseImported, ServerUpdateCheck, ServerUpdateRun, ServerUpdateState } from "./api";
+import type {
+  ReleaseImported,
+  ServerUpdateCheck,
+  ServerUpdateMilestone,
+  ServerUpdateMilestoneKind,
+  ServerUpdateRun,
+  ServerUpdateState,
+} from "./api";
 import type { Tone } from "@/components/ui/tone";
 import { t } from "@/i18n";
 
@@ -70,3 +77,28 @@ export function importNotes({ missing }: ReleaseImported): string[] {
 export function restoreCommand(backup: string): string {
   return `deploy/restore.sh ${backup}`;
 }
+
+/**
+ * How a milestone shows: reached, the one under way, the one the update
+ * stopped at, or not reached.
+ */
+export type MilestoneMark = "done" | "current" | "failed" | "todo";
+
+/** Each milestone of `run` with its mark, in order. */
+export function milestoneMarks(
+  milestones: ServerUpdateMilestone[],
+  run: ServerUpdateRun,
+): { kind: ServerUpdateMilestoneKind; at: string | null; mark: MilestoneMark }[] {
+  const next = milestones.findIndex((m) => m.done_at === null);
+  const stopped = run.state === "failed" || run.state === "rolled_back";
+  return milestones.map((m, i) => {
+    let mark: MilestoneMark = "todo";
+    if (m.done_at !== null) mark = "done";
+    else if (i === next && !isFinal(run.state)) mark = "current";
+    else if (i === next && stopped) mark = "failed";
+    return { kind: m.kind, at: m.done_at, mark };
+  });
+}
+
+/** The words of a milestone, in the active language. */
+export const milestoneWord = (kind: ServerUpdateMilestoneKind): string => t(`serverUpdate.milestone.${kind}`);

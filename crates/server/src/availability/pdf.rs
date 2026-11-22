@@ -12,11 +12,14 @@ use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 
 use super::pdf_metrics::{BOLD, HIGH, REGULAR};
 use super::report::{MachineView, Report};
+use super::uptime::Uptime;
 use super::words::{self, Language};
 
 const WIDTH: f32 = 595.0;
 const HEIGHT: f32 = 842.0;
 const MARGIN: f32 = 50.0;
+/// Where a page's content starts, under its header.
+const TOP: f32 = HEIGHT - MARGIN - 14.0;
 const BOTTOM: f32 = 64.0;
 const BODY: f32 = 9.5;
 /// Most outages listed; the CSV has all of them.
@@ -122,7 +125,7 @@ impl Doc {
         Self {
             pages: Vec::new(),
             page: Content::new(),
-            y: HEIGHT - MARGIN,
+            y: TOP,
             language,
         }
     }
@@ -144,7 +147,7 @@ impl Doc {
     fn new_page(&mut self) {
         let page = std::mem::replace(&mut self.page, Content::new());
         self.pages.push(page);
-        self.y = HEIGHT - MARGIN;
+        self.y = TOP;
     }
 
     /// Starts a page when less than `needed` points are left.
@@ -235,14 +238,16 @@ impl Doc {
         }
     }
 
-    /// Every page with its footer: what it is and its number.
-    fn finish(mut self, footer: &str) -> Vec<Content> {
+    /// Every page with its header (`what`: the title and period) and its
+    /// footer: what made it and the page's number.
+    fn finish(mut self, what: &str, footer: &str) -> Vec<Content> {
         self.new_page();
         let count = self.pages.len();
         let pages = std::mem::take(&mut self.pages);
         let mut done = Vec::with_capacity(count);
         for (i, page) in pages.into_iter().enumerate() {
             self.page = page;
+            brand::header(&mut self, what);
             self.text(MARGIN, 34.0, 8.0, false, MUTED, footer);
             let number = format!("{} {} / {count}", self.t("Page", "Page"), i + 1);
             let at = WIDTH - MARGIN - width(&number, 8.0, false);
@@ -348,8 +353,9 @@ fn availability_cell(value: Option<f64>, target: Option<f64>, language: Language
     Cell(words::availability(value, language), color)
 }
 
-/// The PDF of `report`, times written in `zone`.
-pub fn render(report: &Report, zone: Tz, language: Language) -> Vec<u8> {
+/// The PDF of `report`, times written in `zone`, with the uptime at the
+/// period's end when given (ADR-0172).
+pub fn render(report: &Report, uptime: Option<&Uptime>, zone: Tz, language: Language) -> Vec<u8> {
     let mut doc = Doc::new(language);
     let lang = language;
     let d = |n: f64| words::duration(n, lang);
@@ -370,6 +376,10 @@ pub fn render(report: &Report, zone: Tz, language: Language) -> Vec<u8> {
     doc.y -= 6.0;
 
     summary(&mut doc, report);
+    if let Some(uptime) = uptime {
+        let from = report.from.with_timezone(&zone).date_naive();
+        uptime_section::section(&mut doc, uptime, from);
+    }
 
     doc.heading(doc.t(
         "How availability is measured",
@@ -537,7 +547,8 @@ pub fn render(report: &Report, zone: Tz, language: Language) -> Vec<u8> {
         doc.t("made on", "établi le"),
         words::time(report.generated_at, zone)
     );
-    let pages = doc.finish(&footer);
+    let what = format!("{title}, {period}");
+    let pages = doc.finish(&what, &footer);
     write(pages, title, &period)
 }
 
@@ -764,6 +775,9 @@ fn write(pages: Vec<Content>, title: &str, period: &str) -> Vec<u8> {
     }
     pdf.finish()
 }
+
+mod brand;
+mod uptime_section;
 
 #[cfg(test)]
 mod tests;

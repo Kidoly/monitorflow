@@ -7,6 +7,7 @@ import { t } from "@/i18n";
 import { Button, type ButtonVariant, buttonClass, fieldClass } from "./Button";
 import { cx } from "./cx";
 import styles from "./InlineConfirm.module.css";
+import { Switch } from "./Switch";
 
 /**
  * A dangerous action confirmed in place, never in a modal: the trigger
@@ -71,7 +72,7 @@ export function InlineConfirm<R extends string>({
   const [error, setError] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
-  const checkRef = useRef<HTMLInputElement>(null);
+  const checkRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   // Focus moves only after the user opened or cancelled, not on first render.
   const moved = useRef<"open" | "closed" | null>(onClose ? "open" : null);
@@ -173,16 +174,7 @@ export function InlineConfirm<R extends string>({
         </label>
       )}
       {acknowledge && (
-        <label className={styles.acknowledge}>
-          <input
-            ref={checkRef}
-            type="checkbox"
-            checked={acknowledged}
-            onChange={(e) => setAcknowledged(e.target.checked)}
-            disabled={busy}
-          />
-          <span>{acknowledge}</span>
-        </label>
+        <Switch ref={checkRef} checked={acknowledged} onChange={setAcknowledged} disabled={busy} label={acknowledge} />
       )}
       <div className={styles.buttons}>
         <Button onClick={cancel} disabled={busy}>

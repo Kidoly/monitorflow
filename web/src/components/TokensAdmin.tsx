@@ -12,6 +12,8 @@ import { Banner, EmptyState, ErrorState, NoPermission, PageHeader, StaleBanner }
 import { CopyButton, SecretField } from "@/components/ui/SecretField";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatAgo } from "@/components/ui/time";
+import { Switch } from "@/components/ui/Switch";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { rich, t } from "@/i18n";
 import {
   type AgentInstall,
@@ -232,20 +234,18 @@ function CreateToken({
       <div className={styles.formGrid}>
         <fieldset className={styles.fieldset}>
           <legend className={styles.legend}>{t("install.token.role")}</legend>
-          <div className={styles.radios}>
-            {(["agent", "relay"] as const).map((value) => (
-              <label key={value}>
-                <input type="radio" name="role" checked={role === value} onChange={() => setRole(value)} />{" "}
-                {roleWord(value)}
-              </label>
-            ))}
-          </div>
+          <SegmentedControl
+            label={t("install.token.role")}
+            options={(["agent", "relay"] as const).map((value) => ({ value, label: roleWord(value) }))}
+            value={role}
+            onChange={setRole}
+          />
         </fieldset>
         <label className={styles.field}>
           {t("install.token.name")}
           <input
             ref={peerRef}
-            className={cx(fieldClass, styles.mono)}
+            className={fieldClass}
             value={peerId}
             onChange={(e) => setPeerId(e.target.value)}
             placeholder={t("install.token.namePlaceholder")}
@@ -282,7 +282,7 @@ function CreateToken({
           {t("install.token.addresses")} <span className={styles.fieldNote}>{t("install.token.addressesNote")}</span>
         </span>
         <input
-          className={cx(fieldClass, styles.mono)}
+          className={fieldClass}
           value={role === "relay" ? names : ""}
           onChange={(e) => setNames(e.target.value)}
           placeholder="relay1.paris.example 10.0.0.5"
@@ -516,7 +516,7 @@ export function ServerAddress({
       {editable ? (
         <div className={styles.buttons}>
           <select
-            className={cx(fieldClass, styles.mono)}
+            className={fieldClass}
             aria-labelledby={labelId}
             value={typing ? OTHER_ADDRESS : value.address}
             disabled={busy}
@@ -546,7 +546,7 @@ export function ServerAddress({
               }}
             >
               <input
-                className={cx(fieldClass, styles.mono)}
+                className={fieldClass}
                 aria-label={t("install.address.otherLabel")}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
@@ -593,32 +593,25 @@ function pageOrigin(): string {
   return typeof window === "undefined" ? "" : window.location.origin;
 }
 
-function SourceRadios({
-  name,
+function SourceChoice({
+  label,
   value,
   onChange,
   disabled = false,
 }: {
-  name: string;
+  label: string;
   value: InstallSource;
   onChange: (source: InstallSource) => void;
   disabled?: boolean;
 }) {
   return (
-    <div className={styles.radios}>
-      {SOURCES.map((source) => (
-        <label key={source}>
-          <input
-            type="radio"
-            name={name}
-            checked={value === source}
-            disabled={disabled}
-            onChange={() => onChange(source)}
-          />{" "}
-          {sourceWord(source)}
-        </label>
-      ))}
-    </div>
+    <SegmentedControl
+      label={label}
+      options={SOURCES.map((source) => ({ value: source, label: sourceWord(source) }))}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+    />
   );
 }
 
@@ -628,7 +621,6 @@ function SourceRadios({
  */
 function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTarget; relay?: string }) {
   const titleId = useId();
-  const sourceName = useId();
   const [source, setSource] = useState<InstallSource>(token.install.source);
   const [relay, setRelay] = useState(initialRelay);
   const [aiFromWeb, setAiFromWeb] = useState(false);
@@ -658,7 +650,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
       </h3>
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>{t("install.downloadFrom")}</legend>
-        <SourceRadios name={sourceName} value={source} onChange={setSource} />
+        <SourceChoice label={t("install.downloadFrom")} value={source} onChange={setSource} />
       </fieldset>
       {source === "central" && central && !shared && (
         <p className={styles.fieldNote}>
@@ -670,7 +662,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
           {t("install.agent.relay")} <span className={styles.fieldNote}>{t("install.agent.relayNote")}</span>
         </span>
         <input
-          className={cx(fieldClass, styles.mono)}
+          className={fieldClass}
           value={relay}
           onChange={(e) => setRelay(e.target.value)}
           placeholder="relay1.paris.example:7443"
@@ -684,10 +676,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
           {t("install.agent.relayInvalid")}
         </p>
       )}
-      <label className={styles.check}>
-        <input type="checkbox" checked={aiFromWeb} onChange={(e) => setAiFromWeb(e.target.checked)} />{" "}
-        {t("install.agent.aiFromWeb")} <span className={styles.fieldNote}>{t("install.agent.aiFromWebNote")}</span>
-      </label>
+      <Switch checked={aiFromWeb} onChange={setAiFromWeb} label={t("install.agent.aiFromWeb")} note={t("install.agent.aiFromWebNote")} />
       {shared ? (
         <Banner tone="warn">{shared}</Banner>
       ) : (
@@ -711,7 +700,6 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
  */
 function RelayInstallCommand({ target }: { target: InstallTarget }) {
   const titleId = useId();
-  const sourceName = useId();
   const [source, setSource] = useState<InstallSource>(target.install.source);
   const [mirror, setMirror] = useState(false);
   const command = relayInstallCommand(target, source, pageOrigin(), mirror);
@@ -723,17 +711,14 @@ function RelayInstallCommand({ target }: { target: InstallTarget }) {
       </h3>
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>{t("install.downloadFrom")}</legend>
-        <SourceRadios name={sourceName} value={source} onChange={setSource} />
+        <SourceChoice label={t("install.downloadFrom")} value={source} onChange={setSource} />
       </fieldset>
       {source === "central" && central && "text" in command && (
         <p className={styles.fieldNote}>
           {t("install.relay.central", { version: central.version })}
         </p>
       )}
-      <label className={styles.check}>
-        <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />{" "}
-        {t("install.relay.mirror")} <span className={styles.fieldNote}>{t("install.relay.mirrorNote")}</span>
-      </label>
+      <Switch checked={mirror} onChange={setMirror} label={t("install.relay.mirror")} note={t("install.relay.mirrorNote")} />
       {"text" in command ? (
         <InstallCommand name="Linux" note={t("install.linux.note")} text={command.text} />
       ) : (
@@ -747,7 +732,6 @@ function RelayInstallCommand({ target }: { target: InstallTarget }) {
 /** The server-wide default source (ADR-0054); global administrators change it. */
 export function DefaultInstallSource({ editable }: { editable: boolean }) {
   const titleId = useId();
-  const sourceName = useId();
   const [current, setCurrent] = useState<AgentInstall | null>(null);
   const [source, setSource] = useState<InstallSource>("github");
   const [customUrl, setCustomUrl] = useState("");
@@ -796,10 +780,7 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
           {t("install.source.title")}
         </h2>
       </div>
-      <p className={styles.sectionNote}>
-        {t("install.source.note")}
-        {!editable && t("install.source.readOnly")}
-      </p>
+      {!editable && <p className={styles.sectionNote}>{t("install.source.readOnly")}</p>}
       <div className={styles.sectionBody}>
         {current && (
           <>
@@ -808,7 +789,7 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
                 {t("install.source.label")}{" "}
                 {current.source_from_config && <span className={styles.fieldNote}>{t("install.source.fromConfig")}</span>}
               </legend>
-              <SourceRadios name={sourceName} value={source} onChange={setSource} />
+              <SourceChoice label={t("install.source.label")} value={source} onChange={setSource} />
             </fieldset>
             <p className={styles.fieldNote}>
               {current.central
@@ -827,7 +808,7 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
                   </span>
                 </span>
                 <input
-                  className={cx(fieldClass, styles.mono)}
+                  className={fieldClass}
                   value={customUrl}
                   onChange={(e) => setCustomUrl(e.target.value)}
                   placeholder="https://files.example.com/monitorflow/"
@@ -940,10 +921,7 @@ function TokenTable({
           {t("install.tokens.title")}
         </h2>
         <span className={styles.dim}>{t("install.tokens.pending", { count: pending })}</span>
-        <label className={styles.check}>
-          <input type="checkbox" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} />{" "}
-          {t("install.tokens.hideDone")}
-        </label>
+        <Switch rowClassName={styles.check} checked={hideDone} onChange={setHideDone} label={t("install.tokens.hideDone")} />
       </div>
       {tokens && rows.length === 0 ? (
         <p className={styles.sectionNote}>{tokens.length === 0 ? t("install.tokens.none") : t("install.tokens.nonePending")}</p>

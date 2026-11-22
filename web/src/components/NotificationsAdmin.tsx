@@ -19,6 +19,7 @@ import { rich, t } from "@/i18n";
 import { administersEverything, isAdministrator, multiCustomer, useMe } from "@/lib/me";
 import { channelScopes, scopeName, scopeValue } from "@/lib/notifications";
 import { usePolledData } from "@/lib/usePolledData";
+import { Switch } from "@/components/ui/Switch";
 
 import styles from "./AdminPages.module.css";
 import { Button, fieldClass } from "./ui/Button";
@@ -714,10 +715,7 @@ function ChannelForm({
         : scope?.value !== "everything" && (
             <p className={styles.fieldNote}>{scope?.note}</p>
           )}
-      <label>
-        <input type="checkbox" checked={followUpOnly} onChange={(e) => setFollowUpOnly(e.target.checked)} />{" "}
-        {t("notifications.followUpOnlyLabel")}
-      </label>
+      <Switch checked={followUpOnly} onChange={setFollowUpOnly} label={t("notifications.followUpOnlyLabel")} />
       <div className={styles.formFoot}>
         <Button type="submit" variant="k" disabled={busy || !scope}>
           {busy ? t("notifications.saving") : t("notifications.saveAndTest")}

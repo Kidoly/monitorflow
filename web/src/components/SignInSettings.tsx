@@ -19,11 +19,12 @@ import {
 } from "@/lib/api";
 import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
+import { Switch } from "@/components/ui/Switch";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import styles from "./AdminPages.module.css";
 import { describeGrant } from "./UsersAdmin";
 import { Button, fieldClass } from "./ui/Button";
-import { cx } from "./ui/cx";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 import { CopyButton } from "./ui/SecretField";
@@ -459,7 +460,7 @@ function CaField({ value, onChange }: { value: string | null; onChange: (pem: st
     <label className={styles.field}>
       {t("signIn.ca")}
       <textarea
-        className={cx(fieldClass, styles.mono)}
+        className={fieldClass}
         rows={4}
         spellCheck={false}
         value={value ?? ""}
@@ -497,14 +498,12 @@ function LdapFields({
     <>
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>{t("signIn.preset")}</legend>
-        <div className={styles.radios}>
-          {(["ad", "openldap"] as const).map((p) => (
-            <label key={p}>
-              <input type="radio" name="preset" checked={preset === p} onChange={() => update({ ...PRESETS[p] })} />{" "}
-              {t(`signIn.preset.${p}`)}
-            </label>
-          ))}
-        </div>
+        <SegmentedControl
+          label={t("signIn.preset")}
+          options={(["ad", "openldap"] as const).map((p) => ({ value: p, label: t(`signIn.preset.${p}`) }))}
+          value={preset}
+          onChange={(p) => update({ ...PRESETS[p] })}
+        />
       </fieldset>
       <label className={styles.field}>
         {t("signIn.url")}
@@ -524,26 +523,19 @@ function LdapFields({
       </label>
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>{t("signIn.security")}</legend>
-        <div className={styles.radios}>
-          <label>
-            <input
-              type="radio"
-              name="security"
-              checked={!settings.starttls}
-              onChange={() => update({ starttls: false, url: settings.url.replace(/^ldap:\/\//i, "ldaps://") })}
-            />{" "}
-            {t("signIn.ldaps")}
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="security"
-              checked={settings.starttls}
-              onChange={() => update({ starttls: true, url: settings.url.replace(/^ldaps:\/\//i, "ldap://") })}
-            />{" "}
-            {t("signIn.starttls")}
-          </label>
-        </div>
+        <SegmentedControl
+          label={t("signIn.security")}
+          options={[
+            { value: "ldaps", label: t("signIn.ldaps") },
+            { value: "starttls", label: t("signIn.starttls") },
+          ]}
+          value={settings.starttls ? "starttls" : "ldaps"}
+          onChange={(v) =>
+            v === "starttls"
+              ? update({ starttls: true, url: settings.url.replace(/^ldaps:\/\//i, "ldap://") })
+              : update({ starttls: false, url: settings.url.replace(/^ldap:\/\//i, "ldaps://") })
+          }
+        />
       </fieldset>
       {text("bind_dn", t("signIn.bindDn"), "cn=monitorflow,ou=services,dc=example,dc=com", t("signIn.bindDnNote"))}
       {text("user_base_dn", t("signIn.userBase"), "ou=people,dc=example,dc=com")}
@@ -558,21 +550,14 @@ function LdapFields({
         />
         <span className={styles.fieldNote}>{t("signIn.groupBaseNote")}</span>
       </label>
-      <label className={styles.check}>
-        <input
-          type="checkbox"
-          checked={settings.nested_groups}
-          onChange={(e) => update({ nested_groups: e.target.checked })}
-        />{" "}
-        {t("signIn.nested")}
-      </label>
+      <Switch checked={settings.nested_groups} onChange={(nested_groups) => update({ nested_groups })} label={t("signIn.nested")} />
       <details>
         <summary>{t("signIn.advanced")}</summary>
         <div className={styles.stack}>
           <label className={styles.field}>
             {t("signIn.userFilter")}
             <input
-              className={cx(fieldClass, styles.mono)}
+              className={fieldClass}
               spellCheck={false}
               value={settings.user_filter}
               onChange={(e) => update({ user_filter: e.target.value })}
@@ -581,7 +566,7 @@ function LdapFields({
           <label className={styles.field}>
             {t("signIn.groupFilter")}
             <input
-              className={cx(fieldClass, styles.mono)}
+              className={fieldClass}
               spellCheck={false}
               value={settings.group_filter}
               onChange={(e) => update({ group_filter: e.target.value })}
