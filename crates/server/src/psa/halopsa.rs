@@ -390,26 +390,66 @@ fn record(value: &Value) -> Option<Record> {
     })
 }
 
+/// Clients asked of Halo per page while searching.
+const SCAN_PAGE: usize = 100;
+/// Pages read at most for one search: 3,000 clients.
+const SCAN_PAGES: usize = 30;
+
+/// `text` lowercased and without accents, for a forgiving match:
+/// "Écoles" holds "ecol".
+fn folded(text: &str) -> String {
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| match c {
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+            'ç' => 'c',
+            'è' | 'é' | 'ê' | 'ë' => 'e',
+            'ì' | 'í' | 'î' | 'ï' => 'i',
+            'ñ' => 'n',
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' => 'o',
+            'ù' | 'ú' | 'û' | 'ü' => 'u',
+            'ý' | 'ÿ' => 'y',
+            other => other,
+        })
+        .collect()
+}
+
 impl Halo {
     /// Active clients whose name holds `search`, by name, at most
     /// [`PAGE_SIZE`].
+    ///
+    /// Halo is asked to search, but some instances ignore it and answer
+    /// every client: the names are matched here too, reading the pages
+    /// until enough clients match.
     pub async fn clients(&self, search: &str) -> Result<Vec<Record>, HaloError> {
-        let mut query = vec![
-            ("pageinate", "true".to_owned()),
-            ("page_size", PAGE_SIZE.to_string()),
-            ("page_no", "1".to_owned()),
-            ("order", "name".to_owned()),
-            ("includeinactive", "false".to_owned()),
-        ];
-        if !search.trim().is_empty() {
-            query.push(("search", search.trim().to_owned()));
+        let search = search.trim();
+        let needle = folded(search);
+        let mut found = Vec::new();
+        for page in 1..=SCAN_PAGES {
+            let mut query = vec![
+                ("pageinate", "true".to_owned()),
+                ("page_size", SCAN_PAGE.to_string()),
+                ("page_no", page.to_string()),
+                ("order", "name".to_owned()),
+                ("includeinactive", "false".to_owned()),
+            ];
+            if !search.is_empty() {
+                query.push(("search", search.to_owned()));
+            }
+            let answer = self.get("the client list", "Client", &query).await?;
+            let listed = records(&answer, "clients");
+            found.extend(
+                listed
+                    .iter()
+                    .filter_map(record)
+                    .filter(|c| folded(&c.name).contains(&needle)),
+            );
+            if found.len() >= PAGE_SIZE || listed.len() < SCAN_PAGE {
+                break;
+            }
         }
-        let answer = self.get("the client list", "Client", &query).await?;
-        Ok(records(&answer, "clients")
-            .iter()
-            .filter_map(record)
-            .take(PAGE_SIZE)
-            .collect())
+        found.truncate(PAGE_SIZE);
+        Ok(found)
     }
 
     /// The client `id`; `None` when Halo does not know it.
@@ -588,6 +628,13 @@ impl Halo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_match_without_case_or_accents() {
+        assert!(folded("Écoles Réunies").contains(&folded("ecoles reu")));
+        assert!(folded("Sample Corp").contains(&folded("CORP")));
+        assert!(!folded("Sample Corp").contains(&folded("example")));
+    }
 
     #[test]
     fn base_urls_lose_api_and_slashes() {

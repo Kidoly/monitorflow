@@ -163,14 +163,20 @@ async fn clients(
     if !authorized(&inner, &headers, query_line("/api/Client", &query)) {
         return unauthorized();
     }
-    let search = query
-        .get("search")
-        .cloned()
-        .unwrap_or_default()
-        .to_lowercase();
+    // Like some real instances, the fake ignores `search`: the server
+    // must match the names itself. It does honour the pages.
+    let size: usize = query
+        .get("page_size")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(CLIENTS.len());
+    let page: usize = query
+        .get("page_no")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
     let found: Vec<_> = CLIENTS
         .iter()
-        .filter(|(_, name)| name.to_lowercase().contains(&search))
+        .skip(size * page.saturating_sub(1))
+        .take(size)
         .map(|(id, name)| json!({"id": id, "name": name, "toplevel_id": 1, "inactive": false}))
         .collect();
     Json(json!({"record_count": found.len(), "clients": found})).into_response()

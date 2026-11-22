@@ -206,7 +206,7 @@ function MatchForm({ site, onCancel, onSaved }: { site: PsaSiteLink; onCancel: (
       ) : (
         <fieldset className={styles.fieldset}>
           <legend className={styles.legend}>{t("psa.sites.client")}</legend>
-          <ul className={own.where}>
+          <ul className={own.choices}>
             {found.records.map((r) => (
               <li key={r.id}>
                 <label>
@@ -219,7 +219,7 @@ function MatchForm({ site, onCancel, onSaved }: { site: PsaSiteLink; onCancel: (
                       setSites(null);
                       setPsaSite("");
                     }}
-                  />{" "}
+                  />
                   {r.name}
                 </label>
               </li>
