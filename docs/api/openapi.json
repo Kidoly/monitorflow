@@ -47129,6 +47129,7 @@
           "counted_seconds",
           "down_seconds",
           "maintenance_seconds",
+          "unobserved_seconds",
           "outages",
           "longest_seconds"
         ],
@@ -47162,6 +47163,11 @@
           "outages": {
             "type": "integer",
             "minimum": 0
+          },
+          "unobserved_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Time the central server was not running, so nothing was watched:\nleft out of the count too, seconds (ADR-0173)."
           }
         }
       },
@@ -65181,7 +65187,7 @@
               "null"
             ],
             "format": "double",
-            "description": "In percent; `null` when nothing was counted: before it existed, or\nall of it under planned maintenance."
+            "description": "In percent; `null` when nothing was counted: before it existed, all\nof it under planned maintenance, or the central server not running."
           },
           "date": {
             "type": "string",

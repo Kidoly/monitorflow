@@ -4,7 +4,7 @@ import type { Catalog, Translation } from "../catalog";
 export const en = {
   title: "Reports",
   about: "How availability is measured",
-  rule: "Down is any time a critical incident was open: a check failing at its critical threshold, a server offline, or a server unreachable because what it depends on was down. Warnings never count. Planned maintenance, under a silence or a maintenance window, is shown apart and left out of the calculation.",
+  rule: "Down is any time a critical incident was open: a check failing at its critical threshold, a server offline, or a server unreachable because what it depends on was down. Warnings never count. Planned maintenance, under a silence or a maintenance window, is shown apart and left out of the calculation, like any time the central server was not running, as nothing was watched then.",
   load: "the report",
   period: "Period",
   "period.thisMonth": "This month",
@@ -191,7 +191,7 @@ export const fr: Translation<typeof en> = {
   "uptime.kind.device": "Équipement",
   "uptime.kind.check": "Contrôle",
   about: "Comment la disponibilité est mesurée",
-  rule: "Une panne est tout moment où un incident critique était ouvert : un contrôle en échec à son seuil critique, un serveur hors ligne, ou un serveur injoignable parce que ce dont il dépend était en panne. Les avertissements ne comptent jamais. La maintenance planifiée, sous un silence ou une fenêtre de maintenance, est présentée à part et n’entre pas dans le calcul.",
+  rule: "Une panne est tout moment où un incident critique était ouvert : un contrôle en échec à son seuil critique, un serveur hors ligne, ou un serveur injoignable parce que ce dont il dépend était en panne. Les avertissements ne comptent jamais. La maintenance planifiée, sous un silence ou une fenêtre de maintenance, est présentée à part et n’entre pas dans le calcul, pas plus que le temps où le serveur central était arrêté, puisque rien n’était surveillé.",
   load: "le rapport",
   period: "Période",
   "period.thisMonth": "Ce mois-ci",

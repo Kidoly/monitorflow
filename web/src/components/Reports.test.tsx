@@ -16,6 +16,7 @@ const numbers = (down: number, outages: number) => ({
   counted_seconds: 2_678_400,
   down_seconds: down,
   maintenance_seconds: 0,
+  unobserved_seconds: 0,
   outages,
   longest_seconds: down,
 });
