@@ -6,7 +6,7 @@ import { useCallback, useState } from "react";
 import { t } from "@/i18n";
 import { ApiError, type Mirror, type MirrorRunSummary, api, describeError } from "@/lib/api";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
-import { describeMirror, intervalText, nextSync, shortTime } from "@/lib/mirrors";
+import { describeMirror, intervalText, nextSync, shortTime, syncHint } from "@/lib/mirrors";
 import { mirrorHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -275,17 +275,21 @@ function MirrorList() {
   );
 }
 
-/** Sync now and Snapshot of a row, disabled while a run of the mirror is going. */
+/**
+ * Sync now of a row, disabled while a run of the mirror is going. A sync
+ * publishes a snapshot by itself, so a snapshot alone is only offered on the
+ * mirror's page, for mirrors that do not.
+ */
 function MirrorButtons({ mirror, jobs }: { mirror: Mirror; jobs: ReturnType<typeof useMirrorJobs> }) {
   const disabled = jobs.busy !== null || mirror.last_run?.state === "running" || mirror.deleting_at !== null;
   return (
-    <>
-      <Button size="small" disabled={disabled} onClick={() => void jobs.start(mirror, "sync")}>
-        {t("mirrors.syncNow")} <span className="visually-hidden">{mirror.name}</span>
-      </Button>
-      <Button size="small" disabled={disabled} onClick={() => void jobs.start(mirror, "snapshot")}>
-        {t("mirrors.snapshot")} <span className="visually-hidden">{mirror.name}</span>
-      </Button>
-    </>
+    <Button
+      size="small"
+      disabled={disabled}
+      title={syncHint(mirror)}
+      onClick={() => void jobs.start(mirror, "sync")}
+    >
+      {t("mirrors.syncNow")} <span className="visually-hidden">{mirror.name}</span>
+    </Button>
   );
 }

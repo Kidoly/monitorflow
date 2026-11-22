@@ -103,7 +103,7 @@ export const en = {
   "relay.central":
     "Release {version} from this server. The command checks its checksums, so the relay need not trust this site's certificate.",
   "relay.mirror": "Serve the package mirrors and agent releases to this site's servers",
-  "relay.mirrorNote": "(the relay copies every mirror added under Mirrors, 50 to 400 GiB per distribution)",
+  "relay.mirrorNote": "(the relay copies every mirror added under Linux mirrors, 50 to 400 GiB per distribution)",
   "relay.after":
     "Once the relay is online, its page gives the command for the servers behind it. It updates itself with the agents (Updates › Automatic updates).",
   "source.loadFailed": "Loading the install source failed. {error}",
@@ -307,7 +307,7 @@ export const fr: Translation<typeof en> = {
   "relay.central":
     "Version {version} depuis ce serveur. La commande vérifie ses sommes de contrôle, le relais n’a donc pas à faire confiance au certificat de ce site.",
   "relay.mirror": "Servir les miroirs de paquets et les versions de l’agent aux serveurs de ce site",
-  "relay.mirrorNote": "(le relais copie chaque miroir ajouté sous Miroirs, 50 à 400 Gio par distribution)",
+  "relay.mirrorNote": "(le relais copie chaque miroir ajouté sous Miroirs Linux, 50 à 400 Gio par distribution)",
   "relay.after":
     "Une fois le relais en ligne, sa page donne la commande pour les serveurs derrière lui. Il se met à jour avec les agents (Mises à jour › Mises à jour automatiques).",
   "source.loadFailed": "Le chargement de la source d’installation a échoué. {error}",

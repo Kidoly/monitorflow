@@ -72,7 +72,7 @@ Most of these are pages under **Administration** in the web interface:
 
 - **Notifications**: get an email, a webhook call, or a Slack, Teams or Discord message when an alert opens or an update fails.
 - **Alerts**: open a server and use its **Sensors** tab to change limits or add checks.
-- **Mirrors** and update campaigns: copy package repositories to the central server and update servers in waves. See [Installing the agent](docs/deploy-agent.md#pointing-a-server-at-the-mirrors).
+- **Linux mirrors** and update campaigns: copy Linux package repositories to the central server and update servers in waves. See [Installing the agent](docs/deploy-agent.md#pointing-a-server-at-the-mirrors).
 - **AI**: choose a provider (Anthropic, OpenAI or a compatible API, or a local model) so the AI can diagnose alerts and propose fixes you approve.
 - **Backups**: one backup a day, the last 7 kept, and **Back up now**. See [Data and backups](docs/deploy-server.md#data-and-backups).
 - **Dashboards**: build your own, and show them on a wall screen or TV with a display link that needs no sign-in.

@@ -172,7 +172,7 @@ describe("AppShell", () => {
       "Silences",
       "On call",
       "Reports",
-      "Mirrors",
+      "Linux mirrors",
       "Automatic updates",
       "Campaigns",
       "Approvals",
