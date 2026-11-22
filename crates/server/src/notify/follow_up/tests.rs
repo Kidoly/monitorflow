@@ -100,8 +100,10 @@ fn schedule(id: u128, coverage: Coverage) -> Schedule {
             anchor: NaiveDate::from_ymd_opt(2026, 11, 2).unwrap(),
             anchor_position: 0,
             members: vec![Some(ALICE), Some(BOB)],
+            per_turn: 1,
         },
         overrides: Vec::new(),
+        follow_up_only: false,
     }
 }
 

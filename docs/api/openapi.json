@@ -1161,7 +1161,7 @@
           "alerts"
         ],
         "summary": "Download an availability report",
-        "description": "The same report as a file to keep or send: `pdf`, a document to send to a customer as it is (a summary in plain words, then the details), or `csv`, one row per service, server, device and check with its numbers, then one row per outage and per planned maintenance, with a `kind` column. CSV numbers are plain (seconds, dot decimals); words are in `language`; times are in `time_zone`.\n\n**Who**: any role, as above. **Area**: `alerts`.",
+        "description": "The same report as a file to keep or send: `pdf`, a document to send to a customer as it is (a header with the logo on every page, a summary in plain words, the uptime over 24 hours, 7, 30 and 90 days at the period's end with a bar per day of the period, then the details), or `csv`, one row per service, server, device and check with its numbers, then one row per outage and per planned maintenance, with a `kind` column. CSV numbers are plain (seconds, dot decimals); words are in `language`; times are in `time_zone`.\n\n**Who**: any role, as above. **Area**: `alerts`.",
         "operationId": "availability_file",
         "parameters": [
           {
@@ -1242,6 +1242,161 @@
           },
           "400": {
             "description": "An unknown format, language or time zone, or a period as above: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/availability/uptime": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Uptime over 24 hours, 7, 30 and 90 days, with daily bars",
+        "description": "For each business service, server and device the key reads, and each check that had an outage in the 90 days, its availability over the last 24 hours, 7, 30 and 90 days (`windows`, in percent), its number of outages over the 90 days, and one entry per day for 90 days (`days`, the oldest first, today so far last) with its availability, down time and planned maintenance. Days are cut at midnight in `time_zone`. Down time and planned maintenance follow the same rule as the availability report, so the numbers match it. `null` means nothing was counted: before the thing was added, or all of it under planned maintenance.\n\n`at` moves the end of the windows to a past instant, to see the uptime as it was then.\n\n**Who**: any role. With `customer_id`, only that customer's sites the key reads; business services only of customers the key is granted as a whole. **Area**: `alerts`.",
+        "operationId": "availability_uptime",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only this customer's sites and services.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "The instant the windows end at, RFC 3339; now when absent or in\nthe future.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "time_zone",
+            "in": "query",
+            "description": "IANA time zone days are cut in, like `Europe/Paris`; UTC when\nabsent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The uptime",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Uptime"
+                },
+                "example": {
+                  "at": "2026-11-22T17:00:00Z",
+                  "rows": [
+                    {
+                      "check": null,
+                      "days": [
+                        {
+                          "availability": 97.083,
+                          "date": "2026-11-21",
+                          "down_seconds": 2520.0,
+                          "maintenance_seconds": 0.0
+                        },
+                        {
+                          "availability": 100.0,
+                          "date": "2026-11-22",
+                          "down_seconds": 0.0,
+                          "maintenance_seconds": 0.0
+                        }
+                      ],
+                      "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "kind": "server",
+                      "name": "mail-1",
+                      "outages": 1,
+                      "site_name": "main",
+                      "windows": {
+                        "day": 100.0,
+                        "month": 99.903,
+                        "quarter": 99.968,
+                        "week": 99.583
+                      }
+                    }
+                  ],
+                  "time_zone": "Europe/Paris"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown time zone, an `at` that is not RFC 3339, or an unknown parameter: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -21336,6 +21491,7 @@
                       "fallback": [
                         "carol"
                       ],
+                      "follow_up_only": false,
                       "handoff_day": 1,
                       "handoff_time": "09:00",
                       "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -21357,19 +21513,44 @@
                         "ends_at": "2026-11-23T08:00:00Z",
                         "override_id": null,
                         "problem": "no_contact",
+                        "seat": 0,
                         "starts_at": "2026-11-16T08:00:00Z",
                         "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                         "username": "bob"
                       },
+                      "next_all": [
+                        {
+                          "ends_at": "2026-11-23T08:00:00Z",
+                          "override_id": null,
+                          "problem": "no_contact",
+                          "seat": 0,
+                          "starts_at": "2026-11-16T08:00:00Z",
+                          "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                          "username": "bob"
+                        }
+                      ],
                       "now": {
                         "ends_at": "2026-11-16T08:00:00Z",
                         "override_id": null,
                         "problem": null,
+                        "seat": 0,
                         "starts_at": "2026-11-09T08:00:00Z",
                         "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                         "username": "alice"
                       },
+                      "now_all": [
+                        {
+                          "ends_at": "2026-11-16T08:00:00Z",
+                          "override_id": null,
+                          "problem": null,
+                          "seat": 0,
+                          "starts_at": "2026-11-09T08:00:00Z",
+                          "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                          "username": "alice"
+                        }
+                      ],
                       "overrides": [],
+                      "people_per_turn": 1,
                       "rotation": "weekly",
                       "site_id": null,
                       "site_name": null,
@@ -21379,6 +21560,7 @@
                           "ends_at": "2026-11-16T08:00:00Z",
                           "override_id": null,
                           "problem": null,
+                          "seat": 0,
                           "starts_at": "2026-11-09T08:00:00Z",
                           "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                           "username": "alice"
@@ -21387,6 +21569,7 @@
                           "ends_at": "2026-11-23T08:00:00Z",
                           "override_id": null,
                           "problem": "no_contact",
+                          "seat": 0,
                           "starts_at": "2026-11-16T08:00:00Z",
                           "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                           "username": "bob"
@@ -21473,7 +21656,7 @@
           "on-call"
         ],
         "summary": "Add an on-call schedule",
-        "description": "Administrators of its place. The first member is on call from the last\nhand-off, so someone is on call at once. Audited as\n`on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`\nto retry.",
+        "description": "Administrators of its place. The first member is on call from the last\nhand-off, so someone is on call at once. With `people_per_turn` above\n1, that many members are on call together and all are told (ADR-0170).\nWith `follow_up_only`, its people hear only of alerts nobody\nacknowledged, through a follow-up step that names the schedule: a\nsecond level (ADR-0171). Audited as\n`on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`\nto retry.",
         "operationId": "create_on_call_schedule",
         "parameters": [
           {
@@ -21496,6 +21679,7 @@
               },
               "example": {
                 "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "follow_up_only": false,
                 "handoff_day": 1,
                 "handoff_time": "09:00",
                 "members": [
@@ -21503,6 +21687,7 @@
                   "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"
                 ],
                 "name": "acme night shift",
+                "people_per_turn": 1,
                 "rotation": "weekly",
                 "site_id": null,
                 "time_zone": "Europe/Paris"
@@ -21526,6 +21711,7 @@
                   "fallback": [
                     "carol"
                   ],
+                  "follow_up_only": false,
                   "handoff_day": 1,
                   "handoff_time": "09:00",
                   "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -21547,19 +21733,44 @@
                     "ends_at": "2026-11-23T08:00:00Z",
                     "override_id": null,
                     "problem": "no_contact",
+                    "seat": 0,
                     "starts_at": "2026-11-16T08:00:00Z",
                     "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                     "username": "bob"
                   },
+                  "next_all": [
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "seat": 0,
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
                   "now": {
                     "ends_at": "2026-11-16T08:00:00Z",
                     "override_id": null,
                     "problem": null,
+                    "seat": 0,
                     "starts_at": "2026-11-09T08:00:00Z",
                     "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                     "username": "alice"
                   },
+                  "now_all": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "seat": 0,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    }
+                  ],
                   "overrides": [],
+                  "people_per_turn": 1,
                   "rotation": "weekly",
                   "site_id": null,
                   "site_name": null,
@@ -21569,6 +21780,7 @@
                       "ends_at": "2026-11-16T08:00:00Z",
                       "override_id": null,
                       "problem": null,
+                      "seat": 0,
                       "starts_at": "2026-11-09T08:00:00Z",
                       "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                       "username": "alice"
@@ -21577,6 +21789,7 @@
                       "ends_at": "2026-11-23T08:00:00Z",
                       "override_id": null,
                       "problem": "no_contact",
+                      "seat": 0,
                       "starts_at": "2026-11-16T08:00:00Z",
                       "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                       "username": "bob"
@@ -21587,7 +21800,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: no name or one over 80 characters, an unknown time zone, a rotation other than `daily` or `weekly`, a time not `HH:MM`, no day for a weekly hand-off, no members, over 50, the same one twice, someone who does not see all of the place, a customer and a site together, an unknown customer or site",
+            "description": "`invalid`: no name or one over 80 characters, an unknown time zone, a rotation other than `daily` or `weekly`, a time not `HH:MM`, no day for a weekly hand-off, no members, over 50, the same one twice, `people_per_turn` outside 1 to 5 or above the number of members, someone who does not see all of the place, a customer and a site together, an unknown customer or site",
             "content": {
               "application/json": {
                 "schema": {
@@ -21716,6 +21929,7 @@
               },
               "example": {
                 "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "follow_up_only": false,
                 "handoff_day": 1,
                 "handoff_time": "09:00",
                 "members": [
@@ -21723,6 +21937,7 @@
                   "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"
                 ],
                 "name": "acme night shift",
+                "people_per_turn": 1,
                 "rotation": "weekly",
                 "site_id": null,
                 "time_zone": "Europe/Paris"
@@ -21746,6 +21961,7 @@
                   "fallback": [
                     "carol"
                   ],
+                  "follow_up_only": false,
                   "handoff_day": 1,
                   "handoff_time": "09:00",
                   "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -21767,19 +21983,44 @@
                     "ends_at": "2026-11-23T08:00:00Z",
                     "override_id": null,
                     "problem": "no_contact",
+                    "seat": 0,
                     "starts_at": "2026-11-16T08:00:00Z",
                     "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                     "username": "bob"
                   },
+                  "next_all": [
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "seat": 0,
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
                   "now": {
                     "ends_at": "2026-11-16T08:00:00Z",
                     "override_id": null,
                     "problem": null,
+                    "seat": 0,
                     "starts_at": "2026-11-09T08:00:00Z",
                     "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                     "username": "alice"
                   },
+                  "now_all": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "seat": 0,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    }
+                  ],
                   "overrides": [],
+                  "people_per_turn": 1,
                   "rotation": "weekly",
                   "site_id": null,
                   "site_name": null,
@@ -21789,6 +22030,7 @@
                       "ends_at": "2026-11-16T08:00:00Z",
                       "override_id": null,
                       "problem": null,
+                      "seat": 0,
                       "starts_at": "2026-11-09T08:00:00Z",
                       "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                       "username": "alice"
@@ -21797,6 +22039,7 @@
                       "ends_at": "2026-11-23T08:00:00Z",
                       "override_id": null,
                       "problem": "no_contact",
+                      "seat": 0,
                       "starts_at": "2026-11-16T08:00:00Z",
                       "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                       "username": "bob"
@@ -22027,7 +22270,7 @@
           "on-call"
         ],
         "summary": "Add a cover",
-        "description": "Puts a member, or anyone who could be one, on call for a period,\nwhatever the rotation says: for a holiday or a swap. A start absent or\npast is now. Administrators of the schedule's place. Answers the\nschedule. Audited as `on_call.override_create`. Not safe to repeat:\nsend `Idempotency-Key` to retry.",
+        "description": "Puts a member, or anyone who could be one, on call for a period,\nwhatever the rotation says: for a holiday or a swap. With several\npeople on call at once, `seat` says whose place it takes, 0 for the\nfirst person of the turn. A start absent or past is now. Administrators of the schedule's place. Answers the\nschedule. Audited as `on_call.override_create`. Not safe to repeat:\nsend `Idempotency-Key` to retry.",
         "operationId": "add_on_call_cover",
         "parameters": [
           {
@@ -22060,6 +22303,7 @@
               },
               "example": {
                 "ends_at": "2026-12-27T08:00:00Z",
+                "seat": 0,
                 "starts_at": "2026-12-24T18:00:00Z",
                 "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f"
               }
@@ -22082,6 +22326,7 @@
                   "fallback": [
                     "carol"
                   ],
+                  "follow_up_only": false,
                   "handoff_day": 1,
                   "handoff_time": "09:00",
                   "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -22103,19 +22348,44 @@
                     "ends_at": "2026-11-23T08:00:00Z",
                     "override_id": null,
                     "problem": "no_contact",
+                    "seat": 0,
                     "starts_at": "2026-11-16T08:00:00Z",
                     "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                     "username": "bob"
                   },
+                  "next_all": [
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "seat": 0,
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
                   "now": {
                     "ends_at": "2026-11-16T08:00:00Z",
                     "override_id": null,
                     "problem": null,
+                    "seat": 0,
                     "starts_at": "2026-11-09T08:00:00Z",
                     "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                     "username": "alice"
                   },
+                  "now_all": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "seat": 0,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    }
+                  ],
                   "overrides": [],
+                  "people_per_turn": 1,
                   "rotation": "weekly",
                   "site_id": null,
                   "site_name": null,
@@ -22125,6 +22395,7 @@
                       "ends_at": "2026-11-16T08:00:00Z",
                       "override_id": null,
                       "problem": null,
+                      "seat": 0,
                       "starts_at": "2026-11-09T08:00:00Z",
                       "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                       "username": "alice"
@@ -22133,6 +22404,7 @@
                       "ends_at": "2026-11-23T08:00:00Z",
                       "override_id": null,
                       "problem": "no_contact",
+                      "seat": 0,
                       "starts_at": "2026-11-16T08:00:00Z",
                       "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                       "username": "bob"
@@ -22143,7 +22415,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: an end not after the start, over 90 days, a start over a year away, someone who does not see all of the place",
+            "description": "`invalid`: an end not after the start, over 90 days, a start over a year away, a `seat` not below the schedule's `people_per_turn`, someone who does not see all of the place",
             "content": {
               "application/json": {
                 "schema": {
@@ -44138,6 +44410,16 @@
           }
         }
       },
+      "AvailabilityThing": {
+        "type": "string",
+        "description": "What a thing of a report is: a business service, a server or device,\nor one check of a server or device.",
+        "enum": [
+          "service",
+          "server",
+          "device",
+          "check"
+        ]
+      },
       "AvailableRelease": {
         "type": "object",
         "description": "A release newer than the running server, as `GET /api/server-update`\nshows it.",
@@ -52902,6 +53184,7 @@
         "required": [
           "id",
           "user_id",
+          "seat",
           "starts_at",
           "ends_at"
         ],
@@ -52915,6 +53198,12 @@
             "type": "string",
             "format": "uuid",
             "description": "The cover's ID, to remove it."
+          },
+          "seat": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The place of the turn it covers, 0 for the first person.",
+            "minimum": 0
           },
           "starts_at": {
             "type": "string",
@@ -52947,6 +53236,15 @@
             "type": "string",
             "format": "date-time",
             "description": "After the start, at most 90 days after it; the start within a\nyear."
+          },
+          "seat": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Which place of the turn they cover, 0 (the default) for the first\nperson; below the schedule's `people_per_turn`.",
+            "minimum": 0
           },
           "starts_at": {
             "type": [
@@ -53066,7 +53364,11 @@
           "rotation",
           "handoff_time",
           "members",
+          "people_per_turn",
+          "follow_up_only",
           "overrides",
+          "now_all",
+          "next_all",
           "turns",
           "fallback",
           "can_manage"
@@ -53097,6 +53399,10 @@
               "type": "string"
             },
             "description": "Who is told during a gap; empty when nobody can be, and for members\nwho do not manage it."
+          },
+          "follow_up_only": {
+            "type": "boolean",
+            "description": "Told only when a follow-up step names it, never of an alert's\nfirst message: a second level (ADR-0171)."
           },
           "handoff_day": {
             "type": [
@@ -53138,23 +53444,37 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/OnCallTurn",
-                "description": "The next one who takes over; `null` when nobody else does within\nthe horizon."
+                "description": "Who takes the first place next; `null` when nobody else does within\nthe horizon."
               },
               {
                 "type": "null"
               }
             ]
           },
+          "next_all": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallTurn"
+            },
+            "description": "Who takes each place next, in the order of the places; a place\nnobody else takes within the horizon is left out."
+          },
           "now": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/OnCallTurn",
-                "description": "Who is on call now; `null` only without members."
+                "description": "Who holds the first place now; `null` only without members."
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "now_all": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallTurn"
+            },
+            "description": "Everyone on call now, one per place, the first being `now`."
           },
           "overrides": {
             "type": "array",
@@ -53162,6 +53482,12 @@
               "$ref": "#/components/schemas/OnCallCover"
             },
             "description": "Covers not over yet, by start."
+          },
+          "people_per_turn": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many people are on call at once, 1 to 5 (ADR-0170).",
+            "minimum": 0
           },
           "rotation": {
             "$ref": "#/components/schemas/OnCallRotation",
@@ -53191,7 +53517,7 @@
             "items": {
               "$ref": "#/components/schemas/OnCallTurn"
             },
-            "description": "The turns that start within the next 28 days, the one running\nnow first."
+            "description": "The turns that start within the next 28 days, the ones running\nnow first, by start and then by place."
           }
         }
       },
@@ -53230,6 +53556,10 @@
             "format": "uuid",
             "description": "The customer it is for; with `site_id` also `null`, everything."
           },
+          "follow_up_only": {
+            "type": "boolean",
+            "description": "`true`: its people are told only by the follow-up steps that name\nit, when nobody acknowledged in time, never of an alert's first\nmessage (ADR-0171). `false` by default."
+          },
           "handoff_day": {
             "type": [
               "integer",
@@ -53255,6 +53585,15 @@
             "type": "string",
             "description": "1 to 80 characters, trimmed."
           },
+          "people_per_turn": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many people are on call at once: 1 (the default) to 5, and at\nmost the number of members. Turns take them in order: with 2,\nthe first and second members, then the third and fourth.",
+            "minimum": 0
+          },
           "rotation": {
             "type": "string",
             "description": "`daily` or `weekly`."
@@ -53278,6 +53617,7 @@
         "type": "object",
         "description": "One period with one person on call.",
         "required": [
+          "seat",
           "starts_at",
           "ends_at"
         ],
@@ -53305,6 +53645,12 @@
                 "type": "null"
               }
             ]
+          },
+          "seat": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The place in the turn, 0 for the first person; always 0 with one\nperson per turn (ADR-0170).",
+            "minimum": 0
           },
           "starts_at": {
             "type": "string",
@@ -60695,6 +61041,161 @@
           "version": {
             "type": "string",
             "description": "The updater's own version."
+          }
+        }
+      },
+      "Uptime": {
+        "type": "object",
+        "description": "Body of `GET /api/availability/uptime`.",
+        "required": [
+          "at",
+          "time_zone",
+          "rows"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The instant the windows end at."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UptimeRow"
+            },
+            "description": "Services first, then each server or device followed by its checks\nthat had outages; checks without any are left out."
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "The IANA zone days are cut in."
+          }
+        }
+      },
+      "UptimeDay": {
+        "type": "object",
+        "description": "One day of one thing.",
+        "required": [
+          "date",
+          "down_seconds",
+          "maintenance_seconds"
+        ],
+        "properties": {
+          "availability": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "In percent; `null` when nothing was counted: before it existed, or\nall of it under planned maintenance."
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "The local date, in the view's time zone."
+          },
+          "down_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Down time that day, seconds."
+          },
+          "maintenance_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Planned maintenance that day, seconds, left out of the count."
+          }
+        }
+      },
+      "UptimeRow": {
+        "type": "object",
+        "description": "One service, server, device or check.",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "windows",
+          "outages",
+          "days"
+        ],
+        "properties": {
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The check's name, for a check; `null` otherwise."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UptimeDay"
+            },
+            "description": "One per day, the oldest first, the last being today so far."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The service's ID, or the server's or device's (a check's too)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AvailabilityThing",
+            "description": "`service`, `server`, `device` or `check`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The service's, server's or device's name."
+          },
+          "outages": {
+            "type": "integer",
+            "description": "Outages over the 90 days.",
+            "minimum": 0
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The site; `null` for a service."
+          },
+          "windows": {
+            "$ref": "#/components/schemas/UptimeWindows"
+          }
+        }
+      },
+      "UptimeWindows": {
+        "type": "object",
+        "description": "Availability over the windows that end at the view's instant, in\npercent; `null` when nothing was counted (\"Not measured\").",
+        "properties": {
+          "day": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 24 hours."
+          },
+          "month": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 30 days."
+          },
+          "quarter": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 90 days."
+          },
+          "week": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 7 days."
           }
         }
       },

@@ -3586,6 +3586,8 @@ export type OnCallProblem = "nobody" | "removed" | "disabled" | "no_access" | "n
 
 /** One period with one person on call. */
 export interface OnCallTurn {
+  /** The place in the turn, 0 for the first person (ADR-0170). */
+  seat: number;
   starts_at: string;
   ends_at: string;
   /** Null for a removed user's turn or a schedule without people. */
@@ -3599,6 +3601,8 @@ export interface OnCallTurn {
 export interface OnCallOverride {
   id: string;
   user_id: string;
+  /** The place of the turn it covers. */
+  seat: number;
   username: string | null;
   starts_at: string;
   ends_at: string;
@@ -3621,9 +3625,17 @@ export interface OnCallSchedule {
   /** 1 for Monday to 7 for Sunday; null when daily. */
   handoff_day: number | null;
   members: { user_id: string | null; username: string | null; problem: OnCallProblem | null }[];
+  /** How many people are on call at once, 1 to 5. */
+  people_per_turn: number;
+  /** Told only when a follow-up step names it (ADR-0171). */
+  follow_up_only: boolean;
   overrides: OnCallOverride[];
   now: OnCallTurn | null;
   next: OnCallTurn | null;
+  /** Everyone on call now, one per place. */
+  now_all: OnCallTurn[];
+  /** Who takes each place next. */
+  next_all: OnCallTurn[];
   /** From now to four weeks ahead. */
   turns: OnCallTurn[];
   /** Who is told during a gap; empty when nobody can be. Empty too for members who do not manage it. */
@@ -3643,6 +3655,10 @@ export interface OnCallScheduleRequest {
   handoff_day: number | null;
   /** In order of their turns. */
   members: string[];
+  /** 1 to 5, at most the number of members. */
+  people_per_turn: number;
+  /** Told only when a follow-up step names it. */
+  follow_up_only: boolean;
 }
 
 /** Someone the user may put on a schedule. */
@@ -3882,6 +3898,37 @@ export interface ReportSent {
   from: string;
   to: string;
   recipients: string[];
+}
+
+/** One day of uptime (ADR-0172). */
+export interface UptimeDay {
+  /** Local date, "2026-11-22". */
+  date: string;
+  /** Percent; null when nothing was counted. */
+  availability: number | null;
+  down_seconds: number;
+  maintenance_seconds: number;
+}
+
+/** One service, server, device or check with its windows and daily bars. */
+export interface UptimeRow {
+  kind: "service" | "server" | "device" | "check";
+  id: string;
+  name: string;
+  check: string | null;
+  site_name: string | null;
+  /** Percent over the last 24 hours, 7, 30 and 90 days; null when not measured. */
+  windows: { day: number | null; week: number | null; month: number | null; quarter: number | null };
+  outages: number;
+  /** 90 days, the oldest first, today so far last. */
+  days: UptimeDay[];
+}
+
+/** `GET /api/availability/uptime`. */
+export interface Uptime {
+  at: string;
+  time_zone: string;
+  rows: UptimeRow[];
 }
 
 /** The query of an availability report: a period and, for an MSP, a customer. */
@@ -4313,6 +4360,13 @@ export const api = {
   availability: (query: AvailabilityQuery, signal?: AbortSignal) =>
     request<AvailabilityReport>(`/api/availability?${availabilityQuery(query)}`, { signal }),
 
+  /** The last 24 hours, 7, 30 and 90 days and 90 daily bars, days cut in `time_zone` (ADR-0172). */
+  uptime: (query: { customer_id?: string | null; time_zone: string }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ time_zone: query.time_zone });
+    if (query.customer_id) params.set("customer_id", query.customer_id);
+    return request<Uptime>(`/api/availability/uptime?${params.toString()}`, { signal });
+  },
+
   /** Business services of the customers the user is granted as a whole. */
   businessServices: (signal?: AbortSignal) => request<{ services: BusinessService[] }>("/api/business-services", { signal }),
 
@@ -4461,7 +4515,7 @@ export const api = {
     request<void>(`/api/on-call/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Puts `user_id` on call instead of the rotation for a while. */
-  addOnCallOverride: (id: string, body: { user_id: string; starts_at?: string; ends_at: string }) =>
+  addOnCallOverride: (id: string, body: { user_id: string; seat?: number; starts_at?: string; ends_at: string }) =>
     request<OnCallSchedule>(`/api/on-call/schedules/${encodeURIComponent(id)}/overrides`, { method: "POST", body }),
 
   deleteOnCallOverride: (id: string) => request<void>(`/api/on-call/overrides/${encodeURIComponent(id)}`, { method: "DELETE" }),

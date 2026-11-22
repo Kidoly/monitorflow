@@ -457,6 +457,69 @@ impl<'a> Builder<'a> {
         Some(measure(life, &maintenance, &sources))
     }
 
+    /// The checks of `machine` that had outages of their own over the
+    /// period, measured; checks at 100 % are not listed (ADR-0155).
+    fn checks_with_outages(&self, machine: &Machine) -> Vec<(CheckRef, Measured<Cause>)> {
+        let mut names: Vec<String> = self
+            .data
+            .incidents
+            .iter()
+            .filter(|i| i.server_id == Some(machine.id) && i.metric != "offline")
+            .map(|i| check_of(&i.metric, &self.data.names))
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+            .into_iter()
+            .filter_map(|name| {
+                let check = CheckRef {
+                    name,
+                    instance: String::new(),
+                };
+                let measured = self.measure_check(machine, &check)?;
+                let own = measured
+                    .outages
+                    .iter()
+                    .any(|o| o.causes.iter().any(|c| c.kind == "check"));
+                own.then_some((check, measured))
+            })
+            .collect()
+    }
+
+    /// A business service's members, as the report names them, and its
+    /// availability over the period by its rule.
+    fn measure_service(
+        &self,
+        service: &super::data::Service,
+    ) -> (Vec<MemberView>, Measured<usize>) {
+        let span = (self.period.0, self.period.1.min(self.now));
+        let mut members = Vec::new();
+        let mut timelines = Vec::new();
+        for member in &service.members {
+            let Some(machine) = self.machine(member.server_id) else {
+                continue;
+            };
+            if machine.customer_id != service.customer_id {
+                continue;
+            }
+            let measured = match &member.check {
+                None => self.measure_machine(machine),
+                Some(check) => self.measure_check(machine, check),
+            };
+            timelines.push(
+                measured
+                    .map(|m| m.timeline)
+                    .unwrap_or_else(Timeline::default),
+            );
+            members.push(MemberView {
+                server_id: machine.id,
+                server_name: machine.name.clone(),
+                check: member.check.clone(),
+            });
+        }
+        (members, combine(span, service.rule, &timelines))
+    }
+
     fn outages(&self, outages: &[Outage<Cause>]) -> Vec<OutageView> {
         let end = self.period.1.min(self.now);
         outages
@@ -495,36 +558,15 @@ pub fn build(data: &Data, period: Span, now: DateTime<Utc>) -> Report {
             numbers: Numbers::of(&measured),
             outage_list: b.outages(&measured.outages),
         });
-        let mut names: Vec<String> = data
-            .incidents
-            .iter()
-            .filter(|i| i.server_id == Some(machine.id) && i.metric != "offline")
-            .map(|i| check_of(&i.metric, &data.names))
-            .collect();
-        names.sort_unstable();
-        names.dedup();
-        for name in names {
-            let check = CheckRef {
-                name,
-                instance: String::new(),
-            };
-            let Some(measured) = b.measure_check(machine, &check) else {
-                continue;
-            };
-            let own = measured
-                .outages
-                .iter()
-                .any(|o| o.causes.iter().any(|c| c.kind == "check"));
-            if own {
-                checks.push(CheckView {
-                    server_id: machine.id,
-                    server_name: machine.name.clone(),
-                    name: check.name,
-                    instance: check.instance,
-                    numbers: Numbers::of(&measured),
-                    outage_list: b.outages(&measured.outages),
-                });
-            }
+        for (check, measured) in b.checks_with_outages(machine) {
+            checks.push(CheckView {
+                server_id: machine.id,
+                server_name: machine.name.clone(),
+                name: check.name,
+                instance: check.instance,
+                numbers: Numbers::of(&measured),
+                outage_list: b.outages(&measured.outages),
+            });
         }
     }
     let services = services(&b);
@@ -553,6 +595,92 @@ pub fn build(data: &Data, period: Span, now: DateTime<Utc>) -> Report {
     }
 }
 
+/// What a thing of a report is: a business service, a server or device,
+/// or one check of a server or device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = AvailabilityThing)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    Service,
+    Server,
+    Device,
+    Check,
+}
+
+/// One thing of a report with when it was down and under planned
+/// maintenance: what the uptime view slices into days and windows.
+#[derive(Debug, Clone)]
+pub struct Measure {
+    pub kind: Kind,
+    /// The service's, or the server's or device's.
+    pub id: Uuid,
+    pub name: String,
+    /// The check's name, for a check.
+    pub check: Option<String>,
+    /// The site of a server, device or check; `None` for a service.
+    pub site_name: Option<String>,
+    /// When it existed within the period.
+    pub life: Span,
+    pub timeline: Timeline,
+    pub outages: usize,
+}
+
+/// Every service, server, device and check of `data` with outages of its
+/// own over `period`, made at `now`, in the report's order.
+pub fn measures(data: &Data, period: Span, now: DateTime<Utc>) -> Vec<Measure> {
+    let b = Builder { data, period, now };
+    let mut out = Vec::new();
+    let span = (period.0, period.1.min(now));
+    if span.0 < span.1 {
+        for service in &data.services {
+            let (_, measured) = b.measure_service(service);
+            out.push(Measure {
+                kind: Kind::Service,
+                id: service.id,
+                name: service.name.clone(),
+                check: None,
+                site_name: None,
+                life: span,
+                outages: measured.outages.len(),
+                timeline: measured.timeline,
+            });
+        }
+    }
+    for machine in &data.machines {
+        let (Some(life), Some(measured)) = (b.lifetime(machine), b.measure_machine(machine)) else {
+            continue;
+        };
+        let kind = if machine.device {
+            Kind::Device
+        } else {
+            Kind::Server
+        };
+        out.push(Measure {
+            kind,
+            id: machine.id,
+            name: machine.name.clone(),
+            check: None,
+            site_name: Some(machine.site_name.clone()),
+            life,
+            outages: measured.outages.len(),
+            timeline: measured.timeline,
+        });
+        for (check, measured) in b.checks_with_outages(machine) {
+            out.push(Measure {
+                kind: Kind::Check,
+                id: machine.id,
+                name: machine.name.clone(),
+                check: Some(check.name),
+                site_name: Some(machine.site_name.clone()),
+                life,
+                outages: measured.outages.len(),
+                timeline: measured.timeline,
+            });
+        }
+    }
+    out
+}
+
 fn services(b: &Builder) -> Vec<ServiceView> {
     let span = (b.period.0, b.period.1.min(b.now));
     let mut views = Vec::new();
@@ -560,31 +688,7 @@ fn services(b: &Builder) -> Vec<ServiceView> {
         return views;
     }
     for service in &b.data.services {
-        let mut members = Vec::new();
-        let mut timelines = Vec::new();
-        for member in &service.members {
-            let Some(machine) = b.machine(member.server_id) else {
-                continue;
-            };
-            if machine.customer_id != service.customer_id {
-                continue;
-            }
-            let measured = match &member.check {
-                None => b.measure_machine(machine),
-                Some(check) => b.measure_check(machine, check),
-            };
-            timelines.push(
-                measured
-                    .map(|m| m.timeline)
-                    .unwrap_or_else(Timeline::default),
-            );
-            members.push(MemberView {
-                server_id: machine.id,
-                server_name: machine.name.clone(),
-                check: member.check.clone(),
-            });
-        }
-        let measured = combine(span, service.rule, &timelines);
+        let (members, measured) = b.measure_service(service);
         let outages: Vec<Outage<Cause>> = measured
             .outages
             .iter()

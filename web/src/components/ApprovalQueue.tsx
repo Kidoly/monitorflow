@@ -16,7 +16,7 @@ import { t } from "@/i18n";
 import { acceptance } from "@/lib/commandKinds";
 import { riskWord, rollbackText, ruleReason, tierName, timeLeft } from "@/lib/remediation";
 import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
-import { AI_SETTINGS_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
+import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -137,9 +137,14 @@ export function ApprovalQueue() {
         ) : (
           <EmptyState
             title={t("remediation.queue.nothing")}
-            actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>{t("remediation.queue.openIncidents")}</ButtonLink>}
+            actions={
+              <>
+                <ButtonLink href={AUDIT_PATH}>{t("remediation.queue.seeAudit")}</ButtonLink>
+                <ButtonLink href={scopedHref(incidentsHref(), scope)}>{t("remediation.queue.openIncidents")}</ButtonLink>
+              </>
+            }
           >
-            {t("remediation.queue.empty")}
+            <HowItArrives />
           </EmptyState>
         )
       ) : (
@@ -174,6 +179,28 @@ export function ApprovalQueue() {
         {t("remediation.queue.note")}
       </p>
     </Page>
+  );
+}
+
+/**
+ * What an empty queue means: the AI parks a command here only when it
+ * proposes a change the risk rules keep for a person, so most days there
+ * is none. Says how one gets here, so an empty page is not read as broken.
+ */
+function HowItArrives() {
+  return (
+    <>
+      <p className={styles.emptyText}>{t("remediation.queue.empty")}</p>
+      <p className={styles.emptyText}>
+        <strong>{t("remediation.queue.howTitle")}</strong>
+      </p>
+      <ol className={styles.howList}>
+        <li>{t("remediation.queue.howAi")}</li>
+        <li>{t("remediation.queue.howServer")}</li>
+        <li>{t("remediation.queue.howAlert")}</li>
+        <li>{t("remediation.queue.howRules")}</li>
+      </ol>
+    </>
   );
 }
 

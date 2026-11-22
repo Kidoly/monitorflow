@@ -647,6 +647,44 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_second_level_hears_only_what_the_first_did_not_acknowledge(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let a = place(&pool, "acme").await;
+        let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
+        let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
+        user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
+        let inbox = Inbox::start().await;
+        inbox.contact(&pool, alice, "alice").await;
+        inbox.contact(&pool, bob, "bob").await;
+        let cookie = login(&pool, "boss").await;
+        schedule(&pool, Coverage::Customer(a.customer), &[alice]).await;
+        let request = json!({
+            "name": "Second level", "customer_id": a.customer, "time_zone": "UTC",
+            "rotation": "weekly", "handoff_time": "09:00", "handoff_day": 1,
+            "members": [bob], "follow_up_only": true,
+        });
+        let (status, body) = call(&pool, "POST", "/api/on-call/schedules", Some(&cookie), Some(request)).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["follow_up_only"], true);
+        let second = body["id"].as_str().unwrap().to_owned();
+        let policy = json!({
+            "customer_id": a.customer,
+            "steps": [{ "after_minutes": 15, "on_call": [second] }],
+        });
+        let (status, view) = call(&pool, "PUT", "/api/follow-up/policies", Some(&cookie), Some(policy)).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+
+        let incident = disk(&pool, a.site, "db-1", "critical").await;
+        let dispatcher = dispatcher(&pool);
+        dispatcher.pass().await.unwrap();
+        assert_eq!(inbox.who(), ["alice"]);
+        due(&pool).await;
+        dispatcher.pass().await.unwrap();
+        assert_eq!(inbox.who(), ["bob"]);
+        assert_eq!(follow_up(&pool, incident).await.unwrap().2.as_deref(), Some("finished"));
+    }
+
+    #[sqlx::test]
     async fn the_page_names_who_is_on_call_at_the_step_s_time(pool: PgPool) {
         monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;

@@ -2251,6 +2251,14 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = format!("{path}?format=csv&customer_id={}", b.customer);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
+        ("GET", "/api/availability/uptime") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.server), "{body}");
+            assert!(!Ctx::mentions(&body, b.server), "{body}");
+            assert!(!Ctx::mentions(&body, b.business_service), "{body}");
+            let uri = format!("{path}?customer_id={}", b.customer);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
         // Report schedules (ADR-0155): B's are not listed and do not exist
         // for A, and A cannot send its report through B's channel nor make
         // one of B's customer.
