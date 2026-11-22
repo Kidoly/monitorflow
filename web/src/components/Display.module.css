@@ -260,3 +260,18 @@
   text-decoration: none;
   cursor: pointer;
 }
+
+/* A gauge fills the panel's height without overflowing it. */
+.dial {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dial svg {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+}

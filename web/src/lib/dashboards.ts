@@ -11,7 +11,9 @@ import type {
 } from "./api";
 import { t } from "@/i18n";
 
+import { type Unit, formatNumber, formatValue, unitOf } from "./format";
 import { metricTitle, shortMetric } from "./metrics";
+import { formatSensorValue } from "./sensors";
 
 /** Dashboards are looked at rather than watched, so they refresh less often (ADR-0095). */
 export const DASHBOARD_REFRESH_MS = 30_000;
@@ -33,7 +35,22 @@ export function isRange(value: string | null): value is TimeRangeLabel {
   return value !== null && (RANGES as readonly string[]).includes(value);
 }
 
-export const PANEL_KINDS: readonly PanelKind[] = ["chart", "figure", "top", "alerts"];
+export const PANEL_KINDS: readonly PanelKind[] = ["chart", "area", "columns", "figure", "gauge", "top", "bars", "alerts"];
+
+/** The kind whose data a panel draws: area and columns a chart's, a gauge a figure's, bars a top list's. */
+export function baseKind(kind: PanelKind): "chart" | "figure" | "top" | "alerts" {
+  switch (kind) {
+    case "area":
+    case "columns":
+      return "chart";
+    case "gauge":
+      return "figure";
+    case "bars":
+      return "top";
+    default:
+      return kind;
+  }
+}
 
 export const kindLabel = (kind: PanelKind): string => t(`dashboards.kind.${kind}`);
 
@@ -57,6 +74,90 @@ export function lowIsBad(metric: string): boolean {
   return /available|free|_(up|active|loaded|installed)$/.test(short);
 }
 
+/** How a panel writes its values: its unit, else the metric's. */
+export function panelUnit(panel: Panel): Unit {
+  return panel.unit ?? unitOf(panel.metric ?? "");
+}
+
+/** Whether the panel's values add up across servers (bytes, traffic, counts), so areas and columns stack. */
+export function panelAdditive(panel: Panel): boolean {
+  return !["ratio", "celsius", "seconds"].includes(panelUnit(panel));
+}
+
+/** Value to text for a panel: "how many servers" is a count, the rest in its unit. */
+export function panelFormat(panel: Panel): (value: number) => string {
+  if (baseKind(panel.kind) === "figure" && panel.combine === "count") return (v) => formatNumber(v);
+  if (panel.unit) return (v) => formatValue(v, panel.unit!);
+  return (v) => formatSensorValue(panel.metric ?? "", v);
+}
+
+export type Level = "ok" | "warning" | "critical";
+
+/**
+ * Where `value` stands against the panel's thresholds: above them, or
+ * below for metrics where low is bad; null without thresholds.
+ */
+export function levelOf(panel: Panel, value: number | null): Level | null {
+  const limits = panel.thresholds;
+  if (!limits || value === null) return null;
+  const low = lowIsBad(panel.metric ?? "");
+  const beyond = (limit: number | undefined) => limit !== undefined && (low ? value <= limit : value >= limit);
+  if (beyond(limits.critical)) return "critical";
+  if (beyond(limits.warning)) return "warning";
+  return "ok";
+}
+
+/** The `index`th colour of the panel's palette, from its first colour. */
+export function panelColor(panel: Panel, index = 0): string {
+  return `var(--series-${(((panel.color ?? 1) - 1 + index) % 8) + 1})`;
+}
+
+/** A value's colour: its threshold's when it is beyond one, else the panel's. */
+export function levelColor(panel: Panel, value: number | null, index = 0): string {
+  switch (levelOf(panel, value)) {
+    case "critical":
+      return "var(--threshold-crit)";
+    case "warning":
+      return "var(--threshold-warn)";
+    default:
+      return panelColor(panel, index);
+  }
+}
+
+/**
+ * The scale of a gauge or bars: the panel's, else 0 to 1 for ratios, else
+ * from 0 (or the lowest value) to the highest value or threshold.
+ */
+export function panelScale(panel: Panel, values: (number | null)[]): { min: number; max: number } {
+  const known = values.filter((v): v is number => v !== null && Number.isFinite(v));
+  const ratio = panelUnit(panel) === "ratio";
+  const limits = [panel.thresholds?.warning, panel.thresholds?.critical].filter((v): v is number => v !== undefined);
+  const min = panel.min ?? (ratio ? 0 : Math.min(0, ...known));
+  const top = Math.max(...known, ...limits, min + 1);
+  const max = panel.max ?? (ratio ? Math.max(1, top) : top);
+  return { min, max: max > min ? max : min + 1 };
+}
+
+/**
+ * The thresholds as coloured stretches of a gauge's scale: amber from the
+ * warning to the critical value, red beyond, or below for low-is-bad metrics.
+ */
+export function thresholdBands(panel: Panel, min: number, max: number): { from: number; to: number; color: string }[] {
+  const { warning, critical } = panel.thresholds ?? {};
+  const warn = "var(--threshold-warn)";
+  const crit = "var(--threshold-crit)";
+  if (lowIsBad(panel.metric ?? "")) {
+    return [
+      ...(critical !== undefined ? [{ from: min, to: critical, color: crit }] : []),
+      ...(warning !== undefined ? [{ from: critical ?? min, to: warning, color: warn }] : []),
+    ];
+  }
+  return [
+    ...(warning !== undefined ? [{ from: warning, to: critical ?? max, color: warn }] : []),
+    ...(critical !== undefined ? [{ from: critical, to: max, color: crit }] : []),
+  ];
+}
+
 /** A short random panel id, unique within a dashboard. */
 export function newPanelId(taken: Iterable<string> = []): string {
   const used = new Set(taken);
@@ -73,10 +174,10 @@ export function defaultInstance(instances: string[]): string | undefined {
 
 /** A title from a panel's choices: "CPU usage total, average", "Fullest: Disk used". */
 export function suggestedTitle(panel: Panel): string {
-  if (panel.kind === "alerts") return t("dashboards.title.alerts");
+  if (baseKind(panel.kind) === "alerts") return t("dashboards.title.alerts");
   const metric = panel.metric ? metricTitle(panel.metric) : t("dashboards.title.metric");
   const what = panel.instance && panel.instance !== "total" ? `${metric} ${panel.instance}` : metric;
-  if (panel.kind === "top") {
+  if (baseKind(panel.kind) === "top") {
     return panel.order === "lowest" ? t("dashboards.title.lowest", { what }) : t("dashboards.title.highest", { what });
   }
   switch (panel.combine) {
@@ -99,28 +200,44 @@ export function suggestedTitle(panel: Panel): string {
 export function withKind(panel: Panel, kind: PanelKind): Panel {
   const base: Panel = { id: panel.id, title: panel.title, kind, width: panel.width, servers: panel.servers };
   const metric = panel.metric ?? CPU;
-  switch (kind) {
+  const instance = panel.instance !== undefined ? { instance: panel.instance } : {};
+  // Display options follow the panel, except a legend, which only charts over time have.
+  const options: Partial<Panel> =
+    kind === "alerts"
+      ? {}
+      : {
+          ...(panel.unit && { unit: panel.unit }),
+          ...(panel.min !== undefined && { min: panel.min }),
+          ...(panel.max !== undefined && { max: panel.max }),
+          ...(panel.thresholds && { thresholds: panel.thresholds }),
+          ...(panel.color !== undefined && { color: panel.color }),
+          ...(panel.legend !== undefined && baseKind(kind) === "chart" && { legend: panel.legend }),
+        };
+  switch (baseKind(kind)) {
     case "chart":
       return {
         ...base,
         metric,
-        ...(panel.instance !== undefined && { instance: panel.instance }),
+        ...instance,
         combine: panel.combine && CHART_COMBINES.includes(panel.combine) ? panel.combine : "each",
+        ...options,
       };
     case "figure":
       return {
         ...base,
         metric,
-        ...(panel.instance !== undefined && { instance: panel.instance }),
-        combine: panel.combine && FIGURE_COMBINES.includes(panel.combine) ? panel.combine : "avg",
+        ...instance,
+        combine: panel.combine && FIGURE_COMBINES.includes(panel.combine) ? panel.combine : kind === "gauge" ? "max" : "avg",
+        ...options,
       };
     case "top":
       return {
         ...base,
         metric,
-        ...(panel.instance !== undefined && { instance: panel.instance }),
+        ...instance,
         order: panel.order ?? (lowIsBad(metric) ? "lowest" : "highest"),
         count: panel.count ?? 5,
+        ...options,
       };
     case "alerts":
       return { ...base, count: panel.count ?? 10 };

@@ -5,14 +5,16 @@ import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { t } from "@/i18n";
 import type { DashboardData, Panel, PanelData } from "@/lib/api";
 import { endWords } from "@/lib/dependencies";
-import { formatNumber, unitOf } from "@/lib/format";
+import { levelColor, panelAdditive, panelColor, panelFormat, panelScale, thresholdBands } from "@/lib/dashboards";
 import { incidentTitle } from "@/lib/incidents";
-import { formatSensorValue } from "@/lib/sensors";
-import { niceTicks, segments, timeTicks } from "@/components/ui/chartScale";
+import { BarList } from "@/components/ui/BarList";
+import { ChartMarks, type ChartVariant, shapeSeries } from "@/components/ui/ChartMarks";
+import { niceTicks, timeTicks } from "@/components/ui/chartScale";
+import { Gauge } from "@/components/ui/Gauge";
 import { SkeletonLines } from "@/components/ui/PageState";
 import { formatSince } from "@/components/ui/time";
 
-import { emptyReason, quiet, seriesLabel } from "./DashboardPanel";
+import { chartBounds, chartThresholds, emptyReason, quiet, seriesLabel, variantOf } from "./DashboardPanel";
 import styles from "./Display.module.css";
 
 /** Chart text in SVG units; the drawing is scaled so it matches the panel's text. */
@@ -30,14 +32,27 @@ function ScreenChart({
   end,
   step,
   format,
-  ratio,
+  min,
+  max,
+  variant,
+  additive,
+  color,
+  legend,
+  thresholds,
 }: {
   series: { label: string; points: [number, number | null][] }[];
   start: number;
   end: number;
   step: number;
   format: (v: number) => string;
-  ratio: boolean;
+  min?: number;
+  max?: number;
+  variant: ChartVariant;
+  /** False draws several areas or columns over each other. */
+  additive: boolean;
+  color: (index: number) => string;
+  legend: boolean;
+  thresholds: { severity: "warning" | "critical"; value: number }[];
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 600, h: 240 });
@@ -55,8 +70,10 @@ function ScreenChart({
     return () => window.removeEventListener("resize", measure);
   }, []);
 
-  const values = series.flatMap((s) => s.points.map((p) => p[1])).filter((v): v is number => v !== null);
-  const ticks = niceTicks(ratio ? 0 : Math.min(0, ...values), ratio ? 1 : Math.max(...values, 1), 3);
+  const shaped = shapeSeries(series, variant, start, end, step, additive);
+  const values = shaped.series.flatMap((s) => s.points.map((p) => p[1])).filter((v): v is number => v !== null);
+  const limits = thresholds.map((t) => t.value);
+  const ticks = niceTicks(min ?? Math.min(0, ...values, ...limits), max ?? Math.max(...values, ...limits, 1), 3);
   const low = ticks[0]!;
   const high = ticks[ticks.length - 1]!;
   const left = TEXT * 4.5;
@@ -86,29 +103,42 @@ function ScreenChart({
                 {tick.label}
               </text>
             ))}
-          {series.map((s, i) =>
-            segments(s.points, step).map((segment) => (
-              <polyline
-                key={`${s.label}-${segment[0]![0]}`}
-                className={styles.line}
-                stroke={`var(--series-${i + 1})`}
-                points={segment.map(([t, v]) => `${x(t)},${y(v)}`).join(" ")}
-              />
-            )),
-          )}
+          {thresholds.map((t) => (
+            <line
+              key={t.severity}
+              x1={left}
+              x2={right}
+              y1={y(t.value)}
+              y2={y(t.value)}
+              stroke={t.severity === "critical" ? "var(--threshold-crit)" : "var(--threshold-warn)"}
+              strokeWidth={2}
+              strokeDasharray="6 4"
+            />
+          ))}
+          <ChartMarks
+            series={shaped.series}
+            variant={variant}
+            step={shaped.step}
+            x={x}
+            y={y}
+            low={low}
+            right={right}
+            color={color}
+            lineClassName={styles.line}
+          />
         </svg>
       </div>
-      <ul className={styles.legend}>
+      {legend && <ul className={styles.legend}>
         {series.map((s, i) => {
           const value = last(s.points);
           return (
             <li key={s.label}>
-              <i className={styles.swatch} style={{ background: `var(--series-${i + 1})` }} aria-hidden="true" />
+              <i className={styles.swatch} style={{ background: color(i) }} aria-hidden="true" />
               {s.label} <b>{value === null ? "–" : format(value)}</b>
             </li>
           );
         })}
-      </ul>
+      </ul>}
     </>
   );
 }
@@ -135,8 +165,7 @@ export function ScreenPanel({
   data: PanelData | undefined;
   window: Pick<DashboardData, "start" | "end" | "step" | "at"> | undefined;
 }) {
-  const metric = panel.metric ?? "";
-  const format = (v: number) => formatSensorValue(metric, v);
+  const format = panelFormat(panel);
   if (!data || !window) {
     return (
       <Frame panel={panel}>
@@ -170,7 +199,12 @@ export function ScreenPanel({
               end={window.end}
               step={window.step}
               format={format}
-              ratio={unitOf(metric) === "ratio"}
+              {...chartBounds(panel, data.series.length)}
+              variant={variantOf(panel)}
+              additive={panelAdditive(panel)}
+              color={(i) => panelColor(panel, i)}
+              legend={panel.legend ?? true}
+              thresholds={chartThresholds(panel)}
             />
           ) : (
             <p className={styles.muted}>{t("display.screen.noData")}</p>
@@ -178,10 +212,28 @@ export function ScreenPanel({
         </Frame>
       );
     case "figure":
+      if (panel.kind === "gauge") {
+        const { min, max } = panelScale(panel, [data.value]);
+        return (
+          <Frame panel={panel}>
+            <div className={styles.dial}>
+              <Gauge
+                value={data.value}
+                min={min}
+                max={max}
+                format={format}
+                color={levelColor(panel, data.value)}
+                bands={thresholdBands(panel, min, max)}
+                label={`${panel.title}: ${data.value === null ? t("display.screen.noValue") : format(data.value)}`}
+              />
+            </div>
+          </Frame>
+        );
+      }
       return (
         <Frame panel={panel}>
-          <p className={styles.figure}>
-            {data.value === null ? "–" : panel.combine === "count" ? formatNumber(data.value) : format(data.value)}
+          <p className={styles.figure} style={panel.thresholds && data.value !== null ? { color: levelColor(panel, data.value) } : undefined}>
+            {data.value === null ? "–" : format(data.value)}
           </p>
           <p className={styles.muted}>
             {data.value === null ? t("display.screen.noValue") : t("display.panel.servers", { count: data.servers })}
@@ -193,6 +245,18 @@ export function ScreenPanel({
         <Frame panel={panel}>
           {data.rows.length === 0 ? (
             <p className={styles.muted}>{t("display.screen.noValues")}</p>
+          ) : panel.kind === "bars" ? (
+            <BarList
+              label={panel.title}
+              {...panelScale(panel, data.rows.map((r) => r.value))}
+              format={format}
+              bars={data.rows.map((row) => ({
+                key: `${row.server_id}/${row.instance ?? ""}`,
+                value: row.value,
+                color: levelColor(panel, row.value),
+                label: row.instance && !panel.instance ? `${row.hostname} ${row.instance}` : row.hostname,
+              }))}
+            />
           ) : (
             <ol className={styles.rows}>
               {data.rows.map((row) => (

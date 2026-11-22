@@ -6,13 +6,15 @@ import type { ReactNode } from "react";
 import { t } from "@/i18n";
 import type { ChartLine, DashboardData, Panel, PanelAlert, PanelData } from "@/lib/api";
 import { endWords } from "@/lib/dependencies";
-import { formatNumber, unitOf } from "@/lib/format";
+import { levelColor, panelAdditive, panelColor, panelFormat, panelScale, panelUnit, thresholdBands } from "@/lib/dashboards";
 import { incidentTitle } from "@/lib/incidents";
 import { incidentHref, sensorHref, serverHref } from "@/lib/routes";
 import { type Scope, scopedHref } from "@/lib/scope";
-import { formatSensorValue } from "@/lib/sensors";
+import { BarList } from "@/components/ui/BarList";
+import { stacks } from "@/components/ui/ChartMarks";
+import { Gauge } from "@/components/ui/Gauge";
 import { Label } from "@/components/ui/StatusLabel";
-import { TimeChart } from "@/components/ui/TimeChart";
+import { type Threshold, TimeChart } from "@/components/ui/TimeChart";
 import { formatDay, formatSince } from "@/components/ui/time";
 
 import styles from "./Dashboards.module.css";
@@ -25,6 +27,27 @@ import styles from "./Dashboards.module.css";
 export function seriesLabel(panel: Panel, line: ChartLine): string {
   if (line.server_id) return line.label;
   return panel.combine && panel.combine !== "each" ? t(`dashboards.combine.${panel.combine}`) : line.label;
+}
+
+/** How a chart over time draws its series. */
+export const variantOf = (panel: Panel) => (panel.kind === "area" ? "area" : panel.kind === "columns" ? "columns" : "line");
+
+/** The panel's thresholds as dashed lines of a chart. */
+export function chartThresholds(panel: Panel): Threshold[] {
+  const { warning, critical } = panel.thresholds ?? {};
+  return [
+    ...(warning !== undefined ? [{ severity: "warning" as const, value: warning, label: t("display.panel.warning") }] : []),
+    ...(critical !== undefined ? [{ severity: "critical" as const, value: critical, label: t("display.panel.critical") }] : []),
+  ];
+}
+
+/**
+ * The y bounds of a chart: the panel's, else 0 to 100 % for ratios unless
+ * stacked series add up beyond it.
+ */
+export function chartBounds(panel: Panel, lines: number): { min?: number; max?: number } {
+  const ratio = panelUnit(panel) === "ratio" && !stacks(variantOf(panel), lines, panelAdditive(panel));
+  return { min: panel.min ?? (ratio ? 0 : undefined), max: panel.max ?? (ratio ? 1 : undefined) };
 }
 
 /** Why a panel shows nothing, in plain words; null when it shows something. */
@@ -68,7 +91,7 @@ export function DashboardPanel({
   scope: Scope;
 }) {
   const metric = panel.metric ?? "";
-  const format = (v: number) => formatSensorValue(metric, v);
+  const format = panelFormat(panel);
   const missing =
     data && data.unavailable > 0 && data.servers > 0
       ? t("display.panel.missing", { count: data.unavailable })
@@ -101,7 +124,6 @@ export function DashboardPanel({
 
   switch (data.kind) {
     case "chart": {
-      const ratio = unitOf(metric) === "ratio";
       // "One line per server" draws the worst few: say how many of them.
       const drawn = new Set(data.series.flatMap((s) => (s.server_id ? [s.server_id] : []))).size;
       const subtitle =
@@ -118,33 +140,71 @@ export function DashboardPanel({
             end={window.end}
             step={window.step}
             format={format}
-            min={ratio ? 0 : undefined}
-            max={ratio ? 1 : undefined}
+            {...chartBounds(panel, data.series.length)}
+            thresholds={chartThresholds(panel)}
+            variant={variantOf(panel)}
+            additive={panelAdditive(panel)}
+            legend={panel.legend ?? true}
+            color={(i) => panelColor(panel, i)}
             emptyText={t("display.panel.noData")}
           />
           {missing && <p className={styles.note}>{missing}</p>}
         </div>
       );
     }
-    case "figure":
+    case "figure": {
+      if (panel.kind === "gauge") {
+        const { min, max } = panelScale(panel, [data.value]);
+        return (
+          <Frame panel={panel} note={missing}>
+            <div className={styles.gauge}>
+              <Gauge
+                value={data.value}
+                min={min}
+                max={max}
+                format={format}
+                color={levelColor(panel, data.value)}
+                bands={thresholdBands(panel, min, max)}
+                label={`${panel.title}: ${data.value === null ? t("display.panel.noValue") : format(data.value)}`}
+              />
+            </div>
+            {data.value === null && <p className={styles.muted}>{t("display.panel.noValue")}</p>}
+          </Frame>
+        );
+      }
       return (
         <Frame panel={panel} note={missing}>
-          <p className={styles.figure}>
-            {data.value === null
-              ? "–"
-              : panel.combine === "count"
-                ? formatNumber(data.value)
-                : format(data.value)}
+          {/* Coloured only past a threshold: a plain figure stays in the text colour. */}
+          <p className={styles.figure} style={panel.thresholds && data.value !== null ? { color: levelColor(panel, data.value) } : undefined}>
+            {data.value === null ? "–" : format(data.value)}
           </p>
           {/* With a value, no "Now, of 16 servers" under each figure: it said the same on every card. */}
           {data.value === null && <p className={styles.muted}>{t("display.panel.noValue")}</p>}
         </Frame>
       );
+    }
     case "top":
       return (
         <Frame panel={panel} note={missing}>
           {data.rows.length === 0 ? (
             <p className={styles.muted}>{t("display.panel.noValues")}</p>
+          ) : panel.kind === "bars" ? (
+            <BarList
+              label={panel.title}
+              {...panelScale(panel, data.rows.map((r) => r.value))}
+              format={format}
+              bars={data.rows.map((row) => ({
+                key: `${row.server_id}/${row.instance ?? ""}`,
+                value: row.value,
+                color: levelColor(panel, row.value),
+                label: (
+                  <>
+                    <Link href={scopedHref(sensorHref(row.server_id, metric, row.instance ?? ""), scope)}>{row.hostname}</Link>
+                    {row.instance && !panel.instance && <span className={styles.muted}> {row.instance}</span>}
+                  </>
+                ),
+              }))}
+            />
           ) : (
             <ol className={styles.rows}>
               {data.rows.map((row) => (

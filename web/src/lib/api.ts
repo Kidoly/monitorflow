@@ -317,7 +317,14 @@ export type PanelServers =
   | { kind: "customer"; id: string }
   | { kind: "list"; ids: string[] };
 
-export type PanelKind = "chart" | "figure" | "top" | "alerts";
+/**
+ * How a panel is drawn (ADR-0166). `area` and `columns` draw a chart's
+ * data, `gauge` a figure's, `bars` a top list's.
+ */
+export type PanelKind = "chart" | "figure" | "top" | "alerts" | "gauge" | "bars" | "area" | "columns";
+
+/** How a panel writes values when the metric's name does not say it well. */
+export type PanelUnit = "ratio" | "bytes" | "bytes_per_second" | "bits_per_second" | "per_second" | "seconds" | "celsius" | "number";
 export type Combine = "each" | "avg" | "max" | "min" | "sum" | "count";
 
 /** One panel of a dashboard; fields not of its kind are absent. */
@@ -333,6 +340,17 @@ export interface Panel {
   combine?: Combine;
   order?: "highest" | "lowest";
   count?: number;
+  /** From the metric's name when absent. */
+  unit?: PanelUnit;
+  /** The scale; from the values when absent. */
+  min?: number;
+  max?: number;
+  /** Where values turn amber and red, in the metric's unit. */
+  thresholds?: { warning?: number; critical?: number };
+  /** Whether a chart names its lines; true when absent. */
+  legend?: boolean;
+  /** The first colour of the palette, 1 to 8. */
+  color?: number;
 }
 
 export interface DashboardSpec {

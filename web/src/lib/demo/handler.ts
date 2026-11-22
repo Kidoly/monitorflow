@@ -68,6 +68,7 @@ import {
   serverRow,
   summary,
 } from "./fleet";
+import { baseKind } from "../dashboards";
 import { ALL_METRICS, instancesOf, metricsOf, rangeSeries, sensorValues, sensorsOf, valueAt } from "./series";
 import { DAY, HOUR, ago, later } from "./time";
 
@@ -489,7 +490,7 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
       const servers = panelServers(panel);
       const metric = panel.metric ?? "";
       const base = { id: panel.id, servers: servers.length, unavailable: 0 };
-      switch (panel.kind) {
+      switch (baseKind(panel.kind)) {
         case "alerts":
           return {
             ...base, kind: "alerts",

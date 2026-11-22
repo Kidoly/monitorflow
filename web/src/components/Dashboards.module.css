@@ -245,3 +245,10 @@
 .card:focus-visible {
   border-color: var(--text);
 }
+
+/* A gauge keeps a readable size in a wide panel. */
+.gauge {
+  width: 100%;
+  max-width: 280px;
+  margin: 0 auto;
+}

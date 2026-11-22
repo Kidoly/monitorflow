@@ -173,6 +173,72 @@ describe("DashboardPanel", () => {
     expect(screen.getByText("on db-1")).toBeInTheDocument();
   });
 
+  it("draws a gauge and bars coloured by their thresholds", () => {
+    const thresholds = { warning: 0.8, critical: 0.9 };
+    const { unmount } = render1(
+      { ...chart, kind: "gauge", combine: "max", title: "Busiest CPU", thresholds },
+      { id: "c", servers: 4, unavailable: 0, kind: "figure", value: 0.85 },
+    );
+    expect(screen.getByRole("img", { name: "Busiest CPU: 85%" })).toBeInTheDocument();
+    expect(screen.getByTestId("gauge-value")).toHaveAttribute("stroke", "var(--threshold-warn)");
+    unmount();
+
+    render1(
+      { ...chart, kind: "bars", metric: "monitorflow_disk_used_ratio", instance: undefined, order: "highest", count: 5, title: "Fullest disks", thresholds },
+      {
+        id: "c",
+        servers: 3,
+        unavailable: 0,
+        kind: "top",
+        rows: [
+          { server_id: "s1", hostname: "db-1", instance: "/var", value: 0.95 },
+          { server_id: "s2", hostname: "db-2", instance: "/", value: 0.5 },
+        ],
+      },
+    );
+    const bars = screen.getByRole("list", { name: "Fullest disks" });
+    expect(within(bars).getByRole("link", { name: "db-1" })).toHaveAttribute("href", "/servers/sensor?id=s1&sensor=disk_used_ratio&instance=%2Fvar");
+    const fills = bars.querySelectorAll<HTMLElement>("li > div:last-child > div");
+    expect(fills[0]!.style.width).toBe("95%");
+    expect(fills[0]!.style.background).toBe("var(--threshold-crit)");
+    expect(fills[1]!.style.background).toBe("var(--series-1)");
+  });
+
+  it("stacks the areas of values that add up, and overlaps percentages", () => {
+    const overlap = render1(
+      { ...chart, kind: "area" },
+      {
+        id: "c",
+        servers: 2,
+        unavailable: 0,
+        kind: "chart",
+        series: [
+          { label: "web-1", server_id: "s1", points: [[1_800_000_000, 0.75]] },
+          { label: "web-2", server_id: "s2", points: [[1_800_000_000, 0.75]] },
+        ],
+      },
+    );
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.queryByText("150%")).toBeNull();
+    overlap.unmount();
+    const { container } = render1(
+      { ...chart, kind: "area", color: 3, metric: "monitorflow_memory_used_bytes", instance: undefined },
+      {
+        id: "c",
+        servers: 2,
+        unavailable: 0,
+        kind: "chart",
+        series: [
+          { label: "web-1", server_id: "s1", points: [[1_800_000_000, 768]] },
+          { label: "web-2", server_id: "s2", points: [[1_800_000_000, 768]] },
+        ],
+      },
+    );
+    expect(container.querySelector("polyline")).toHaveAttribute("stroke", "var(--series-3)");
+    // 1.5 KiB stacked: the axis reaches 2 KiB.
+    expect(screen.getByText("2 KiB")).toBeInTheDocument();
+  });
+
   it("says how many servers of the panel its lines show", () => {
     const lines = Array.from({ length: 8 }, (_, i) => ({ label: `web-${i}`, server_id: `s${i}`, points: [[1_800_000_000, 0.5]] as [number, number][] }));
     render1(chart, { id: "c", servers: 16, unavailable: 0, kind: "chart", series: lines });
