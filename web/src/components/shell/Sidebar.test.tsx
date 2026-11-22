@@ -109,7 +109,7 @@ describe("sidebar preferences", () => {
     it("never shows what the role hides, whatever the preferences say", async () => {
       await withPreferences(<AppShell me={viewer}>page</AppShell>, { order: ["mirrors", "campaigns", "fleet"] });
       const names = links();
-      expect(names).not.toContain("Mirrors");
+      expect(names).not.toContain("Linux mirrors");
       expect(names).not.toContain("Campaigns");
       expect(names[0]).toBe("Fleet");
       // Settings always shows: it leads to the person's preferences.
@@ -166,7 +166,7 @@ describe("sidebar preferences", () => {
     it("moves items within their section only", async () => {
       const { main } = await renderEditor(admin);
       expect(main.getByRole("button", { name: "Move Reports down" })).toBeDisabled();
-      expect(main.getByRole("button", { name: "Move Mirrors up" })).toBeDisabled();
+      expect(main.getByRole("button", { name: "Move Linux mirrors up" })).toBeDisabled();
     });
 
     it("picks labels, icons only or automatic", async () => {
@@ -192,7 +192,7 @@ describe("sidebar preferences", () => {
 
     it("lists only what the role shows", async () => {
       const { main } = await renderEditor(viewer);
-      expect(main.queryByRole("switch", { name: "Mirrors" })).not.toBeInTheDocument();
+      expect(main.queryByRole("switch", { name: "Linux mirrors" })).not.toBeInTheDocument();
       expect(main.queryByRole("switch", { name: "Campaigns" })).not.toBeInTheDocument();
       expect(main.getByRole("switch", { name: "Fleet" })).toBeChecked();
     });

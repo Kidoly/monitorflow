@@ -3,7 +3,16 @@ import { describe, expect, it } from "vitest";
 import { setActiveLocale } from "@/i18n/locale";
 import { mirror } from "@/test/mirrors";
 
-import { describeMirror, durationText, intervalText, minuteText, nextSync, shortTime, upstreamText } from "./mirrors";
+import {
+  describeMirror,
+  durationText,
+  intervalText,
+  minuteText,
+  nextSync,
+  shortTime,
+  syncHint,
+  upstreamText,
+} from "./mirrors";
 
 describe("mirror helpers", () => {
   it("describes a mirror on one line", () => {
@@ -15,6 +24,13 @@ describe("mirror helpers", () => {
     expect(describeMirror(mirror({ family: "dnf", distribution: "", components: [], architectures: [] }))).toBe(
       "dnf · deb.debian.org/debian · all architectures",
     );
+  });
+
+  it("says whether a sync publishes a snapshot by itself", () => {
+    expect(syncHint({ auto_snapshot: true })).toBe(
+      "Downloads the new packages from the source, then publishes a snapshot that servers use.",
+    );
+    expect(syncHint({ auto_snapshot: false })).toMatch(/once you create a snapshot on the mirror’s page/);
   });
 
   it("writes intervals in their largest whole unit", () => {

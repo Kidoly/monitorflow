@@ -152,7 +152,7 @@ The French column is what the French interface says for each word, so a term rea
 | Sidebar | Barre latérale |
 | Monitoring | Supervision |
 | Campaign | Campagne |
-| Mirror | Miroir |
+| Mirror (Linux mirrors in the menu) | Miroir (Miroirs Linux dans le menu) |
 | Approval, approve | Approbation, approuver |
 | Audit log | Journal d’audit |
 | Administrator, operator, approver, viewer | Administrateur, opérateur, approbateur, lecteur |

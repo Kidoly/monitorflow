@@ -1377,6 +1377,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         // The server is shared: updating it is for global administrators.
         ("GET", "/api/server-update")
+        | ("GET", "/api/server-update/history")
         | ("POST", "/api/server-update")
         | ("POST", "/api/server-update/check") => {
             let body = method.eq("POST").then(|| json!({ "version": "99.0.0" }));
@@ -1465,6 +1466,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("PUT", "/api/settings/server")
         | ("PUT", "/api/settings/retention")
         | ("GET", "/api/auto-update/{kind}/peers")
+        | ("GET", "/api/auto-update/{kind}/versions/peers")
         | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
             let uri = path
                 .replace("{kind}/peers", "agent/peers?state=waiting")

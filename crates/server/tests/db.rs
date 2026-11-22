@@ -230,6 +230,7 @@ db_tests! {
                 "server_settings",
                 "server_storage",
                 "server_third_party_packages",
+                "server_updates",
                 "servers",
                 "sessions",
                 "setup_tokens",

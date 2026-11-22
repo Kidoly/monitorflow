@@ -50,7 +50,8 @@ pub async fn record(pool: &PgPool, backups: &Backups) -> Result<bool, sqlx::Erro
     Ok(done.rows_affected() == 1)
 }
 
-/// Reads the updater's status in `dir` and records a failure. A status
+/// Reads the updater's status in `dir`, records a failure and copies the
+/// last server update into its history. A status
 /// that cannot be read says nothing: the backups page shows that.
 pub async fn check(pool: &PgPool, dir: &Path) -> Result<bool, sqlx::Error> {
     let path = dir.join(STATUS_FILE);
@@ -64,7 +65,13 @@ pub async fn check(pool: &PgPool, dir: &Path) -> Result<bool, sqlx::Error> {
     .ok()
     .flatten();
     match status {
-        Some(status) => record(pool, &status.backups).await,
+        Some(status) => {
+            // The server's update history copies the last run (ADR-0172).
+            if let Some(run) = &status.update {
+                crate::server_history::record(pool, run).await?;
+            }
+            record(pool, &status.backups).await
+        }
         None => Ok(false),
     }
 }

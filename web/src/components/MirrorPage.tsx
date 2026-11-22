@@ -8,7 +8,7 @@ import { t } from "@/i18n";
 import { ApiError, type MirrorDetail, type MirrorRun, type MirrorSnapshot, api, describeError } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
-import { describeMirror, durationText, intervalText, minuteText, retentionText } from "@/lib/mirrors";
+import { describeMirror, durationText, intervalText, minuteText, retentionText, syncHint } from "@/lib/mirrors";
 import { MIRRORS_PATH, campaignHref, serverHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 import { UUID } from "@/lib/uuid";
@@ -116,10 +116,22 @@ export function MirrorPage({ id }: { id: string | null }) {
         meta={`${describeMirror(mirror, { distribution: true })} · ${intervalText(mirror.sync_interval_s)}`}
         actions={
           <>
-            <Button disabled={disabled} onClick={() => void jobs.start(mirror, "snapshot")}>
-              {t("mirrors.createSnapshot")}
-            </Button>
-            <Button variant="k" disabled={disabled} onClick={() => void jobs.start(mirror, "sync")}>
+            {/* Each sync of the others publishes a snapshot already. */}
+            {!mirror.auto_snapshot && (
+              <Button
+                disabled={disabled}
+                title={t("mirrors.createSnapshot.hint")}
+                onClick={() => void jobs.start(mirror, "snapshot")}
+              >
+                {t("mirrors.createSnapshot")}
+              </Button>
+            )}
+            <Button
+              variant="k"
+              disabled={disabled}
+              title={syncHint(mirror)}
+              onClick={() => void jobs.start(mirror, "sync")}
+            >
               {t("mirrors.syncNow")}
             </Button>
           </>

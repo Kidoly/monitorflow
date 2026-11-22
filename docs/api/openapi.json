@@ -393,7 +393,7 @@
           "automatic updates"
         ],
         "summary": "Read the progress of automatic updates",
-        "description": "The settings as they apply, the central server's version (agents and\nrelays never move past it), and for agents and for relays: the newest\nstable release held, the `target` they move to, its rollout, totals,\neach site's phase and totals, and the last 10 rollouts with their\n`outcome`. Relays are updated before the agents behind them.\n\nMonitorFlow sends each server or relay that needs it a signed\n`self_update` command, with no person's approval: one per site first\n(`canary`), then a quarter of the site at a time (`rolling`). A site\nwhose first update failed is `blocked` for that version. Each server is\ntried once per version. Only the agent or relay restarts, never the\nhost, and its watchdog rolls back a version that does not connect.\n\nNeeds a global administrator role and the key area \"updates\".",
+        "description": "The settings as they apply, the central server's version (agents and\nrelays never move past it), and for agents and for relays: the newest\nstable release held, the `target` they move to, its rollout, totals,\neach site's phase and totals, the last 10 rollouts with their\n`outcome`, and `versions`: how many agents or relays run each version,\nnewest first, which `GET /api/v1/auto-update/{kind}/versions/peers`\nlists. Relays are updated before the agents behind them.\n\nMonitorFlow sends each server or relay that needs it a signed\n`self_update` command, with no person's approval: one per site first\n(`canary`), then a quarter of the site at a time (`rolling`). A site\nwhose first update failed is `blocked` for that version. Each server is\ntried once per version. Only the agent or relay restarts, never the\nhost, and its watchdog rolls back a version that does not connect.\n\nNeeds a global administrator role and the key area \"updates\".",
         "operationId": "auto_update_status",
         "responses": {
           "200": {
@@ -463,7 +463,19 @@
                       "up_to_date": 3,
                       "waiting": 4,
                       "waiting_for_relay": 0
-                    }
+                    },
+                    "versions": [
+                      {
+                        "count": 3,
+                        "up_to_date": true,
+                        "version": "0.3.1"
+                      },
+                      {
+                        "count": 5,
+                        "up_to_date": false,
+                        "version": "0.3.0"
+                      }
+                    ]
                   },
                   "relays": {
                     "history": [],
@@ -495,7 +507,14 @@
                       "up_to_date": 1,
                       "waiting": 0,
                       "waiting_for_relay": 0
-                    }
+                    },
+                    "versions": [
+                      {
+                        "count": 1,
+                        "up_to_date": true,
+                        "version": "0.3.1"
+                      }
+                    ]
                   },
                   "server_version": "0.3.1",
                   "settings": {
@@ -821,6 +840,164 @@
           },
           "400": {
             "description": "`invalid`: a missing or unknown `state`, a `site_id` that is not a UUID, or `limit` outside 1 to 500",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not a global administrator. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: `kind` is not `agent` or `relay`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auto-update/{kind}/versions/peers": {
+      "get": {
+        "tags": [
+          "automatic updates"
+        ],
+        "summary": "List the agents or relays on one version",
+        "description": "The servers with an agent (for `agent`) or relays (for `relay`) that\nrun `version`, one of the `versions` of `GET /api/v1/auto-update`, so\n`total` equals its `count`. Without `version`, those that have not\nreported one yet. With `site_id`, only that site's. Each has its\n`state` towards the target, as the totals count it (`null` when there\nis no target). By customer, site and name.\n\nNeeds a global administrator role and the key area \"updates\".",
+        "operationId": "auto_update_version_peers",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "`agent` or `relay`; anything else is 404",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AutoUpdateKind"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "The version, as `versions` of `GET /api/auto-update` gives it.\nAbsent: those that have not reported one yet.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the peers of this site.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 500, default 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Peers to skip, default 0.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the peers on that version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoUpdateVersionPeerList"
+                },
+                "example": {
+                  "peers": [
+                    {
+                      "customer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                      "customer_name": "acme",
+                      "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+                      "name": "web-01",
+                      "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "site_name": "paris",
+                      "state": "waiting"
+                    }
+                  ],
+                  "target": "0.3.1",
+                  "total": 1,
+                  "version": "0.3.0"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: a `site_id` that is not a UUID, or `limit` outside 1 to 500",
             "content": {
               "application/json": {
                 "schema": {
@@ -30501,7 +30678,7 @@
           "server-update"
         ],
         "summary": "Read the server's update status",
-        "description": "The running version, what the updater service last reported, the last\nupdate with its steps, and a newer release the daily check saw.\n`enabled` is false when the deployment has no updater (a package\ninstall, for one): updates are then done by hand. Changes nothing.",
+        "description": "The running version, what the updater service last reported, the last\nupdate with its steps (the updater's own words), its `milestones` in\norder (`verified`, `images_pulled`, `backed_up`, `database_migrated`,\n`server_restarted`, `agents_ready`) each with when it was reached, and\na newer release the daily check saw.\n`enabled` is false when the deployment has no updater (a package\ninstall, for one): updates are then done by hand. Changes nothing.",
         "operationId": "update_status",
         "responses": {
           "200": {
@@ -30515,6 +30692,32 @@
                   "available": null,
                   "channel": "regular",
                   "enabled": true,
+                  "milestones": [
+                    {
+                      "done_at": "2026-11-12T20:00:03Z",
+                      "kind": "verified"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:00:41Z",
+                      "kind": "images_pulled"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:01:40Z",
+                      "kind": "backed_up"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:01:52Z",
+                      "kind": "database_migrated"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:02:30Z",
+                      "kind": "server_restarted"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:03:05Z",
+                      "kind": "agents_ready"
+                    }
+                  ],
                   "requested": false,
                   "running_version": "0.4.0",
                   "source": "https://releases.example.com/monitorflow",
@@ -30531,15 +30734,31 @@
                     "steps": [
                       {
                         "at": "2026-11-12T20:00:03Z",
-                        "message": "Release 0.4.0 verified"
+                        "message": "release 0.4.0 verified: server, web and updater images"
+                      },
+                      {
+                        "at": "2026-11-12T20:00:41Z",
+                        "message": "images pulled"
                       },
                       {
                         "at": "2026-11-12T20:01:40Z",
-                        "message": "Backup taken"
+                        "message": "database and server data saved to monitorflow-backup-20261112T200005Z-update.tar.gz"
+                      },
+                      {
+                        "at": "2026-11-12T20:01:41Z",
+                        "message": "new images pinned; migrating the database"
+                      },
+                      {
+                        "at": "2026-11-12T20:01:52Z",
+                        "message": "recreating server and web"
+                      },
+                      {
+                        "at": "2026-11-12T20:02:30Z",
+                        "message": "server 0.4.0 is healthy"
                       },
                       {
                         "at": "2026-11-12T20:03:05Z",
-                        "message": "0.4.0 is running"
+                        "message": "agent release 0.4.0 cached for agents"
                       }
                     ],
                     "to": "0.4.0"
@@ -30894,6 +31113,135 @@
           },
           "422": {
             "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server-update/history": {
+      "get": {
+        "tags": [
+          "server-update"
+        ],
+        "summary": "List the server's updates",
+        "description": "The central server's updates, newest first: the versions from and to,\nwho asked (`null` when the updater started it from the command line, or\nit is not known), when it started and ended, and its `result`:\n`in_progress`, `succeeded`, `failed` (nothing changed), `rolled_back`\n(the previous version runs again, `error` says why) or `unknown`.\nUpdates asked for before this history are copied from the audit log\nwithout their end; for those, and for one whose end the server did not\nsee, `result` is `succeeded` with `inferred` when a later update started\nfrom the version it installed or the server runs it (ADR-0172).\nChanges nothing.",
+        "operationId": "update_history",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 200, default 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updates, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerUpdateHistory"
+                },
+                "example": {
+                  "updates": [
+                    {
+                      "error": null,
+                      "finished_at": "2026-11-21T21:06:56Z",
+                      "from": "0.4.0",
+                      "id": "8c2f6d1e-4b3a-4f9e-a7c5-0d1b2e3f4a5b",
+                      "inferred": false,
+                      "requested_by": "admin",
+                      "result": "succeeded",
+                      "started_at": "2026-11-21T21:05:57Z",
+                      "to": "0.4.1"
+                    },
+                    {
+                      "error": null,
+                      "finished_at": null,
+                      "from": "0.3.2",
+                      "id": "3f1c2a9e-8b7d-4c6e-9a51-2d0e7f4b6c18",
+                      "inferred": true,
+                      "requested_by": "admin",
+                      "result": "succeeded",
+                      "started_at": "2026-11-12T20:00:01Z",
+                      "to": "0.4.0"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: `limit` outside 1 to 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
             "content": {
               "application/json": {
                 "schema": {
@@ -45358,7 +45706,8 @@
         "required": [
           "totals",
           "sites",
-          "history"
+          "history",
+          "versions"
         ],
         "properties": {
           "history": {
@@ -45403,6 +45752,13 @@
           "totals": {
             "$ref": "#/components/schemas/AutoUpdateTotals",
             "description": "The sum of `sites`."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutoUpdateVersionCount"
+            },
+            "description": "How many agents (or relays) run each version, newest first: the\nversions in use, not the releases held."
           }
         }
       },
@@ -45776,6 +46132,114 @@
             "type": "integer",
             "description": "Of `waiting`, agents whose relay runs an older version or is being\nupdated.",
             "minimum": 0
+          }
+        }
+      },
+      "AutoUpdateVersionCount": {
+        "type": "object",
+        "description": "How many agents or relays run one version.",
+        "required": [
+          "count",
+          "up_to_date"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "up_to_date": {
+            "type": "boolean",
+            "description": "On the target or newer. `false` when there is no target, and for a\nversion that is not a release version, like a development build."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "As they report it; `null` for those that have not reported one\nyet."
+          }
+        }
+      },
+      "AutoUpdateVersionPeer": {
+        "type": "object",
+        "description": "One agent or relay on that version.",
+        "required": [
+          "id",
+          "name",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "customer_name"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The server's ID for an agent, the relay's for a relay."
+          },
+          "name": {
+            "type": "string",
+            "description": "The server's hostname or the relay's name."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "state": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AutoUpdatePeerState",
+                "description": "Where it stands towards the target, as the totals count it; `null`\nwhen there is no target, or when it is counted in none of them."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AutoUpdateVersionPeerList": {
+        "type": "object",
+        "description": "Body of `GET /api/auto-update/{kind}/versions/peers`.",
+        "required": [
+          "total",
+          "peers"
+        ],
+        "properties": {
+          "peers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutoUpdateVersionPeer"
+            },
+            "description": "By customer, site and name."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What peers move to; `null` when there is none."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Peers on this version (and site), the `count` of `versions`;\n`peers` holds one page of them.",
+            "minimum": 0
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -60091,6 +60555,82 @@
           }
         }
       },
+      "ServerUpdateHistory": {
+        "type": "object",
+        "description": "Body of `GET /api/server-update/history`.",
+        "required": [
+          "updates"
+        ],
+        "properties": {
+          "updates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerUpdateHistoryEntry"
+            },
+            "description": "Newest first."
+          }
+        }
+      },
+      "ServerUpdateHistoryEntry": {
+        "type": "object",
+        "description": "One update of the server, newest first.",
+        "required": [
+          "id",
+          "to",
+          "started_at",
+          "result",
+          "inferred"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed or rolled back, in the updater's words."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` while running, and when the end was not recorded."
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` when not known."
+          },
+          "id": {
+            "type": "string",
+            "description": "The ID of its request, `update.id` of `GET /api/v1/server-update`."
+          },
+          "inferred": {
+            "type": "boolean",
+            "description": "`result` was inferred: a later update started from the version it\ninstalled, or the server runs it."
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user name of who asked; `null` when the updater started it\n(from the command line) or it is not known."
+          },
+          "result": {
+            "$ref": "#/components/schemas/ServerUpdateResult"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
       "ServerUpdateRequest": {
         "type": "object",
         "description": "Body of `POST /api/server-update`.",
@@ -60104,6 +60644,17 @@
           }
         },
         "additionalProperties": false
+      },
+      "ServerUpdateResult": {
+        "type": "string",
+        "description": "How an update of the history ended.",
+        "enum": [
+          "in_progress",
+          "succeeded",
+          "failed",
+          "rolled_back",
+          "unknown"
+        ]
       },
       "ServerUpdateStarted": {
         "type": "object",
@@ -63167,6 +63718,38 @@
           "tested"
         ]
       },
+      "UpdateMilestone": {
+        "type": "object",
+        "description": "One milestone and when it was reached.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "done_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` while not reached, and for good once the update ended\nwithout it."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/UpdateMilestoneKind"
+          }
+        }
+      },
+      "UpdateMilestoneKind": {
+        "type": "string",
+        "description": "A milestone of an update, as people follow it: each one the updater\nreached, told by the step it wrote then.",
+        "enum": [
+          "verified",
+          "images_pulled",
+          "backed_up",
+          "database_migrated",
+          "server_restarted",
+          "agents_ready"
+        ]
+      },
       "UpdateMirrorRequest": {
         "type": "object",
         "description": "Body of `PATCH /api/mirrors/{id}`.",
@@ -63295,6 +63878,7 @@
           "running_version",
           "enabled",
           "source",
+          "milestones",
           "requested",
           "channel"
         ],
@@ -63317,6 +63901,13 @@
           "enabled": {
             "type": "boolean",
             "description": "Whether `server_update_dir` is set."
+          },
+          "milestones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpdateMilestone"
+            },
+            "description": "The milestones of `update` in order, each with when it was\nreached, from its steps; empty without an update. The steps stay\nthe updater's own words; these are what a person follows."
           },
           "requested": {
             "type": "boolean",

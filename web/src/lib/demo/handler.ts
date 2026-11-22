@@ -9,6 +9,7 @@ import {
   DEMO_REFUSAL,
   type AgentInstall,
   type AutoUpdateStatus,
+  type AutoUpdateVersionPeerList,
   type BackupsView,
   type CertificateAuthorityView,
   type DashboardData,
@@ -330,6 +331,7 @@ const ROUTES: [RegExp, Handler][] = [
   })],
   [/^\/api\/mirrors\/([^/]+)$/, ([id]) => mirrorDetail(found(MIRRORS.find((m) => m.id === id)))],
   [/^\/api\/auto-update$/, () => autoUpdate()],
+  [/^\/api\/auto-update\/(agent|relay)\/versions\/peers$/, ([kind]) => versionPeers(kind!)],
   [/^\/api\/agent-releases$/, () => ({ versions: [AGENT_VERSION, "0.5.2", "0.5.1"], latest: AGENT_VERSION })],
 
   // Alerting
@@ -420,6 +422,12 @@ const ROUTES: [RegExp, Handler][] = [
     tags: [],
   })],
   [/^\/api\/server-update$/, () => SERVER_UPDATE],
+  [/^\/api\/server-update\/history$/, () => ({
+    updates: [{
+      id: SERVER_UPDATE.update!.id, from: "0.5.2", to: SERVER_VERSION, requested_by: "alex", started_at: ago(10 * DAY + 10),
+      finished_at: ago(10 * DAY + 3), result: "succeeded", error: null, inferred: false,
+    }],
+  })],
   [/^\/api\/license$/, () => ({ available: false })],
   [/^\/api\/backups$/, () => BACKUPS],
   [/^\/api\/certificate-authority$/, () => CERTIFICATE_AUTHORITY],
@@ -613,12 +621,24 @@ const SERVER_UPDATE: ServerUpdateView = {
   update: {
     id: "00000000-0000-4000-801a-000000000001", from: "0.5.2", to: SERVER_VERSION, requested_by: "alex", state: "succeeded",
     steps: [
-      { at: ago(10 * DAY + 9), message: "Backing up the database" },
-      { at: ago(10 * DAY + 6), message: "Starting the new version" },
-      { at: ago(10 * DAY + 4), message: "The new version answers" },
+      { at: ago(10 * DAY + 10), message: `release ${SERVER_VERSION} verified: server, web and updater images` },
+      { at: ago(10 * DAY + 9), message: "images pulled" },
+      { at: ago(10 * DAY + 8), message: "database and server data saved to monitorflow-update-0.5.2.dump" },
+      { at: ago(10 * DAY + 7), message: "new images pinned; migrating the database" },
+      { at: ago(10 * DAY + 6), message: "recreating server and web" },
+      { at: ago(10 * DAY + 4), message: `server ${SERVER_VERSION} is healthy` },
+      { at: ago(10 * DAY + 3), message: `agent release ${SERVER_VERSION} cached for agents` },
     ],
     error: null, backup: "monitorflow-update-0.5.2.dump", migrated: true, started_at: ago(10 * DAY + 10), finished_at: ago(10 * DAY + 3),
   },
+  milestones: [
+    { kind: "verified", done_at: ago(10 * DAY + 10) },
+    { kind: "images_pulled", done_at: ago(10 * DAY + 9) },
+    { kind: "backed_up", done_at: ago(10 * DAY + 8) },
+    { kind: "database_migrated", done_at: ago(10 * DAY + 6) },
+    { kind: "server_restarted", done_at: ago(10 * DAY + 4) },
+    { kind: "agents_ready", done_at: ago(10 * DAY + 3) },
+  ],
   requested: false,
   available: null,
 };
@@ -660,8 +680,30 @@ function autoUpdate(): AutoUpdateStatus {
   return {
     settings: { enabled: true, enabled_locked: false, paused: false, failure_threshold: 3 },
     server_version: SERVER_VERSION,
-    agents: { latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(SERVERS.length), sites, history },
-    relays: { latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(1), sites: [sites[0]!], history: [] },
+    agents: {
+      latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(SERVERS.length), sites, history,
+      versions: [{ version: AGENT_VERSION, count: SERVERS.length, up_to_date: true }],
+    },
+    relays: {
+      latest: AGENT_VERSION, target: AGENT_VERSION, rollout: null, totals: totals(1), sites: [sites[0]!], history: [],
+      versions: [{ version: AGENT_VERSION, count: 1, up_to_date: true }],
+    },
+  };
+}
+
+/** Every demo agent or relay runs the target. */
+function versionPeers(kind: string): AutoUpdateVersionPeerList {
+  const site = (id: string) => SITES.find((s) => s.id === id)?.name ?? "";
+  const peers = kind === "relay"
+    ? [{ id: RELAY.id, name: RELAY.name, site_id: RELAY.site_id }]
+    : SERVERS.map((s) => ({ id: s.id, name: s.hostname, site_id: s.site_id }));
+  return {
+    version: AGENT_VERSION,
+    target: AGENT_VERSION,
+    total: peers.length,
+    peers: peers.map((p) => ({
+      ...p, site_name: site(p.site_id), customer_id: CUSTOMER.id, customer_name: CUSTOMER.name, state: "up_to_date" as const,
+    })),
   };
 }
 

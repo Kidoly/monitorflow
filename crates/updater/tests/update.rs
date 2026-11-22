@@ -431,6 +431,11 @@ async fn updates_to_a_signed_release_after_a_backup() {
     // The whole release was staged, the installer included (ADR-0054).
     assert!(run.steps.iter().any(|s| s.message.contains("install.sh")
         && s.message.contains("monitorflow-agent-linux-x86_64")));
+    // The web interface follows the steps by their words: each milestone
+    // is found, in order.
+    let reached: Vec<_> = run.milestones().iter().map(|m| m.done_at).collect();
+    assert!(reached.iter().all(Option::is_some), "{:?}", run.steps);
+    assert!(reached.is_sorted(), "{reached:?}");
 }
 
 #[tokio::test]

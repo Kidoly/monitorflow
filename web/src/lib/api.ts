@@ -1367,6 +1367,38 @@ export interface AutoUpdateKind {
   totals: AutoUpdateTotals;
   sites: AutoUpdateSite[];
   history: HistoryRollout[];
+  /** How many run each version, newest first. */
+  versions: AutoUpdateVersionCount[];
+}
+
+/** One version in use and how many agents or relays run it. */
+export interface AutoUpdateVersionCount {
+  /** `null` for those that have not reported one yet. */
+  version: string | null;
+  count: number;
+  /** On the target or newer; `false` without a target or for a development build. */
+  up_to_date: boolean;
+}
+
+/** One agent (a server) or relay of `GET /api/auto-update/{kind}/versions/peers`. */
+export interface AutoUpdateVersionPeer {
+  id: string;
+  name: string;
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  /** Towards the target; `null` without a target or outside every total. */
+  state: AutoUpdatePeerState | null;
+}
+
+/** `GET /api/auto-update/{kind}/versions/peers`: one page and the total. */
+export interface AutoUpdateVersionPeerList {
+  version: string | null;
+  target: string | null;
+  total: number;
+  /** By customer, site and name. */
+  peers: AutoUpdateVersionPeer[];
 }
 
 /** `GET /api/auto-update`. */
@@ -1935,6 +1967,40 @@ export interface ServerUpdateRun {
 }
 
 /** `GET /api/server-update`. */
+/** What a person follows of an update, in order. */
+export type ServerUpdateMilestoneKind =
+  | "verified"
+  | "images_pulled"
+  | "backed_up"
+  | "database_migrated"
+  | "server_restarted"
+  | "agents_ready";
+
+export interface ServerUpdateMilestone {
+  kind: ServerUpdateMilestoneKind;
+  /** Null while not reached, and for good once the update ended without it. */
+  done_at: string | null;
+}
+
+/** How an update of the server's history ended (ADR-0172). */
+export type ServerUpdateResult = "in_progress" | "succeeded" | "failed" | "rolled_back" | "unknown";
+
+/** One update of the server, `GET /api/server-update/history`. */
+export interface ServerUpdateHistoryEntry {
+  id: string;
+  from: string | null;
+  to: string;
+  /** Null when the updater started it (command line) or it is not known. */
+  requested_by: string | null;
+  started_at: string;
+  finished_at: string | null;
+  result: ServerUpdateResult;
+  /** Why it failed or rolled back, in the updater's words. */
+  error: string | null;
+  /** `result` was deduced from the updates after it, not recorded. */
+  inferred: boolean;
+}
+
 export interface ServerUpdateView {
   running_version: string;
   /** The server is set up for updates from the web interface. */
@@ -1954,6 +2020,8 @@ export interface ServerUpdateView {
     } | null;
   } | null;
   update: ServerUpdateRun | null;
+  /** The milestones of `update` in order, from its steps; empty without one. */
+  milestones: ServerUpdateMilestone[];
   /** A request waits for the updater. */
   requested: boolean;
   /** A newer release the daily check saw (ADR-0061). */
@@ -5142,6 +5210,13 @@ export const api = {
     return request<AutoUpdatePeerList>(`/api/auto-update/${kind}/peers?${query}`, { signal });
   },
 
+  /** The agents or relays on `version`; `null` lists those that reported none. */
+  autoUpdateVersionPeers: (kind: RolloutKind, version: string | null, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ limit: String(AUTO_UPDATE_PEERS_MAX) });
+    if (version !== null) query.set("version", version);
+    return request<AutoUpdateVersionPeerList>(`/api/auto-update/${kind}/versions/peers?${query}`, { signal });
+  },
+
   /** Changes automatic update settings; global administrators only; audited. */
   setAutoUpdate: (change: AutoUpdateChange) =>
     request<AutoUpdateSettings>("/api/settings/auto-update", {
@@ -5299,6 +5374,10 @@ export const api = {
   /** Server updates; global administrators only (ADR-0056). */
   serverUpdate: (signal?: AbortSignal) =>
     request<ServerUpdateView>("/api/server-update", { signal }),
+
+  /** The server's updates, newest first (ADR-0172). */
+  serverUpdateHistory: (signal?: AbortSignal) =>
+    request<{ updates: ServerUpdateHistoryEntry[] }>("/api/server-update/history", { signal }),
 
   license: (signal?: AbortSignal) => request<LicenseView>("/api/license", { signal }),
 
