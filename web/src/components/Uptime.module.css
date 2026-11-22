@@ -110,7 +110,8 @@
   margin: 0;
 }
 
-.percent {
+/* Two classes, so the day colors below (.up, .minor...) only tint the text. */
+.window .percent {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   background: none;

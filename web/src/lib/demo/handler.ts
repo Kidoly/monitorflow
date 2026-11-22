@@ -253,19 +253,12 @@ const ROUTES: [RegExp, Handler][] = [
       services: [], machines, checks: [], maintenance: [],
     };
   }],
-  // Uptime (ADR-0172): the same servers, up every day.
+  // Uptime (ADR-0172): the same servers, up most days, with a few outages.
   [/^\/api\/availability\/uptime$/, (_, q) => {
     const today = new Date();
-    const days = Array.from({ length: 90 }, (_, i) => {
-      const date = new Date(today.getTime() - (89 - i) * 86_400_000).toISOString().slice(0, 10);
-      return { date, availability: 100, down_seconds: 0, maintenance_seconds: 0 };
-    });
-    const windows = { day: 100, week: 100, month: 100, quarter: 100 };
     return {
       at: today.toISOString(), time_zone: q.get("time_zone") ?? "UTC",
-      rows: SERVERS.map((s) => ({
-        kind: "server", id: s.id, name: s.hostname, check: null, site_name: s.site_name, windows, outages: 0, days,
-      })),
+      rows: SERVERS.map((s) => ({ kind: "server", id: s.id, name: s.hostname, check: null, site_name: s.site_name, ...uptimeOf(s.hostname, today) })),
     };
   }],
   [/^\/api\/business-services$/, () => ({ services: [] })],
@@ -773,4 +766,39 @@ function behindRelay(s: Server): Dependency {
 
 function noDependencies(): DependencyPage {
   return { parents: [], children: [], behind: [], suggestions: [], unreachable: null, unreachable_checks: [], can_change: false };
+}
+
+
+/** Seconds down, by days ago (0 is today), of the demo servers that had an outage. */
+const OUTAGES: Record<string, Record<number, number>> = {
+  "web-02": { 2: 180 },
+  "web-03": { 31: 2_400 },
+  "proxy-01": { 9: 300 },
+  "db-02": { 40: 4_800 },
+  "app-04": { 0: 2_520 },
+  "mail-01": { 63: 360 },
+  "files-01": { 12: 1_500, 47: 900 },
+  "br-web-01": { 18: 7_200 },
+  "br-files-01": { 18: 7_200 },
+};
+
+/** A demo server's 90 days and its four windows, worked out from `OUTAGES`. */
+export function uptimeOf(hostname: string, today: Date) {
+  const outages = OUTAGES[hostname] ?? {};
+  const percent = (down: number, counted: number) => Math.round((1 - down / counted) * 100_000) / 1000;
+  const days = Array.from({ length: 90 }, (_, i) => {
+    const ago = 89 - i;
+    const down = outages[ago] ?? 0;
+    const date = new Date(today.getTime() - ago * 86_400_000).toISOString().slice(0, 10);
+    return { date, availability: percent(down, 86_400), down_seconds: down, maintenance_seconds: 0 };
+  });
+  const over = (n: number) => {
+    const last = days.slice(-n);
+    return percent(last.reduce((sum, d) => sum + d.down_seconds, 0), n * 86_400);
+  };
+  return {
+    windows: { day: over(1), week: over(7), month: over(30), quarter: over(90) },
+    outages: Object.keys(outages).length,
+    days,
+  };
 }
