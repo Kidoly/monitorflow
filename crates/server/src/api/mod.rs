@@ -273,6 +273,10 @@
 //! | POST | `/api/integrations/{id}/test` | administrator of what it covers | sends a `test` event now; 200 [`integrations::TestResult`] `{"ok", "status", "error"}` |
 //! | GET | `/api/integrations/{id}/deliveries` | administrator of what it covers | `?before=`; [`integrations::DeliveryList`], newest first |
 //! | POST | `/api/integrations/{id}/replay` | administrator of what it covers | body [`integrations::ReplayRequest`], `event_id` or `from` and `to`; 200 [`integrations::ReplayResult`]; 404 for an event it does not want or cover; audited |
+//! | GET | `/api/psa/connection` | global administrator | [`psa::ConnectionState`]: the PSA connection without its secret, or `null` (ADR-0164, ADR-0166) |
+//! | PUT | `/api/psa/connection` | global administrator | body [`psa::ConnectionRequest`]; sets it up or changes it, an empty secret keeps the stored one for the same address; 200 [`psa::ConnectionView`]; audited |
+//! | DELETE | `/api/psa/connection` | global administrator | 204, 404 when none; audited |
+//! | POST | `/api/psa/connection/test` | global administrator | body [`psa::ConnectionRequest`], absent values from the stored connection; signs in and reads the agent, read-only; 200 [`psa::TestResult`] |
 //!
 //! # Authentication
 //!
@@ -767,6 +771,7 @@ mod openapi_imports;
 mod openapi_maintenance;
 mod openapi_network_scans;
 mod openapi_plugins;
+mod openapi_psa;
 pub mod openapi_remediation;
 mod openapi_reports;
 mod openapi_settings;
@@ -782,6 +787,7 @@ pub mod password;
 pub mod plugins;
 pub mod preferences;
 pub mod proxmox;
+pub mod psa;
 pub mod public_address;
 pub mod recommendations;
 pub mod relays;
@@ -1611,6 +1617,13 @@ pub fn router(state: ApiState) -> Router {
             get(integrations::deliveries),
         )
         .route("/api/integrations/{id}/replay", post(integrations::replay))
+        .route(
+            "/api/psa/connection",
+            get(psa::get_connection)
+                .put(psa::put_connection)
+                .delete(psa::delete_connection),
+        )
+        .route("/api/psa/connection/test", post(psa::test_connection))
         .route(
             "/api/servers/{id}/proxmox",
             get(proxmox::get).put(proxmox::set).delete(proxmox::clear),

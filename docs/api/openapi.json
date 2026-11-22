@@ -24113,6 +24113,522 @@
         }
       }
     },
+    "/api/v1/psa/connection": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Read the PSA connection",
+        "description": "The connection without its Client Secret, or `null` when none is set\nup. Global administrators only.",
+        "operationId": "get_psa_connection",
+        "responses": {
+          "200": {
+            "description": "The connection, or `null`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaConnectionState"
+                },
+                "example": {
+                  "connection": {
+                    "agent_name": "MonitorFlow",
+                    "base_url": "https://halo.example.com",
+                    "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                    "created_at": "2026-11-22T09:00:00Z",
+                    "enabled": true,
+                    "kind": "halopsa",
+                    "last_error": null,
+                    "last_error_at": null,
+                    "last_success_at": "2026-11-22T09:30:00Z",
+                    "secret_error": null,
+                    "tenant": null,
+                    "updated_at": "2026-11-22T09:00:00Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Set up or change the PSA connection",
+        "description": "Sets the address, the tenant of a hosted instance, the Client ID and\nthe Client Secret, and whether MonitorFlow uses the connection. Saving\ntests nothing: test first with the same body. An empty or absent\n`client_secret` keeps the stored one, only for the same address. A new\naddress or Client ID clears the last success and error. Audited as\n`psa.connection.create` or `psa.connection.update`, without the secret.\nSafe to repeat.",
+        "operationId": "put_psa_connection",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaConnectionRequest"
+              },
+              "example": {
+                "base_url": "https://halo.example.com",
+                "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                "client_secret": "the application's secret",
+                "enabled": true,
+                "kind": "halopsa",
+                "tenant": null
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaConnection"
+                },
+                "example": {
+                  "agent_name": "MonitorFlow",
+                  "base_url": "https://halo.example.com",
+                  "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                  "created_at": "2026-11-22T09:00:00Z",
+                  "enabled": true,
+                  "kind": "halopsa",
+                  "last_error": null,
+                  "last_error_at": null,
+                  "last_success_at": "2026-11-22T09:30:00Z",
+                  "secret_error": null,
+                  "tenant": null,
+                  "updated_at": "2026-11-22T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: an address that is not http or https or holds a user, a missing Client ID, a missing secret for a new address, another `kind`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Remove the PSA connection",
+        "description": "MonitorFlow stops calling the PSA. Audited as `psa.connection.delete`.",
+        "operationId": "delete_psa_connection",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/connection/test": {
+      "post": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Test the PSA connection",
+        "description": "Signs in to the PSA and reads the agent the application acts as,\nread-only: no ticket is created. The body's values are tested, the\nstored ones filling what it leaves out, so a form can be tested before\nit is saved; `{}` tests the stored connection and records the outcome\non it. A failure is answered with 200 and the PSA's own words.",
+        "operationId": "test_psa_connection",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaConnectionRequest"
+              },
+              "example": {
+                "base_url": "https://halo.example.com",
+                "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                "client_secret": "the application's secret"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Whether it worked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaConnectionTest"
+                },
+                "example": {
+                  "agent_name": null,
+                  "error": "halo.example.com answered 401 Unauthorized to the sign-in: invalid_client. Check the Client ID and Secret, and that the application uses Client Credentials.",
+                  "ok": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: as when saving",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/relays": {
       "get": {
         "tags": [
@@ -54620,6 +55136,183 @@
           }
         }
       },
+      "PsaConnection": {
+        "type": "object",
+        "description": "The connection as the web interface shows it; never its secret.",
+        "required": [
+          "kind",
+          "base_url",
+          "client_id",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "agent_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The PSA agent the application acts as, from the last success;\n`null` before the first."
+          },
+          "base_url": {
+            "type": "string",
+            "description": "The PSA's address, like `https://halo.example.com`."
+          },
+          "client_id": {
+            "type": "string",
+            "description": "The API application's Client ID."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was set up."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether MonitorFlow uses the connection."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`halopsa`, the only kind so far."
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The last failure, in the PSA's words when it gave some; `null`\nonce a request works again."
+          },
+          "last_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When `last_error` happened."
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last request that worked; `null` before the first."
+          },
+          "secret_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the stored secret does not open (ADR-0125), so it must be\nentered again; `null` when it opens."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tenant named on the token request of hosted instances; `null`\nwhen none."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was last changed."
+          }
+        }
+      },
+      "PsaConnectionRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/psa/connection` and of\n`POST /api/psa/connection/test`.",
+        "properties": {
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The PSA's address, like `https://halo.example.com`; a trailing\n`/api` is taken off. On the test, absent means the stored one."
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The API application's Client ID. On the test, absent means the\nstored one."
+          },
+          "client_secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The application's Client Secret. Write-only. Absent or empty keeps\nthe stored one, but only for the same address."
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether MonitorFlow uses it; absent means `true`. Ignored by the\ntest."
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`halopsa`; absent means `halopsa`."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tenant of a hosted instance; absent, `null` or empty for none."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PsaConnectionState": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/connection`.",
+        "properties": {
+          "connection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PsaConnection",
+                "description": "The connection; `null` when none is set up."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PsaConnectionTest": {
+        "type": "object",
+        "description": "Body of `POST /api/psa/connection/test`.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "agent_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The PSA agent the application acts as, when it worked."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, in the PSA's words when it gave some; `null` when\nit worked."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Whether MonitorFlow signed in and read the application's agent."
+          }
+        }
+      },
       "PublicAddress": {
         "type": "object",
         "description": "Body of `GET` and `PUT /api/settings/public-address`, and the\n`address` object of a new token.",
@@ -61204,6 +61897,10 @@
     {
       "name": "snmp",
       "description": "What custom SNMP checks of devices read (ADR-0157): lookups that name the values of an enumerated object and give each a state (`ok`, `warning`, `critical`), built in or a customer's own; MIB files a customer uploads to name the objects of its devices; and the names the library of common vendor objects and those MIBs give to OIDs. Lookups and MIBs belong to a customer: anyone who reads one of its sites reads them, and operators and above of the whole customer change them. Custom checks of a device, with their channels and limits, and Test and Browse from the device's probe, are under `/api/v1/devices/{id}/snmp-checks` and `/api/v1/devices/{id}/snmp`. Area `servers`."
+    },
+    {
+      "name": "psa",
+      "description": "The PSA connection: MonitorFlow calls a PSA's API with credentials it keeps, HaloPSA first. One per installation, managed by global administrators (a key with every reach), since one PSA serves every customer. In HaloPSA, create an API application (Configuration, Integrations, HaloPSA API, View Applications) with the authentication method Client ID and Secret (Client Credentials), acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never answered. Every change is in the audit log, with the key's ID. API keys need the `administration` area."
     }
   ]
 }

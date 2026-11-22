@@ -201,6 +201,7 @@ db_tests! {
                 "plugins",
                 "proxmox_guests",
                 "proxmox_snapshots",
+                "psa_connections",
                 "relay_auto_updates",
                 "relay_commands",
                 "relay_mirrors",
