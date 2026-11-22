@@ -1,7 +1,7 @@
 # ADR-0165: New AI remediation attempts on an alert still open
 
 Date: 2026-11-22
-Status: accepted
+Status: accepted; devices, offline hosts and servers refusing AI commands get an attempt that diagnoses without commands (ADR-0175)
 
 ## Context
 

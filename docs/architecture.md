@@ -251,7 +251,7 @@ When a threshold is crossed, the central server can ask an external AI API to di
 
 1. A sensor crosses a threshold and an incident opens.
 2. The server gathers context: sensor history, recent logs, server inventory, recent changes.
-3. The AI receives the context and proposes a diagnosis and commands, one at a time.
+3. The AI receives the context and proposes a diagnosis and commands, one at a time. Where no command can run (the server refuses AI commands, a device, a host that stopped reporting), it diagnoses from the context alone, nothing runs, and the incident goes to a person with its diagnosis (ADR-0175).
 4. Each command is classified by risk and either runs automatically or waits for approval.
 5. The agent runs the command and returns its output; the AI decides the next step.
 6. The incident closes when the sensor returns to normal, or escalates to a human.
