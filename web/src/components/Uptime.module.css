@@ -90,8 +90,8 @@
 
 .windows {
   display: grid;
-  grid-template-columns: repeat(4, minmax(64px, auto));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(86px, auto));
+  gap: 8px;
   margin: 0;
 }
 
@@ -99,6 +99,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  gap: 2px;
 }
 
 .window dt {
@@ -110,25 +111,33 @@
   margin: 0;
 }
 
+/* A window's percentage, always written, on a light tint of its color. */
 .percent {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  background: none;
+  white-space: nowrap;
 }
 
-.percent.up {
+.tint-up {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
   color: var(--ok);
 }
 
-.percent.minor {
+.tint-minor {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
   color: var(--warn);
 }
 
-.percent.major {
+.tint-major {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
   color: var(--bad);
 }
 
-.percent.none {
+.tint-none {
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
   color: var(--muted);
 }
 
@@ -147,24 +156,69 @@
   border-radius: 2px;
 }
 
-.bar:hover {
-  opacity: 0.75;
+/* Days and swatches: translucent, the full color on hover. */
+.fill-up {
+  background: color-mix(in srgb, var(--ok) 45%, transparent);
 }
 
-.up {
+.fill-minor {
+  background: color-mix(in srgb, var(--warn) 50%, transparent);
+}
+
+.fill-major {
+  background: color-mix(in srgb, var(--bad) 50%, transparent);
+}
+
+.fill-none {
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+}
+
+.bar.fill-up:hover {
   background: var(--ok);
 }
 
-.minor {
+.bar.fill-minor:hover {
   background: var(--warn);
 }
 
-.major {
+.bar.fill-major:hover {
   background: var(--bad);
 }
 
-.none {
+.bar.fill-none:hover {
   background: var(--border);
+}
+
+/* The chosen period's numbers under the bars. */
+.period {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.periodItem {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.periodItem dt {
+  color: var(--muted);
+}
+
+.periodItem dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.periodMain dd {
+  font-weight: 600;
+}
+
+.bad {
+  color: var(--bad);
 }
 
 /* On a phone, the last 30 days: 90 bars would be a pixel each. */
@@ -180,6 +234,11 @@
 
   .window {
     align-items: flex-start;
+  }
+
+  .percent {
+    padding: 2px 6px;
+    font-size: 12px;
   }
 
   .check {

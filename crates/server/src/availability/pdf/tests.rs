@@ -65,6 +65,7 @@ fn data(outages: usize) -> Data {
         parents: vec![],
         pings: HashMap::new(),
         names: vec![],
+        gaps: Spans::new(),
     }
 }
 

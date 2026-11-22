@@ -152,6 +152,8 @@ db_tests! {
                 "campaign_waves",
                 "campaign_windows",
                 "campaigns",
+                "central_server_gaps",
+                "central_server_heartbeat",
                 "certificates",
                 "check_recommendation_dismissals",
                 "cluster_leases",

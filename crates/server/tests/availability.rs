@@ -2,9 +2,13 @@
 //! and their events, offline incidents of a relay, silences counted from
 //! their creation, and business services. Ignored without `DATABASE_URL`.
 
+use std::time::Duration;
+
 use chrono::{DateTime, TimeDelta, Utc};
 use monitorflow_server::availability::data::{load, Reach};
 use monitorflow_server::availability::report::build;
+use monitorflow_server::cluster::{self, Cluster, Links};
+use monitorflow_server::grpc::Registry;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -306,5 +310,60 @@ db_tests! {
         let report = build(&load(&mut db, &both, period, t(5000)).await.unwrap(), period, t(5000));
         let db_server = report.machines.iter().find(|m| m.id == p.db).unwrap();
         assert_eq!(db_server.outage_list[0].causes[0].via.as_deref(), Some("sw-core"));
+    }
+
+    #[sqlx::test]
+    async fn a_central_server_gap_is_recorded_and_left_out_of_reports(pool: PgPool) {
+        let settings = cluster::Settings {
+            heartbeat: Duration::from_millis(100),
+            dead_after: Duration::from_secs(30),
+            leader_ttl: Duration::from_secs(1),
+        };
+        let gaps = || sqlx::query_as::<_, (DateTime<Utc>, DateTime<Utc>)>(
+            "SELECT starts_at, ends_at FROM central_server_gaps ORDER BY starts_at",
+        );
+        let instance = Cluster::join(pool.clone(), Registry::default(), Links::default(), settings)
+            .await
+            .unwrap();
+        // The first heartbeat ever, then one right after: no gap.
+        instance.tick().await.unwrap();
+        instance.tick().await.unwrap();
+        assert!(gaps().fetch_all(&pool).await.unwrap().is_empty());
+        // Two hours without any instance, as after the host was stopped.
+        let stopped: DateTime<Utc> = sqlx::query_scalar(
+            "UPDATE central_server_heartbeat SET at = now() - interval '2 hours' RETURNING at",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        instance.tick().await.unwrap();
+        instance.tick().await.unwrap();
+        let recorded = gaps().fetch_all(&pool).await.unwrap();
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert_eq!(recorded[0].0, stopped);
+        assert!(recorded[0].1 - recorded[0].0 >= TimeDelta::hours(2));
+
+        // A report: the memory of web critical 100-400 while the central
+        // server was stopped from 160 to 400, when the incident resolved.
+        let p = place(&pool, "acme").await;
+        incident(&pool, Some(p.db), None, "monitorflow_memory_available_ratio", &[
+            ("opened", Some("critical"), 100),
+            ("resolved", None, 400),
+        ]).await;
+        sqlx::query("INSERT INTO central_server_gaps (starts_at, ends_at) VALUES ($1, $2)")
+            .bind(t(160))
+            .bind(t(400))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut db = pool.acquire().await.unwrap();
+        let period = (t(0), t(1440));
+        let report = build(&load(&mut db, &everything(), period, t(5000)).await.unwrap(), period, t(5000));
+        let server = report.machines.iter().find(|m| m.id == p.db).unwrap();
+        assert_eq!(server.numbers.down_seconds, 60.0 * 60.0);
+        assert_eq!(server.numbers.unobserved_seconds, 240.0 * 60.0);
+        assert_eq!(server.numbers.counted_seconds, 1200.0 * 60.0);
+        assert_eq!(server.outage_list.len(), 1);
+        assert_eq!(server.outage_list[0].end, t(160));
     }
 }

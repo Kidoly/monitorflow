@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
-import type { AvailabilityReport } from "@/lib/api";
+import type { AvailabilityReport, Uptime, UptimeRow } from "@/lib/api";
 import { formatAvailability, formatTarget, periodOf } from "@/lib/reports";
 import { As, oneSite, viewer } from "@/test/admin";
 
@@ -16,6 +16,7 @@ const numbers = (down: number, outages: number) => ({
   counted_seconds: 2_678_400,
   down_seconds: down,
   maintenance_seconds: 0,
+  unobserved_seconds: 0,
   outages,
   longest_seconds: down,
 });
@@ -60,10 +61,30 @@ function report(overrides: Partial<AvailabilityReport> = {}): AvailabilityReport
   };
 }
 
-/** Answers `GET /api/availability` with `body`, echoing the period asked for. */
-function stubReport(body: AvailabilityReport) {
+function uptimeRow(overrides: Partial<UptimeRow>): UptimeRow {
+  return {
+    kind: "server",
+    id: "s1",
+    name: "mail-1",
+    check: null,
+    site_name: "paris",
+    windows: { day: 100, week: 99.5, month: 99.9, quarter: 99.97 },
+    outages: 1,
+    days: [{ date: "2026-11-18", availability: 100, down_seconds: 0, maintenance_seconds: 0 }],
+    ...overrides,
+  };
+}
+
+/**
+ * Answers `GET /api/availability` with `body`, echoing the period asked
+ * for, and `GET /api/availability/uptime` with `uptime` when given.
+ */
+function stubReport(body: AvailabilityReport, uptime?: Uptime) {
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
     const url = new URL(String(input), "http://localhost");
+    if (uptime && url.pathname === "/api/availability/uptime") {
+      return new Response(JSON.stringify(uptime), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.pathname !== "/api/availability") throw new Error(`unexpected request ${String(input)}`);
     // As the server writes them: without milliseconds.
     const second = (iso: string | null) => (iso ?? "").replace(/\.\d{3}Z$/, "Z");
@@ -126,6 +147,35 @@ describe("Reports page", () => {
     const pdf = screen.getByRole("link", { name: "Download PDF" });
     expect(pdf.getAttribute("href")).toMatch(/^\/api\/availability\/report\?from=.*&format=pdf&language=en&time_zone=/);
     expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("customer_id");
+  });
+
+  it("lists each server once: its uptime with the period's numbers under it", async () => {
+    const rows = [
+      uptimeRow({ kind: "service", id: "b1", name: "Email", site_name: null }),
+      uptimeRow({}),
+      uptimeRow({ kind: "check", check: "service_postfix" }),
+    ];
+    stubReport(report(), { at: "2026-11-18T10:00:00Z", time_zone: "Europe/Paris", rows });
+    render(
+      <As user={oneSite(viewer)}>
+        <ReportsPage />
+      </As>,
+    );
+    const lines = await screen.findAllByLabelText("Chosen period: This month");
+    expect(lines).toHaveLength(3);
+    const [service, machine, check] = lines;
+    expect(service).toHaveTextContent("Missed");
+    expect(service).toHaveTextContent("Exceeded by 19 min");
+    expect(machine).toHaveTextContent("Outages1");
+    expect(machine).toHaveTextContent("Maintenance");
+    expect(check).toHaveTextContent("Down time42 min");
+    // Listed once: no table repeats them, and the downloads stay.
+    expect(screen.queryByRole("region", { name: "Servers and devices" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Business services" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Checks with outages" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Outages" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download PDF" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download CSV" })).toBeInTheDocument();
   });
 
   it("asks for chosen days and refuses impossible ones", async () => {

@@ -102,6 +102,7 @@ fn data() -> Data {
         parents: vec![],
         pings: HashMap::new(),
         names: vec!["cpu".into(), "disk".into(), "memory".into()],
+        gaps: Spans::new(),
     }
 }
 

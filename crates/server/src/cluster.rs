@@ -44,6 +44,22 @@ pub const COMMANDS_CHANNEL: &str = "monitorflow_commands";
 /// Payload: the relay ID. Sent by a trigger on `relay_commands`.
 pub const RELAY_COMMANDS_CHANNEL: &str = "monitorflow_relay_commands";
 
+/// Moves the central server's heartbeat to now and, when it was older
+/// than `$1` seconds, records the time in between as a gap (ADR-0173):
+/// no instance ran then. Returns the gap's start, when there was one.
+const GAP: &str = "WITH prev AS (
+         SELECT at FROM central_server_heartbeat WHERE id FOR UPDATE
+     ), gap AS (
+         INSERT INTO central_server_gaps (starts_at, ends_at)
+         SELECT at, now() FROM prev WHERE at < now() - make_interval(secs => $1)
+         RETURNING starts_at
+     ), beat AS (
+         INSERT INTO central_server_heartbeat (id, at) VALUES (true, now())
+         ON CONFLICT (id) DO UPDATE
+             SET at = greatest(central_server_heartbeat.at, EXCLUDED.at)
+     )
+     SELECT starts_at FROM gap";
+
 #[derive(Debug, Clone)]
 pub struct Settings {
     /// Time between two ticks.
@@ -192,6 +208,13 @@ impl Cluster {
             tracing::warn!(instance = %self.id(), "this instance was taken for dead; joining again");
             self.insert().await?;
             lock(&self.inner.written).clear();
+        }
+        let gap: Option<DateTime<Utc>> = sqlx::query_scalar(GAP)
+            .bind(self.inner.settings.dead_after.as_secs_f64())
+            .fetch_optional(pool)
+            .await?;
+        if let Some(since) = gap {
+            tracing::warn!(%since, "no central server instance was running since then");
         }
         let gone = sqlx::query(
             "DELETE FROM server_instances
