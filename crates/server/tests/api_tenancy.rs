@@ -2873,6 +2873,16 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
             }
         }
+        // What tickets the PSA connection opens: global administrators.
+        ("GET", "/api/psa/ticket-types")
+        | ("GET", "/api/psa/categories")
+        | ("GET", "/api/psa/statuses")
+        | ("PUT", "/api/psa/ticket-settings") => {
+            let body = method
+                .eq("PUT")
+                .then(|| json!({ "min_severity": "warning" }));
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         ("GET", "/api/dashboard-metrics") => {
             let uri = format!("{path}?site_id={}", b.site);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
