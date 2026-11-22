@@ -718,7 +718,10 @@ mod tests {
             disabled.text,
             "Integration HaloPSA was turned off: nothing reached psa.example for a day. Last error: psa.example answered 500 Internal Server Error."
         );
-        assert_eq!(disabled.url, "https://mf.example/settings/integrations/");
+        assert_eq!(
+            disabled.url,
+            "https://mf.example/settings/integrations/webhooks/"
+        );
     }
 
     #[test]

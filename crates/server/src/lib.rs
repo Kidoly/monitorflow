@@ -27,6 +27,7 @@ pub mod netscan;
 pub mod notify;
 pub mod plugins;
 pub mod probes;
+pub mod psa;
 pub mod recommend;
 pub mod relay_commands;
 pub mod release_check;

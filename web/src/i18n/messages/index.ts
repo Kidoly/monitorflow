@@ -28,6 +28,7 @@ import * as monitoring from "./monitoring";
 import * as notifications from "./notifications";
 import * as onCall from "./onCall";
 import * as plugins from "./plugins";
+import * as psa from "./psa";
 import * as relays from "./relays";
 import * as remediation from "./remediation";
 import * as reports from "./reports";
@@ -77,6 +78,7 @@ export const en = {
   notifications: notifications.en,
   onCall: onCall.en,
   plugins: plugins.en,
+  psa: psa.en,
   relays: relays.en,
   remediation: remediation.en,
   reports: reports.en,
@@ -125,6 +127,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   notifications: notifications.fr,
   onCall: onCall.fr,
   plugins: plugins.fr,
+  psa: psa.fr,
   relays: relays.fr,
   remediation: remediation.fr,
   reports: reports.fr,

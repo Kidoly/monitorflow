@@ -3477,6 +3477,104 @@ export interface IntegrationDeliveryList {
 /** One event by its ID, or every event from `from` to `to` (now when absent). */
 export type IntegrationReplay = { event_id: string } | { from: string; to?: string };
 
+/** The PSA connection of `GET /api/psa/connection` (ADR-0164, ADR-0166). Never its secret. */
+export interface PsaConnection {
+  kind: "halopsa";
+  base_url: string;
+  tenant: string | null;
+  client_id: string;
+  /** Why the saved secret does not open; null when it does. */
+  secret_error: string | null;
+  enabled: boolean;
+  /** The PSA agent the application acts as, from the last success. */
+  agent_name: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  created_at: string;
+  updated_at: string;
+  tickets: PsaTicketSettings;
+}
+
+/** What tickets the PSA connection opens and how it closes them (ADR-0166). */
+export interface PsaTicketSettings {
+  ticket_type_id: number | null;
+  ticket_type_name: string | null;
+  category: string | null;
+  min_severity: "warning" | "critical";
+  /** Null adds a note only. */
+  resolved_status_id: number | null;
+  resolved_status_name: string | null;
+}
+
+export interface PsaTicketSettingsRequest {
+  ticket_type_id: number | null;
+  category: string | null;
+  min_severity: "warning" | "critical";
+  resolved_status_id: number | null;
+}
+
+/** One incident's ticket in the PSA. */
+export interface PsaTicket {
+  incident_id: string;
+  ticket_id: number | null;
+  state: "creating" | "open" | "closed" | "skipped" | "failed";
+  error: string | null;
+  metric: string;
+  severity: string;
+  server_name: string | null;
+  site_name: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+export interface PsaConnectionState {
+  connection: PsaConnection | null;
+}
+
+/** Body of `PUT /api/psa/connection` and of its test; an empty secret keeps the saved one for the same address. */
+export interface PsaConnectionRequest {
+  base_url?: string;
+  tenant?: string | null;
+  client_id?: string;
+  client_secret?: string;
+  enabled?: boolean;
+}
+
+/** A client or site of the PSA, as its lists give it. */
+export interface PsaRecord {
+  id: number;
+  name: string;
+}
+
+export interface PsaRecordList {
+  records: PsaRecord[];
+}
+
+/** A MonitorFlow site and the PSA client and site it is matched to; nulls when not matched. */
+export interface PsaSiteLink {
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  client_id: number | null;
+  client_name: string | null;
+  psa_site_id: number | null;
+  psa_site_name: string | null;
+  linked_at: string | null;
+}
+
+export interface PsaSiteLinkList {
+  sites: PsaSiteLink[];
+}
+
+export interface PsaConnectionTest {
+  ok: boolean;
+  agent_name: string | null;
+  error: string | null;
+}
+
 /** A channel run by a plugin (ADR-0103); its secret settings never come back. */
 export interface PluginChannelSettings {
   plugin: string;
@@ -4649,6 +4747,46 @@ export const api = {
 
   replayIntegration: (id: string, body: IntegrationReplay) =>
     request<{ queued: number }>(`/api/integrations/${encodeURIComponent(id)}/replay`, { method: "POST", body }),
+
+  /** The PSA connection, global administrators only (ADR-0164). */
+  psaConnection: (signal?: AbortSignal) => request<PsaConnectionState>("/api/psa/connection", { signal }),
+
+  savePsaConnection: (body: PsaConnectionRequest) =>
+    request<PsaConnection>("/api/psa/connection", { method: "PUT", body }),
+
+  deletePsaConnection: () => request<void>("/api/psa/connection", { method: "DELETE" }),
+
+  /** The PSA's active clients whose name holds `search`, read through the connection. */
+  psaClients: (search: string, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/clients?search=${encodeURIComponent(search)}`, { signal }),
+
+  psaClientSites: (client: number, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/clients/${client}/sites`, { signal }),
+
+  /** Every site with the PSA client and site it is matched to. */
+  psaSiteLinks: (signal?: AbortSignal) => request<PsaSiteLinkList>("/api/psa/site-links", { signal }),
+
+  linkPsaSite: (site: string, body: { client_id: number; psa_site_id: number | null }) =>
+    request<PsaSiteLink>(`/api/psa/site-links/${encodeURIComponent(site)}`, { method: "PUT", body }),
+
+  unlinkPsaSite: (site: string) =>
+    request<void>(`/api/psa/site-links/${encodeURIComponent(site)}`, { method: "DELETE" }),
+
+  psaTicketTypes: (signal?: AbortSignal) => request<PsaRecordList>("/api/psa/ticket-types", { signal }),
+
+  psaCategories: (signal?: AbortSignal) => request<{ categories: string[] }>("/api/psa/categories", { signal }),
+
+  psaStatuses: (signal?: AbortSignal) => request<PsaRecordList>("/api/psa/statuses", { signal }),
+
+  savePsaTicketSettings: (body: PsaTicketSettingsRequest) =>
+    request<PsaConnection>("/api/psa/ticket-settings", { method: "PUT", body }),
+
+  /** The latest tickets opened for incidents, closed, skipped or refused. */
+  psaTickets: (signal?: AbortSignal) => request<{ tickets: PsaTicket[] }>("/api/psa/tickets", { signal }),
+
+  /** Signs in to the PSA with the form's values, the saved ones filling the gaps; changes nothing there. */
+  testPsaConnection: (body: PsaConnectionRequest) =>
+    request<PsaConnectionTest>("/api/psa/connection/test", { method: "POST", body }),
 
   /** Install keys and hosts waiting for approval, of the customers the user administers (ADR-0073). */
   installKeys: (signal?: AbortSignal) =>
