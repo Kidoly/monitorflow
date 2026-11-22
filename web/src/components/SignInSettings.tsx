@@ -25,7 +25,6 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import styles from "./AdminPages.module.css";
 import { describeGrant } from "./UsersAdmin";
 import { Button, fieldClass } from "./ui/Button";
-import { cx } from "./ui/cx";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 import { CopyButton } from "./ui/SecretField";
@@ -461,7 +460,7 @@ function CaField({ value, onChange }: { value: string | null; onChange: (pem: st
     <label className={styles.field}>
       {t("signIn.ca")}
       <textarea
-        className={cx(fieldClass, styles.mono)}
+        className={fieldClass}
         rows={4}
         spellCheck={false}
         value={value ?? ""}
@@ -558,7 +557,7 @@ function LdapFields({
           <label className={styles.field}>
             {t("signIn.userFilter")}
             <input
-              className={cx(fieldClass, styles.mono)}
+              className={fieldClass}
               spellCheck={false}
               value={settings.user_filter}
               onChange={(e) => update({ user_filter: e.target.value })}
@@ -567,7 +566,7 @@ function LdapFields({
           <label className={styles.field}>
             {t("signIn.groupFilter")}
             <input
-              className={cx(fieldClass, styles.mono)}
+              className={fieldClass}
               spellCheck={false}
               value={settings.group_filter}
               onChange={(e) => update({ group_filter: e.target.value })}

@@ -245,7 +245,7 @@ function CreateToken({
           {t("install.token.name")}
           <input
             ref={peerRef}
-            className={cx(fieldClass, styles.mono)}
+            className={fieldClass}
             value={peerId}
             onChange={(e) => setPeerId(e.target.value)}
             placeholder={t("install.token.namePlaceholder")}
@@ -282,7 +282,7 @@ function CreateToken({
           {t("install.token.addresses")} <span className={styles.fieldNote}>{t("install.token.addressesNote")}</span>
         </span>
         <input
-          className={cx(fieldClass, styles.mono)}
+          className={fieldClass}
           value={role === "relay" ? names : ""}
           onChange={(e) => setNames(e.target.value)}
           placeholder="relay1.paris.example 10.0.0.5"
@@ -516,7 +516,7 @@ export function ServerAddress({
       {editable ? (
         <div className={styles.buttons}>
           <select
-            className={cx(fieldClass, styles.mono)}
+            className={fieldClass}
             aria-labelledby={labelId}
             value={typing ? OTHER_ADDRESS : value.address}
             disabled={busy}
@@ -546,7 +546,7 @@ export function ServerAddress({
               }}
             >
               <input
-                className={cx(fieldClass, styles.mono)}
+                className={fieldClass}
                 aria-label={t("install.address.otherLabel")}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
@@ -662,7 +662,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
           {t("install.agent.relay")} <span className={styles.fieldNote}>{t("install.agent.relayNote")}</span>
         </span>
         <input
-          className={cx(fieldClass, styles.mono)}
+          className={fieldClass}
           value={relay}
           onChange={(e) => setRelay(e.target.value)}
           placeholder="relay1.paris.example:7443"
@@ -811,7 +811,7 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
                   </span>
                 </span>
                 <input
-                  className={cx(fieldClass, styles.mono)}
+                  className={fieldClass}
                   value={customUrl}
                   onChange={(e) => setCustomUrl(e.target.value)}
                   placeholder="https://files.example.com/monitorflow/"

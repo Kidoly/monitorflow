@@ -67,20 +67,22 @@ export function SettingsIndex() {
           {t("settings.index.noMatch", { query: query.trim() })}
         </EmptyState>
       ) : (
-        shown.map((group) => (
-          <section key={group.heading} className={styles.group} aria-labelledby={`${searchId}-${group.heading}`}>
-            <h2 id={`${searchId}-${group.heading}`} className={styles.groupTitle}>
-              {t(group.heading)}
-            </h2>
-            <ul className={styles.rows}>
-              {group.entries.map((entry) => (
-                <li key={entry.id}>
-                  <SettingsRow entry={entry} me={me} status={statuses[entry.id]} />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))
+        <div className={styles.groups}>
+          {shown.map((group) => (
+            <section key={group.heading} className={styles.group} aria-labelledby={`${searchId}-${group.heading}`}>
+              <h2 id={`${searchId}-${group.heading}`} className={styles.groupTitle}>
+                {t(group.heading)}
+              </h2>
+              <ul className={styles.rows}>
+                {group.entries.map((entry) => (
+                  <li key={entry.id}>
+                    <SettingsRow entry={entry} me={me} status={statuses[entry.id]} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
       )}
     </Page>
   );

@@ -306,7 +306,7 @@ function StartForm({ onPreview }: { onPreview: (run: ImportRun) => void }) {
                 )}
               </span>
               <input
-                className={cx(fieldClass, styles.mono)}
+                className={fieldClass}
                 type={field.secret ? "password" : "text"}
                 autoComplete={field.secret ? "new-password" : "off"}
                 spellCheck={false}

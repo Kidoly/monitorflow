@@ -50,6 +50,7 @@ export function StatTiles({
   return (
     <div
       className={cx(styles.tiles, compact && styles.compact, dense && styles.dense)}
+      data-stat-tiles=""
       style={{ maxWidth }}
       role="group"
       aria-label={label}

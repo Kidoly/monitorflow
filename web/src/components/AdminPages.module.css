@@ -43,6 +43,31 @@
   color: var(--muted);
 }
 
+/* A note straight in the page column, not in a box, lines up with the column. */
+.page > .sectionNote {
+  padding: 0;
+}
+
+/*
+ * Blocks put straight in a section keep the section's inner margins, so
+ * buttons and tiles never touch its border.
+ */
+.section > .buttons,
+.section > .buttonRow {
+  padding: 14px 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.section > .sectionNote + .buttons,
+.section > .sectionNote + .buttonRow {
+  padding-top: 0;
+}
+
+.section > [data-stat-tiles] {
+  margin: 16px 20px;
+}
+
 /* The grey sentence closing a list page. */
 .footnote {
   margin: 0;
@@ -167,6 +192,11 @@ tr td.wrap {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* A body right under the title line, with no note between them. */
+.sectionHead + .sectionBody {
+  padding-top: 14px;
 }
 
 .linkList {

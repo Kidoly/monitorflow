@@ -275,7 +275,7 @@ describe("ServerPage", () => {
     expect(screen.getByRole("status", { name: "Loading server" })).toBeInTheDocument();
     await heading();
     await vi.waitFor(() => expect(document.title).toBe("web-1 · MonitorFlow"));
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(/^Fleet›▾$/);
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(/^Fleet›Other servers of paris▾$/);
     const facts = document.querySelector("dl")!;
     // Only what the header line above does not say.
     expect(facts).toHaveTextContent(/Customer\s*acme/);
@@ -318,7 +318,7 @@ describe("ServerPage", () => {
     stubFetch(routes());
     render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByRole("navigation", { name: "Fil d’Ariane" })).toHaveTextContent(/^Parc›▾$/);
+    expect(screen.getByRole("navigation", { name: "Fil d’Ariane" })).toHaveTextContent(/^Parc›Autres serveurs de paris▾$/);
     const facts = document.querySelector("dl")!;
     expect(facts).toHaveTextContent(/Connecté depuis\s*2026-10-19 02:14/);
     expect(facts).toHaveTextContent(/Certificat\s*Valide jusqu’au 2026-12-\d\d \(renouvelé automatiquement\)/);
