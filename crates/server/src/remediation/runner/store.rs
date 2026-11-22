@@ -67,6 +67,8 @@ pub struct NewAlert {
 
 /// Open alerts opened within `max_age` without any remediation incident,
 /// oldest first. Alerts opened before remediation was enabled stay alone.
+/// Devices and `offline` alerts are among them: they get a diagnosis
+/// without commands (ADR-0175).
 pub async fn new_alerts(
     pool: &PgPool,
     max_age: Duration,
@@ -75,10 +77,8 @@ pub async fn new_alerts(
     sqlx::query_as(
         "SELECT a.id, a.server_id, a.metric, a.instance FROM incidents a
          WHERE a.state = 'open' AND a.opened_at > now() - make_interval(secs => $1)
-           -- No command reaches an offline host (ADR-0072), nor a device,
-           -- which has no agent to run one (ADR-0148).
-           AND a.metric <> 'offline'
-           AND NOT EXISTS (SELECT 1 FROM servers d WHERE d.id = a.server_id AND d.kind = 'device')
+           -- A relay's own offline incident has no server to diagnose.
+           AND a.server_id IS NOT NULL
            AND NOT EXISTS (SELECT 1 FROM remediation_incidents r WHERE r.alert_incident_id = a.id)
          ORDER BY a.opened_at LIMIT $2",
     )

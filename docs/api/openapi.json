@@ -28184,7 +28184,7 @@
           "remediation"
         ],
         "summary": "Whether AI remediation can run again on an alert",
-        "description": "The alert's remediations so far, one remediation incident per attempt,\nand whether the caller may start a new one now with\n`POST .../run`. When not, `blocked` says why with a stable code and\n`reason` in English; a server that reports refusing AI commands is\n`commands_refused`, with the refusal's code in `refusal`, so the reason\nshows before anyone starts an attempt that could only stop on it.\n\nThe loop starts an attempt by itself, once, when the latest one stopped\nbecause the server refused AI commands and the server accepts them\nsince (ADR-0165).\n\nNeeds any role on the alert's site and the key area \"remediation\".",
+        "description": "The alert's remediations so far, one remediation incident per attempt,\nand whether the caller may start a new one now with\n`POST .../run`. When not, `blocked` says why with a stable code and\n`reason` in English.\n\nWhere no command can run (the server reports refusing AI commands, a\ndevice, an offline host), an attempt still starts: the AI diagnoses\nfrom what the server already holds and runs nothing. `diagnosis_only`\nsays so before anyone starts it, with `refusal` for a server that\nrefuses (ADR-0175). On an open alert that never had a remediation,\n`no_attempt` says why: AI is off, the alert is too old for AI to look\nat it by itself, or it does so within seconds.\n\nThe loop starts an attempt by itself, once, when the latest one stopped\nbecause the server refused AI commands and the server accepts them\nsince (ADR-0165).\n\nNeeds any role on the alert's site and the key area \"remediation\".",
         "operationId": "run_status",
         "parameters": [
           {
@@ -28209,11 +28209,15 @@
                 "example": {
                   "alert_incident_id": "2f3a4b5c-6d7e-4f80-9a1b-2c3d4e5f6a7b",
                   "attempts": 1,
-                  "blocked": "commands_refused",
-                  "can_run": false,
+                  "blocked": null,
+                  "can_run": true,
+                  "diagnosis_only": "commands_off",
+                  "diagnosis_only_reason": "AI commands are off on this server; the Commands tab of its page turns them on, or gives the line to run there (MF_ALLOW_COMMANDS=1)",
                   "latest_id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
                   "latest_state": "escalated",
-                  "reason": "AI commands are off on this server; run the installer there with MF_ALLOW_COMMANDS=1 to allow them",
+                  "no_attempt": null,
+                  "no_attempt_reason": null,
+                  "reason": null,
                   "refusal": "commands_off"
                 }
               }
@@ -28296,7 +28300,7 @@
           "remediation"
         ],
         "summary": "Run AI remediation again on an alert",
-        "description": "Opens a new remediation incident for an open alert whose remediations\nare all closed (escalated, failed, or resolved while the alert stayed\nopen), or that never had one. The remediation loop drives it on its next\npoll, with the configured limits, and the AI gets how the earlier\nattempts ended in its context. Its first event is a `note` with `code`\n`attempt`, `trigger` `person`, the user as actor, its `attempt` number\nand `previous`, how the one before ended; the audit log records\n`remediation.run`.\n\nNeeds an approver or administrator role on the alert's site and the key\narea \"remediation\".",
+        "description": "Opens a new remediation incident for an open alert whose remediations\nare all closed (escalated, failed, or resolved while the alert stayed\nopen), or that never had one. Where no command can run, the AI only\ndiagnoses (`diagnosis_only` of the status). The remediation loop drives it on its next\npoll, with the configured limits, and the AI gets how the earlier\nattempts ended in its context. Its first event is a `note` with `code`\n`attempt`, `trigger` `person`, the user as actor, its `attempt` number\nand `previous`, how the one before ended; the audit log records\n`remediation.run`.\n\nNeeds an approver or administrator role on the alert's site and the key\narea \"remediation\".",
         "operationId": "run",
         "parameters": [
           {
@@ -28380,7 +28384,7 @@
             }
           },
           "409": {
-            "description": "`conflict`, with `error` saying why: the alert is resolved, it is on a device or an offline host, an attempt is running or waits for approval, AI is off, or the server reports refusing AI commands (with how to allow them); or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "description": "`conflict`, with `error` saying why: the alert is resolved, an attempt is running or waits for approval, or AI is off; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -29283,7 +29287,7 @@
           "remediation"
         ],
         "summary": "List remediation incidents",
-        "description": "What the AI did about alerts: one remediation incident per alert it\nworked on, newest `opened_at` first. Read-only: the remediation loop\nopens, drives and closes them. An incident in `awaiting_approval`\ncarries the command waiting for a person in `pending_command`; the\napproval queue (`/remediation/approvals`) decides it.\n\nNeeds any role and the key area \"remediation\"; lists the incidents of\nthe servers of the sites the caller reads. A filter outside them gives\nan empty list. Paginated with `limit` and `cursor`; unknown parameters\nand bad values are 400.",
+        "description": "What the AI did about alerts: one remediation incident per alert it\nworked on, newest `opened_at` first. Read-only: the remediation loop\nopens, drives and closes them. An incident in `awaiting_approval`\ncarries the command waiting for a person in `pending_command`; the\napproval queue (`/remediation/approvals`) decides it.\n\nEvery alert gets a diagnosis (ADR-0175): `diagnosis` and `ai_advice`\nhold the AI's latest, as untrusted text. Where no command could run\n(the server refuses AI commands, a device, a host that stopped\nreporting), `diagnosis_only` says why, and the incident closes on the\nAI's answer, escalated to a person with its `close_code`.\n\nNeeds any role and the key area \"remediation\"; lists the incidents of\nthe servers of the sites the caller reads. A filter outside them gives\nan empty list. Paginated with `limit` and `cursor`; unknown parameters\nand bad values are 400.",
         "operationId": "list_incidents",
         "parameters": [
           {
@@ -29363,10 +29367,19 @@
                 "example": {
                   "incidents": [
                     {
+                      "ai_advice": "The configuration test passes now; a restart should bring it back.",
+                      "ai_command": "systemctl restart nginx",
                       "alert_incident_id": "2f3a4b5c-6d7e-4f80-9a1b-2c3d4e5f6a7b",
+                      "close_code": null,
+                      "close_detail": null,
+                      "close_limit": null,
+                      "close_reason": null,
                       "closed_at": null,
                       "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
                       "customer_name": "acme",
+                      "diagnosed_at": "2026-11-05T03:12:40Z",
+                      "diagnosis": "nginx exited after a configuration reload.",
+                      "diagnosis_only": null,
                       "event_count": 6,
                       "hostname": "web-1",
                       "id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
@@ -29392,6 +29405,34 @@
                       "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                       "site_name": "paris",
                       "state": "awaiting_approval"
+                    },
+                    {
+                      "ai_advice": "Check the size of /var/backups and move old archives off the server.",
+                      "ai_command": null,
+                      "alert_incident_id": "9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f",
+                      "close_code": "commands_off",
+                      "close_detail": null,
+                      "close_limit": null,
+                      "close_reason": "the AI diagnosed the incident without commands: AI commands are off on this server; the Commands tab of its page turns them on, or gives the line to run there (MF_ALLOW_COMMANDS=1)",
+                      "closed_at": "2026-11-05T02:40:19Z",
+                      "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                      "customer_name": "acme",
+                      "diagnosed_at": "2026-11-05T02:40:18Z",
+                      "diagnosis": "/ grew from 70% to 93% in two hours; the logs show the backup job writing to /var/backups.",
+                      "diagnosis_only": "commands_off",
+                      "event_count": 4,
+                      "hostname": "db-1",
+                      "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                      "instance": "/",
+                      "max_commands": 10,
+                      "max_duration_s": 1800,
+                      "metric": "monitorflow_disk_used_ratio",
+                      "opened_at": "2026-11-05T02:40:11Z",
+                      "pending_command": null,
+                      "server_id": "4b5c6d7e-8f90-4a1b-9c2d-3e4f5a6b7c8d",
+                      "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "site_name": "paris",
+                      "state": "escalated"
                     }
                   ],
                   "next_cursor": null
@@ -29499,6 +29540,8 @@
                   "$ref": "#/components/schemas/RemediationIncidentDetail"
                 },
                 "example": {
+                  "ai_advice": "Reading the unit's status is harmless.",
+                  "ai_command": "systemctl status nginx",
                   "alert_incident_id": "2f3a4b5c-6d7e-4f80-9a1b-2c3d4e5f6a7b",
                   "chain": {
                     "broken_at": null,
@@ -29507,9 +29550,16 @@
                     "reason": null,
                     "valid": true
                   },
+                  "close_code": null,
+                  "close_detail": null,
+                  "close_limit": null,
+                  "close_reason": null,
                   "closed_at": null,
                   "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
                   "customer_name": "acme",
+                  "diagnosed_at": "2026-11-05T03:12:31Z",
+                  "diagnosis": "nginx stopped; its last log lines may say why.",
+                  "diagnosis_only": null,
                   "event_count": 3,
                   "events": [
                     {
@@ -59931,6 +59981,20 @@
           "event_count"
         ],
         "properties": {
+          "ai_advice": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the AI said to do next with that diagnosis (untrusted text):\nthe `reason` it stopped with, or the `reasoning` of the command it\nproposed."
+          },
+          "ai_command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The command it proposed with that diagnosis; `null` when it\nstopped. Where `diagnosis_only` is set, a suggestion for a person\nthat never ran."
+          },
           "alert_incident_id": {
             "type": [
               "string",
@@ -59938,6 +60002,35 @@
             ],
             "format": "uuid",
             "description": "The threshold incident that opened it, see `/api/incidents`."
+          },
+          "close_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Once closed, the `code` of the event that closed it, as the audit\nlog words it (`sensor_normal`, `ai_escalated`, `ai_failed`,\n`commands_off`, ...); `null` while it runs."
+          },
+          "close_detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The part of the sentence that varies: an error, a rule's reason,\nthe AI's words or a command; `null` when none."
+          },
+          "close_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The number in the sentence, for the limits; `null` otherwise."
+          },
+          "close_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That event's English sentence."
           },
           "closed_at": {
             "type": [
@@ -59952,6 +60045,28 @@
           },
           "customer_name": {
             "type": "string"
+          },
+          "diagnosed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it gave that diagnosis."
+          },
+          "diagnosis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The AI's latest diagnosis (untrusted text, ADR-0175), from its\nlatest `ai_proposal` event; `null` before it answered."
+          },
+          "diagnosis_only": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why no command could run, so the AI only diagnosed from what the\nserver already held (ADR-0175): `commands_off`,\n`commands_off_windows`, `system_unsupported`, `agent_too_old`\n(the server refuses AI commands), `device` (no agent) or `offline`\n(the host stopped reporting). `null` when commands could run, or\nbefore the context was sent."
           },
           "event_count": {
             "type": "integer",
@@ -60389,11 +60504,25 @@
               "string",
               "null"
             ],
-            "description": "Why not: `alert_resolved`, `no_agent` (a device, or the server is\noffline), `in_progress` (an attempt is running or waits for\napproval), `ai_off`, `commands_refused` (the server reports refusing\nAI commands, see `refusal`), or `role` (the caller is no approver on\nthe site). `null` when it can run."
+            "description": "Why not: `alert_resolved`, `in_progress` (an attempt is running or\nwaits for approval), `ai_off`, or `role` (the caller is no approver\non the site). `null` when it can run. Since ADR-0175 a device, an\noffline host or a server refusing AI commands no longer blocks\n(`no_agent` and `commands_refused` are not returned any more): the\nattempt diagnoses without commands, see `diagnosis_only`."
           },
           "can_run": {
             "type": "boolean",
             "description": "Whether the caller may start an attempt now: `blocked` is `null`."
+          },
+          "diagnosis_only": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why an attempt started now could not run commands, so the AI would\nonly diagnose from what the server already holds (ADR-0175): a\n`refusal` code, `device` (no agent) or `offline` (the host stopped\nreporting). `null` when commands can run, or the alert is resolved."
+          },
+          "diagnosis_only_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`diagnosis_only` as an English sentence."
           },
           "latest_id": {
             "type": [
@@ -60413,6 +60542,20 @@
               }
             ]
           },
+          "no_attempt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "On an open alert without any remediation, why: `ai_off`, `too_old`\n(it opened more than an hour before AI looked at it; AI looks at new\nalerts only, a person can start one) or `soon` (AI looks at it\nwithin seconds). `null` once it has one, or when resolved."
+          },
+          "no_attempt_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`no_attempt` as an English sentence."
+          },
           "reason": {
             "type": [
               "string",
@@ -60425,7 +60568,7 @@
               "string",
               "null"
             ],
-            "description": "With `commands_refused`, why the server refuses: `commands_off`,\n`commands_off_windows`, `system_unsupported` or `agent_too_old`,\nthe codes of remediation events (ADR-0076)."
+            "description": "When the server reports refusing AI commands, why: `commands_off`,\n`commands_off_windows`, `system_unsupported` or `agent_too_old`, the\ncodes of remediation events (ADR-0076). `null` otherwise."
           }
         }
       },

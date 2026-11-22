@@ -3,6 +3,7 @@
 //! stable `code`, with what varies in `detail` and `limit`, so clients can
 //! word it in their own language.
 
+use super::reach::DiagnosisOnly;
 use crate::commands::acceptance::Refusal;
 
 /// Why an incident closes; [`Self::code`] never changes for a variant.
@@ -37,6 +38,10 @@ pub(super) enum CloseReason {
     /// `command_result` just before, so it is not repeated (`detail` is
     /// absent); `reason` still says it, for older clients.
     Incomplete(String),
+    /// The AI gave its diagnosis where no command can run (ADR-0175). The
+    /// code is that of the reason, so a refusal keeps its own and gets the
+    /// new attempt of ADR-0165; the event adds `diagnosis_only: true`.
+    DiagnosisOnly(DiagnosisOnly),
 }
 
 impl CloseReason {
@@ -59,6 +64,7 @@ impl CloseReason {
             Self::CommandGone => "command_gone",
             Self::TimedOut(_) => "timed_out",
             Self::Incomplete(_) => "incomplete",
+            Self::DiagnosisOnly(why) => why.code(),
         }
     }
 
@@ -86,6 +92,12 @@ impl CloseReason {
             Self::CommandGone => "the queued command is gone".into(),
             Self::TimedOut(command) => format!("the command timed out: {command}"),
             Self::Incomplete(why) => format!("the command did not run to completion: {why}"),
+            Self::DiagnosisOnly(why) => {
+                format!(
+                    "the AI diagnosed the incident without commands: {}",
+                    why.message()
+                )
+            }
         }
     }
 
@@ -146,6 +158,23 @@ mod tests {
                 CloseReason::Incomplete("refused".into()),
                 "incomplete",
                 "the command did not run to completion: refused",
+                None,
+                None,
+            ),
+            (
+                CloseReason::DiagnosisOnly(DiagnosisOnly::Refused(Refusal::Off { windows: false })),
+                "commands_off",
+                "the AI diagnosed the incident without commands: AI commands are off on this \
+                 server; the Commands tab of its page turns them on, or gives the line to run \
+                 there (MF_ALLOW_COMMANDS=1)",
+                None,
+                None,
+            ),
+            (
+                CloseReason::DiagnosisOnly(DiagnosisOnly::Device),
+                "device",
+                "the AI diagnosed the incident without commands: this is a device without an \
+                 agent, so no command can run on it",
                 None,
                 None,
             ),

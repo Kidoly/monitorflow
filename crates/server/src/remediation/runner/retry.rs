@@ -75,8 +75,6 @@ pub enum Blocked {
     AlertResolved,
     /// A remediation of the alert is open, running or waits for approval.
     InProgress,
-    /// No agent runs commands there: a device, or an offline host.
-    NoAgent,
     /// Another attempt started since the caller looked.
     Changed,
 }
@@ -87,7 +85,6 @@ impl Blocked {
         match self {
             Self::AlertResolved => "alert_resolved",
             Self::InProgress => "in_progress",
-            Self::NoAgent => "no_agent",
             Self::Changed => "changed",
         }
     }
@@ -98,27 +95,17 @@ impl Blocked {
             Self::InProgress => {
                 "an AI remediation of this alert is already running or waiting for approval"
             }
-            Self::NoAgent => "no agent can run commands for this alert",
             Self::Changed => "another AI remediation of this alert started meanwhile",
         }
     }
 }
 
-/// Why `alert` cannot get an attempt, from its state, its metric, whether
-/// its server is a device, and the state of its latest remediation.
-pub fn blocked(
-    alert_state: &str,
-    metric: &str,
-    device: bool,
-    latest: Option<IncidentState>,
-) -> Option<Blocked> {
+/// Why `alert` cannot get an attempt, from its state and the state of its
+/// latest remediation. A device or an offline host gets one too: the AI
+/// diagnoses it without commands (ADR-0175).
+pub fn blocked(alert_state: &str, latest: Option<IncidentState>) -> Option<Blocked> {
     if alert_state != "open" {
         return Some(Blocked::AlertResolved);
-    }
-    // As for new alerts: no command reaches an offline host (ADR-0072) or
-    // a device (ADR-0148).
-    if device || metric == "offline" {
-        return Some(Blocked::NoAgent);
     }
     if latest.is_some_and(|state| !state.is_closed()) {
         return Some(Blocked::InProgress);
@@ -147,6 +134,7 @@ pub struct AlertAttempts {
     pub instance: String,
     /// `open` or `resolved`.
     pub state: String,
+    pub opened_at: chrono::DateTime<chrono::Utc>,
     pub device: bool,
     /// Remediation incidents of the alert so far.
     pub attempts: i64,
@@ -156,11 +144,11 @@ pub struct AlertAttempts {
 
 impl AlertAttempts {
     pub fn blocked(&self) -> Option<Blocked> {
-        blocked(&self.state, &self.metric, self.device, self.latest_state)
+        blocked(&self.state, self.latest_state)
     }
 }
 
-const ALERT: &str = "SELECT a.server_id, s.site_id, a.metric, a.instance, a.state,
+const ALERT: &str = "SELECT a.server_id, s.site_id, a.metric, a.instance, a.state, a.opened_at,
             s.kind = 'device' AS device,
             (SELECT count(*) FROM remediation_incidents r
              WHERE r.alert_incident_id = a.id) AS attempts,
@@ -325,40 +313,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_an_open_alert_with_an_agent_and_nothing_in_progress_gets_one() {
-        let disk = "monitorflow_disk_used_ratio";
-        assert_eq!(blocked("open", disk, false, None), None);
-        assert_eq!(
-            blocked("open", disk, false, Some(IncidentState::Escalated)),
-            None
-        );
-        assert_eq!(
-            blocked("open", disk, false, Some(IncidentState::Failed)),
-            None
-        );
-        assert_eq!(
-            blocked("open", disk, false, Some(IncidentState::Resolved)),
-            None
-        );
+    fn only_an_open_alert_with_nothing_in_progress_gets_one() {
+        assert_eq!(blocked("open", None), None);
+        assert_eq!(blocked("open", Some(IncidentState::Escalated)), None);
+        assert_eq!(blocked("open", Some(IncidentState::Failed)), None);
+        assert_eq!(blocked("open", Some(IncidentState::Resolved)), None);
         for active in [
             IncidentState::Open,
             IncidentState::Running,
             IncidentState::AwaitingApproval,
         ] {
-            assert_eq!(
-                blocked("open", disk, false, Some(active)),
-                Some(Blocked::InProgress)
-            );
+            assert_eq!(blocked("open", Some(active)), Some(Blocked::InProgress));
         }
-        assert_eq!(
-            blocked("resolved", disk, false, None),
-            Some(Blocked::AlertResolved)
-        );
-        assert_eq!(
-            blocked("open", "offline", false, None),
-            Some(Blocked::NoAgent)
-        );
-        assert_eq!(blocked("open", disk, true, None), Some(Blocked::NoAgent));
+        assert_eq!(blocked("resolved", None), Some(Blocked::AlertResolved));
     }
 
     #[test]

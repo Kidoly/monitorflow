@@ -17,6 +17,7 @@ use super::closing::CloseReason;
 use super::earlier;
 use super::hook::Change;
 use super::progress::{self, head, Next, Progress};
+use super::reach;
 use super::store::{self, Incident};
 use super::{prompt, DriveError, Shared};
 use crate::commands::acceptance;
@@ -77,6 +78,22 @@ async fn pass(shared: &Shared, incident: &Incident) -> Result<Pass, DriveError> 
         }
         if Utc::now() >= incident.deadline() {
             return duration_limit(shared, incident).await;
+        }
+    }
+    // No command can run: the AI's answer is its diagnosis, and the
+    // incident goes to a person with it (ADR-0175). A proposal is kept as
+    // the AI wrote it, neither classified nor run.
+    if let Some(why) = progress.diagnosis_only {
+        if matches!(
+            progress.next,
+            Next::Classify { .. }
+                | Next::Stopped {
+                    outcome: StopOutcome::Escalate,
+                    ..
+                }
+        ) {
+            let reason = CloseReason::DiagnosisOnly(why);
+            return finish(shared, incident, IncidentState::Escalated, reason).await;
         }
     }
     match progress.next.clone() {
@@ -190,17 +207,23 @@ async fn send_context(shared: &Shared, incident: &Incident) -> Result<Pass, Driv
             ));
         }
     }
-    let event = NewEvent::context_sent(
+    let mut event = NewEvent::context_sent(
         &shared.model,
         json!({ "rendered": rendered, "redactions": redactions }),
     );
+    // Decided once, with the context: the rest of the incident follows it
+    // even if the server's report changes meanwhile.
+    if let Some(why) = reach::of(&shared.pool, incident.server_id, &trigger.metric).await? {
+        event.payload["diagnosis_only"] = why.payload();
+    }
     append(shared, incident, event).await
 }
 
 /// Asks the AI for the next step and records its answer.
 async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result<Pass, DriveError> {
-    let request = StepRequest {
-        system_prompt: prompt::system(prompt::Limits {
+    let system_prompt = match progress.diagnosis_only {
+        Some(why) => prompt::diagnosis_only(why.for_prompt(), incident.shell()),
+        None => prompt::system(prompt::Limits {
             max_commands: incident.max_commands(),
             commands_left: incident
                 .max_commands()
@@ -208,6 +231,9 @@ async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result
             command_timeout: shared.settings.command_timeout,
             shell: incident.shell(),
         }),
+    };
+    let request = StepRequest {
+        system_prompt,
         context: vec![prompt::context_block(
             progress.context.as_deref().unwrap_or_default(),
         )],
@@ -649,7 +675,7 @@ async fn close_in(
     if from.is_closed() {
         return Ok(());
     }
-    let event = NewEvent::closing(
+    let mut event = NewEvent::closing(
         from,
         to,
         &reason.text(),
@@ -657,6 +683,9 @@ async fn close_in(
         reason.detail(),
         reason.limit(),
     );
+    if let CloseReason::DiagnosisOnly(_) = reason {
+        event.payload["diagnosis_only"] = json!(true);
+    }
     audit::append_in(tx, incident, event).await?;
     let pending = match pending {
         Pending::Cancel => "cancelled",

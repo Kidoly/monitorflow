@@ -11,6 +11,11 @@
 //! anywhere resumes from the events, and the lease keeps two processes off
 //! one incident.
 //!
+//! Every alert gets a diagnosis. Where no command can run (the server
+//! refuses AI commands, a device, a host that stopped reporting), the AI
+//! is told so and diagnoses from the context alone, and the incident
+//! closes on its answer ([`reach`], ADR-0175).
+//!
 //! The AI's answers are untrusted text. Only the exact command of a
 //! proposal runs, after the rules classified it (ADR-0041): read-only, or
 //! low impact where the policy allows it, runs at once; other tiers wait
@@ -24,6 +29,7 @@ pub mod earlier;
 pub mod hook;
 pub mod progress;
 pub mod prompt;
+pub mod reach;
 pub mod retry;
 pub mod store;
 
@@ -49,6 +55,10 @@ const UNIQUE_VIOLATION: &str = "23505";
 
 /// Supervisor time between two polls.
 pub const POLL: Duration = Duration::from_secs(10);
+
+/// Alerts opened longer ago get no remediation by themselves: those open
+/// when remediation was enabled (ADR-0043, ADR-0165).
+pub const ALERT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -93,7 +103,7 @@ impl Settings {
             result_poll: Duration::from_secs(1),
             lease_ttl: Duration::from_secs(60),
             resolve_wait: Duration::from_secs(5 * 60),
-            alert_max_age: Duration::from_secs(60 * 60),
+            alert_max_age: ALERT_MAX_AGE,
             max_concurrent: 16,
             context_limits: Limits::default(),
         }
