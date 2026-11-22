@@ -1371,6 +1371,10 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             };
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // Tickets of every customer's incidents: global administrators.
+        ("GET", "/api/psa/tickets") => {
+            assert_eq!(ctx.status(method, path, None).await, StatusCode::FORBIDDEN);
+        }
         // The server is shared: updating it is for global administrators.
         ("GET", "/api/server-update")
         | ("POST", "/api/server-update")
