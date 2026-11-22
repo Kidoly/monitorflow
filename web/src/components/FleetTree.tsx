@@ -64,8 +64,9 @@ function groupBy<T extends TreeRow>(rows: T[], of: (row: T) => { id: string; nam
  * The fleet as a tree: customers (only for someone who sees two), sites,
  * then servers (ADR-0130). A group where every server is healthy folds to
  * one line; any other opens, as does every group while `filtered`. An open
- * site lists what needs a look and folds its healthy servers behind a
- * button, unless filtered or sorted. Columns `groupedOut` disappear while
+ * site lists all its servers, problems first; past {@link GROUP_PAGE}
+ * servers it folds the healthy ones behind a button, unless filtered or
+ * sorted. Columns `groupedOut` disappear while
  * grouped by site. Each
  * group line has a pill per state, naming the server when a problem state
  * has just one. One table, so the columns line up and sort across groups.
@@ -134,8 +135,9 @@ export function FleetTree<T extends TreeRow>({
   /** The servers a site shows, and how many more and how many healthy ones it hides. */
   function shown(group: Group<T>) {
     const sorted = sortRows(group.rows, columns, sort, defaultOrder);
-    // A healthy site someone opened shows its servers.
-    const fold = !filtered && !sort && !group.healthy && !unfolded.has(group.key);
+    // A healthy site someone opened shows its servers; a small site shows them all.
+    const fold =
+      !filtered && !sort && !group.healthy && group.rows.length > GROUP_PAGE && !unfolded.has(group.key);
     const ordered = fold ? sorted.filter((r) => !r.healthy) : sorted;
     const limit = limits.get(group.key) ?? GROUP_PAGE;
     return { rows: ordered.slice(0, limit), limit, more: ordered.length - limit, healthy: sorted.length - ordered.length };

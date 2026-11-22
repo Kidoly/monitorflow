@@ -208,10 +208,9 @@ describe("FleetOverview", () => {
     expect(second).toHaveTextContent(/^lyon3 servers\s*3 OK$/);
     expect(within(first!).getByRole("link", { name: /web-1 · Disk/ })).toHaveAttribute("href", expect.stringMatching(/^\/servers\/view\/?\?id=s1$/));
     expect(within(first!).getByRole("link", { name: "2 warning" })).toHaveAttribute("href", "/?state=warning&site=berlin");
-    // Its OK server waits behind a button.
-    expect(await rows()).toHaveLength(3);
-    await userEvent.click(screen.getByRole("button", { name: "Show 1 OK server of berlin" }));
+    // A small site lists its OK server too.
     expect(await rows()).toHaveLength(4);
+    expect(screen.queryByRole("button", { name: "Show 1 OK server of berlin" })).toBeNull();
 
     const lyon = within(second!).getByRole("button", { name: /lyon/ });
     expect(lyon).toHaveAttribute("aria-expanded", "false");
@@ -249,18 +248,17 @@ describe("FleetOverview", () => {
     expect(screen.getByRole("link", { name: "1 OK" })).toHaveAttribute("href", "/?state=ok&customer=c2");
   });
 
-  it("lists one site without a group line, its OK servers behind a button", async () => {
+  it("lists one site without a group line, its OK servers included", async () => {
     stubFetch(reply([web1, mail, server({ id: "s3", hostname: "ok-1" })]));
     render(
       <As user={oneCustomer(viewer)}>
         <FleetOverview />
       </As>,
     );
-    expect(await rows()).toHaveLength(2);
+    expect(await rows()).toHaveLength(3);
     expect(await groups()).toHaveLength(0);
     expect(screen.getByRole("columnheader", { name: "Site" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Show 1 OK server" }));
-    expect(await rows()).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: "Show 1 OK server" })).toBeNull();
   });
 
   it("names no site while there is only one", async () => {
@@ -324,18 +322,18 @@ describe("FleetOverview", () => {
       </As>,
     );
     await table();
-    // paris shows its two problems, web-2 folds away as OK and berlin is folded: neither is checked.
+    // paris shows its three servers, OK web-2 included; berlin is folded and not checked.
     await user.click(screen.getByRole("checkbox", { name: "Select every row shown" }));
     const bar = screen.getByRole("region", { name: "Bulk actions" });
-    expect(within(bar).getByText("2 selected")).toBeInTheDocument();
+    expect(within(bar).getByText("3 selected")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Select web-1" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Select db-1" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select web-2" })).toBeChecked();
     expect(screen.queryByRole("checkbox", { name: "Select web-9" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: "Select web-2" })).not.toBeInTheDocument();
 
-    await user.click(within(bar).getByRole("button", { name: "Acknowledge the alerts of the 2 selected servers" }));
+    await user.click(within(bar).getByRole("button", { name: "Acknowledge the alerts of the 3 selected servers" }));
     await user.type(within(bar).getByRole("textbox", { name: "What are you doing about it? (optional)" }), "on it{Enter}");
-    expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 acknowledged, 1 with no alert to acknowledge/);
+    expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 acknowledged, 2 with no alert to acknowledge/);
     const bodies = fetchMock.mock.calls
       .filter(([url]) => url === "/api/incidents/acknowledge")
       .map(([, init]) => JSON.parse(String(init?.body)));
