@@ -24,10 +24,15 @@ per server), `columns` (a column per step, stacked likewise), `figure` (one numb
 number on a dial), `top` (a list of the highest or lowest servers), `bars` (the same as \
 horizontal bars), `alerts` (open alerts), `heatmap` (a row per server over time, coloured by \
 value: the `count` worst servers), `table` (a row per server, a column per metric of `columns`, \
-sorted by the first, the `count` first) and `text` (Markdown in `text`, no data). Kinds that draw \
+sorted by the first, the `count` first), `text` (Markdown in `text`, no data), `states` (a \
+square per server, coloured by its state as on the fleet's pages, or with a `metric` by its \
+worst value against the thresholds; the worst 500), `pie` (the servers by state, or with a \
+`metric` the largest 7 servers' share and the rest as `Other`) and `timeline` (when each server \
+had open alerts, from its incidents, the `count` servers with the most time in alert first; \
+stretches run from the start of the range to `now`). Kinds that draw \
 the same data take the same fields and answer the same data shape: `area`, `columns` and \
 `heatmap` as `chart`, `gauge` as `figure`, `bars` as `top`; a table answers `table`, a text \
-panel `text`. A table column without an instance shows the worst of the server's instances. Optional display fields, ignored by the data: `unit`, `min` and `max` of the scale, \
+panel `text`; `states`, `pie` and `timeline` answer their own kind. A table column without an instance shows the worst of the server's instances. Optional display fields, ignored by the data: `unit`, `min` and `max` of the scale, \
 `thresholds` (`warning`, `critical`) that colour figures, gauges and bars and draw lines on \
 charts, `legend` (charts over time only) and `color`, the first colour of the eight of the \
 palette. Alerts panels take none of them. Dashboards saved before these kinds and fields existed \

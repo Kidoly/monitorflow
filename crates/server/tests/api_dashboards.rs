@@ -368,6 +368,35 @@ db_tests! {
         assert!(seen.iter().any(|q| q.contains("topk_max(5, ")), "{seen:?}");
         assert!(seen.iter().any(|q| q.contains("and on (peer) topk(10, ")), "{seen:?}");
 
+        // States, a pie of them and a timeline read the database, not the metrics.
+        let before = w.vm.seen().len();
+        sqlx::query(
+            "INSERT INTO incidents (server_id, metric, instance, severity, opened_at, last_value,
+                                    last_value_at, peak_value, threshold)
+             VALUES ($1, 'monitorflow_cpu_usage_ratio', 'total', 'critical', now() - interval '10 minutes',
+                     0.99, now(), 0.99, '{}')",
+        )
+        .bind(w.a1)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+        let request = json!({ "range": "1h", "within": { "kind": "all" }, "panels": [
+            { "id": "s", "title": "States", "kind": "states" },
+            { "id": "p", "title": "States", "kind": "pie" },
+            { "id": "t", "title": "Alerts", "kind": "timeline", "count": 2 },
+        ] });
+        let (status, body) = send(&w.app, &admin, "POST", "/api/dashboard-data", Some(request)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(w.vm.seen().len(), before);
+        // No agent is connected here: every server is offline, as on the fleet's pages.
+        let cells = body["panels"][0]["cells"].as_array().unwrap();
+        assert!(!cells.is_empty() && cells.iter().all(|c| c["state"] == "offline"), "{body}");
+        assert_eq!(body["panels"][1]["slices"], json!([{ "label": "offline", "state": "offline", "value": cells.len() as f64 }]));
+        let row = &body["panels"][2]["rows"][0];
+        assert_eq!(row["server_id"], json!(w.a1), "{body}");
+        assert_eq!(row["spans"][0]["severity"], "critical", "{body}");
+        assert_eq!(body["panels"][2]["rows"].as_array().unwrap().len(), 2, "{body}");
+
         // A display option of the wrong kind is refused with a sentence.
         let alerts = json!([{ "id": "x", "title": "Alerts", "kind": "alerts", "count": 5, "color": 2 }]);
         let (status, body) = send(&w.app, &admin, "POST", "/api/dashboards",

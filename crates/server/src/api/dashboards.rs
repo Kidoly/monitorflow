@@ -141,6 +141,13 @@ pub enum PanelKind {
     Table,
     /// Text in Markdown, no data.
     Text,
+    /// A square per server, coloured by its state, or by its value of
+    /// `metric` against the thresholds.
+    States,
+    /// The servers by state, or each server's share of `metric`.
+    Pie,
+    /// When each server had open alerts over the range, from its incidents.
+    Timeline,
 }
 
 impl PanelKind {
@@ -376,6 +383,31 @@ fn check_panel(panel: &Panel) -> Result<(), String> {
         return Err("only a text panel has text.".into());
     }
     match panel.kind {
+        PanelKind::States | PanelKind::Pie => {
+            if panel.combine.is_some() || panel.order.is_some() || panel.count.is_some() {
+                return Err("it takes servers and, if you like, a metric.".into());
+            }
+            if panel.metric.is_none() {
+                if panel.instance.is_some() || has_options(panel) {
+                    return Err("without a metric it shows states: it takes servers only.".into());
+                }
+                return Ok(());
+            }
+        }
+        PanelKind::Timeline => {
+            if panel.metric.is_some()
+                || panel.instance.is_some()
+                || panel.combine.is_some()
+                || panel.order.is_some()
+                || has_options(panel)
+            {
+                return Err("a timeline takes servers and a count only.".into());
+            }
+            if !count_ok(panel.count) {
+                return Err(format!("show 1 to {MAX_COUNT} servers."));
+            }
+            return Ok(());
+        }
         PanelKind::Text => {
             let text = panel.text.as_deref().unwrap_or_default();
             if text.trim().is_empty() || text.chars().count() > MAX_TEXT {
@@ -1066,6 +1098,12 @@ mod tests {
                    "columns": [{"metric": "monitorflow_cpu_usage_ratio", "instance": "total"},
                                {"metric": "monitorflow_disk_used_ratio"}]}),
             json!({"id": "a", "title": "Read me", "kind": "text", "text": "# On call\nCall **Bob**."}),
+            json!({"id": "a", "title": "States", "kind": "states"}),
+            json!({"id": "a", "title": "CPU", "kind": "states", "metric": "monitorflow_cpu_usage_ratio",
+                   "instance": "total", "thresholds": {"warning": 0.8}}),
+            json!({"id": "a", "title": "States", "kind": "pie", "servers": {"kind": "site", "id": id}}),
+            json!({"id": "a", "title": "Traffic", "kind": "pie", "metric": "monitorflow_network_receive_bytes_per_second"}),
+            json!({"id": "a", "title": "Alerts", "kind": "timeline", "count": 10}),
             json!({"id": "a", "title": "Traffic", "kind": "columns", "metric": "monitorflow_network_receive_bytes_per_second",
                    "combine": "sum", "thresholds": {"critical": 1e9}}),
         ] {
@@ -1121,6 +1159,12 @@ mod tests {
             json!({"id": "a", "title": "x", "kind": "table", "order": "highest", "count": 5,
                    "columns": [{"metric": "up"}]}),
             json!({"id": "a", "title": "x", "kind": "text", "text": " "}),
+            json!({"id": "a", "title": "x", "kind": "states", "color": 2}),
+            json!({"id": "a", "title": "x", "kind": "states", "count": 2}),
+            json!({"id": "a", "title": "x", "kind": "pie", "instance": "total"}),
+            json!({"id": "a", "title": "x", "kind": "pie", "metric": "monitorflow_cpu_usage_ratio", "order": "highest"}),
+            json!({"id": "a", "title": "x", "kind": "timeline"}),
+            json!({"id": "a", "title": "x", "kind": "timeline", "count": 3, "metric": "monitorflow_cpu_usage_ratio"}),
             json!({"id": "a", "title": "x", "kind": "text", "text": "x".repeat(4001)}),
             json!({"id": "a", "title": "x", "kind": "text", "text": "hi", "servers": {"kind": "site", "id": Uuid::nil()}}),
             json!({"id": "a", "title": "x", "kind": "chart", "metric": "monitorflow_cpu_usage_ratio", "combine": "avg", "text": "hi"}),
