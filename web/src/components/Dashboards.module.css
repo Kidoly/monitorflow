@@ -230,6 +230,11 @@
 }
 
 .card {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 4px;

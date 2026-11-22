@@ -57,10 +57,10 @@ The charts stay our own SVG (`TimeChart`, and the screen's chart), extended with
 Making a panel starts from what to see, not from a form:
 
 1. **What to see.** A metric, searched by its plain title, with the common ones first, and which servers (every server of the dashboard by default, a site, a customer or chosen servers).
-2. **How to draw it.** Tiles with a small picture of each kind; the editor picks a good one for the metric (a dial for a percentage now, lines over time otherwise) and keeps what it can when the kind changes.
+2. **How to draw it.** Tiles with a small picture of each kind that fits what is shown; a new panel starts as lines over time of the busiest servers, or as a state grid for metrics that are up or down, and changing the kind keeps what it can.
 3. **A preview** of the panel with live data as it is changed, through the same data request.
 
-Everything else (title, width, how servers combine, what it watches, order and count, unit, scale, thresholds, colour, legend) is in an **Advanced** section, closed by default, with defaults that make it unnecessary. A new, empty dashboard offers ready layouts to start from, as well as an empty page.
+Everything else (title, width, how servers combine, what it watches, order and count, unit, scale, thresholds, colour, legend) is in an **Advanced** section, closed by default, with defaults that make it unnecessary. A new, empty dashboard offers the ready-made dashboards as layouts to start from (a new one, "Health at a glance", draws states, a pie of them, the alerts of the day as a timeline and the busiest CPUs as a heatmap), as well as adding panels one by one. The ready-made dashboards use the new kinds where they read better: gauges for the average CPU and the fullest disk, bars for the busiest servers.
 
 ### Screens
 

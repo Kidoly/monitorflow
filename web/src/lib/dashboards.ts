@@ -442,8 +442,32 @@ export interface ReadyMade {
 const all: PanelServers = { kind: "all" };
 const panel = (id: string, fields: Omit<Panel, "id" | "servers">): Panel => ({ id, servers: all, ...fields });
 
-/** The ready-made dashboards, named in the active language. */
+/** The ready-made dashboards, named in the active language; also the layouts a new dashboard starts from. */
 export const readyMades = (): ReadyMade[] => [
+  {
+    id: "health",
+    name: t("dashboards.ready.health"),
+    description: t("dashboards.ready.healthText"),
+    spec: {
+      version: 1,
+      range: "24h",
+      panels: [
+        panel("states", { title: t("dashboards.title.states"), kind: "states", width: 2 }),
+        panel("by-state", { title: t("dashboards.title.pie"), kind: "pie", width: 1 }),
+        panel("timeline", { title: t("dashboards.title.timeline"), kind: "timeline", width: 3, count: 10 }),
+        panel("cpu-heat", {
+          title: t("dashboards.ready.cpuHeat"),
+          kind: "heatmap",
+          width: 2,
+          metric: CPU,
+          instance: "total",
+          count: 10,
+          thresholds: { warning: 0.8, critical: 0.95 },
+        }),
+        panel("alerts", { title: t("dashboards.title.alerts"), kind: "alerts", width: 1, count: 10 }),
+      ],
+    },
+  },
   {
     id: "overview",
     name: t("dashboards.ready.overview"),
@@ -453,10 +477,25 @@ export const readyMades = (): ReadyMade[] => [
       range: "6h",
       panels: [
         panel("servers", { title: t("dashboards.ready.servers"), kind: "figure", width: 1, metric: CPU, instance: "total", combine: "count" }),
-        panel("cpu", { title: t("dashboards.ready.cpu"), kind: "figure", width: 1, metric: CPU, instance: "total", combine: "avg" }),
-        panel("disk", { title: t("dashboards.ready.disk"), kind: "figure", width: 1, metric: "monitorflow_disk_used_ratio", combine: "max" }),
+        panel("cpu", {
+          title: t("dashboards.ready.cpu"),
+          kind: "gauge",
+          width: 1,
+          metric: CPU,
+          instance: "total",
+          combine: "avg",
+          thresholds: { warning: 0.8, critical: 0.95 },
+        }),
+        panel("disk", {
+          title: t("dashboards.ready.disk"),
+          kind: "gauge",
+          width: 1,
+          metric: "monitorflow_disk_used_ratio",
+          combine: "max",
+          thresholds: { warning: 0.8, critical: 0.9 },
+        }),
         panel("cpu-lines", { title: t("dashboards.ready.cpuLines"), kind: "chart", width: 2, metric: CPU, instance: "total", combine: "each" }),
-        panel("cpu-top", { title: t("dashboards.ready.cpuTop"), kind: "top", width: 1, metric: CPU, instance: "total", order: "highest", count: 5 }),
+        panel("cpu-top", { title: t("dashboards.ready.cpuTop"), kind: "bars", width: 1, metric: CPU, instance: "total", order: "highest", count: 5 }),
         panel("memory-lines", {
           title: t("dashboards.ready.memoryLines"),
           kind: "chart",
@@ -464,7 +503,15 @@ export const readyMades = (): ReadyMade[] => [
           metric: "monitorflow_memory_available_ratio",
           combine: "each",
         }),
-        panel("disk-top", { title: t("dashboards.ready.diskTop"), kind: "top", width: 1, metric: "monitorflow_disk_used_ratio", order: "highest", count: 5 }),
+        panel("disk-top", {
+          title: t("dashboards.ready.diskTop"),
+          kind: "bars",
+          width: 1,
+          metric: "monitorflow_disk_used_ratio",
+          order: "highest",
+          count: 5,
+          thresholds: { warning: 0.8, critical: 0.9 },
+        }),
         panel("alerts", { title: t("dashboards.title.alerts"), kind: "alerts", width: 3, count: 10 }),
       ],
     },
@@ -488,24 +535,33 @@ export const readyMades = (): ReadyMade[] => [
         }),
         panel("memory-avg", {
           title: t("dashboards.ready.memoryAvg"),
-          kind: "chart",
+          kind: "area",
           width: 2,
           metric: "monitorflow_memory_available_ratio",
           combine: "avg",
         }),
         panel("memory-low", {
           title: t("dashboards.ready.memoryLow"),
-          kind: "top",
+          kind: "bars",
           width: 1,
           metric: "monitorflow_memory_available_ratio",
           order: "lowest",
           count: 5,
+          thresholds: { warning: 0.2, critical: 0.1 },
         }),
         panel("load", { title: t("dashboards.ready.load"), kind: "chart", width: 3, metric: "monitorflow_cpu_load15", combine: "each" }),
       ],
     },
   },
 ];
+
+/**
+ * A layout to start a new dashboard from: the ready-made dashboard's
+ * panels and range, kept as they are.
+ */
+export function starter(id: string): DashboardSpec | undefined {
+  return readyMade(id)?.spec;
+}
 
 export function readyMade(id: string | null): ReadyMade | undefined {
   return readyMades().find((d) => d.id === id);

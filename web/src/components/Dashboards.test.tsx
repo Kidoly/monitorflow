@@ -623,7 +623,7 @@ describe("Dashboards", () => {
         <DashboardView />
       </As>,
     );
-    const add = await screen.findByRole("button", { name: "Add a panel" });
+    const add = await screen.findByRole("button", { name: "Or add panels one by one" });
     // "Only me" once, in the Shared with field: no badge, no note; no moving help without panels.
     expect(screen.getAllByText("Only me")).toHaveLength(1);
     expect(screen.queryByText(/Only you see it/)).toBeNull();
@@ -646,6 +646,30 @@ describe("Dashboards", () => {
         panels: [expect.objectContaining({ kind: "chart", metric: "monitorflow_cpu_usage_ratio", instance: "total", title: "CPU usage" })],
       },
     });
+  });
+
+  it("starts a new dashboard from a layout", async () => {
+    setUrl("/dashboards/view/?new=1");
+    const fetchMock = stubFetch({
+      "GET /api/servers": { status: 200, body: { servers: [server("s1", "web-1")], next_cursor: null } },
+      "POST /api/dashboard-data": { status: 200, body: data([]) },
+      "POST /api/dashboards": { status: 201, body: dashboard({ name: "Health at a glance", shared_with: { kind: "personal" } }) },
+    });
+    render(
+      <As user={viewer}>
+        <DashboardView />
+      </As>,
+    );
+    const layouts = await screen.findByRole("region", { name: "Start from a layout" });
+    await userEvent.click(within(layouts).getByRole("button", { name: /Health at a glance/ }));
+    // The layout's panels are there to change before saving; the choice of layouts goes.
+    expect(screen.queryByRole("region", { name: "Start from a layout" })).toBeNull();
+    expect(screen.getByLabelText("Name")).toHaveValue("Health at a glance");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
+    const body = bodyOf(fetchMock, "POST /api/dashboards") as { spec: { range: string; panels: Panel[] } };
+    expect(body.spec.range).toBe("24h");
+    expect(body.spec.panels.map((p) => p.kind)).toEqual(["states", "pie", "timeline", "heatmap", "alerts"]);
   });
 
   it("deletes after a confirmation naming it", async () => {
