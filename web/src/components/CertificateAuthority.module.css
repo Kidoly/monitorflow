@@ -68,3 +68,28 @@
   align-items: center;
   gap: 8px;
 }
+
+/*
+ * A phone: two buttons alone in a row of actions share the line evenly, a long
+ * label breaking inside its button, instead of falling one under the
+ * other in a cascade.
+ */
+@media (max-width: 640px) {
+  .actions:has(> :is(button, a):nth-child(2):last-child):not(:has(> :not(button, a))) {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    align-items: stretch;
+  }
+
+  .actions:has(> :is(button, a):nth-child(2):last-child):not(:has(> :not(button, a))) > :is(button, a)[class] {
+    flex: 1 1 0;
+    min-width: 0;
+    height: auto;
+    min-height: 32px;
+    padding-block: 6px;
+    justify-content: center;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.3;
+  }
+}

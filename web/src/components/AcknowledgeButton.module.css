@@ -16,6 +16,13 @@
   color: var(--text);
 }
 
+/* The buttons of the form are small: the fields match their height, so
+   the whole line reads as one row of controls. */
+.form input,
+.form select {
+  height: 30px;
+}
+
 .field {
   width: 260px;
   max-width: 100%;
@@ -25,4 +32,21 @@
   flex-basis: 100%;
   color: var(--bad);
   font-size: 13px;
+}
+
+/* On a phone: each field across the width, Cancel and the submit button
+   together under them. */
+@media (max-width: 640px) {
+  .form {
+    display: flex;
+    width: 100%;
+  }
+
+  .label {
+    flex: 1 1 100%;
+  }
+
+  .field {
+    width: 100%;
+  }
 }

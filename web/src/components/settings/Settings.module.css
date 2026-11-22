@@ -148,6 +148,29 @@
   max-width: 240px;
 }
 
+/* Preferences: each group a panel across the page's whole width, as on
+   the Server update page; language and appearance side by side when
+   they fit. */
+.card {
+  max-width: none;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.cardRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 20px;
+}
+
+.card .choices {
+  margin: 0;
+}
+
 /* Preferences: the password form, labels above their fields. */
 .password {
   display: flex;
