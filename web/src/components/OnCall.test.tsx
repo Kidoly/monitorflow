@@ -40,6 +40,7 @@ function schedule(overrides: Partial<OnCallSchedule> = {}): OnCallSchedule {
       { user_id: "id-bob", username: "bob", problem: null },
     ],
     people_per_turn: 1,
+    follow_up_only: false,
     overrides: [],
     now: NOW_TURN,
     next: NEXT_TURN,
@@ -203,8 +204,57 @@ describe("OnCallPage", () => {
       handoff_time: "09:00",
       members: ["id-carol", "id-bob"],
       people_per_turn: 1,
+      follow_up_only: false,
     });
     expect(typeof body.time_zone).toBe("string");
+  });
+
+  it("makes a second level told only when nobody acknowledges, and adds its step", async () => {
+    const second = schedule({ id: "s2", name: "Second level", follow_up_only: true });
+    const administrators = { after_minutes: 15, on_call: [], users: [], channels: [], administrators: true };
+    const fetchMock = stubFetch({
+      "GET /api/on-call/schedules": { status: 200, body: { schedules: [second] } },
+      "GET /api/on-call/contact": { status: 200, body: contact },
+      "GET /api/follow-up/policies": {
+        status: 200,
+        body: { policies: [], default_steps: [administrators], schedules: [{ id: "s2", name: "Second level", customer_id: "c1", site_id: null }], channels: [] },
+      },
+      "PUT /api/follow-up/policies": { status: 200, body: {} },
+    });
+    render(
+      <As user={customerAdmin}>
+        <OnCallPage />
+      </As>,
+    );
+    const card = await screen.findByRole("region", { name: "Second level" });
+    expect(within(card).getByText(/Only for follow-ups/)).toBeInTheDocument();
+    expect(await within(card).findByText("Nobody on it is told yet.")).toBeInTheDocument();
+    await userEvent.click(within(card).getByRole("button", { name: "Tell them after 15 minutes" }));
+    const body = bodyOf(fetchMock.mock.calls.find((c) => c[1]?.method === "PUT"));
+    // The place had the default: the administrators still come after.
+    expect(body).toEqual({
+      customer_id: "c1",
+      site_id: null,
+      steps: [{ after_minutes: 15, on_call: ["s2"], users: [], channels: [], administrators: false }, administrators],
+    });
+  });
+
+  it("says which step tells a second level", async () => {
+    const second = schedule({ id: "s2", name: "Second level", follow_up_only: true });
+    const step = { after_minutes: 10, on_call: [{ id: "s2", name: "Second level" }], users: [], channels: [], administrators: false };
+    const policy = { id: "p1", customer_id: "c1", customer_name: "acme", site_id: null, site_name: null, steps: [{ ...step, on_call: [] }, step], updated_at: at(-1) };
+    stubFetch({
+      "GET /api/on-call/schedules": { status: 200, body: { schedules: [second] } },
+      "GET /api/on-call/contact": { status: 200, body: contact },
+      "GET /api/follow-up/policies": { status: 200, body: { policies: [policy], default_steps: [], schedules: [], channels: [] } },
+    });
+    render(
+      <As user={customerAdmin}>
+        <OnCallPage />
+      </As>,
+    );
+    const card = await screen.findByRole("region", { name: "Second level" });
+    expect(await within(card).findByText("Told after 20 minutes without acknowledgement: step 2 of the follow-up of acme.")).toBeInTheDocument();
   });
 
   it("puts several people on call at once and covers one of them", async () => {

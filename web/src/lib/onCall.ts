@@ -1,7 +1,7 @@
 import { t } from "@/i18n";
 import { activeLocale, dateLocale } from "@/i18n/locale";
 
-import type { OnCallProblem, OnCallSchedule, OnCallTurn } from "./api";
+import type { FollowUpPolicy, OnCallProblem, OnCallSchedule, OnCallTurn } from "./api";
 
 export { browserTimeZone, toLocalInput } from "./clock";
 
@@ -85,6 +85,30 @@ export function onCallNext(schedule: Pick<OnCallSchedule, "next" | "next_all" | 
   if (schedule.people_per_turn <= 1 || schedule.next_all.length === 0) return schedule.next ? [schedule.next] : [];
   const first = schedule.next_all.reduce((a, b) => (b.starts_at < a ? b.starts_at : a), schedule.next_all[0]!.starts_at);
   return schedule.next_all.filter((turn) => turn.starts_at === first);
+}
+
+/** Where a schedule is named in follow-ups: each step, its place and the wait since the first message. */
+export function stepsNaming(
+  schedule: Pick<OnCallSchedule, "id">,
+  policies: FollowUpPolicy[],
+): { policy: FollowUpPolicy; step: number; minutes: number }[] {
+  return policies.flatMap((policy) => {
+    let minutes = 0;
+    return policy.steps.flatMap((step, i) => {
+      minutes += step.after_minutes;
+      return step.on_call.some((s) => s.id === schedule.id) ? [{ policy, step: i + 1, minutes }] : [];
+    });
+  });
+}
+
+/** The follow-up of exactly the schedule's place, if it has one. */
+export function placePolicy(
+  schedule: Pick<OnCallSchedule, "customer_id" | "site_id">,
+  policies: FollowUpPolicy[],
+): FollowUpPolicy | undefined {
+  return policies.find((p) =>
+    schedule.site_id ? p.site_id === schedule.site_id : p.site_id === null && p.customer_id === schedule.customer_id,
+  );
 }
 
 /** "alice and bob", "alice et bob". */

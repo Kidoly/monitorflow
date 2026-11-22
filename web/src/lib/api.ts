@@ -3595,6 +3595,8 @@ export interface OnCallSchedule {
   members: { user_id: string | null; username: string | null; problem: OnCallProblem | null }[];
   /** How many people are on call at once, 1 to 5. */
   people_per_turn: number;
+  /** Told only when a follow-up step names it (ADR-0171). */
+  follow_up_only: boolean;
   overrides: OnCallOverride[];
   now: OnCallTurn | null;
   next: OnCallTurn | null;
@@ -3623,6 +3625,8 @@ export interface OnCallScheduleRequest {
   members: string[];
   /** 1 to 5, at most the number of members. */
   people_per_turn: number;
+  /** Told only when a follow-up step names it. */
+  follow_up_only: boolean;
 }
 
 /** Someone the user may put on a schedule. */

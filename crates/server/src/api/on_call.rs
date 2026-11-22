@@ -126,6 +126,9 @@ pub struct ScheduleView {
     pub members: Vec<MemberView>,
     /// How many people are on call at once, 1 to 5 (ADR-0170).
     pub people_per_turn: u32,
+    /// Told only when a follow-up step names it, never of an alert's
+    /// first message: a second level (ADR-0171).
+    pub follow_up_only: bool,
     /// Covers not over yet, by start.
     pub overrides: Vec<OverrideView>,
     /// Who holds the first place now; `null` only without members.
@@ -190,6 +193,11 @@ pub struct ScheduleRequest {
     /// the first and second members, then the third and fourth.
     #[serde(default)]
     pub people_per_turn: Option<u32>,
+    /// `true`: its people are told only by the follow-up steps that name
+    /// it, when nobody acknowledged in time, never of an alert's first
+    /// message (ADR-0171). `false` by default.
+    #[serde(default)]
+    pub follow_up_only: bool,
 }
 
 /// Body of `POST /api/on-call/schedules/{id}/overrides`.
@@ -420,6 +428,7 @@ fn view(
             })
             .collect(),
         people_per_turn: u32::try_from(rota.seats()).unwrap_or(1),
+        follow_up_only: schedule.follow_up_only,
         overrides: schedule
             .overrides
             .iter()
@@ -535,6 +544,7 @@ struct Valid {
     weekday: Weekday,
     members: Vec<Uuid>,
     per_turn: usize,
+    follow_up_only: bool,
 }
 
 /// Checks a request; `current` holds the members already on the schedule,
@@ -627,6 +637,7 @@ async fn validate(
         weekday,
         members: request.members,
         per_turn,
+        follow_up_only: request.follow_up_only,
     })
 }
 
@@ -684,6 +695,7 @@ fn audited(valid: &Valid) -> Value {
         "handoff_time": valid.handoff.format("%H:%M").to_string(),
         "members": valid.members,
         "people_per_turn": valid.per_turn,
+        "follow_up_only": valid.follow_up_only,
     })
 }
 
@@ -751,8 +763,9 @@ pub async fn create(
     let (customer_id, site_id) = valid.coverage.columns();
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO on_call_schedules (name, customer_id, site_id, time_zone, rotation,
-                                        handoff_time, anchor_date, created_by, people_per_turn)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+                                        handoff_time, anchor_date, created_by, people_per_turn,
+                                        follow_up_only)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
     )
     .bind(&valid.name)
     .bind(customer_id)
@@ -763,6 +776,7 @@ pub async fn create(
     .bind(anchor)
     .bind(user.id)
     .bind(i16::try_from(valid.per_turn).unwrap_or(1))
+    .bind(valid.follow_up_only)
     .fetch_one(&mut *tx)
     .await?;
     write_members(&mut tx, id, &valid.members).await?;
@@ -813,7 +827,8 @@ pub async fn update(
     sqlx::query(
         "UPDATE on_call_schedules
          SET name = $2, customer_id = $3, site_id = $4, time_zone = $5, rotation = $6,
-             handoff_time = $7, anchor_date = $8, anchor_position = $9, people_per_turn = $10
+             handoff_time = $7, anchor_date = $8, anchor_position = $9, people_per_turn = $10,
+             follow_up_only = $11
          WHERE id = $1",
     )
     .bind(id)
@@ -826,6 +841,7 @@ pub async fn update(
     .bind(anchor)
     .bind(i32::try_from(anchor_position).unwrap_or(0))
     .bind(i16::try_from(valid.per_turn).unwrap_or(1))
+    .bind(valid.follow_up_only)
     .execute(&mut *tx)
     .await?;
     write_members(&mut tx, id, &valid.members).await?;
@@ -1311,6 +1327,7 @@ mod tests {
                 ends_at: utc("2026-11-21T00:00:00Z"),
                 created_at: utc("2026-11-01T00:00:00Z"),
             }],
+            follow_up_only: false,
         };
         let names = Names {
             name: "Ops".into(),

@@ -70,7 +70,10 @@ fn list_on_call_schedules() {}
 ///
 /// Administrators of its place. The first member is on call from the last
 /// hand-off, so someone is on call at once. With `people_per_turn` above
-/// 1, that many members are on call together and all are told (ADR-0170). Audited as
+/// 1, that many members are on call together and all are told (ADR-0170).
+/// With `follow_up_only`, its people hear only of alerts nobody
+/// acknowledged, through a follow-up step that names the schedule: a
+/// second level (ADR-0171). Audited as
 /// `on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`
 /// to retry.
 #[utoipa::path(post, path = "/api/v1/on-call/schedules", tag = "on-call",
@@ -248,6 +251,7 @@ fn schedule_request() -> serde_json::Value {
         "handoff_day": 1,
         "members": ["5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f", "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"],
         "people_per_turn": 1,
+        "follow_up_only": false,
     })
 }
 
@@ -290,6 +294,7 @@ fn schedule() -> serde_json::Value {
             { "user_id": bob, "username": "bob", "problem": "no_contact" },
         ],
         "people_per_turn": 1,
+        "follow_up_only": false,
         "overrides": [],
         "now": now,
         "next": next,

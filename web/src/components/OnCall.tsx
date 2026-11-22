@@ -6,6 +6,7 @@ import { rich, t } from "@/i18n";
 import {
   type Contact,
   type ContactRequest,
+  type FollowUpPolicyList,
   type OnCallPerson,
   type OnCallSchedule,
   type OnCallScheduleRequest,
@@ -26,6 +27,8 @@ import {
   names,
   onCallNext,
   onCallNow,
+  placePolicy,
+  stepsNaming,
   placeName,
   problemText,
   timeZones,
@@ -36,6 +39,7 @@ import {
 import { useScope } from "@/lib/scope";
 import { fromLocalInput } from "@/lib/silences";
 import { usePolledData } from "@/lib/usePolledData";
+import { minutesText, stepRequest } from "@/lib/followUp";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Page } from "@/components/ui/Page";
@@ -342,6 +346,7 @@ function ScheduleForm({
     (schedule?.members ?? []).flatMap((m) => (m.user_id && m.username ? [{ id: m.user_id, username: m.username }] : [])),
   );
   const [perTurn, setPerTurn] = useState(schedule?.people_per_turn ?? 1);
+  const [followUpOnly, setFollowUpOnly] = useState(schedule?.follow_up_only ?? false);
   const [rotation, setRotation] = useState<OnCallScheduleRequest["rotation"]>(schedule?.rotation ?? "weekly");
   const [day, setDay] = useState(schedule?.handoff_day ?? 1);
   const [time, setTime] = useState(schedule?.handoff_time ?? "09:00");
@@ -373,6 +378,7 @@ function ScheduleForm({
       handoff_day: rotation === "weekly" ? day : null,
       members: members.map((m) => m.id),
       people_per_turn: Math.min(perTurn, Math.max(members.length, 1)),
+      follow_up_only: followUpOnly,
     };
     try {
       if (schedule) await api.updateOnCallSchedule(schedule.id, body);
@@ -415,6 +421,14 @@ function ScheduleForm({
           </label>
         )}
       </div>
+      <label className={admin.field}>
+        {t("onCall.form.told")}
+        <select className={fieldClass} value={followUpOnly ? "follow_up" : "first"} onChange={(e) => setFollowUpOnly(e.target.value === "follow_up")}>
+          <option value="first">{t("onCall.form.toldFirst")}</option>
+          <option value="follow_up">{t("onCall.form.toldFollowUp")}</option>
+        </select>
+        <span className={admin.fieldNote}>{followUpOnly ? t("onCall.form.toldFollowUpNote") : t("onCall.form.toldFirstNote")}</span>
+      </label>
       <fieldset className={styles.people}>
         <legend>{t("onCall.form.people")}</legend>
         <ol className={styles.order}>
@@ -536,7 +550,18 @@ function ScheduleForm({
 }
 
 /** One schedule: now and next, gaps ahead, the coming weeks, overrides. */
-function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedule; several: boolean; onChanged: () => void }) {
+function ScheduleCard({
+  schedule,
+  several,
+  followUps,
+  onChanged,
+}: {
+  schedule: OnCallSchedule;
+  several: boolean;
+  /** Follow-ups the user administers; absent for others. */
+  followUps?: FollowUpPolicyList;
+  onChanged: () => void;
+}) {
   const [covering, setCovering] = useState<OnCallTurn | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -586,6 +611,7 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
         <span className={admin.dim}>
           {place} · {handoffRule(schedule)}
           {schedule.people_per_turn > 1 && ` · ${t("onCall.card.atOnce", { count: schedule.people_per_turn })}`}
+          {schedule.follow_up_only && ` · ${t("onCall.card.followUpOnly")}`}
         </span>
       </div>
       <div className={styles.body}>
@@ -605,6 +631,7 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
             </div>
           )}
         </div>
+        {schedule.follow_up_only && <SecondLevel schedule={schedule} place={place} followUps={followUps} onChanged={onChanged} />}
         {ahead.map((gap) => (
           <Banner key={`${gap.seat}-${gap.starts_at}`} tone={isNow(gap) ? "bad" : "warn"}>
             <strong>
@@ -722,7 +749,79 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
   );
 }
 
+/** The default wait of a step added from a schedule, as the default follow-up's. */
+const SECOND_LEVEL_MINUTES = 15;
+
+/**
+ * A schedule for follow-ups only (ADR-0171): which steps tell it, or, when
+ * none does, that its people are never told, with a button to add a step.
+ */
+function SecondLevel({
+  schedule,
+  place,
+  followUps,
+  onChanged,
+}: {
+  schedule: OnCallSchedule;
+  place: string;
+  followUps?: FollowUpPolicyList;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!followUps) return <p className={admin.fieldNote}>{t("onCall.second.only")}</p>;
+  const naming = stepsNaming(schedule, followUps.policies);
+
+  async function addStep() {
+    if (!followUps) return;
+    setBusy(true);
+    setError(null);
+    const own = placePolicy(schedule, followUps.policies);
+    const step = { after_minutes: SECOND_LEVEL_MINUTES, on_call: [schedule.id], users: [], channels: [], administrators: false };
+    // Without a follow-up of its own, the place had the default: keep it after the new step.
+    const steps = own ? [...own.steps.map(stepRequest), step] : [step, ...followUps.default_steps.map(stepRequest)];
+    try {
+      await api.saveFollowUpPolicy({
+        customer_id: schedule.site_id ? null : schedule.customer_id,
+        site_id: schedule.site_id,
+        steps,
+      });
+      onChanged();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (naming.length > 0) {
+    return (
+      <ul className={styles.overrides} aria-label={t("onCall.second.label")}>
+        {naming.map((n) => (
+          <li key={`${n.policy.id}-${n.step}`}>
+            {t("onCall.second.told", {
+              minutes: minutesText(n.minutes),
+              step: n.step,
+              place: n.policy.site_name ?? n.policy.customer_name ?? t("onCall.second.everything"),
+            })}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <Banner tone="warn">
+      <strong>{t("onCall.second.neverTitle")}</strong> {t("onCall.second.never", { place })}{" "}
+      <Button size="small" disabled={busy} onClick={() => void addStep()}>
+        {t("onCall.second.add", { minutes: minutesText(SECOND_LEVEL_MINUTES) })}
+      </Button>
+      {error && <span role="alert"> {error}</span>}
+    </Banner>
+  );
+}
+
 const load = (signal: AbortSignal) => api.onCallSchedules(signal);
+const loadFollowUps = (signal: AbortSignal) => api.followUpPolicies(signal);
 
 /** `/on-call/`: who is on call now and next, the coming weeks, and how the user is reached. */
 export function OnCallPage() {
@@ -737,6 +836,14 @@ export function OnCallPage() {
   );
   const several = multiCustomer(me) && new Set((data?.schedules ?? []).map((s) => s.customer_id).filter(Boolean)).size > 1;
   const canCreate = isAdministrator(me);
+  const followUps = usePolledData(loadFollowUps, { enabled: canCreate });
+  // Remounted after a step is added here, so the follow-up section shows it at once.
+  const [followUpVersion, setFollowUpVersion] = useState(0);
+  const changed = () => {
+    refresh();
+    followUps.refresh();
+    setFollowUpVersion((v) => v + 1);
+  };
   return (
     <Page>
       <PageHeader
@@ -775,9 +882,9 @@ export function OnCallPage() {
           </EmptyState>
         )
       ) : (
-        schedules.map((s) => <ScheduleCard key={s.id} schedule={s} several={several} onChanged={refresh} />)
+        schedules.map((s) => <ScheduleCard key={s.id} schedule={s} several={several} followUps={followUps.data ?? undefined} onChanged={changed} />)
       )}
-      <FollowUpSection enabled={canCreate} />
+      <FollowUpSection key={followUpVersion} enabled={canCreate} />
     </Page>
   );
 }

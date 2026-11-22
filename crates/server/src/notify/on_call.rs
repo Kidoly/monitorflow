@@ -209,6 +209,10 @@ pub struct Schedule {
     pub coverage: Coverage,
     pub rota: Rota,
     pub overrides: Vec<Override>,
+    /// Told only by the follow-up steps that name it, never of an alert's
+    /// first message: a second level behind the people told first
+    /// (ADR-0171).
+    pub follow_up_only: bool,
 }
 
 impl Schedule {
@@ -545,7 +549,7 @@ pub async fn schedules(
 ) -> Result<Vec<Schedule>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT id, customer_id, site_id, time_zone, rotation, handoff_time, anchor_date,
-                anchor_position, people_per_turn
+                anchor_position, people_per_turn, follow_up_only
          FROM on_call_schedules WHERE $1::uuid IS NULL OR id = $1 ORDER BY created_at, id",
     )
     .bind(only)
@@ -607,6 +611,7 @@ pub async fn schedules(
                 per_turn: usize::try_from(per_turn).unwrap_or(1),
             },
             overrides: overrides.remove(&id).unwrap_or_default(),
+            follow_up_only: row.try_get("follow_up_only")?,
         });
     }
     Ok(out)
@@ -701,8 +706,11 @@ pub fn deliveries(
     extra: &Extra,
     now: DateTime<Utc>,
 ) -> Vec<(Channel, Vec<i64>)> {
+    // A schedule for follow-ups only hears of an event through a step that
+    // names it, which comes in `extra.users`.
     let found: Vec<(&Schedule, Option<&Channel>, Vec<Uuid>)> = schedules
         .iter()
+        .filter(|s| !s.follow_up_only)
         .map(|s| {
             let mail = mail_channel(channels, directory, s.coverage);
             (s, mail, recipients(s, directory, mail.is_some(), now))
@@ -822,6 +830,7 @@ mod tests {
             coverage: Coverage::Customer(CUSTOMER),
             rota,
             overrides: Vec::new(),
+            follow_up_only: false,
         }
     }
 
@@ -1248,6 +1257,46 @@ mod tests {
             details: json!({}),
             created_at: utc("2026-11-02T10:00:00Z"),
         }
+    }
+
+    #[test]
+    fn a_schedule_for_follow_ups_only_hears_nothing_first_and_its_steps_still_reach_it() {
+        let d = directory(vec![
+            person(ALICE, vec![(false, Some(CUSTOMER), None)], true),
+            person(BOB, vec![(false, Some(CUSTOMER), None)], true),
+        ]);
+        let channels = vec![email_channel(2, Coverage::Customer(CUSTOMER), "acme")];
+        let mut first = schedule(rota(Tz::UTC, Rotation::Daily, time(9, 0), "2026-11-02"));
+        first.rota.members = vec![Some(ALICE)];
+        let mut second = first.clone();
+        second.id = Uuid::from_u128(98);
+        second.rota.members = vec![Some(BOB)];
+        second.follow_up_only = true;
+        let now = utc("2026-11-02T10:00:00Z");
+        let told = |events: &[Event], extra: &Extra| -> Vec<(Uuid, Vec<i64>)> {
+            deliveries(
+                &[first.clone(), second.clone()],
+                &d,
+                &channels,
+                events,
+                &HashMap::new(),
+                extra,
+                now,
+            )
+            .into_iter()
+            .map(|(c, ids)| (c.id, ids))
+            .collect()
+        };
+        let events = vec![event(1, Some(CUSTOMER), Some(SITE))];
+        assert_eq!(told(&events, &Extra::default()), vec![(ALICE, vec![1])]);
+        // A step naming the second schedule tells Bob, and Bob only.
+        let step = Extra {
+            users: HashMap::from([(2, recipients(&second, &d, true, now))]),
+            unrouted: HashSet::from([2]),
+            ..Extra::default()
+        };
+        let events = vec![event(2, Some(CUSTOMER), Some(SITE))];
+        assert_eq!(told(&events, &step), vec![(BOB, vec![2])]);
     }
 
     #[test]

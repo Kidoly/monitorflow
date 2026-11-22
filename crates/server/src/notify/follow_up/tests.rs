@@ -103,6 +103,7 @@ fn schedule(id: u128, coverage: Coverage) -> Schedule {
             per_turn: 1,
         },
         overrides: Vec::new(),
+        follow_up_only: false,
     }
 }
 
