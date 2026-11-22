@@ -237,6 +237,7 @@
 //! | POST | `/api/agent-releases/import-url` | global administrator | body [`release_import::UrlRequest`]; as above, from a directory of release files |
 //! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater, last update and any newer release the daily check saw (ADR-0056, ADR-0061) |
 //! | POST | `/api/server-update/check` | global administrator | [`server_update::CheckResult`]: the latest release, verified, and what it changes |
+//! | GET | `/api/server-update/history` | global administrator | `limit`; [`server_update::History`]: the server's updates, newest first (ADR-0172) |
 //! | POST | `/api/server-update` | global administrator | body `{"version"}`; 202 `{"id"}`; 400 unless newer, 409 without a running updater or while busy; audited |
 //! | GET | `/api/backups` | global administrator | [`backups::BackupsView`]: last backup, next one and the files kept (ADR-0058) |
 //! | POST | `/api/backups` | global administrator | "Back up now"; 202 `{"id"}`; 409 without a running updater or while one runs; audited |
@@ -1492,6 +1493,7 @@ pub fn router(state: ApiState) -> Router {
             get(server_update::get).post(server_update::start),
         )
         .route("/api/server-update/check", post(server_update::check))
+        .route("/api/server-update/history", get(server_update::history))
         .route(
             "/api/agent-releases/import",
             post(release_import::upload).layer(DefaultBodyLimit::max(release_import::MAX_RELEASE)),

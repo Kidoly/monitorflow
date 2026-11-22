@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use axum::extract::rejection::JsonRejection;
-use axum::extract::State;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
@@ -26,8 +26,10 @@ use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::notifications::is_global_admin;
 use super::sensors::body;
+use super::servers::page_limit;
 use super::{ApiError, ApiState};
 use crate::release_check::{self, running_version};
+use crate::server_history;
 
 /// The subdirectory of the update volume the server writes requests in.
 pub(super) const INBOX: &str = "inbox";
@@ -201,6 +203,10 @@ pub async fn get(
     let (status, requested) = read_state(settings.dir.clone()).await?;
     let available = release_check::available(&state.pool, &running_version()).await?;
     let channel = channel(&state).await?;
+    if let Some(run) = status.as_ref().and_then(|s| s.update.as_ref()) {
+        // The history copies the last run (ADR-0172).
+        server_history::record(&state.pool, run).await?;
+    }
     let (updater, update) = match status {
         None => (None, None),
         Some(status) => (
@@ -354,6 +360,19 @@ pub async fn start(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .map_err(|e| ApiError::Internal(format!("writing the update request: {e}")))?;
+    // The request is out: a failure here only leaves the history to the
+    // updater's run.
+    if let Err(error) = server_history::requested(
+        &state.pool,
+        &id,
+        &current.to_string(),
+        &target.to_string(),
+        &user.username,
+    )
+    .await
+    {
+        tracing::warn!(%error, %id, "could not record the update request in the history");
+    }
     audit::record(
         &state.pool,
         Event {
@@ -367,6 +386,60 @@ pub async fn start(
     .await?;
     tracing::info!(%id, from = %current, to = %target, by = %user.username, "server update requested");
     Ok((StatusCode::ACCEPTED, Json(Started { id })))
+}
+
+/// Query string of `GET /api/server-update/history`.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct HistoryParams {
+    /// 1 to 200, default 50.
+    pub limit: Option<u32>,
+}
+
+/// Body of `GET /api/server-update/history`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = ServerUpdateHistory)]
+pub struct History {
+    /// Newest first.
+    pub updates: Vec<server_history::Entry>,
+}
+
+/// `GET /api/server-update/history`: the server's updates, newest first
+/// (ADR-0172).
+pub async fn history(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    params: Result<Query<HistoryParams>, QueryRejection>,
+) -> Result<Json<History>, ApiError> {
+    require_global_admin(&user)?;
+    let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
+    let limit = page_limit(params.limit, 50, 200)?;
+    let (status, requested) = read_state(state.settings.server_update.dir.clone()).await?;
+    let run = status.and_then(|s| s.update);
+    if let Some(run) = &run {
+        server_history::record(&state.pool, run).await?;
+    }
+    // What runs or waits now: the updater's run, else the newest request
+    // while one waits in the inbox.
+    let busy =
+        match &run {
+            Some(run) if !run.state.is_final() => Some(run.id.clone()),
+            _ if requested => sqlx::query_scalar(
+                "SELECT id FROM server_updates WHERE state = $1 ORDER BY started_at DESC LIMIT 1",
+            )
+            .bind(server_history::REQUESTED)
+            .fetch_optional(&state.pool)
+            .await?,
+            _ => None,
+        };
+    let updates = server_history::list(
+        &state.pool,
+        monitorflow_common::VERSION,
+        busy.as_deref(),
+        i64::from(limit),
+    )
+    .await?;
+    Ok(Json(History { updates }))
 }
 
 fn write_request(inbox: &Path, bytes: &[u8]) -> std::io::Result<()> {

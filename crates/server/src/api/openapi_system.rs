@@ -14,7 +14,8 @@ use super::{backups, certificate_authority, health, server_update};
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        live, ready, update_status, check_update, start_update, list_backups, start_backup,
+        live, ready, update_status, check_update, start_update, update_history, list_backups,
+        start_backup,
         download_backup, ca, start_ca_change, next_ca_step,
     ),
     components(schemas(BackupArchive)),
@@ -202,6 +203,48 @@ fn check_update() {}
         (status = 409, body = ErrorBody, description = "No updater, updater not running, or an update under way: `conflict`"),
     ))]
 fn start_update() {}
+
+/// List the server's updates
+///
+/// The central server's updates, newest first: the versions from and to,
+/// who asked (`null` when the updater started it from the command line, or
+/// it is not known), when it started and ended, and its `result`:
+/// `in_progress`, `succeeded`, `failed` (nothing changed), `rolled_back`
+/// (the previous version runs again, `error` says why) or `unknown`.
+/// Updates asked for before this history are copied from the audit log
+/// without their end; for those, and for one whose end the server did not
+/// see, `result` is `succeeded` with `inferred` when a later update started
+/// from the version it installed or the server runs it (ADR-0172).
+/// Changes nothing.
+#[utoipa::path(get, path = "/api/v1/server-update/history", tag = "server-update",
+    params(server_update::HistoryParams),
+    responses(
+        (status = 200, description = "The updates, newest first", body = server_update::History, example = json!({
+            "updates": [{
+                "id": "8c2f6d1e-4b3a-4f9e-a7c5-0d1b2e3f4a5b",
+                "from": "0.4.0",
+                "to": "0.4.1",
+                "requested_by": "admin",
+                "started_at": "2026-11-21T21:05:57Z",
+                "finished_at": "2026-11-21T21:06:56Z",
+                "result": "succeeded",
+                "error": null,
+                "inferred": false
+            }, {
+                "id": "3f1c2a9e-8b7d-4c6e-9a51-2d0e7f4b6c18",
+                "from": "0.3.2",
+                "to": "0.4.0",
+                "requested_by": "admin",
+                "started_at": "2026-11-12T20:00:01Z",
+                "finished_at": null,
+                "result": "succeeded",
+                "error": null,
+                "inferred": true
+            }]
+        })),
+        (status = 400, body = ErrorBody, description = "`invalid`: `limit` outside 1 to 200"),
+    ))]
+fn update_history() {}
 
 /// List backups
 ///

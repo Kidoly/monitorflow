@@ -28794,6 +28794,135 @@
         }
       }
     },
+    "/api/v1/server-update/history": {
+      "get": {
+        "tags": [
+          "server-update"
+        ],
+        "summary": "List the server's updates",
+        "description": "The central server's updates, newest first: the versions from and to,\nwho asked (`null` when the updater started it from the command line, or\nit is not known), when it started and ended, and its `result`:\n`in_progress`, `succeeded`, `failed` (nothing changed), `rolled_back`\n(the previous version runs again, `error` says why) or `unknown`.\nUpdates asked for before this history are copied from the audit log\nwithout their end; for those, and for one whose end the server did not\nsee, `result` is `succeeded` with `inferred` when a later update started\nfrom the version it installed or the server runs it (ADR-0172).\nChanges nothing.",
+        "operationId": "update_history",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 200, default 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updates, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerUpdateHistory"
+                },
+                "example": {
+                  "updates": [
+                    {
+                      "error": null,
+                      "finished_at": "2026-11-21T21:06:56Z",
+                      "from": "0.4.0",
+                      "id": "8c2f6d1e-4b3a-4f9e-a7c5-0d1b2e3f4a5b",
+                      "inferred": false,
+                      "requested_by": "admin",
+                      "result": "succeeded",
+                      "started_at": "2026-11-21T21:05:57Z",
+                      "to": "0.4.1"
+                    },
+                    {
+                      "error": null,
+                      "finished_at": null,
+                      "from": "0.3.2",
+                      "id": "3f1c2a9e-8b7d-4c6e-9a51-2d0e7f4b6c18",
+                      "inferred": true,
+                      "requested_by": "admin",
+                      "result": "succeeded",
+                      "started_at": "2026-11-12T20:00:01Z",
+                      "to": "0.4.0"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: `limit` outside 1 to 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers": {
       "get": {
         "tags": [
@@ -57381,6 +57510,82 @@
           }
         }
       },
+      "ServerUpdateHistory": {
+        "type": "object",
+        "description": "Body of `GET /api/server-update/history`.",
+        "required": [
+          "updates"
+        ],
+        "properties": {
+          "updates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerUpdateHistoryEntry"
+            },
+            "description": "Newest first."
+          }
+        }
+      },
+      "ServerUpdateHistoryEntry": {
+        "type": "object",
+        "description": "One update of the server, newest first.",
+        "required": [
+          "id",
+          "to",
+          "started_at",
+          "result",
+          "inferred"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed or rolled back, in the updater's words."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` while running, and when the end was not recorded."
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` when not known."
+          },
+          "id": {
+            "type": "string",
+            "description": "The ID of its request, `update.id` of `GET /api/v1/server-update`."
+          },
+          "inferred": {
+            "type": "boolean",
+            "description": "`result` was inferred: a later update started from the version it\ninstalled, or the server runs it."
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user name of who asked; `null` when the updater started it\n(from the command line) or it is not known."
+          },
+          "result": {
+            "$ref": "#/components/schemas/ServerUpdateResult"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
       "ServerUpdateRequest": {
         "type": "object",
         "description": "Body of `POST /api/server-update`.",
@@ -57394,6 +57599,17 @@
           }
         },
         "additionalProperties": false
+      },
+      "ServerUpdateResult": {
+        "type": "string",
+        "description": "How an update of the history ended.",
+        "enum": [
+          "in_progress",
+          "succeeded",
+          "failed",
+          "rolled_back",
+          "unknown"
+        ]
       },
       "ServerUpdateStarted": {
         "type": "object",

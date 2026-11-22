@@ -1362,6 +1362,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         // The server is shared: updating it is for global administrators.
         ("GET", "/api/server-update")
+        | ("GET", "/api/server-update/history")
         | ("POST", "/api/server-update")
         | ("POST", "/api/server-update/check") => {
             let body = method.eq("POST").then(|| json!({ "version": "99.0.0" }));

@@ -190,7 +190,8 @@ impl Harness {
             .header("cookie", cookie)
             .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
             .unwrap();
-        let response = api::router(state).oneshot(request).await.unwrap();
+        // As served: `/api` and the public `/api/v1`.
+        let response = api::v1::app(state).oneshot(request).await.unwrap();
         let status = response.status();
         let headers = response.headers().clone();
         let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
@@ -224,7 +225,8 @@ impl Harness {
             .header("cookie", cookie)
             .body(Body::from(body))
             .unwrap();
-        let response = api::router(state).oneshot(request).await.unwrap();
+        // As served: `/api` and the public `/api/v1`.
+        let response = api::v1::app(state).oneshot(request).await.unwrap();
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
             .await
@@ -284,7 +286,8 @@ impl Harness {
                 json!({ "username": name, "password": PASSWORD }).to_string(),
             ))
             .unwrap();
-        let response = api::router(state).oneshot(request).await.unwrap();
+        // As served: `/api` and the public `/api/v1`.
+        let response = api::v1::app(state).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let cookie = response
             .headers()
@@ -453,6 +456,119 @@ db_tests! {
         off.settings.server_update.dir = None;
         let (status, _) = off.call("POST", "/api/server-update", &admin, Some(start(NEWER))).await;
         assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[sqlx::test]
+    async fn the_history_keeps_each_update(pool: PgPool) {
+        let h = Harness::new(&pool, "http://127.0.0.1:9/mf", vec![]);
+        let admin = h.user("root", Role::Administrator).await;
+        // Two updates from before the history, as the migration copies
+        // them from the audit log: how they ended is not recorded.
+        let current = monitorflow_common::VERSION;
+        for (id, from, to, days) in [("old-1", "0.0.7", "0.0.8", 9), ("old-2", "0.0.8", current, 5)] {
+            sqlx::query(
+                "INSERT INTO server_updates (id, from_version, to_version, requested_by, state, started_at)
+                 VALUES ($1, $2, $3, 'admin', 'unknown', now() - make_interval(days => $4))",
+            )
+            .bind(id).bind(from).bind(to).bind(days)
+            .execute(&pool).await.unwrap();
+        }
+        let history = || async { h.call("GET", "/api/server-update/history", &admin, None).await };
+        let results = |body: &Value| -> Vec<(String, String, bool)> {
+            body["updates"].as_array().unwrap().iter()
+                .map(|u| (u["to"].as_str().unwrap().to_owned(), u["result"].as_str().unwrap().to_owned(), u["inferred"].as_bool().unwrap()))
+                .collect()
+        };
+        let row = |to: &str, result: &str, inferred: bool| (to.to_owned(), result.to_owned(), inferred);
+
+        // The server runs what old-2 installed, which old-1 led to.
+        let (status, body) = history().await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(results(&body), [row(current, "succeeded", true), row("0.0.8", "succeeded", true)]);
+
+        // A request waits for the updater: in progress, by who asked.
+        h.write_status(5, None);
+        let (status, started) = h.call("POST", "/api/server-update", &admin, Some(json!({ "version": NEWER }))).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+        let id = started["id"].as_str().unwrap().to_owned();
+        let (_, body) = history().await;
+        assert_eq!(body["updates"][0]["id"], id.as_str());
+        assert_eq!(body["updates"][0]["requested_by"], "root");
+        assert_eq!(body["updates"][0]["from"], current);
+        assert_eq!(results(&body)[0], row(NEWER, "in_progress", false));
+
+        // The updater took it and rolled back: the history copies its run,
+        // also when only the dispatcher reads the status.
+        std::fs::remove_file(h.dir().join("inbox/request.json")).unwrap();
+        let mut taken = run(UpdateState::RolledBack);
+        taken.id = id.clone();
+        taken.from = Some(current.into());
+        taken.to = NEWER.into();
+        taken.requested_by = "root".into();
+        taken.error = Some("the new version did not start".into());
+        taken.finished_at = Some(Utc::now());
+        h.write_status(5, Some(taken));
+        monitorflow_server::notify::backup::check(&pool, h.dir()).await.unwrap();
+        let (_, body) = history().await;
+        let newest = &body["updates"][0];
+        assert_eq!(results(&body)[0], row(NEWER, "rolled_back", false));
+        assert_eq!(newest["error"], "the new version did not start");
+        assert!(newest["finished_at"].is_string());
+        // It did not install `current` again: old-2 still stands inferred.
+        assert_eq!(results(&body)[1], row(current, "succeeded", true));
+
+        // An update from the command line has no request and no user.
+        let mut cli = run(UpdateState::Succeeded);
+        cli.id = "cli".into();
+        cli.requested_by = String::new();
+        cli.started_at = Utc::now() + chrono::Duration::seconds(1);
+        h.write_status(5, Some(cli));
+        let (_, body) = history().await;
+        assert_eq!(body["updates"][0]["id"], "cli");
+        assert_eq!(body["updates"][0]["requested_by"], Value::Null);
+        assert_eq!(body["updates"].as_array().unwrap().len(), 4);
+
+        // Bounded, and the same through the public API.
+        let (_, body) = h.call("GET", "/api/server-update/history?limit=1", &admin, None).await;
+        assert_eq!(body["updates"].as_array().unwrap().len(), 1);
+        let (status, _) = h.call("GET", "/api/server-update/history?limit=201", &admin, None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, v1) = h.call("GET", "/api/v1/server-update/history", &admin, None).await;
+        assert_eq!(status, StatusCode::OK, "{v1}");
+        assert_eq!(v1, history().await.1);
+    }
+
+    #[sqlx::test]
+    async fn the_history_starts_from_the_audit_log(pool: PgPool) {
+        let h = Harness::new(&pool, "http://127.0.0.1:9/mf", vec![]);
+        let admin = h.user("root", Role::Administrator).await;
+        sqlx::query(
+            "INSERT INTO audit_log (actor_kind, actor_id, action, details, occurred_at)
+             SELECT 'user', id::text, 'server.update', $1, now() - interval '3 days' FROM users WHERE username = 'root'
+             UNION ALL
+             SELECT 'user', '00000000-0000-4000-8000-000000000000', 'server.update', $2, now() - interval '2 days'
+             UNION ALL
+             SELECT 'user', 'x', 'server.update', '{\"from\": \"0.0.1\"}', now()",
+        )
+        .bind(json!({ "request_id": "a1", "from": "0.0.7", "to": "0.0.8" }))
+        .bind(json!({ "request_id": "a2", "from": "0.0.8", "to": "0.0.9" }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The copy the migration makes, run again on these entries.
+        let migration = include_str!("../migrations/20261211000000_server_updates.sql");
+        let copy = &migration[migration.find("INSERT INTO server_updates").unwrap()..];
+        sqlx::raw_sql(copy).execute(&pool).await.unwrap();
+        sqlx::raw_sql(copy).execute(&pool).await.unwrap();
+        let (_, body) = h.call("GET", "/api/server-update/history", &admin, None).await;
+        let rows: Vec<(&str, &str, &Value, &str)> = body["updates"].as_array().unwrap().iter()
+            .map(|u| (u["id"].as_str().unwrap(), u["to"].as_str().unwrap(), &u["requested_by"], u["result"].as_str().unwrap()))
+            .collect();
+        // Newest first; a user gone is not named; the first led to the second.
+        assert_eq!(rows, [
+            ("a2", "0.0.9", &Value::Null, "unknown"),
+            ("a1", "0.0.8", &json!("root"), "succeeded"),
+        ]);
     }
 
     #[sqlx::test]
