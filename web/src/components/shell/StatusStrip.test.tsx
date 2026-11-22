@@ -26,10 +26,10 @@ describe("StatusStrip", () => {
       ["3 Offline", "/?state=offline"],
       ["1,980 OK", "/?state=ok"],
     ]);
-    // Problems are tinted; zero and OK stay plain.
+    // A count above zero is tinted in its colour, OK in green; zero stays plain.
     expect(links[0]!.className).toMatch(/bad/);
-    expect(links[1]!.className).not.toMatch(/warn/);
-    expect(links[5]!.className).not.toMatch(/ok/);
+    expect(links[1]!.className).not.toMatch(/warn|tinted/);
+    expect(links[5]!.className).toMatch(/ok/);
   });
 
   it("keeps the scope, and marks the state the fleet shows", async () => {

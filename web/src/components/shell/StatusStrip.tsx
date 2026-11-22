@@ -5,7 +5,6 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
 import { cx } from "@/components/ui/cx";
-import { toneClass } from "@/components/ui/StatusLabel";
 import { t } from "@/i18n";
 import { activeLocale } from "@/i18n/locale";
 import { api } from "@/lib/api";
@@ -19,8 +18,8 @@ import styles from "./StatusStrip.module.css";
 /**
  * The servers of the scope by state, at the top of every page (ADR-0130).
  * Each count opens the fleet filtered to that state, except Silenced, which
- * opens the Silences page (it has no sidebar item); a count that needs a
- * look is tinted, zero and OK stay plain. Nothing shows until it loads,
+ * opens the Silences page (it has no sidebar item); a count above zero is
+ * tinted in its state's colour, OK in green, and a zero stays plain. Nothing shows until it loads,
  * nor for a fleet without servers.
  */
 export function StatusStrip() {
@@ -48,12 +47,12 @@ export function StatusStrip() {
           const tone = STATE_TONES[state];
           const silences = state === "silenced";
           const active = silences ? pathname.startsWith(SILENCES_PATH) : current === state;
-          const tinted = count > 0 && state !== "ok";
+          const tinted = count > 0;
           return (
             <li key={state}>
               <Link
                 href={scopedHref(silences ? SILENCES_PATH : active ? "/" : stateHref(state), scope)}
-                className={cx(styles.item, tinted && toneClass(tone), tinted && styles.tinted, active && styles.active)}
+                className={cx(styles.item, tinted && styles[tone], tinted && styles.tinted, active && styles.active)}
                 aria-current={active ? "page" : undefined}
               >
                 <span className={styles.count}>{count.toLocaleString(activeLocale())}</span> {t(`common.state.${state}`)}
