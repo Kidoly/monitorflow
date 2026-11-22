@@ -186,6 +186,40 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn uptime_over_windows_and_days_for_one_customer(pool: PgPool) {
+        let (acme, _) = customer(&pool, "acme", 600, 30).await;
+        customer(&pool, "globex", 1000, 90).await;
+        let admin = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let uri = format!(
+            "/api/availability/uptime?customer_id={acme}&at=2026-10-30T22:00:00Z&time_zone=Europe/Paris"
+        );
+        let (status, body, _) = call(&pool, "GET", &uri, Some(&admin), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["time_zone"], "Europe/Paris");
+        assert!(!body.to_string().contains("globex"), "{body}");
+        let rows = body["rows"].as_array().unwrap();
+        let web = rows.iter().find(|r| r["kind"] == "server").unwrap();
+        assert_eq!(web["name"], "acme-web");
+        assert_eq!(web["outages"], 1);
+        let days = web["days"].as_array().unwrap();
+        assert_eq!(days.len(), 90);
+        // The last day is 30 October in Paris (23:00 there), so far.
+        assert_eq!(days[89]["date"], "2026-10-30");
+        let down: f64 = days.iter().map(|d| d["down_seconds"].as_f64().unwrap()).sum();
+        assert_eq!(down, 1800.0);
+        // 30 minutes of the last 30 days.
+        let month = web["windows"]["month"].as_f64().unwrap();
+        assert!((month - (1.0 - 1800.0 / (30.0 * 86_400.0)) * 100.0).abs() < 1e-9, "{month}");
+        assert!(rows.iter().any(|r| r["kind"] == "service"));
+
+        for bad in ["time_zone=Paris", "at=yesterday", "days=30"] {
+            let uri = format!("/api/availability/uptime?{bad}");
+            let (status, _, _) = call(&pool, "GET", &uri, Some(&admin), None).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        }
+    }
+
+    #[sqlx::test]
     async fn the_report_as_csv(pool: PgPool) {
         let (acme, _) = customer(&pool, "acme", 600, 30).await;
         let admin = login(&pool, "root", Role::Administrator, GrantScope::Global).await;

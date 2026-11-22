@@ -14,7 +14,7 @@ use super::{availability, business_services, report_schedules};
 #[derive(OpenApi)]
 #[openapi(
     paths(list_services, create_service, update_service, remove_service, availability_report,
-        availability_file, list_schedules, create_schedule, update_schedule, remove_schedule,
+        availability_file, availability_uptime, list_schedules, create_schedule, update_schedule, remove_schedule,
         send_schedule),
     components(schemas(ErrorBody)),
     modifiers(&Common),
@@ -217,6 +217,46 @@ CSV numbers are plain (seconds, dot decimals); words are in `language`; times ar
 `not_found`", body = ErrorBody),
     ))]
 fn availability_file() {}
+
+fn uptime() -> Value {
+    let day = |date: &str, availability: f64, down: f64| {
+        json!({"date": date, "availability": availability, "down_seconds": down,
+               "maintenance_seconds": 0.0})
+    };
+    json!({
+        "at": "2026-11-22T17:00:00Z", "time_zone": "Europe/Paris",
+        "rows": [{
+            "kind": "server", "id": ex::SERVER, "name": "mail-1", "check": null,
+            "site_name": "main",
+            "windows": {"day": 100.0, "week": 99.583, "month": 99.903, "quarter": 99.968},
+            "outages": 1,
+            "days": [day("2026-11-21", 97.083, 2520.0), day("2026-11-22", 100.0, 0.0)]
+        }]
+    })
+}
+
+#[utoipa::path(get, path = "/api/v1/availability/uptime", tag = "alerts",
+    summary = "Uptime over 24 hours, 7, 30 and 90 days, with daily bars",
+    description = "For each business service, server and device the key reads, and each check that had \
+an outage in the 90 days, its availability over the last 24 hours, 7, 30 and 90 days (`windows`, in \
+percent), its number of outages over the 90 days, and one entry per day for 90 days (`days`, the oldest \
+first, today so far last) with its availability, down time and planned maintenance. Days are cut at \
+midnight in `time_zone`. Down time and planned maintenance follow the same rule as the availability \
+report, so the numbers match it. `null` means nothing was counted: before the thing was added, or all of \
+it under planned maintenance.\n\n\
+`at` moves the end of the windows to a past instant, to see the uptime as it was then.\n\n\
+**Who**: any role. With `customer_id`, only that customer's sites the key reads; business services only \
+of customers the key is granted as a whole. **Area**: `alerts`.",
+    params(availability::UptimeParams),
+    responses(
+        (status = 200, description = "The uptime", body = crate::availability::uptime::Uptime,
+            example = json!(uptime())),
+        (status = 400, description = "An unknown time zone, an `at` that is not RFC 3339, or an \
+unknown parameter: `invalid`", body = ErrorBody),
+        (status = 404, description = "The customer does not exist or is outside the key's reach: \
+`not_found`", body = ErrorBody),
+    ))]
+fn availability_uptime() {}
 
 const SCHEDULE: &str = "8e9f0a1b-2c3d-4e5f-8a6b-7c8d9e0f1a2b";
 const CHANNEL: &str = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f";

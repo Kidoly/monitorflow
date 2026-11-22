@@ -15,6 +15,7 @@ pub mod report;
 pub mod schedule;
 pub mod sender;
 pub mod spans;
+pub mod uptime;
 pub mod words;
 
 use chrono::{DateTime, Utc};

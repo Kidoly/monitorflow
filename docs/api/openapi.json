@@ -1311,6 +1311,161 @@
         }
       }
     },
+    "/api/v1/availability/uptime": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Uptime over 24 hours, 7, 30 and 90 days, with daily bars",
+        "description": "For each business service, server and device the key reads, and each check that had an outage in the 90 days, its availability over the last 24 hours, 7, 30 and 90 days (`windows`, in percent), its number of outages over the 90 days, and one entry per day for 90 days (`days`, the oldest first, today so far last) with its availability, down time and planned maintenance. Days are cut at midnight in `time_zone`. Down time and planned maintenance follow the same rule as the availability report, so the numbers match it. `null` means nothing was counted: before the thing was added, or all of it under planned maintenance.\n\n`at` moves the end of the windows to a past instant, to see the uptime as it was then.\n\n**Who**: any role. With `customer_id`, only that customer's sites the key reads; business services only of customers the key is granted as a whole. **Area**: `alerts`.",
+        "operationId": "availability_uptime",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only this customer's sites and services.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "The instant the windows end at, RFC 3339; now when absent or in\nthe future.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "time_zone",
+            "in": "query",
+            "description": "IANA time zone days are cut in, like `Europe/Paris`; UTC when\nabsent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The uptime",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Uptime"
+                },
+                "example": {
+                  "at": "2026-11-22T17:00:00Z",
+                  "rows": [
+                    {
+                      "check": null,
+                      "days": [
+                        {
+                          "availability": 97.083,
+                          "date": "2026-11-21",
+                          "down_seconds": 2520.0,
+                          "maintenance_seconds": 0.0
+                        },
+                        {
+                          "availability": 100.0,
+                          "date": "2026-11-22",
+                          "down_seconds": 0.0,
+                          "maintenance_seconds": 0.0
+                        }
+                      ],
+                      "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "kind": "server",
+                      "name": "mail-1",
+                      "outages": 1,
+                      "site_name": "main",
+                      "windows": {
+                        "day": 100.0,
+                        "month": 99.903,
+                        "quarter": 99.968,
+                        "week": 99.583
+                      }
+                    }
+                  ],
+                  "time_zone": "Europe/Paris"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown time zone, an `at` that is not RFC 3339, or an unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backups": {
       "get": {
         "tags": [
@@ -44003,6 +44158,16 @@
           }
         }
       },
+      "AvailabilityThing": {
+        "type": "string",
+        "description": "What a thing of a report is: a business service, a server or device,\nor one check of a server or device.",
+        "enum": [
+          "service",
+          "server",
+          "device",
+          "check"
+        ]
+      },
       "AvailableRelease": {
         "type": "object",
         "description": "A release newer than the running server, as `GET /api/server-update`\nshows it.",
@@ -60522,6 +60687,161 @@
           "version": {
             "type": "string",
             "description": "The updater's own version."
+          }
+        }
+      },
+      "Uptime": {
+        "type": "object",
+        "description": "Body of `GET /api/availability/uptime`.",
+        "required": [
+          "at",
+          "time_zone",
+          "rows"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The instant the windows end at."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UptimeRow"
+            },
+            "description": "Services first, then each server or device followed by its checks\nthat had outages; checks without any are left out."
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "The IANA zone days are cut in."
+          }
+        }
+      },
+      "UptimeDay": {
+        "type": "object",
+        "description": "One day of one thing.",
+        "required": [
+          "date",
+          "down_seconds",
+          "maintenance_seconds"
+        ],
+        "properties": {
+          "availability": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "In percent; `null` when nothing was counted: before it existed, or\nall of it under planned maintenance."
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "The local date, in the view's time zone."
+          },
+          "down_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Down time that day, seconds."
+          },
+          "maintenance_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Planned maintenance that day, seconds, left out of the count."
+          }
+        }
+      },
+      "UptimeRow": {
+        "type": "object",
+        "description": "One service, server, device or check.",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "windows",
+          "outages",
+          "days"
+        ],
+        "properties": {
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The check's name, for a check; `null` otherwise."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UptimeDay"
+            },
+            "description": "One per day, the oldest first, the last being today so far."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The service's ID, or the server's or device's (a check's too)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AvailabilityThing",
+            "description": "`service`, `server`, `device` or `check`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The service's, server's or device's name."
+          },
+          "outages": {
+            "type": "integer",
+            "description": "Outages over the 90 days.",
+            "minimum": 0
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The site; `null` for a service."
+          },
+          "windows": {
+            "$ref": "#/components/schemas/UptimeWindows"
+          }
+        }
+      },
+      "UptimeWindows": {
+        "type": "object",
+        "description": "Availability over the windows that end at the view's instant, in\npercent; `null` when nothing was counted (\"Not measured\").",
+        "properties": {
+          "day": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 24 hours."
+          },
+          "month": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 30 days."
+          },
+          "quarter": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 90 days."
+          },
+          "week": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 7 days."
           }
         }
       },
