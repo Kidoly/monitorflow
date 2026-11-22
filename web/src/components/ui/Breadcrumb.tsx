@@ -58,7 +58,11 @@ export function Breadcrumb({
             <Link href={parent.href}>{parent.label}</Link>
             {parent.siblings && <SiblingMenu siblings={parent.siblings} />}
           </span>
-          {(last || i < parents.length - 1) && <span aria-hidden="true">›</span>}
+          {(last || i < parents.length - 1) && (
+            <span className={styles.separator} aria-hidden="true">
+              ›
+            </span>
+          )}
         </Fragment>
       ))}
       {last && (

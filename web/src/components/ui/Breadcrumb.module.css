@@ -1,23 +1,77 @@
 .crumb {
+  /* Tints of the text colour: visible on both themes' backgrounds. */
+  --crumb-hover: color-mix(in srgb, var(--text) 8%, transparent);
+  --crumb-chip: color-mix(in srgb, var(--text) 10%, transparent);
+  --crumb-chip-hover: color-mix(in srgb, var(--text) 16%, transparent);
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 2px;
   font-size: 13px;
   color: var(--muted);
 }
 
+/* Links read as quiet chips: no underline, a soft background on hover. */
 .crumb a {
-  text-decoration: underline;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  text-decoration: none;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.crumb a:hover {
+  background: var(--crumb-hover);
+  color: var(--text);
+}
+
+.crumb a:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.separator {
+  padding: 0 2px;
+  color: var(--muted);
+  opacity: 0.55;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .current {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
   color: var(--text);
+  font-weight: 500;
 }
 
 .item {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+}
+
+/* A crumb with its ▾: one chip, link and toggle side by side. */
+.item:has(.menu) a {
+  padding-right: 4px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.item:has(.menu) .toggle:not(.named) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.item:has(.menu):hover a,
+.item:has(.menu):hover .toggle:not(.named) {
+  background: var(--crumb-hover);
 }
 
 .menu {
@@ -26,15 +80,19 @@
 }
 
 .toggle {
-  min-width: 24px;
-  height: 24px;
-  padding: 0 4px;
+  min-width: 22px;
+  height: 26px;
+  padding: 0 6px;
   border: 0;
-  border-radius: var(--radius-label);
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
   font: inherit;
+  font-size: 11px;
   cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 /* The current page's siblings, named: "Other servers of paris ▾". */
@@ -42,24 +100,33 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px;
-  border: 1px solid var(--border-strong);
+  margin-left: 2px;
+  padding: 0 10px;
+  background: var(--crumb-chip);
   color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .chevron {
-  font-size: 12px;
+  font-size: 11px;
+  opacity: 0.7;
 }
 
 .toggle:hover,
 .toggle[aria-expanded="true"] {
-  background: var(--hl);
+  background: var(--crumb-hover);
   color: var(--text);
+}
+
+.toggle.named:hover,
+.toggle.named[aria-expanded="true"] {
+  background: var(--crumb-chip-hover);
 }
 
 .toggle:focus-visible {
   outline: 2px solid var(--text);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
 
 /* Not a modal: only the list itself takes clicks. */
