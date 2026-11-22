@@ -339,6 +339,17 @@ impl Halo {
     }
 }
 
+/// A ticket to create.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewTicket {
+    pub summary: String,
+    pub details: String,
+    pub client_id: i64,
+    pub site_id: Option<i64>,
+    pub ticket_type_id: Option<i64>,
+    pub category: Option<String>,
+}
+
 /// A client or site of Halo, as the matching shows it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[schema(as = PsaRecord)]
@@ -491,6 +502,74 @@ impl Halo {
             .collect();
         statuses.sort_by_key(|s| s.id);
         Ok(statuses)
+    }
+
+    /// Creates `ticket` by posting it in an array, as Halo takes them; its
+    /// id.
+    pub async fn create_ticket(&self, ticket: &NewTicket) -> Result<i64, HaloError> {
+        let mut body = serde_json::json!({
+            "summary": ticket.summary,
+            "details": ticket.details,
+            "client_id": ticket.client_id,
+        });
+        if let Some(site) = ticket.site_id {
+            body["site_id"] = site.into();
+        }
+        if let Some(kind) = ticket.ticket_type_id {
+            body["tickettype_id"] = kind.into();
+        }
+        if let Some(category) = &ticket.category {
+            body["category_1"] = category.clone().into();
+        }
+        let answer = self
+            .post("the new ticket", "Tickets", &Value::Array(vec![body]))
+            .await?;
+        let created = match &answer {
+            Value::Array(items) => items.first().cloned().unwrap_or(Value::Null),
+            other => other.clone(),
+        };
+        created.get("id").and_then(Value::as_i64).ok_or_else(|| {
+            HaloError::new(format!(
+                "{} created the ticket without saying its number.",
+                self.host()
+            ))
+        })
+    }
+
+    /// A ticket of `client` whose text holds `marker`, the incident's id:
+    /// what a retry after a lost answer finds instead of creating a second
+    /// ticket.
+    pub async fn find_ticket(&self, client: i64, marker: &str) -> Result<Option<i64>, HaloError> {
+        let query = [
+            ("client_id", client.to_string()),
+            ("search", marker.to_owned()),
+            ("pageinate", "true".to_owned()),
+            ("page_size", "5".to_owned()),
+            ("page_no", "1".to_owned()),
+        ];
+        let answer = self.get("the ticket search", "Tickets", &query).await?;
+        Ok(records(&answer, "tickets")
+            .first()
+            .and_then(|t| t.get("id").and_then(Value::as_i64)))
+    }
+
+    /// Adds a private note to `ticket`, hidden from the end user.
+    pub async fn add_note(&self, ticket: i64, note: &str) -> Result<(), HaloError> {
+        let action = serde_json::json!([{
+            "ticket_id": ticket,
+            "outcome": "MonitorFlow",
+            "note": note,
+            "hiddenfromuser": true,
+        }]);
+        self.post("the note", "Actions", &action).await.map(drop)
+    }
+
+    /// Moves `ticket` to the status `status`.
+    pub async fn set_status(&self, ticket: i64, status: i64) -> Result<(), HaloError> {
+        let update = serde_json::json!([{ "id": ticket, "status_id": status }]);
+        self.post("the status change", "Tickets", &update)
+            .await
+            .map(drop)
     }
 
     /// The site `id` and its client; `None` when Halo does not know it.

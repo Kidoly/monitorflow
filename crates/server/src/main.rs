@@ -623,6 +623,7 @@ async fn main() -> anyhow::Result<()> {
     let notify_pool = pool.clone();
     let report_pool = pool.clone();
     let deliverer = integrations::Deliverer::new(pool.clone(), config.web_base_url());
+    let psa_sync = monitorflow_server::psa::sync::Syncer::new(pool.clone(), config.web_base_url());
     // The daily look for a newer release (ADR-0061).
     let check_pool = pool.clone();
     let maintenance_pool = pool.clone();
@@ -719,6 +720,14 @@ async fn main() -> anyhow::Result<()> {
         async {
             deliverer
                 .run(integrations::deliver::POLL, until_stopped())
+                .await;
+            Ok(())
+        },
+        // Every instance opens and closes PSA tickets; claims are leased
+        // (ADR-0164).
+        async {
+            psa_sync
+                .run(monitorflow_server::psa::sync::POLL, until_stopped())
                 .await;
             Ok(())
         },

@@ -4,6 +4,7 @@
 //! sealed at rest (ADR-0125) and never returned.
 
 pub mod halopsa;
+pub mod sync;
 
 use chrono::{DateTime, Utc};
 use monitorflow_common::redact::Secret;

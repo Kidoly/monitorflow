@@ -375,4 +375,44 @@ db_tests! {
         let audited = actions(&pool).await;
         assert_eq!(audited.iter().filter(|(a, _)| a == "psa.connection.tickets").count(), 1);
     }
+
+    #[sqlx::test]
+    async fn tickets_are_listed_with_their_incident(pool: PgPool) {
+        secrets::install_for_tests();
+        let halo = FakeHalo::start().await;
+        let cookie = admin(&pool).await;
+        call(&pool, "PUT", CONNECTION, &cookie, Some(settings(&halo))).await;
+        let customer: uuid::Uuid =
+            sqlx::query_scalar("INSERT INTO customers (name) VALUES ('acme') RETURNING id")
+                .fetch_one(&pool).await.unwrap();
+        let site: uuid::Uuid =
+            sqlx::query_scalar("INSERT INTO sites (name, customer_id) VALUES ('paris', $1) RETURNING id")
+                .bind(customer).fetch_one(&pool).await.unwrap();
+        let server: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+             VALUES ('web-01', $1, 'web-01', 'debian') RETURNING id",
+        )
+        .bind(site).fetch_one(&pool).await.unwrap();
+        let incident: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO incidents (server_id, metric, instance, severity, opened_at, last_value,
+                                    last_value_at, peak_value, threshold)
+             VALUES ($1, 'disk_used_percent', '', 'critical', now(), 97, now(), 97, '{}') RETURNING id",
+        )
+        .bind(server).fetch_one(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO psa_tickets (incident_id, connection_id, ticket_id, state)
+             SELECT $1, id, 5001, 'open' FROM psa_connections",
+        )
+        .bind(incident).execute(&pool).await.unwrap();
+        let (status, body) = call(&pool, "GET", "/api/psa/tickets", &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ticket = &body["tickets"][0];
+        assert_eq!(ticket["ticket_id"], 5001);
+        assert_eq!(ticket["state"], "open");
+        assert_eq!(ticket["server_name"], "web-01");
+        assert_eq!(ticket["site_name"], "paris");
+        assert_eq!(ticket["severity"], "critical");
+        let viewer = login(&pool, "viewer", Role::Viewer, GrantScope::Global).await;
+        assert_eq!(call(&pool, "GET", "/api/psa/tickets", &viewer, None).await.0, StatusCode::FORBIDDEN);
+    }
 }

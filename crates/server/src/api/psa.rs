@@ -783,3 +783,59 @@ pub async fn put_ticket_settings(
     tx.commit().await?;
     Ok(Json(saved.into()))
 }
+
+/// One incident's ticket, as the HaloPSA page lists them.
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = PsaTicket)]
+pub struct TicketView {
+    /// The incident.
+    pub incident_id: uuid::Uuid,
+    /// The PSA's ticket number; `null` until created.
+    pub ticket_id: Option<i64>,
+    /// `creating`, `open`, `closed` (its incident resolved), `skipped`
+    /// (its site has no PSA client) or `failed` (the PSA refused).
+    pub state: String,
+    /// Why it was skipped or failed, or the last failure while retrying,
+    /// in the PSA's words; `null` otherwise.
+    pub error: Option<String>,
+    /// The incident's measure, severity, and server or relay.
+    pub metric: String,
+    pub severity: String,
+    pub server_name: Option<String>,
+    pub site_name: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub closed_at: Option<DateTime<Utc>>,
+}
+
+/// Body of `GET /api/psa/tickets`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = PsaTicketList)]
+pub struct TicketList {
+    /// The 50 most recently changed, newest first.
+    pub tickets: Vec<TicketView>,
+}
+
+/// `GET /api/psa/tickets`: the latest tickets opened, closed, skipped or
+/// refused; global administrators.
+pub async fn tickets(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+) -> Result<Json<TicketList>, ApiError> {
+    require_global_admin(&user)?;
+    let tickets = sqlx::query_as(
+        "SELECT t.incident_id, t.ticket_id, t.state, t.error, i.metric, i.severity,
+                coalesce(sv.hostname, r.name) AS server_name, si.name AS site_name,
+                t.created_at, t.updated_at, t.closed_at
+         FROM psa_tickets t
+         JOIN incidents i ON i.id = t.incident_id
+         LEFT JOIN servers sv ON sv.id = i.server_id
+         LEFT JOIN relays r ON r.id = i.relay_id
+         LEFT JOIN sites si ON si.id = coalesce(sv.site_id, r.site_id)
+         ORDER BY t.updated_at DESC, t.incident_id
+         LIMIT 50",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(TicketList { tickets }))
+}

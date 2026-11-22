@@ -12,7 +12,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Form, Json, Router};
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
 pub const CLIENT_ID: &str = "test-client-id";
@@ -27,6 +27,14 @@ pub struct Inner {
     pub token_requests: Mutex<Vec<HashMap<String, String>>>,
     /// Every API request: method, path and query.
     pub requests: Mutex<Vec<String>>,
+    /// Bodies posted to `/api/Tickets`.
+    pub tickets: Mutex<Vec<Value>>,
+    /// Bodies posted to `/api/Actions`.
+    pub actions: Mutex<Vec<Value>>,
+    /// When set, `POST /api/Tickets` answers this status and text.
+    pub ticket_refusal: Mutex<Option<(u16, String)>>,
+    /// Requires `category_1` on new tickets, as some instances do.
+    pub category_required: Mutex<bool>,
 }
 
 #[derive(Clone)]
@@ -48,6 +56,8 @@ impl FakeHalo {
             .route("/api/TicketType", get(ticket_types))
             .route("/api/Category", get(categories))
             .route("/api/Status", get(statuses))
+            .route("/api/Tickets", post(tickets).get(find_tickets))
+            .route("/api/Actions", post(actions))
             .with_state(inner.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -61,6 +71,26 @@ impl FakeHalo {
 
     pub fn requests(&self) -> Vec<String> {
         self.inner.requests.lock().unwrap().clone()
+    }
+
+    pub fn tickets(&self) -> Vec<Value> {
+        self.inner.tickets.lock().unwrap().clone()
+    }
+
+    pub fn actions(&self) -> Vec<Value> {
+        self.inner.actions.lock().unwrap().clone()
+    }
+
+    pub fn refuse_tickets(&self, status: u16, text: &str) {
+        *self.inner.ticket_refusal.lock().unwrap() = Some((status, text.into()));
+    }
+
+    pub fn accept_tickets(&self) {
+        *self.inner.ticket_refusal.lock().unwrap() = None;
+    }
+
+    pub fn require_category(&self) {
+        *self.inner.category_required.lock().unwrap() = true;
     }
 }
 
@@ -239,4 +269,79 @@ async fn statuses(
         {"id": 2, "name": "In Progress"},
     ]))
     .into_response()
+}
+
+async fn tickets(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    if !authorized(&inner, &headers, "POST /api/Tickets".into()) {
+        return unauthorized();
+    }
+    if let Some((status, text)) = inner.ticket_refusal.lock().unwrap().clone() {
+        return (StatusCode::from_u16(status).unwrap(), text).into_response();
+    }
+    let Some(ticket) = body.as_array().and_then(|a| a.first()).cloned() else {
+        return (StatusCode::BAD_REQUEST, "Expected an array").into_response();
+    };
+    let creating = ticket.get("id").is_none();
+    if creating
+        && *inner.category_required.lock().unwrap()
+        && ticket
+            .get("category_1")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return (StatusCode::BAD_REQUEST, "Veuillez renseigner la catégorie").into_response();
+    }
+    let mut stored = inner.tickets.lock().unwrap();
+    stored.push(ticket.clone());
+    let id = ticket
+        .get("id")
+        .and_then(Value::as_i64)
+        .unwrap_or(5000 + stored.len() as i64);
+    let mut answer = ticket;
+    answer["id"] = id.into();
+    (StatusCode::CREATED, Json(answer)).into_response()
+}
+
+async fn find_tickets(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if !authorized(&inner, &headers, query_line("/api/Tickets", &query)) {
+        return unauthorized();
+    }
+    let search = query.get("search").cloned().unwrap_or_default();
+    let found: Vec<Value> = inner
+        .tickets
+        .lock()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.get("id").is_none())
+        .filter(|(_, t)| !search.is_empty() && t.to_string().contains(&search))
+        .map(|(i, t)| json!({"id": 5001 + i as i64, "summary": t["summary"]}))
+        .collect();
+    Json(json!({"record_count": found.len(), "tickets": found})).into_response()
+}
+
+async fn actions(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    if !authorized(&inner, &headers, "POST /api/Actions".into()) {
+        return unauthorized();
+    }
+    let action = body
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null);
+    inner.actions.lock().unwrap().push(action.clone());
+    (StatusCode::CREATED, Json(action)).into_response()
 }

@@ -13,7 +13,7 @@ use super::psa;
 #[openapi(
     paths(get_psa_connection, put_psa_connection, delete_psa_connection, test_psa_connection,
           list_psa_clients, list_psa_client_sites, list_psa_site_links, put_psa_site_link, delete_psa_site_link,
-          list_psa_ticket_types, list_psa_categories, list_psa_statuses, put_psa_ticket_settings),
+          list_psa_ticket_types, list_psa_categories, list_psa_statuses, put_psa_ticket_settings, list_psa_tickets),
     components(schemas(ErrorBody)),
     modifiers(&Common),
     tags((name = "psa", description = "The PSA connection: MonitorFlow calls a PSA's API with credentials \
@@ -23,7 +23,9 @@ HaloPSA API, View Applications) with the authentication method Client ID and Sec
 acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` \
 with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never \
 answered. Each MonitorFlow site is then matched to a PSA client, and optionally one of its sites, chosen \
-from the PSA's lists read through the connection; incidents of a site without a match open no ticket. \
+from the PSA's lists read through the connection; incidents of a site without a match open no ticket. An incident at the chosen severity then opens one \
+ticket for its site's client, with the chosen ticket type and category, and its resolution adds a private \
+note and moves the ticket to the chosen status. \
 When the PSA refuses or does not answer, the answer is 502 `psa_unavailable` with its own words. Every change is in the audit log, with the key's ID. API keys need the `administration` area."))
 )]
 pub(super) struct Doc;
@@ -286,3 +288,29 @@ fn list_psa_statuses() {}
         (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
     ))]
 fn put_psa_ticket_settings() {}
+
+/// List tickets opened for incidents
+///
+/// The 50 most recently changed: created, closed when their incident
+/// resolved, skipped because the site has no PSA client, or refused by
+/// the PSA with its words. Global administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/tickets", tag = "psa",
+    responses(
+        (status = 200, description = "The tickets", body = psa::TicketList, example = json!({
+            "tickets": [{
+                "incident_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                "ticket_id": 5001,
+                "state": "open",
+                "error": null,
+                "metric": "disk_used_percent",
+                "severity": "critical",
+                "server_name": "web-01",
+                "site_name": "paris",
+                "created_at": "2026-11-22T10:00:05Z",
+                "updated_at": "2026-11-22T10:00:05Z",
+                "closed_at": null,
+            }],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+    ))]
+fn list_psa_tickets() {}

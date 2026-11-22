@@ -286,6 +286,7 @@
 //! | GET | `/api/psa/categories` | global administrator | [`psa::CategoryList`]: the PSA's first-level categories |
 //! | GET | `/api/psa/statuses` | global administrator | [`psa::RecordList`]: the PSA's ticket statuses |
 //! | PUT | `/api/psa/ticket-settings` | global administrator | body [`psa::TicketSettingsRequest`], checked against the PSA's lists; 200 [`psa::ConnectionView`]; audited |
+//! | GET | `/api/psa/tickets` | global administrator | [`psa::TicketList`]: the latest tickets opened for incidents, closed, skipped or refused |
 //!
 //! # Authentication
 //!
@@ -1640,6 +1641,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/psa/categories", get(psa::categories))
         .route("/api/psa/statuses", get(psa::statuses))
         .route("/api/psa/ticket-settings", put(psa::put_ticket_settings))
+        .route("/api/psa/tickets", get(psa::tickets))
         .route(
             "/api/psa/site-links/{site_id}",
             put(psa::put_site_link).delete(psa::delete_site_link),

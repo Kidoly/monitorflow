@@ -25840,6 +25840,113 @@
         }
       }
     },
+    "/api/v1/psa/tickets": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List tickets opened for incidents",
+        "description": "The 50 most recently changed: created, closed when their incident\nresolved, skipped because the site has no PSA client, or refused by\nthe PSA with its words. Global administrators only.",
+        "operationId": "list_psa_tickets",
+        "responses": {
+          "200": {
+            "description": "The tickets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaTicketList"
+                },
+                "example": {
+                  "tickets": [
+                    {
+                      "closed_at": null,
+                      "created_at": "2026-11-22T10:00:05Z",
+                      "error": null,
+                      "incident_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                      "metric": "disk_used_percent",
+                      "server_name": "web-01",
+                      "severity": "critical",
+                      "site_name": "paris",
+                      "state": "open",
+                      "ticket_id": 5001,
+                      "updated_at": "2026-11-22T10:00:05Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/relays": {
       "get": {
         "tags": [
@@ -56685,6 +56792,94 @@
         },
         "additionalProperties": false
       },
+      "PsaTicket": {
+        "type": "object",
+        "description": "One incident's ticket, as the HaloPSA page lists them.",
+        "required": [
+          "incident_id",
+          "state",
+          "metric",
+          "severity",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it was skipped or failed, or the last failure while retrying,\nin the PSA's words; `null` otherwise."
+          },
+          "incident_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The incident."
+          },
+          "metric": {
+            "type": "string",
+            "description": "The incident's measure, severity, and server or relay."
+          },
+          "server_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": "string"
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "description": "`creating`, `open`, `closed` (its incident resolved), `skipped`\n(its site has no PSA client) or `failed` (the PSA refused)."
+          },
+          "ticket_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA's ticket number; `null` until created."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PsaTicketList": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/tickets`.",
+        "required": [
+          "tickets"
+        ],
+        "properties": {
+          "tickets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PsaTicket"
+            },
+            "description": "The 50 most recently changed, newest first."
+          }
+        }
+      },
       "PsaTicketSettings": {
         "type": "object",
         "description": "What tickets the connection opens and how it closes them (ADR-0166).",
@@ -63357,7 +63552,7 @@
     },
     {
       "name": "psa",
-      "description": "The PSA connection: MonitorFlow calls a PSA's API with credentials it keeps, HaloPSA first. One per installation, managed by global administrators (a key with every reach), since one PSA serves every customer. In HaloPSA, create an API application (Configuration, Integrations, HaloPSA API, View Applications) with the authentication method Client ID and Secret (Client Credentials), acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never answered. Each MonitorFlow site is then matched to a PSA client, and optionally one of its sites, chosen from the PSA's lists read through the connection; incidents of a site without a match open no ticket. When the PSA refuses or does not answer, the answer is 502 `psa_unavailable` with its own words. Every change is in the audit log, with the key's ID. API keys need the `administration` area."
+      "description": "The PSA connection: MonitorFlow calls a PSA's API with credentials it keeps, HaloPSA first. One per installation, managed by global administrators (a key with every reach), since one PSA serves every customer. In HaloPSA, create an API application (Configuration, Integrations, HaloPSA API, View Applications) with the authentication method Client ID and Secret (Client Credentials), acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never answered. Each MonitorFlow site is then matched to a PSA client, and optionally one of its sites, chosen from the PSA's lists read through the connection; incidents of a site without a match open no ticket. An incident at the chosen severity then opens one ticket for its site's client, with the chosen ticket type and category, and its resolution adds a private note and moves the ticket to the chosen status. When the PSA refuses or does not answer, the answer is 502 `psa_unavailable` with its own words. Every change is in the audit log, with the key's ID. API keys need the `administration` area."
     }
   ]
 }
