@@ -5,8 +5,8 @@
 //! for the same address. The address may be private: a global
 //! administrator controls the server anyway (ADR-0163).
 
-use axum::extract::rejection::JsonRejection;
-use axum::extract::State;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
@@ -18,8 +18,9 @@ use sqlx::PgExecutor;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::notifications::is_global_admin;
-use super::sensors::body;
+use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
+use crate::psa::halopsa::{HaloError, Record};
 use crate::psa::{self, halopsa, Connection, Credentials, Halo, HALOPSA, MAX_ID};
 
 /// The connection as the web interface shows it; never its secret.
@@ -279,6 +280,15 @@ pub async fn put_connection(
     .bind(same)
     .execute(&mut *tx)
     .await?;
+    // Ids of another instance mean nothing here.
+    if current
+        .as_ref()
+        .is_some_and(|c| c.base_url != credentials.base_url)
+    {
+        sqlx::query("DELETE FROM psa_site_links")
+            .execute(&mut *tx)
+            .await?;
+    }
     let action = if current.is_some() {
         "psa.connection.update"
     } else {
@@ -359,4 +369,273 @@ pub async fn test_connection(
             error: Some(error.message),
         },
     }))
+}
+
+/// Query string of `GET /api/psa/clients`.
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ClientSearch {
+    /// Part of the client's name; absent or empty lists the first ones.
+    pub search: Option<String>,
+}
+
+/// Body of `GET /api/psa/clients` and `GET /api/psa/clients/{id}/sites`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = PsaRecordList)]
+pub struct RecordList {
+    /// By name; clients at most 50 per search.
+    pub records: Vec<Record>,
+}
+
+/// One MonitorFlow site and the PSA client and site it is matched to.
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = PsaSiteLink)]
+pub struct SiteLink {
+    /// The MonitorFlow site.
+    pub site_id: uuid::Uuid,
+    pub site_name: String,
+    /// Its customer.
+    pub customer_id: uuid::Uuid,
+    pub customer_name: String,
+    /// The PSA client its tickets go to; `null` when not matched.
+    pub client_id: Option<i64>,
+    /// The client's name when matched; `null` otherwise.
+    pub client_name: Option<String>,
+    /// The PSA site within that client; `null` for none.
+    pub psa_site_id: Option<i64>,
+    pub psa_site_name: Option<String>,
+    /// When it was matched; `null` when not.
+    pub linked_at: Option<DateTime<Utc>>,
+}
+
+/// Body of `GET /api/psa/site-links`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = PsaSiteLinkList)]
+pub struct SiteLinkList {
+    /// Every MonitorFlow site, by customer and name.
+    pub sites: Vec<SiteLink>,
+}
+
+/// Body of `PUT /api/psa/site-links/{site_id}`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = PsaSiteLinkRequest)]
+#[serde(deny_unknown_fields)]
+pub struct SiteLinkRequest {
+    /// The PSA client, an `id` of `GET /api/psa/clients`.
+    pub client_id: i64,
+    /// One of that client's sites, from `GET /api/psa/clients/{id}/sites`;
+    /// absent or `null` lets the PSA choose.
+    #[serde(default)]
+    pub psa_site_id: Option<i64>,
+}
+
+/// The connection and a client for it; 409 when there is none.
+async fn connected(state: &ApiState) -> Result<(Connection, Halo), ApiError> {
+    let connection = psa::load(&state.pool)
+        .await?
+        .ok_or_else(|| ApiError::Conflict("Set up the HaloPSA connection first.".into()))?;
+    let credentials = connection
+        .credentials()
+        .map_err(|e| ApiError::PsaUnavailable(e.message))?;
+    Ok((connection, Halo::new(credentials)))
+}
+
+/// `outcome` with the PSA's failure recorded on the connection and turned
+/// into a 502.
+async fn recorded<T>(
+    state: &ApiState,
+    connection: &Connection,
+    outcome: Result<T, HaloError>,
+) -> Result<T, ApiError> {
+    match outcome {
+        Ok(value) => {
+            psa::record_success(&state.pool, connection.id, None).await?;
+            Ok(value)
+        }
+        Err(error) => {
+            psa::record_failure(&state.pool, connection.id, &error.message).await?;
+            Err(ApiError::PsaUnavailable(error.message))
+        }
+    }
+}
+
+/// `GET /api/psa/clients`: the PSA's active clients, read through the
+/// connection; global administrators.
+pub async fn clients(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    query: Result<Query<ClientSearch>, QueryRejection>,
+) -> Result<Json<RecordList>, ApiError> {
+    require_global_admin(&user)?;
+    let Query(query) = query.map_err(|e| ApiError::Invalid(e.body_text()))?;
+    let (connection, halo) = connected(&state).await?;
+    let search = query.search.unwrap_or_default();
+    let records = recorded(&state, &connection, halo.clients(&search).await).await?;
+    Ok(Json(RecordList { records }))
+}
+
+/// `GET /api/psa/clients/{id}/sites`: the sites of one PSA client.
+pub async fn client_sites(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<RecordList>, ApiError> {
+    require_global_admin(&user)?;
+    let (connection, halo) = connected(&state).await?;
+    let records = recorded(&state, &connection, halo.sites(id).await).await?;
+    Ok(Json(RecordList { records }))
+}
+
+const LINKS: &str = "SELECT s.id AS site_id, s.name AS site_name, c.id AS customer_id,
+        c.name AS customer_name, l.client_id, l.client_name, l.halo_site_id AS psa_site_id,
+        l.halo_site_name AS psa_site_name, l.linked_at
+    FROM sites s
+    JOIN customers c ON c.id = s.customer_id
+    LEFT JOIN psa_site_links l ON l.site_id = s.id";
+
+/// `GET /api/psa/site-links`: every site with its match; global
+/// administrators.
+pub async fn site_links(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+) -> Result<Json<SiteLinkList>, ApiError> {
+    require_global_admin(&user)?;
+    // SQL-safe: interpolates only the constant LINKS.
+    let sites = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{LINKS} ORDER BY lower(c.name), lower(s.name), s.id"
+    )))
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(SiteLinkList { sites }))
+}
+
+async fn site_link(db: impl PgExecutor<'_>, site: uuid::Uuid) -> Result<SiteLink, ApiError> {
+    // SQL-safe: interpolates only the constant LINKS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINKS} WHERE s.id = $1")))
+        .bind(site)
+        .fetch_optional(db)
+        .await?
+        .ok_or(ApiError::NotFound)
+}
+
+/// `PUT /api/psa/site-links/{site_id}`: matches a site to a PSA client and
+/// optionally one of its sites, checked with the PSA, which also gives the
+/// names kept; audited as `psa.link.update`.
+pub async fn put_site_link(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(site): Path<String>,
+    request: Result<Json<SiteLinkRequest>, JsonRejection>,
+) -> Result<Json<SiteLink>, ApiError> {
+    require_global_admin(&user)?;
+    let site = parse_id(&site)?;
+    let request = body(request)?;
+    site_link(&state.pool, site).await?;
+    let (connection, halo) = connected(&state).await?;
+    let client = recorded(&state, &connection, halo.client(request.client_id).await)
+        .await?
+        .ok_or_else(|| ApiError::Invalid("HaloPSA has no such client.".into()))?;
+    let psa_site = match request.psa_site_id {
+        None => None,
+        Some(id) => {
+            let (found, owner) = recorded(&state, &connection, halo.site(id).await)
+                .await?
+                .ok_or_else(|| ApiError::Invalid("HaloPSA has no such site.".into()))?;
+            if owner.is_some_and(|owner| owner != client.id) {
+                return Err(ApiError::Invalid(format!(
+                    "That HaloPSA site belongs to another client than {}.",
+                    client.name
+                )));
+            }
+            Some(found)
+        }
+    };
+    let mut tx = state.pool.begin().await?;
+    let taken: Option<String> = match &psa_site {
+        Some(found) => {
+            sqlx::query_scalar(
+                "SELECT s.name FROM psa_site_links l JOIN sites s ON s.id = l.site_id
+             WHERE l.connection_id = $1 AND l.halo_site_id = $2 AND l.site_id <> $3",
+            )
+            .bind(connection.id)
+            .bind(found.id)
+            .bind(site)
+            .fetch_optional(&mut *tx)
+            .await?
+        }
+        None => None,
+    };
+    if let Some(other) = taken {
+        return Err(ApiError::Conflict(format!(
+            "That HaloPSA site is already matched to {other}."
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO psa_site_links (site_id, connection_id, client_id, client_name,
+                                     halo_site_id, halo_site_name)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (site_id) DO UPDATE SET connection_id = $2, client_id = $3,
+             client_name = $4, halo_site_id = $5, halo_site_name = $6, linked_at = now()",
+    )
+    .bind(site)
+    .bind(connection.id)
+    .bind(client.id)
+    .bind(&client.name)
+    .bind(psa_site.as_ref().map(|s| s.id))
+    .bind(psa_site.as_ref().map(|s| s.name.as_str()))
+    .execute(&mut *tx)
+    .await?;
+    let actor = user.id.to_string();
+    let target = site.to_string();
+    audit::record(
+        &mut *tx,
+        Event {
+            actor_kind: "user",
+            actor_id: &actor,
+            action: "psa.link.update",
+            target: Some(("site", &target)),
+            details: json!({
+                "client_id": client.id,
+                "psa_site_id": psa_site.as_ref().map(|s| s.id),
+            }),
+        },
+    )
+    .await?;
+    let link = site_link(&mut *tx, site).await?;
+    tx.commit().await?;
+    Ok(Json(link))
+}
+
+/// `DELETE /api/psa/site-links/{site_id}`: the site's incidents open no
+/// more tickets; 204, 404 when it was not matched; audited as
+/// `psa.link.delete`.
+pub async fn delete_site_link(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(site): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    require_global_admin(&user)?;
+    let site = parse_id(&site)?;
+    let mut tx = state.pool.begin().await?;
+    let removed: Option<i64> =
+        sqlx::query_scalar("DELETE FROM psa_site_links WHERE site_id = $1 RETURNING client_id")
+            .bind(site)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let client = removed.ok_or(ApiError::NotFound)?;
+    let actor = user.id.to_string();
+    let target = site.to_string();
+    audit::record(
+        &mut *tx,
+        Event {
+            actor_kind: "user",
+            actor_id: &actor,
+            action: "psa.link.delete",
+            target: Some(("site", &target)),
+            details: json!({ "client_id": client }),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
 }

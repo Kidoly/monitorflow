@@ -277,6 +277,11 @@
 //! | PUT | `/api/psa/connection` | global administrator | body [`psa::ConnectionRequest`]; sets it up or changes it, an empty secret keeps the stored one for the same address; 200 [`psa::ConnectionView`]; audited |
 //! | DELETE | `/api/psa/connection` | global administrator | 204, 404 when none; audited |
 //! | POST | `/api/psa/connection/test` | global administrator | body [`psa::ConnectionRequest`], absent values from the stored connection; signs in and reads the agent, read-only; 200 [`psa::TestResult`] |
+//! | GET | `/api/psa/clients` | global administrator | `?search=`; [`psa::RecordList`]: the PSA's active clients, read through the connection; 409 without a connection, 502 `psa_unavailable` with the PSA's words |
+//! | GET | `/api/psa/clients/{id}/sites` | global administrator | [`psa::RecordList`]: that client's sites |
+//! | GET | `/api/psa/site-links` | global administrator | [`psa::SiteLinkList`]: every site with the PSA client and site it is matched to |
+//! | PUT | `/api/psa/site-links/{site_id}` | global administrator | body [`psa::SiteLinkRequest`]; checked with the PSA; 200 [`psa::SiteLink`]; audited |
+//! | DELETE | `/api/psa/site-links/{site_id}` | global administrator | 204, 404 when not matched; audited |
 //!
 //! # Authentication
 //!
@@ -1624,6 +1629,13 @@ pub fn router(state: ApiState) -> Router {
                 .delete(psa::delete_connection),
         )
         .route("/api/psa/connection/test", post(psa::test_connection))
+        .route("/api/psa/clients", get(psa::clients))
+        .route("/api/psa/clients/{id}/sites", get(psa::client_sites))
+        .route("/api/psa/site-links", get(psa::site_links))
+        .route(
+            "/api/psa/site-links/{site_id}",
+            put(psa::put_site_link).delete(psa::delete_site_link),
+        )
         .route(
             "/api/servers/{id}/proxmox",
             get(proxmox::get).put(proxmox::set).delete(proxmox::clear),

@@ -247,4 +247,89 @@ db_tests! {
             assert_eq!(answer["error"], error);
         }
     }
+
+    #[sqlx::test]
+    async fn sites_are_matched_to_clients_read_from_the_psa(pool: PgPool) {
+        secrets::install_for_tests();
+        let halo = FakeHalo::start().await;
+        let cookie = admin(&pool).await;
+        let (status, body) = call(&pool, "GET", "/api/psa/clients?search=example", &cookie, None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "Set up the HaloPSA connection first.");
+        call(&pool, "PUT", CONNECTION, &cookie, Some(settings(&halo))).await;
+
+        let (status, body) = call(&pool, "GET", "/api/psa/clients?search=example", &cookie, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["records"],
+            json!([{"id": 10, "name": "Example Industries"}, {"id": 11, "name": "Example Logistics"}])
+        );
+        let (_, body) = call(&pool, "GET", "/api/psa/clients/10/sites", &cookie, None).await;
+        assert_eq!(body["records"], json!([{"id": 100, "name": "Main office"}, {"id": 101, "name": "Warehouse"}]));
+
+        let customer: uuid::Uuid =
+            sqlx::query_scalar("INSERT INTO customers (name) VALUES ('acme') RETURNING id")
+                .fetch_one(&pool).await.unwrap();
+        let paris: uuid::Uuid =
+            sqlx::query_scalar("INSERT INTO sites (name, customer_id) VALUES ('paris', $1) RETURNING id")
+                .bind(customer).fetch_one(&pool).await.unwrap();
+        let lyon: uuid::Uuid =
+            sqlx::query_scalar("INSERT INTO sites (name, customer_id) VALUES ('lyon', $1) RETURNING id")
+                .bind(customer).fetch_one(&pool).await.unwrap();
+        let link = |site: uuid::Uuid| format!("/api/psa/site-links/{site}");
+
+        let (status, body) = call(&pool, "PUT", &link(paris), &cookie, Some(json!({"client_id": 10, "psa_site_id": 100}))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["client_name"], "Example Industries");
+        assert_eq!(body["psa_site_name"], "Main office");
+
+        // A site of another client, an unknown client, a site taken.
+        let (status, body) = call(&pool, "PUT", &link(lyon), &cookie, Some(json!({"client_id": 10, "psa_site_id": 110}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "That HaloPSA site belongs to another client than Example Industries.");
+        let (status, body) = call(&pool, "PUT", &link(lyon), &cookie, Some(json!({"client_id": 99}))).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("HaloPSA has no such client.")));
+        let (status, body) = call(&pool, "PUT", &link(lyon), &cookie, Some(json!({"client_id": 10, "psa_site_id": 100}))).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("That HaloPSA site is already matched to paris.")));
+        let (status, _) = call(&pool, "PUT", &link(lyon), &cookie, Some(json!({"client_id": 10}))).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (_, body) = call(&pool, "GET", "/api/psa/site-links", &cookie, None).await;
+        let sites = body["sites"].as_array().unwrap();
+        assert_eq!(sites.len(), 2);
+        assert_eq!(sites[0]["site_name"], "lyon");
+        assert_eq!(sites[0]["client_id"], 10);
+        assert_eq!(sites[0]["psa_site_id"], Value::Null);
+
+        let (status, _) = call(&pool, "DELETE", &link(lyon), &cookie, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _) = call(&pool, "DELETE", &link(lyon), &cookie, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // Another instance: its ids mean nothing, so the matches go.
+        let mut moved = settings(&halo);
+        moved["base_url"] = format!("{}/other", halo.url).into();
+        call(&pool, "PUT", CONNECTION, &cookie, Some(moved)).await;
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM psa_site_links").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 0);
+
+        let names: Vec<String> = actions(&pool).await.into_iter().map(|(a, _)| a).filter(|a| a.starts_with("psa.link")).collect();
+        assert_eq!(names, ["psa.link.update", "psa.link.update", "psa.link.delete"]);
+    }
+
+    #[sqlx::test]
+    async fn the_psa_s_refusal_is_a_502_in_its_words(pool: PgPool) {
+        secrets::install_for_tests();
+        let halo = FakeHalo::start().await;
+        let cookie = admin(&pool).await;
+        let mut wrong = settings(&halo);
+        wrong["client_secret"] = "not-the-secret".into();
+        call(&pool, "PUT", CONNECTION, &cookie, Some(wrong)).await;
+        let (status, body) = call(&pool, "GET", "/api/psa/clients", &cookie, None).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["code"], "psa_unavailable");
+        assert!(body["error"].as_str().unwrap().contains("invalid_client"), "{body}");
+        let (_, body) = call(&pool, "GET", CONNECTION, &cookie, None).await;
+        assert!(body["connection"]["last_error"].as_str().unwrap().contains("invalid_client"));
+    }
 }

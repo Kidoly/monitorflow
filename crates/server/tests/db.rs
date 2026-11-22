@@ -202,6 +202,7 @@ db_tests! {
                 "proxmox_guests",
                 "proxmox_snapshots",
                 "psa_connections",
+                "psa_site_links",
                 "relay_auto_updates",
                 "relay_commands",
                 "relay_mirrors",

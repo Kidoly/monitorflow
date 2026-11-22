@@ -15,3 +15,9 @@ The connection is set up by a global administrator under Settings › Integratio
 The address to enter in MonitorFlow is the one of your Halo web interface, like `https://halo.example.com`, without `/api`. MonitorFlow signs in on `https://halo.example.com/auth/token` and calls `https://halo.example.com/api`. A hosted instance whose sign-in needs it also takes its tenant name.
 
 **Test connection** signs in and reads the application's agent, without changing anything in Halo. The secret is sealed in the database (ADR-0125) and never shown again; to change it, enter a new one.
+
+## Match sites to HaloPSA clients
+
+Each MonitorFlow site is matched to a HaloPSA client and, if you want, to one of that client's sites. The lists come from HaloPSA, read through the connection, with a search on the client's name. An incident on a site without a match opens no ticket. A HaloPSA site can be matched to one MonitorFlow site only; a client can take several.
+
+Changing the connection's address removes every match: the ids of another instance mean nothing.

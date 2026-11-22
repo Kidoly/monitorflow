@@ -11,7 +11,8 @@ use super::psa;
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(get_psa_connection, put_psa_connection, delete_psa_connection, test_psa_connection),
+    paths(get_psa_connection, put_psa_connection, delete_psa_connection, test_psa_connection,
+          list_psa_clients, list_psa_client_sites, list_psa_site_links, put_psa_site_link, delete_psa_site_link),
     components(schemas(ErrorBody)),
     modifiers(&Common),
     tags((name = "psa", description = "The PSA connection: MonitorFlow calls a PSA's API with credentials \
@@ -20,7 +21,9 @@ since one PSA serves every customer. In HaloPSA, create an API application (Conf
 HaloPSA API, View Applications) with the authentication method Client ID and Secret (Client Credentials), \
 acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` \
 with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never \
-answered. Every change is in the audit log, with the key's ID. API keys need the `administration` area."))
+answered. Each MonitorFlow site is then matched to a PSA client, and optionally one of its sites, chosen \
+from the PSA's lists read through the connection; incidents of a site without a match open no ticket. \
+When the PSA refuses or does not answer, the answer is 502 `psa_unavailable` with its own words. Every change is in the audit log, with the key's ID. API keys need the `administration` area."))
 )]
 pub(super) struct Doc;
 
@@ -113,3 +116,95 @@ fn delete_psa_connection() {}
         (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
     ))]
 fn test_psa_connection() {}
+
+/// Search the PSA's clients
+///
+/// The PSA's active clients whose name holds `search`, by name, at most
+/// 50, read through the connection. Global administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/clients", tag = "psa",
+    params(psa::ClientSearch),
+    responses(
+        (status = 200, description = "The clients", body = psa::RecordList, example = json!({
+            "records": [{"id": 10, "name": "Example Industries"}, {"id": 11, "name": "Example Logistics"}],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer; `error` has its words", body = ErrorBody),
+    ))]
+fn list_psa_clients() {}
+
+/// List a PSA client's sites
+///
+/// The sites of one PSA client, by name. Global administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/clients/{id}/sites", tag = "psa",
+    params(("id" = i64, Path, description = "The PSA client's id")),
+    responses(
+        (status = 200, description = "Its sites", body = psa::RecordList, example = json!({
+            "records": [{"id": 100, "name": "Main office"}, {"id": 101, "name": "Warehouse"}],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn list_psa_client_sites() {}
+
+fn site_link() -> Value {
+    json!({
+        "site_id": "9a3c1e52-6b7d-4f8e-a1b2-c3d4e5f60718",
+        "site_name": "paris",
+        "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+        "customer_name": "Example Industries",
+        "client_id": 10,
+        "client_name": "Example Industries",
+        "psa_site_id": 100,
+        "psa_site_name": "Main office",
+        "linked_at": "2026-11-22T10:00:00Z",
+    })
+}
+
+/// List sites and their PSA match
+///
+/// Every MonitorFlow site, by customer and name, with the PSA client and
+/// site it is matched to, or `null`s. Read from MonitorFlow only. Global
+/// administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/site-links", tag = "psa",
+    responses(
+        (status = 200, description = "The sites", body = psa::SiteLinkList, example = json!({
+            "sites": [site_link()],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+    ))]
+fn list_psa_site_links() {}
+
+/// Match a site to a PSA client
+///
+/// Sets the PSA client, and optionally one of its sites, that the site's
+/// incidents open tickets for. Both are checked with the PSA, which also
+/// gives the names kept; a PSA site must belong to the client and match
+/// one MonitorFlow site at most. Audited as `psa.link.update`. Safe to
+/// repeat.
+#[utoipa::path(put, path = "/api/v1/psa/site-links/{site_id}", tag = "psa",
+    params(("site_id" = uuid::Uuid, Path, description = "The MonitorFlow site")),
+    request_body(content = psa::SiteLinkRequest, example = json!({"client_id": 10, "psa_site_id": 100})),
+    responses(
+        (status = 200, description = "Matched", body = psa::SiteLink, example = json!(site_link())),
+        (status = 400, description = "`invalid`: the PSA has no such client or site, or the site belongs to another client", body = ErrorBody),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "`not_found`: no such MonitorFlow site", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up, or the PSA site is matched to another site", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn put_psa_site_link() {}
+
+/// Unmatch a site
+///
+/// The site's incidents open no more tickets. Audited as
+/// `psa.link.delete`.
+#[utoipa::path(delete, path = "/api/v1/psa/site-links/{site_id}", tag = "psa",
+    params(("site_id" = uuid::Uuid, Path, description = "The MonitorFlow site")),
+    responses(
+        (status = 204, description = "Unmatched"),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "`not_found`: the site is not matched", body = ErrorBody),
+    ))]
+fn delete_psa_site_link() {}

@@ -339,6 +339,110 @@ impl Halo {
     }
 }
 
+/// A client or site of Halo, as the matching shows it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[schema(as = PsaRecord)]
+pub struct Record {
+    /// Halo's id.
+    pub id: i64,
+    /// Halo's name for it.
+    pub name: String,
+}
+
+/// Clients listed per search.
+pub const PAGE_SIZE: usize = 50;
+
+/// The records of a list answer: Halo answers either an array or an
+/// object holding the array under `key` (`clients`, `sites`...).
+pub fn records(answer: &Value, key: &str) -> Vec<Value> {
+    match answer {
+        Value::Array(items) => items.clone(),
+        Value::Object(map) => map
+            .get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// `value`'s `id` and `name`, when it has them.
+fn record(value: &Value) -> Option<Record> {
+    Some(Record {
+        id: value.get("id")?.as_i64()?,
+        name: value
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+    })
+}
+
+impl Halo {
+    /// Active clients whose name holds `search`, by name, at most
+    /// [`PAGE_SIZE`].
+    pub async fn clients(&self, search: &str) -> Result<Vec<Record>, HaloError> {
+        let mut query = vec![
+            ("pageinate", "true".to_owned()),
+            ("page_size", PAGE_SIZE.to_string()),
+            ("page_no", "1".to_owned()),
+            ("order", "name".to_owned()),
+            ("includeinactive", "false".to_owned()),
+        ];
+        if !search.trim().is_empty() {
+            query.push(("search", search.trim().to_owned()));
+        }
+        let answer = self.get("the client list", "Client", &query).await?;
+        Ok(records(&answer, "clients")
+            .iter()
+            .filter_map(record)
+            .take(PAGE_SIZE)
+            .collect())
+    }
+
+    /// The client `id`; `None` when Halo does not know it.
+    pub async fn client(&self, id: i64) -> Result<Option<Record>, HaloError> {
+        match self.get("the client", &format!("Client/{id}"), &[]).await {
+            Ok(answer) => Ok(record(&answer)),
+            Err(error) if error.status == Some(404) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The sites of client `client`, by name.
+    pub async fn sites(&self, client: i64) -> Result<Vec<Record>, HaloError> {
+        let query = [
+            ("client_id", client.to_string()),
+            ("includeinactive", "false".to_owned()),
+        ];
+        let answer = self.get("the site list", "Site", &query).await?;
+        let mut sites: Vec<Record> = records(&answer, "sites")
+            .iter()
+            .filter(|s| {
+                s.get("client_id")
+                    .and_then(Value::as_i64)
+                    .is_none_or(|c| c == client)
+            })
+            .filter_map(record)
+            .collect();
+        sites.sort_by_key(|s| s.name.to_lowercase());
+        Ok(sites)
+    }
+
+    /// The site `id` and its client; `None` when Halo does not know it.
+    pub async fn site(&self, id: i64) -> Result<Option<(Record, Option<i64>)>, HaloError> {
+        match self.get("the site", &format!("Site/{id}"), &[]).await {
+            Ok(answer) => {
+                Ok(record(&answer)
+                    .map(|site| (site, answer.get("client_id").and_then(Value::as_i64))))
+            }
+            Err(error) if error.status == Some(404) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,6 +490,23 @@ mod tests {
             "Veuillez choisir une catégorie"
         );
         assert_eq!(error_text(&[b'x'; 1000]).len(), ERROR_TEXT);
+    }
+
+    #[test]
+    fn lists_are_arrays_or_objects_holding_one() {
+        let array = serde_json::json!([{"id": 1, "name": " A "}]);
+        let object = serde_json::json!({"record_count": 1, "clients": [{"id": 1, "name": "A"}]});
+        assert_eq!(records(&array, "clients").len(), 1);
+        assert_eq!(records(&object, "clients").len(), 1);
+        assert!(records(&object, "sites").is_empty());
+        assert_eq!(
+            record(&array[0]),
+            Some(Record {
+                id: 1,
+                name: "A".into()
+            })
+        );
+        assert_eq!(record(&serde_json::json!({"name": "no id"})), None);
     }
 
     #[test]
