@@ -19,10 +19,8 @@ import {
   type CampaignDraft,
   type UpdateKind,
   type WaveDraft,
-  type WindowDraft,
   MANAGER_NAMES,
   THIRD_PARTY_MANAGERS,
-  WEEKDAYS,
   campaignTargets,
   canEdit,
   copyName,
@@ -30,7 +28,6 @@ import {
   includesApps,
   includesOs,
   managerFits,
-  weekdayName,
   emptyDraft,
   newWindow,
   planWaves,
@@ -44,6 +41,7 @@ import { CAMPAIGNS_PATH, campaignHref, copyCampaignHref } from "@/lib/routes";
 import { UUID } from "@/lib/uuid";
 
 import { CampaignServerPicker } from "./CampaignServerPicker";
+import { CampaignWindowCard } from "./CampaignWindowCard";
 import own from "./Campaigns.module.css";
 import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, ButtonLink, fieldClass } from "./ui/Button";
@@ -421,7 +419,7 @@ export function CampaignForm({
         <Fieldset legend={t("campaigns.form.windows")}>
           {draft.windows.length === 0 && <p className={own.note}>{t("campaigns.form.noWindow")}</p>}
           {draft.windows.map((window, i) => (
-            <WindowRow
+            <CampaignWindowCard
               key={i}
               index={i}
               window={window}
@@ -431,10 +429,7 @@ export function CampaignForm({
           ))}
           <div className={own.row}>
             <Button onClick={() => set({ windows: [...draft.windows, newWindow("weekly")] })}>
-              {t("campaigns.form.addWeekly")}
-            </Button>
-            <Button onClick={() => set({ windows: [...draft.windows, newWindow("once")] })}>
-              {t("campaigns.form.addOnce")}
+              {t("campaigns.form.addWindow")}
             </Button>
           </div>
         </Fieldset>
@@ -563,76 +558,6 @@ function WavePlan({ draft, targets }: { draft: CampaignDraft; targets: Server[] 
   return <p className={own.note}>{t("campaigns.form.plan", { sizes })}</p>;
 }
 
-function WindowRow({
-  index,
-  window,
-  onChange,
-  onRemove,
-}: {
-  index: number;
-  window: WindowDraft;
-  onChange: (window: WindowDraft) => void;
-  onRemove: () => void;
-}) {
-  const number = index + 1;
-  const label = t("campaigns.check.window", { number });
-  const set = (patch: Partial<WindowDraft>) => onChange({ ...window, ...patch });
-  return (
-    <div className={own.row} role="group" aria-label={label}>
-      {window.kind === "weekly" ? (
-        <>
-          {WEEKDAYS.map((day) => (
-            <label key={day} className={own.inline}>
-              <input
-                type="checkbox"
-                checked={window.weekdays.includes(day)}
-                onChange={(e) => set({ weekdays: toggle(window.weekdays, day, e.target.checked) })}
-              />
-              {weekdayName(day)}
-            </label>
-          ))}
-          <label className={own.fld}>
-            {t("campaigns.form.from")}
-            <input className={fieldClass} type="time" value={window.start} onChange={(e) => set({ start: e.target.value })} />
-          </label>
-          <label className={own.fld}>
-            {t("campaigns.form.to")}
-            <input className={fieldClass} type="time" value={window.end} onChange={(e) => set({ end: e.target.value })} />
-          </label>
-          <label className={own.fld}>
-            {t("campaigns.form.timezone")}
-            <input className={fieldClass} value={window.timezone} onChange={(e) => set({ timezone: e.target.value })} />
-          </label>
-        </>
-      ) : (
-        <>
-          <label className={own.fld}>
-            {t("campaigns.form.starts")}
-            <input
-              className={fieldClass}
-              type="datetime-local"
-              value={window.startsAt}
-              onChange={(e) => set({ startsAt: e.target.value })}
-            />
-          </label>
-          <label className={own.fld}>
-            {t("campaigns.form.ends")}
-            <input
-              className={fieldClass}
-              type="datetime-local"
-              value={window.endsAt}
-              onChange={(e) => set({ endsAt: e.target.value })}
-            />
-          </label>
-        </>
-      )}
-      <Button onClick={onRemove} aria-label={t("campaigns.form.removeWindow", { number })}>
-        {t("campaigns.form.remove")}
-      </Button>
-    </div>
-  );
-}
-
 function Fieldset({ legend, children }: { legend: string; children: ReactNode }) {
   return (
     <fieldset className={own.fieldset}>
@@ -640,10 +565,6 @@ function Fieldset({ legend, children }: { legend: string; children: ReactNode })
       <div className={own.fields}>{children}</div>
     </fieldset>
   );
-}
-
-function toggle<T>(list: T[], item: T, on: boolean): T[] {
-  return on ? (list.includes(item) ? list : [...list, item]) : list.filter((x) => x !== item);
 }
 
 function replace<T>(list: T[], index: number, item: T): T[] {

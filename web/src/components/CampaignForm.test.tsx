@@ -106,7 +106,7 @@ describe("CampaignForm", () => {
     await user.click(screen.getByRole("button", { name: "Add batch" }));
     expect(screen.getByText(/Servers per batch: batch 1: 1, batch 2: 1/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Security updates only" }));
-    await user.click(screen.getByRole("button", { name: "Add weekly window" }));
+    await user.click(screen.getByRole("button", { name: "Add window" }));
     const window = screen.getByRole("group", { name: "Window 1" });
     await user.clear(within(window).getByLabelText("Time zone"));
     await user.type(within(window).getByLabelText("Time zone"), "Europe/Paris");
@@ -146,7 +146,7 @@ describe("CampaignForm", () => {
 
     await user.type(screen.getByLabelText("Name"), "October");
     await user.click(screen.getByRole("checkbox", { name: /web-1/ }));
-    await user.click(screen.getByRole("button", { name: "Add weekly window" }));
+    await user.click(screen.getByRole("button", { name: "Add window" }));
     await user.clear(screen.getByLabelText("Time zone"));
     await user.type(screen.getByLabelText("Time zone"), "Mars/Base");
     await user.click(screen.getByRole("button", { name: "Create campaign" }));
@@ -281,5 +281,56 @@ describe("CampaignForm", () => {
     expect(screen.getByText("No server matches.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Remove all" }));
     expect(screen.getByRole("status")).toHaveTextContent("0 servers targeted.");
+  });
+
+  it("makes a window a card that repeats every week, month or year", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({ ...inventory, "POST /api/campaigns": { status: 201, body: detail() } });
+    render(<CampaignForm me={customerAdmin} />);
+    await user.type(await screen.findByLabelText("Name"), "Patch Tuesday");
+    await user.selectOptions(screen.getByLabelText("Every server of the site"), "site-1");
+    await user.click(screen.getByRole("button", { name: "Add window" }));
+    await user.click(screen.getByRole("button", { name: "Add window" }));
+    const first = screen.getByRole("group", { name: "Window 1" });
+    const days = within(first).getByRole("group", { name: "Days" });
+    expect(within(days).getByRole("button", { name: "Sat" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(within(days).getByRole("button", { name: "Sun" }));
+    await user.click(within(days).getByRole("button", { name: "Fri" }));
+    expect(within(first).getByText(/^Fri, Sat 22:00–04:00/)).toBeInTheDocument();
+
+    const second = screen.getByRole("group", { name: "Window 2" });
+    await user.selectOptions(within(second).getByLabelText("Repeats"), "monthly");
+    await user.selectOptions(within(second).getByLabelText("On"), "weekday");
+    await user.selectOptions(within(second).getByLabelText("Week"), "2");
+    await user.selectOptions(within(second).getByLabelText("Weekday"), "2");
+    expect(within(second).getByText(/^Second Tuesday of each month 22:00–04:00/)).toBeInTheDocument();
+    await user.click(within(within(second).getByRole("group", { name: "Months" })).getByRole("button", { name: "Feb" }));
+    expect(within(second).getByText(/^Second Tuesday of Jan, Mar,/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add window" }));
+    const third = screen.getByRole("group", { name: "Window 3" });
+    await user.selectOptions(within(third).getByLabelText("Repeats"), "yearly");
+    await user.selectOptions(within(third).getByLabelText("Month"), "12");
+    await user.clear(within(third).getByLabelText("Day"));
+    await user.type(within(third).getByLabelText("Day"), "31");
+    expect(within(third).getByText("A month without day 31 has no window.")).toBeInTheDocument();
+    expect(within(third).getByText(/^Every year on December 31 22:00–04:00/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Create campaign" }));
+    const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    const zone = expect.any(String);
+    expect(JSON.parse(call?.[1]?.body as string).windows).toEqual([
+      { kind: "weekly", weekdays: [5, 6], start: "22:00", end: "04:00", timezone: zone },
+      {
+        kind: "monthly",
+        month_week: 2,
+        weekday: 2,
+        months: [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        start: "22:00",
+        end: "04:00",
+        timezone: zone,
+      },
+      { kind: "monthly", month_day: 31, months: [12], start: "22:00", end: "04:00", timezone: zone },
+    ]);
   });
 });

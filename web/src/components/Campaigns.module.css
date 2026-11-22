@@ -221,6 +221,67 @@
   color: var(--text);
 }
 
+/* A maintenance window: a card with how it repeats, its days and hours. */
+.windowCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.cardHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.cardHead > strong {
+  margin-right: auto;
+  font-size: 13px;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pill {
+  min-width: 48px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pill:hover {
+  border-color: var(--text);
+}
+
+.pill[aria-pressed="true"] {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--surface);
+}
+
+.pill:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+}
+
+.short {
+  width: 6em;
+}
+
 .errors {
   margin: 4px 0 0;
   padding-left: 18px;
