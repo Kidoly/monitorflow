@@ -317,4 +317,79 @@ db_tests! {
         assert_eq!(change["skipped"][0]["hostname"], "web-4");
         assert_eq!(h.commands(local).await.len(), 0);
     }
+
+    #[sqlx::test]
+    async fn every_administered_server_switches_at_once(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let h = Harness::new(&pool).await;
+        // A second site of the same customer, and another customer's site.
+        let lyon: Uuid = sqlx::query_scalar(
+            "INSERT INTO sites (name, customer_id) VALUES ('lyon', $1) RETURNING id",
+        )
+        .bind(h.customer)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let other: Uuid = sqlx::query_scalar(
+            "WITH c AS (INSERT INTO customers (name) VALUES ('globex') RETURNING id)
+             INSERT INTO sites (name, customer_id) SELECT 'berlin', id FROM c RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let add = |name: &'static str, site: Uuid| {
+            sqlx::query_scalar::<_, Uuid>(
+                "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+                 VALUES ($1, $2, $1, 'debian') RETURNING id",
+            )
+            .bind(name)
+            .bind(site)
+            .fetch_one(&pool)
+        };
+        let in_lyon = add("db-1", lyon).await.unwrap();
+        let elsewhere = add("web-9", other).await.unwrap();
+        let local = h.add_server("web-2").await;
+        for server in [h.server, in_lyon, elsewhere] {
+            h.report(server, CONSENT()).await;
+        }
+        h.report(local, json!({"ai_commands": "off", "shell": "off"})).await;
+        let customer_admin = h
+            .login("carol", Role::Administrator, GrantScope::Customer(h.customer))
+            .await;
+        let site_admin = h.login("alice", Role::Administrator, GrantScope::Site(lyon)).await;
+        let operator = h.login("op", Role::Operator, GrantScope::Global).await;
+        let uri = "/api/remediation/ai-commands";
+        let on = || Some(json!({"on": true}));
+
+        assert_eq!(h.send("POST", uri, &operator, on()).await.0, StatusCode::FORBIDDEN);
+        assert_eq!(
+            h.send("POST", uri, &customer_admin, Some(json!({"on": 1}))).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        // A site administrator reaches its own site only.
+        let (status, change) = h.send("POST", uri, &site_admin, on()).await;
+        assert_eq!(status, StatusCode::OK, "{change}");
+        assert_eq!(change["queued"], json!([in_lyon]));
+        // The customer's administrator reaches both its sites, not another
+        // customer's; servers that did not allow it are listed.
+        let (status, change) = h.send("POST", uri, &customer_admin, on()).await;
+        assert_eq!(status, StatusCode::OK, "{change}");
+        let mut queued: Vec<Uuid> = serde_json::from_value(change["queued"].clone()).unwrap();
+        queued.sort();
+        let mut expected = vec![h.server, in_lyon];
+        expected.sort();
+        assert_eq!(queued, expected);
+        assert_eq!(change["skipped"][0]["hostname"], "web-2");
+        assert!(h.commands(elsewhere).await.is_empty());
+        // The second request replaced the first one still queued.
+        let states: Vec<String> = h.commands(in_lyon).await.into_iter().map(|c| c.0).collect();
+        assert_eq!(states, ["cancelled", "queued"]);
+        let audited: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = 'server.ai_commands'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(audited, 3);
+    }
 }

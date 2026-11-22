@@ -212,6 +212,7 @@
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
 //! | POST | `/api/servers/{id}/ai-commands` | site administrator | body `{"on": bool}`; 201 [`commands::CommandDetail`] of the `ai_commands` command; 409 saying why the agent would refuse; audited and notified (ADR-0098) |
 //! | POST | `/api/sites/{id}/ai-commands` | site administrator | body `{"on": bool}`; [`package_sources::SiteChange`]: the servers switched, those skipped and why (ADR-0098) |
+//! | POST | `/api/remediation/ai-commands` | administrator of a site | body `{"on": bool}`; [`package_sources::SiteChange`] for every server of every site the user administers (ADR-0173) |
 //! | GET | `/api/commands/{id}` | read | [`commands::CommandDetail`]: the command and its output |
 //! | GET | `/agent/{version}/{file}`, `/agent/latest/{file}` | none | A file of a cached agent release, for installs (ADR-0054); 404 with a plain-text reason |
 //! | GET | `/api/settings/agent-install` | customer administrator | [`settings::AgentInstall`]: default install source, custom URL, what the configuration sets, the release `central` installs (ADR-0054) |
@@ -252,9 +253,11 @@
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
-//! | PUT | `/api/campaigns/{id}` | customer administrator | body [`campaigns::CreateRequest`]; 200 [`campaigns::CampaignDetail`]; 409 once a batch was queued |
+//! | PUT | `/api/campaigns/{id}` | customer administrator | body [`campaigns::CreateRequest`]; 200 [`campaigns::CampaignDetail`]; while a run is under way only the name, windows and threshold change, else 409; a finished campaign becomes a draft for its next run (ADR-0173) |
 //! | DELETE | `/api/campaigns/{id}` | customer administrator | 204 for a draft or finished campaign; 409 otherwise or while commands are in flight |
 //! | POST | `/api/campaigns/{id}/start`, `/pause`, `/resume`, `/stop` | customer administrator | 200 [`campaigns::CampaignDetail`]; 409 when the state does not allow it |
+//! | POST | `/api/campaigns/{id}/relaunch` | customer administrator | body [`campaigns::RelaunchRequest`]; 200 [`campaigns::CampaignDetail`]: a finished campaign runs again, all its servers or the failed ones; 409 otherwise (ADR-0173) |
+//! | GET | `/api/campaigns/{id}/runs` | customer role | [`campaigns::RunList`]: the campaign's past runs, newest first (ADR-0173) |
 //! | GET | `/api/remediation/rules` | customer role | [`remediation::RuleList`], see below |
 //! | POST | `/api/remediation/rules` | customer administrator | body [`remediation::RuleRequest`]; 201 the stored rule |
 //! | DELETE | `/api/remediation/rules/{id}` | customer administrator | 204 |
@@ -1525,6 +1528,7 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/servers/{id}/ai-commands", post(ai_commands::server))
         .route("/api/sites/{id}/ai-commands", post(ai_commands::site))
+        .route("/api/remediation/ai-commands", post(ai_commands::fleet))
         .route("/api/commands/{id}", get(commands::detail))
         .route("/api/agent-releases", get(commands::agent_releases))
         .route(
@@ -1597,6 +1601,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/campaigns/{id}/pause", post(campaigns::pause))
         .route("/api/campaigns/{id}/resume", post(campaigns::resume))
         .route("/api/campaigns/{id}/stop", post(campaigns::stop))
+        .route("/api/campaigns/{id}/relaunch", post(campaigns::relaunch))
+        .route("/api/campaigns/{id}/runs", get(campaigns::runs))
         .route(
             "/api/remediation/rules",
             get(remediation::list).post(remediation::create),

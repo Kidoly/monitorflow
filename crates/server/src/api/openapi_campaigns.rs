@@ -9,28 +9,31 @@ use utoipa::OpenApi;
 use super::campaigns;
 use super::openapi::{Common, ErrorBody};
 use crate::campaign::{
-    CampaignState, FailureThreshold, FailureUnit, PinnedMirror, SourcesMode, SourcesPin,
-    UpdateSpec, WaveSpec, Window,
+    CampaignState, FailureThreshold, FailureUnit, PinnedMirror, RunSettings, SourcesMode,
+    SourcesPin, UpdateSpec, WaveSpec, Window,
 };
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
         list_campaigns, create_campaign, campaign, update_campaign, delete_campaign,
-        start_campaign, pause_campaign, resume_campaign, stop_campaign,
+        start_campaign, pause_campaign, resume_campaign, stop_campaign, relaunch_campaign,
+        campaign_runs,
     ),
     components(schemas(
         CampaignState, FailureThreshold, FailureUnit, PinnedMirror, SourcesMode, SourcesPin,
         UpdateSpec, WaveSpec, Window, campaigns::Progress, campaigns::TargetView,
-        campaigns::WaveView,
+        campaigns::WaveView, campaigns::RelaunchServers, RunSettings,
     )),
     modifiers(&Common),
     tags(
         (name = "campaigns", description = "Package or agent updates sent to many servers of one \
 customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than \
 its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is \
-started. A campaign is edited until its first batch is queued and deleted as a draft or once \
-finished; to run one again, copy it: read it and create another from its fields. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an \
+started. A campaign is edited at any time: fully before its first batch, only its name, windows \
+and failure threshold while a run is under way, and fully once finished, for its next run. A \
+finished campaign runs again, all its servers or only those that failed, and keeps each past run \
+under `/campaigns/{id}/runs`. It is deleted as a draft or once finished. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an \
 agent update campaign), queued behind any other command of that server and checked by its agent, \
 which runs package updates only when its administrator allowed them. Campaign commands are made by \
 an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading \
@@ -101,6 +104,7 @@ fn campaign_in(state: &str) -> serde_json::Value {
         "wave_specs": [{"size": 1}],
         "wave_count": 2,
         "current_wave": if queued { Some(0) } else { None },
+        "previous_runs": 0,
         "progress": {
             "total": 2, "pending": 1 + count("pending"), "in_progress": count("running"),
             "succeeded": count("succeeded"), "failed": 0, "cancelled": 0
@@ -152,6 +156,37 @@ fn paused() -> serde_json::Value {
 }
 fn stopped() -> serde_json::Value {
     campaign_in("stopped")
+}
+/// A stopped campaign scheduled again: its first run is kept.
+fn relaunched() -> serde_json::Value {
+    let mut campaign = campaign_in("scheduled");
+    campaign["previous_runs"] = serde_json::json!(1);
+    campaign
+}
+/// The run of [`stopped`], once it ran again.
+fn runs() -> serde_json::Value {
+    let run = stopped();
+    serde_json::json!({"runs": [{
+        "number": 1,
+        "state": "stopped",
+        "error": run["error"],
+        "started_at": run["started_at"],
+        "finished_at": run["finished_at"],
+        "settings": {
+            "name": run["name"],
+            "site_id": run["site_id"],
+            "server_ids": [],
+            "wave_specs": run["wave_specs"],
+            "spec": run["spec"],
+            "agent_version": null,
+            "command_ttl_s": 3600,
+            "failure_threshold": run["failure_threshold"],
+            "windows": run["windows"],
+            "sources": null
+        },
+        "progress": run["progress"],
+        "waves": run["waves"]
+    }]})
 }
 fn list_example() -> serde_json::Value {
     let mut campaign = campaign_in("running");
@@ -274,10 +309,21 @@ fn campaign() {}
 /// values. Its servers are frozen again into batches, as at creation. The
 /// state, who made it and when stay.
 ///
-/// Only a campaign that queued nothing yet changes: a `draft`, or a
-/// `scheduled` or `paused` one whose first batch is still waiting for a
-/// maintenance window. Once a batch was queued, or once finished, it is
-/// 409: copy it into a new campaign instead (see "Create a campaign").
+/// What may change depends on where the campaign is (ADR-0173):
+///
+/// - **Nothing queued yet** (a `draft`, or a `scheduled` or `paused`
+///   campaign whose first batch waits for a window): everything.
+/// - **A run under way** (a batch was queued, not finished): only `name`,
+///   `windows` and `failure_threshold`; they apply to what is still to be
+///   queued. Every other field must be as the campaign has it, read with
+///   `GET`, or it is 409 naming what differs. Stop it, or wait for it to
+///   end, to change the rest.
+/// - **Finished** (`stopped`, `completed` or `failed`): everything, for its
+///   next run. The run that ended moves to `/campaigns/{id}/runs`, its
+///   servers are frozen again into new batches and the campaign is a
+///   `draft` again, to start when ready. A change of `name` alone renames
+///   it and leaves it as it is. Refused while some of its commands are in
+///   flight or package sources are still to be put back, as a deletion.
 ///
 /// Needs an administrator role on the campaign's customer, and on the
 /// customer of the body when it moves it, as a whole, and the key area
@@ -303,9 +349,10 @@ fn campaign() {}
 without administering it as a whole. `api_key_scope`: the key lacks the area"),
         (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \
 customer the caller does not read as a whole"),
-        (status = 409, body = ErrorBody, description = "`conflict`: `cannot edit a campaign that is \
-<state>` once it is finished, `cannot edit a campaign that queued commands already: duplicate it \
-instead`, or a `sources` conflict as for a creation"),
+        (status = 409, body = ErrorBody, description = "`conflict`: `cannot change <fields> while \
+the campaign runs: ...` for a run under way, `the campaign still has commands in flight: edit it \
+once they end` or `the package sources of some servers are not restored yet` for a finished one, \
+or a `sources` conflict as for a creation"),
     ))]
 fn update_campaign() {}
 
@@ -431,3 +478,57 @@ customer the caller does not read as a whole"),
 <state>`"),
     ))]
 fn stop_campaign() {}
+
+/// Run a campaign again
+///
+/// A `stopped`, `completed` or `failed` campaign runs again with its
+/// current settings: its last run moves to `/campaigns/{id}/runs` with its
+/// batches and results, its servers are frozen again into batches, and it
+/// is `scheduled`, queued at the next maintenance window. With
+/// `{"servers": "failed"}`, only the servers whose update failed, expired
+/// or was cancelled in the last run, still there, run again, in one batch;
+/// the campaign's own targets stay as they are for later runs.
+///
+/// Refused while some of its commands are in flight or package sources
+/// are still to be put back, as a deletion. To change the settings first,
+/// edit it: that prepares the next run as a `draft` to start.
+///
+/// Needs an administrator role on the customer as a whole and the key
+/// area "updates". Audited as `campaign.relaunch`, with the number of the
+/// run kept.
+#[utoipa::path(post, path = "/api/v1/campaigns/{id}/relaunch", tag = "campaigns",
+    params(("id" = uuid::Uuid, Path, description = "The campaign")),
+    request_body(content = campaigns::RelaunchRequest, example = json!({"servers": "failed"})),
+    responses(
+        (status = 200, description = "Scheduled again, with its new batches",
+            body = campaigns::CampaignDetail, example = relaunched),
+        (status = 400, body = ErrorBody, description = "`invalid`: the body, or the settings no \
+longer fit, as for a creation (a site or snapshot gone)"),
+        (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
+without administering it as a whole. `api_key_scope`: the key lacks the area"),
+        (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \
+customer the caller does not read as a whole"),
+        (status = 409, body = ErrorBody, description = "`conflict`: `cannot relaunch a campaign that \
+is <state>` before it is finished, `no server of the campaign failed in its last run`, `the \
+campaign still has commands in flight: relaunch it once they end`, or `the package sources of some \
+servers are not restored yet`"),
+    ))]
+fn relaunch_campaign() {}
+
+/// List a campaign's past runs
+///
+/// Every run that ended before the campaign was edited or run again,
+/// newest first, each with the settings it ran with and its batches and
+/// servers as they ended. The current or last run is the campaign itself
+/// (`GET /campaigns/{id}`).
+///
+/// Needs any role on the campaign's customer as a whole and the key area
+/// "updates".
+#[utoipa::path(get, path = "/api/v1/campaigns/{id}/runs", tag = "campaigns",
+    params(("id" = uuid::Uuid, Path, description = "The campaign")),
+    responses(
+        (status = 200, description = "Its past runs", body = campaigns::RunList, example = runs),
+        (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \
+customer the caller does not read as a whole"),
+    ))]
+fn campaign_runs() {}
