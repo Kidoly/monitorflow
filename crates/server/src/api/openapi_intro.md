@@ -88,6 +88,8 @@ The checkboxes of the web interface's incident and fleet lists act on many items
 | --- | --- |
 | Acknowledge incidents | `POST /api/v1/incidents/acknowledge` with one ID in `incident_ids` |
 | Silence the servers of incidents | `POST /api/v1/silences` with `scope` `server` (`relay` for a relay's offline incident), once per server however many incidents it has |
+| Acknowledge the alerts of servers | `POST /api/v1/incidents/acknowledge` with the server's open incidents nobody acknowledged, once per server (they share its site) |
+| Silence servers | `POST /api/v1/silences` with `scope` `server`, once per server |
 
 `POST /api/v1/incidents/acknowledge` also takes up to 500 incidents in one request, but all or none: one incident on a site the key may only read refuses the whole request with 403, before anything is written. Send one at a time when some may be out of reach.
 
