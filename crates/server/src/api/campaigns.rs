@@ -1,5 +1,6 @@
 //! Update campaigns (ADR-0033): list, create, read with waves and
-//! per-server status, and start, pause, resume or stop.
+//! per-server status, start, pause, resume or stop, and edit before the
+//! first batch or delete once over (ADR-0166).
 //!
 //! Campaigns span sites, so reading one needs a role on its customer as a
 //! whole (global or customer grant); creating and acting need an
@@ -32,8 +33,9 @@ use crate::campaign::{
 };
 use crate::commands::sources::{self, KeyLookupError};
 
-/// Body of `POST /api/campaigns`. Only `customer_id`, `name` and a target
-/// (`site_id` and/or `server_ids`) are required.
+/// Body of `POST /api/campaigns` and `PUT /api/campaigns/{id}`. Only
+/// `customer_id`, `name` and a target (`site_id` and/or `server_ids`) are
+/// required.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[schema(as = CampaignRequest)]
 #[serde(deny_unknown_fields)]
@@ -131,6 +133,12 @@ pub struct CampaignView {
     pub sources: Option<SourcesPin>,
     /// Set for an agent update campaign (ADR-0053).
     pub agent_version: Option<String>,
+    /// The `server_ids` of the request, as last written; `null` for a
+    /// campaign made before they were kept (ADR-0166).
+    pub server_ids: Option<Vec<Uuid>>,
+    /// The `waves` of the request, as last written; `null` for a campaign
+    /// made before they were kept. `waves` holds the batches they made.
+    pub wave_specs: Option<Vec<WaveSpec>>,
     /// Number of batches.
     pub wave_count: usize,
     /// Index of the batch in progress, from 0; `null` before the first is
@@ -226,6 +234,7 @@ impl From<CampaignError> for ApiError {
             CampaignError::Invalid(message) => Self::Invalid(message),
             CampaignError::NotFound => Self::NotFound,
             e @ CampaignError::Transition { .. } => Self::Conflict(e.to_string()),
+            CampaignError::Busy(message) => Self::Conflict(message),
             CampaignError::Database(e) => Self::Database(e),
         }
     }
@@ -284,6 +293,8 @@ async fn views(state: &ApiState, rows: Vec<Listed>) -> Result<Vec<CampaignView>,
                         mirrors: pins.remove(&c.id).unwrap_or_default(),
                     }),
                     agent_version: c.agent_version,
+                    server_ids: c.requested_server_ids,
+                    wave_specs: c.requested_waves.map(|w| w.0),
                     wave_count,
                     progress,
                     id: c.id,
@@ -392,14 +403,14 @@ pub async fn list(
     }))
 }
 
-/// `POST /api/campaigns`.
-pub async fn create(
-    State(state): State<ApiState>,
-    user: CurrentUser,
-    request: Result<Json<CreateRequest>, JsonRejection>,
-) -> Result<(StatusCode, Json<CampaignDetail>), ApiError> {
-    let request = body(request)?;
-    authorize_customer(&user, request.customer_id, true)?;
+/// Checks `request` and makes it a [`NewCampaign`] by `user`, who must
+/// administer its customer.
+async fn new_campaign(
+    state: &ApiState,
+    user: &CurrentUser,
+    request: CreateRequest,
+) -> Result<NewCampaign, ApiError> {
+    authorize_customer(user, request.customer_id, true)?;
     validate_name(&request.name).map_err(|e| ApiError::Invalid(e.to_string()))?;
     let ttl = request.command_ttl_s.unwrap_or(DEFAULT_TTL_S);
     if !(MIN_TTL_S..=MAX_TTL_S).contains(&ttl) {
@@ -411,7 +422,7 @@ pub async fn create(
         return Err(ApiError::Invalid("give a site_id or server_ids".into()));
     }
     if request.sources.is_some() {
-        check_sources(&state).await?;
+        check_sources(state).await?;
     }
     let agent_version = request
         .agent_version
@@ -419,7 +430,7 @@ pub async fn create(
         .map(str::parse::<Version>)
         .transpose()
         .map_err(|_| ApiError::Invalid("agent_version must be like 0.2.0".into()))?;
-    let new = NewCampaign {
+    Ok(NewCampaign {
         customer_id: request.customer_id,
         name: request.name,
         site_id: request.site_id,
@@ -438,13 +449,67 @@ pub async fn create(
         sources: request.sources,
         agent_version,
         created_by: Some(user.id),
-    };
+    })
+}
+
+/// `POST /api/campaigns`.
+pub async fn create(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    request: Result<Json<CreateRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<CampaignDetail>), ApiError> {
+    let request = body(request)?;
+    let new = new_campaign(&state, &user, request).await?;
     let actor = user.id.to_string();
     let row = CampaignStore::new(state.pool.clone())
         .create(&new, ("user", &actor))
         .await?;
     tracing::info!(user = %user.id, campaign = %row.id, "campaign created");
     Ok((StatusCode::CREATED, Json(detail_of(&state, row.id).await?)))
+}
+
+/// `PUT /api/campaigns/{id}`: the whole campaign again, while it queued
+/// nothing (ADR-0166).
+pub async fn update(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    request: Result<Json<CreateRequest>, JsonRejection>,
+) -> Result<Json<CampaignDetail>, ApiError> {
+    let id = parse_id(&id)?;
+    let customer = customer_of(&state, &user, id).await?;
+    authorize_customer(&user, customer, true)?;
+    let request = body(request)?;
+    let new = new_campaign(&state, &user, request).await?;
+    let actor = user.id.to_string();
+    let row = CampaignStore::new(state.pool.clone())
+        .update(id, &new, ("user", &actor))
+        .await?;
+    if row.state.is_active() {
+        if let Some(runner) = &state.campaigns {
+            runner.wake();
+        }
+    }
+    tracing::info!(user = %user.id, campaign = %id, "campaign edited");
+    Ok(Json(detail_of(&state, id).await?))
+}
+
+/// `DELETE /api/campaigns/{id}`: a draft or a finished campaign
+/// (ADR-0166).
+pub async fn delete(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let id = parse_id(&id)?;
+    let customer = customer_of(&state, &user, id).await?;
+    authorize_customer(&user, customer, true)?;
+    let actor = user.id.to_string();
+    CampaignStore::new(state.pool.clone())
+        .delete(id, ("user", &actor))
+        .await?;
+    tracing::info!(user = %user.id, campaign = %id, "campaign deleted");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// 409 unless the server can build `configure_sources` commands, as
@@ -600,6 +665,10 @@ mod tests {
         assert_eq!(
             ApiError::from(conflict).to_string(),
             "cannot pause a campaign that is draft"
+        );
+        assert_eq!(
+            status(CampaignError::Busy("in flight".into())),
+            StatusCode::CONFLICT
         );
     }
 

@@ -26,7 +26,7 @@ pub(super) const COLUMNS: &str =
     "id, customer_id, name, site_id, packages, security_only, allow_reboot,
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
      created_by, created_at, started_at, finished_at, sources_mode, agent_version, include_os,
-     third_party";
+     third_party, requested_server_ids, requested_waves";
 
 /// Who acts, as `(actor_kind, actor_id)` of the audit log.
 pub type Actor<'a> = (&'a str, &'a str);
@@ -64,6 +64,10 @@ pub enum CampaignError {
         action: &'static str,
         state: CampaignState,
     },
+    /// The campaign's state allows the action, what it holds does not;
+    /// the message says why and is safe to show.
+    #[error("{0}")]
+    Busy(String),
     #[error("database query failed: {0}")]
     Database(#[from] sqlx::Error),
 }
@@ -95,6 +99,9 @@ pub struct CampaignRow {
     /// Whether OS updates are included (ADR-0138).
     pub include_os: bool,
     pub third_party: sqlx::types::Json<Vec<ThirdPartySpec>>,
+    /// The `server_ids` and `waves` asked; `None` before ADR-0166.
+    pub requested_server_ids: Option<Vec<Uuid>>,
+    pub requested_waves: Option<sqlx::types::Json<Vec<WaveSpec>>>,
 }
 
 impl CampaignRow {
@@ -116,9 +123,16 @@ impl CampaignRow {
     }
 }
 
+/// The columns of a [`WindowRow`].
+pub(super) const WINDOW_COLUMNS: &str = "kind, weekdays, start_minute, end_minute, timezone, \
+     starts_at, ends_at, month_day, month_week, months";
+
 #[derive(sqlx::FromRow)]
 pub(super) struct WindowRow {
     kind: String,
+    month_day: Option<i16>,
+    month_week: Option<i16>,
+    months: Option<Vec<i16>>,
     weekdays: Option<Vec<i16>>,
     start_minute: Option<i16>,
     end_minute: Option<i16>,
@@ -132,6 +146,15 @@ impl WindowRow {
         match self.kind.as_str() {
             "weekly" => Some(Window::Weekly {
                 weekdays: self.weekdays?.into_iter().map(|d| d as u8).collect(),
+                start: LocalTime(self.start_minute? as u16),
+                end: LocalTime(self.end_minute? as u16),
+                timezone: self.timezone?,
+            }),
+            "monthly" => Some(Window::Monthly {
+                month_day: self.month_day.map(|d| d as u8),
+                month_week: self.month_week.map(|w| w as u8),
+                weekday: self.weekdays.and_then(|d| d.first().map(|&d| d as u8)),
+                months: self.months?.into_iter().map(|m| m as u8).collect(),
                 start: LocalTime(self.start_minute? as u16),
                 end: LocalTime(self.end_minute? as u16),
                 timezone: self.timezone?,
@@ -162,123 +185,25 @@ impl CampaignStore {
         new: &NewCampaign,
         actor: Actor<'_>,
     ) -> Result<CampaignRow, CampaignError> {
-        new.spec.validate().map_err(CampaignError::Invalid)?;
-        new.failure_threshold
-            .validate()
-            .map_err(CampaignError::Invalid)?;
-        if new.windows.len() > MAX_WINDOWS {
-            return Err(CampaignError::Invalid(format!(
-                "at most {MAX_WINDOWS} windows"
-            )));
-        }
-        let mut windows = new.windows.clone();
-        for window in &mut windows {
-            window.validate().map_err(CampaignError::Invalid)?;
-        }
-        if let Some(pin) = &new.sources {
-            pin.validate().map_err(CampaignError::Invalid)?;
-        }
-        let spec = &new.spec;
-        let package_options = !spec.packages.is_empty()
-            || spec.security_only
-            || spec.allow_reboot
-            || !spec.include_os
-            || spec.has_third_party()
-            || new.sources.is_some();
-        if new.agent_version.is_some() && package_options {
-            return Err(CampaignError::Invalid(
-                "an agent update campaign takes no packages, security_only, allow_reboot, \
-                 include_os, third_party or sources"
-                    .into(),
-            ));
-        }
-        if !spec.include_os && new.sources.is_some() {
-            return Err(CampaignError::Invalid(
-                "pinned sources are for OS updates, which this campaign leaves out".into(),
-            ));
-        }
+        let windows = check(new)?;
         let mut tx = self.pool.begin().await?;
-        check_timezones(&mut tx, &windows).await?;
-        let targets = targets(&mut tx, new).await?;
-        let waves =
-            plan_waves(&targets, &new.waves).map_err(|e| CampaignError::Invalid(e.to_string()))?;
-        check_names(&mut tx, &new.spec.packages, &targets).await?;
-        let pinned = match &new.sources {
-            Some(pin) => pinned_snapshots(&mut tx, pin, &targets).await?,
-            None => Vec::new(),
-        };
-        if !pinned.is_empty() {
-            check_pin_limit(&mut tx, new.customer_id, &pinned).await?;
-        }
-
+        let plan = plan(&mut tx, new, windows).await?;
         // SQL-safe: interpolates only the constant COLUMNS.
-        let row: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
-                 allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit, created_by,
-                 sources_mode, agent_version, include_os, third_party)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-             RETURNING {COLUMNS}"
-        )))
-        .bind(new.customer_id)
-        .bind(&new.name)
-        .bind(new.site_id)
-        .bind(&new.spec.packages)
-        .bind(new.spec.security_only)
-        .bind(new.spec.allow_reboot)
-        .bind(i32::try_from(new.command_ttl.as_secs()).unwrap_or(i32::MAX))
-        .bind(new.failure_threshold.value as i32)
-        .bind(new.failure_threshold.unit)
+        let row: CampaignRow = bind_fields(
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
+                     allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit,
+                     sources_mode, agent_version, include_os, third_party, requested_server_ids,
+                     requested_waves, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                 RETURNING {COLUMNS}"
+            ))),
+            new,
+        )
         .bind(new.created_by)
-        .bind(new.sources.as_ref().map(|p| p.mode))
-        .bind(new.agent_version.as_ref().map(ToString::to_string))
-        .bind(new.spec.include_os)
-        .bind(sqlx::types::Json(&new.spec.third_party))
         .fetch_one(&mut *tx)
         .await?;
-        let (mirror_ids, snapshot_ids): (Vec<Uuid>, Vec<Uuid>) = pinned.into_iter().unzip();
-        let (mirror_names, snapshot_names): (Vec<&str>, Vec<&str>) = new
-            .sources
-            .iter()
-            .flat_map(|pin| &pin.mirrors)
-            .map(|m| (m.name.as_str(), m.snapshot.as_str()))
-            .unzip();
-        sqlx::query(
-            "INSERT INTO campaign_snapshots
-                 (campaign_id, mirror_id, snapshot_id, mirror_name, snapshot_name)
-             SELECT $1, * FROM unnest($2::uuid[], $3::uuid[], $4::text[], $5::text[])",
-        )
-        .bind(row.id)
-        .bind(&mirror_ids)
-        .bind(&snapshot_ids)
-        .bind(&mirror_names)
-        .bind(&snapshot_names)
-        .execute(&mut *tx)
-        .await?;
-        let (servers, positions): (Vec<Uuid>, Vec<i32>) = waves
-            .iter()
-            .enumerate()
-            .flat_map(|(i, wave)| wave.iter().map(move |s| (*s, i as i32)))
-            .unzip();
-        sqlx::query(
-            "INSERT INTO campaign_waves (campaign_id, position)
-             SELECT $1, generate_series(0, $2 - 1)",
-        )
-        .bind(row.id)
-        .bind(waves.len() as i32)
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(
-            "INSERT INTO campaign_targets (campaign_id, server_id, wave)
-             SELECT $1, * FROM unnest($2::uuid[], $3::integer[])",
-        )
-        .bind(row.id)
-        .bind(&servers)
-        .bind(&positions)
-        .execute(&mut *tx)
-        .await?;
-        for (position, window) in windows.iter().enumerate() {
-            insert_window(&mut tx, row.id, position as i32, window).await?;
-        }
+        write_plan(&mut tx, row.id, new, &plan).await?;
         audit::record(
             &mut *tx,
             Event {
@@ -286,17 +211,150 @@ impl CampaignStore {
                 actor_id: actor.1,
                 action: "campaign.create",
                 target: Some(("campaign", &row.id.to_string())),
+                details: details(&row, new, &plan),
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(row)
+    }
+
+    /// Replaces everything of the campaign `id` by `new`, but its state and
+    /// who made it, audited as `campaign.update`. Only a campaign that
+    /// queued nothing yet changes: a draft, or a scheduled or paused one
+    /// whose first batch is still waiting (ADR-0166).
+    pub async fn update(
+        &self,
+        id: Uuid,
+        new: &NewCampaign,
+        actor: Actor<'_>,
+    ) -> Result<CampaignRow, CampaignError> {
+        let windows = check(new)?;
+        let mut tx = self.pool.begin().await?;
+        let row = lock(&mut tx, id).await?.ok_or(CampaignError::NotFound)?;
+        if row.state.is_final() {
+            return Err(CampaignError::Transition {
+                action: "edit",
+                state: row.state,
+            });
+        }
+        let queued: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM commands WHERE campaign_id = $1)")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if row.current_wave.is_some() || queued {
+            return Err(CampaignError::Busy(
+                "cannot edit a campaign that queued commands already: duplicate it instead".into(),
+            ));
+        }
+        // Before planning, so its own pins do not count twice.
+        for table in [
+            "campaign_targets",
+            "campaign_waves",
+            "campaign_windows",
+            "campaign_snapshots",
+        ] {
+            // SQL-safe: interpolates only the constant table names above.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE campaign_id = $1"
+            )))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        let plan = plan(&mut tx, new, windows).await?;
+        // SQL-safe: interpolates only the constant COLUMNS.
+        let row: CampaignRow = bind_fields(
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "UPDATE campaigns SET customer_id = $1, name = $2, site_id = $3, packages = $4,
+                     security_only = $5, allow_reboot = $6, command_ttl_s = $7,
+                     failure_threshold = $8, failure_threshold_unit = $9, sources_mode = $10,
+                     agent_version = $11, include_os = $12, third_party = $13,
+                     requested_server_ids = $14, requested_waves = $15
+                 WHERE id = $16
+                 RETURNING {COLUMNS}"
+            ))),
+            new,
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        write_plan(&mut tx, id, new, &plan).await?;
+        let mut details = details(&row, new, &plan);
+        details["state"] = json!(row.state.as_str());
+        audit::record(
+            &mut *tx,
+            Event {
+                actor_kind: actor.0,
+                actor_id: actor.1,
+                action: "campaign.update",
+                target: Some(("campaign", &id.to_string())),
+                details,
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(row)
+    }
+
+    /// Deletes a draft or a finished campaign with its batches, servers
+    /// and windows, audited as `campaign.delete`; its commands stay in the
+    /// history. Refused while some of them are still in flight or a
+    /// server's package sources are still to be put back (ADR-0166).
+    pub async fn delete(&self, id: Uuid, actor: Actor<'_>) -> Result<CampaignRow, CampaignError> {
+        let mut tx = self.pool.begin().await?;
+        let row = lock(&mut tx, id).await?.ok_or(CampaignError::NotFound)?;
+        if !(row.state == CampaignState::Draft || row.state.is_final()) {
+            return Err(CampaignError::Transition {
+                action: "delete",
+                state: row.state,
+            });
+        }
+        let (in_flight, unrestored, servers): (bool, bool, i64) = sqlx::query_as(
+            "SELECT
+                 EXISTS (SELECT 1 FROM commands
+                         WHERE campaign_id = $1 AND state IN ('queued', 'sent', 'running')),
+                 EXISTS (SELECT 1 FROM campaign_targets t
+                         JOIN commands cfg ON cfg.id = t.sources_command_id
+                         JOIN servers s ON s.id = t.server_id
+                         WHERE t.campaign_id = $1 AND t.restore_command_id IS NULL
+                           AND s.revoked_at IS NULL
+                           AND (cfg.sent_at IS NOT NULL OR cfg.state = 'queued')),
+                 (SELECT count(*) FROM campaign_targets WHERE campaign_id = $1)",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if in_flight {
+            return Err(CampaignError::Busy(
+                "the campaign still has commands in flight: delete it once they end".into(),
+            ));
+        }
+        if unrestored {
+            return Err(CampaignError::Busy(
+                "the package sources of some servers are not restored yet".into(),
+            ));
+        }
+        sqlx::query("DELETE FROM campaigns WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        audit::record(
+            &mut *tx,
+            Event {
+                actor_kind: actor.0,
+                actor_id: actor.1,
+                action: "campaign.delete",
+                target: Some(("campaign", &id.to_string())),
                 details: json!({
                     "name": row.name,
                     "customer_id": row.customer_id,
-                    "site_id": row.site_id,
-                    "servers": servers.len(),
-                    "waves": waves.iter().map(Vec::len).collect::<Vec<_>>(),
-                    "spec": new.spec,
-                    "command_ttl_s": row.command_ttl_s,
-                    "failure_threshold": new.failure_threshold,
-                    "windows": windows,
-                    "sources": new.sources,
+                    "state": row.state.as_str(),
+                    "servers": servers,
+                    "created_at": row.created_at,
+                    "started_at": row.started_at,
+                    "finished_at": row.finished_at,
                 }),
             },
         )
@@ -317,10 +375,11 @@ impl CampaignStore {
 
     /// The campaign's windows, in the order they were given.
     pub async fn windows(&self, id: Uuid) -> Result<Vec<Window>, sqlx::Error> {
-        let rows: Vec<WindowRow> = sqlx::query_as(
-            "SELECT kind, weekdays, start_minute, end_minute, timezone, starts_at, ends_at
-             FROM campaign_windows WHERE campaign_id = $1 ORDER BY position",
-        )
+        // SQL-safe: interpolates only the constant WINDOW_COLUMNS.
+        let rows: Vec<WindowRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {WINDOW_COLUMNS}
+             FROM campaign_windows WHERE campaign_id = $1 ORDER BY position"
+        )))
         .bind(id)
         .fetch_all(&self.pool)
         .await?;
@@ -386,6 +445,173 @@ impl CampaignStore {
         tx.commit().await?;
         Ok(row)
     }
+}
+
+/// What a campaign freezes from its request, checked.
+struct Plan {
+    windows: Vec<Window>,
+    waves: Vec<Vec<Uuid>>,
+    /// `(mirror_id, snapshot_id)` of each pinned mirror.
+    pinned: Vec<(Uuid, Uuid)>,
+}
+
+/// The checks of `new` that need no database; its windows, normalized.
+fn check(new: &NewCampaign) -> Result<Vec<Window>, CampaignError> {
+    new.spec.validate().map_err(CampaignError::Invalid)?;
+    new.failure_threshold
+        .validate()
+        .map_err(CampaignError::Invalid)?;
+    if new.windows.len() > MAX_WINDOWS {
+        return Err(CampaignError::Invalid(format!(
+            "at most {MAX_WINDOWS} windows"
+        )));
+    }
+    let mut windows = new.windows.clone();
+    for window in &mut windows {
+        window.validate().map_err(CampaignError::Invalid)?;
+    }
+    if let Some(pin) = &new.sources {
+        pin.validate().map_err(CampaignError::Invalid)?;
+    }
+    let spec = &new.spec;
+    let package_options = !spec.packages.is_empty()
+        || spec.security_only
+        || spec.allow_reboot
+        || !spec.include_os
+        || spec.has_third_party()
+        || new.sources.is_some();
+    if new.agent_version.is_some() && package_options {
+        return Err(CampaignError::Invalid(
+            "an agent update campaign takes no packages, security_only, allow_reboot, \
+             include_os, third_party or sources"
+                .into(),
+        ));
+    }
+    if !spec.include_os && new.sources.is_some() {
+        return Err(CampaignError::Invalid(
+            "pinned sources are for OS updates, which this campaign leaves out".into(),
+        ));
+    }
+    Ok(windows)
+}
+
+/// Resolves the targets of `new` into waves and its pinned snapshots.
+async fn plan(
+    tx: &mut PgConnection,
+    new: &NewCampaign,
+    windows: Vec<Window>,
+) -> Result<Plan, CampaignError> {
+    check_timezones(&mut *tx, &windows).await?;
+    let targets = targets(&mut *tx, new).await?;
+    let waves =
+        plan_waves(&targets, &new.waves).map_err(|e| CampaignError::Invalid(e.to_string()))?;
+    check_names(&mut *tx, &new.spec.packages, &targets).await?;
+    let pinned = match &new.sources {
+        Some(pin) => pinned_snapshots(&mut *tx, pin, &targets).await?,
+        None => Vec::new(),
+    };
+    if !pinned.is_empty() {
+        check_pin_limit(&mut *tx, new.customer_id, &pinned).await?;
+    }
+    Ok(Plan {
+        windows,
+        waves,
+        pinned,
+    })
+}
+
+type RowQuery<'q> =
+    sqlx::query::QueryAs<'q, sqlx::Postgres, CampaignRow, sqlx::postgres::PgArguments>;
+
+/// Binds `$1` to `$15` of an insert or update of `campaigns` from `new`.
+fn bind_fields<'q>(query: RowQuery<'q>, new: &'q NewCampaign) -> RowQuery<'q> {
+    query
+        .bind(new.customer_id)
+        .bind(&new.name)
+        .bind(new.site_id)
+        .bind(&new.spec.packages)
+        .bind(new.spec.security_only)
+        .bind(new.spec.allow_reboot)
+        .bind(i32::try_from(new.command_ttl.as_secs()).unwrap_or(i32::MAX))
+        .bind(new.failure_threshold.value as i32)
+        .bind(new.failure_threshold.unit)
+        .bind(new.sources.as_ref().map(|p| p.mode))
+        .bind(new.agent_version.as_ref().map(ToString::to_string))
+        .bind(new.spec.include_os)
+        .bind(sqlx::types::Json(&new.spec.third_party))
+        .bind(&new.server_ids)
+        .bind(sqlx::types::Json(&new.waves))
+}
+
+/// Stores the pins, waves, targets and windows of the campaign `id`.
+async fn write_plan(
+    tx: &mut PgConnection,
+    id: Uuid,
+    new: &NewCampaign,
+    plan: &Plan,
+) -> Result<(), sqlx::Error> {
+    let (mirror_ids, snapshot_ids): (Vec<Uuid>, Vec<Uuid>) = plan.pinned.iter().copied().unzip();
+    let (mirror_names, snapshot_names): (Vec<&str>, Vec<&str>) = new
+        .sources
+        .iter()
+        .flat_map(|pin| &pin.mirrors)
+        .map(|m| (m.name.as_str(), m.snapshot.as_str()))
+        .unzip();
+    sqlx::query(
+        "INSERT INTO campaign_snapshots
+             (campaign_id, mirror_id, snapshot_id, mirror_name, snapshot_name)
+         SELECT $1, * FROM unnest($2::uuid[], $3::uuid[], $4::text[], $5::text[])",
+    )
+    .bind(id)
+    .bind(&mirror_ids)
+    .bind(&snapshot_ids)
+    .bind(&mirror_names)
+    .bind(&snapshot_names)
+    .execute(&mut *tx)
+    .await?;
+    let (servers, positions): (Vec<Uuid>, Vec<i32>) = plan
+        .waves
+        .iter()
+        .enumerate()
+        .flat_map(|(i, wave)| wave.iter().map(move |s| (*s, i as i32)))
+        .unzip();
+    sqlx::query(
+        "INSERT INTO campaign_waves (campaign_id, position)
+         SELECT $1, generate_series(0, $2 - 1)",
+    )
+    .bind(id)
+    .bind(plan.waves.len() as i32)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO campaign_targets (campaign_id, server_id, wave)
+         SELECT $1, * FROM unnest($2::uuid[], $3::integer[])",
+    )
+    .bind(id)
+    .bind(&servers)
+    .bind(&positions)
+    .execute(&mut *tx)
+    .await?;
+    for (position, window) in plan.windows.iter().enumerate() {
+        insert_window(&mut *tx, id, position as i32, window).await?;
+    }
+    Ok(())
+}
+
+/// The audit details of a created or edited campaign.
+fn details(row: &CampaignRow, new: &NewCampaign, plan: &Plan) -> serde_json::Value {
+    json!({
+        "name": row.name,
+        "customer_id": row.customer_id,
+        "site_id": row.site_id,
+        "servers": plan.waves.iter().map(Vec::len).sum::<usize>(),
+        "waves": plan.waves.iter().map(Vec::len).collect::<Vec<_>>(),
+        "spec": new.spec,
+        "command_ttl_s": row.command_ttl_s,
+        "failure_threshold": new.failure_threshold,
+        "windows": plan.windows,
+        "sources": new.sources,
+    })
 }
 
 /// The campaign `id`, locked until the end of the transaction.
@@ -585,7 +811,9 @@ async fn check_timezones(conn: &mut PgConnection, windows: &[Window]) -> Result<
     let zones: Vec<&str> = windows
         .iter()
         .filter_map(|w| match w {
-            Window::Weekly { timezone, .. } => Some(timezone.as_str()),
+            Window::Weekly { timezone, .. } | Window::Monthly { timezone, .. } => {
+                Some(timezone.as_str())
+            }
             Window::Once { .. } => None,
         })
         .collect();
@@ -692,11 +920,12 @@ async fn insert_window(
 ) -> Result<(), sqlx::Error> {
     let query = sqlx::query(
         "INSERT INTO campaign_windows (campaign_id, position, kind, weekdays, start_minute,
-             end_minute, timezone, starts_at, ends_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+             end_minute, timezone, starts_at, ends_at, month_day, month_week, months)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
     )
     .bind(campaign)
     .bind(position);
+    let small = |values: &[u8]| values.iter().map(|&v| i16::from(v)).collect::<Vec<_>>();
     let query = match window {
         Window::Weekly {
             weekdays,
@@ -705,12 +934,34 @@ async fn insert_window(
             timezone,
         } => query
             .bind("weekly")
-            .bind(weekdays.iter().map(|&d| i16::from(d)).collect::<Vec<_>>())
+            .bind(small(weekdays))
             .bind(start.0 as i16)
             .bind(end.0 as i16)
             .bind(timezone)
             .bind(None::<DateTime<Utc>>)
-            .bind(None::<DateTime<Utc>>),
+            .bind(None::<DateTime<Utc>>)
+            .bind(None::<i16>)
+            .bind(None::<i16>)
+            .bind(None::<Vec<i16>>),
+        Window::Monthly {
+            month_day,
+            month_week,
+            weekday,
+            months,
+            start,
+            end,
+            timezone,
+        } => query
+            .bind("monthly")
+            .bind(weekday.map(|d| vec![i16::from(d)]))
+            .bind(start.0 as i16)
+            .bind(end.0 as i16)
+            .bind(timezone)
+            .bind(None::<DateTime<Utc>>)
+            .bind(None::<DateTime<Utc>>)
+            .bind(month_day.map(i16::from))
+            .bind(month_week.map(i16::from))
+            .bind(small(months)),
         Window::Once { starts_at, ends_at } => query
             .bind("once")
             .bind(None::<Vec<i16>>)
@@ -718,7 +969,10 @@ async fn insert_window(
             .bind(None::<i16>)
             .bind(None::<String>)
             .bind(starts_at)
-            .bind(ends_at),
+            .bind(ends_at)
+            .bind(None::<i16>)
+            .bind(None::<i16>)
+            .bind(None::<Vec<i16>>),
     };
     query.execute(conn).await?;
     Ok(())

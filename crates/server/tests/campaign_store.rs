@@ -281,6 +281,50 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn monthly_windows_open_on_their_day(pool: PgPool) {
+        let t = tenant(&pool, "acme").await;
+        let store = CampaignStore::new(pool.clone());
+        let monthly = |day: Option<u8>, week: Option<u8>, weekday: Option<u8>, months: Vec<u8>,
+                       start: &str, end: &str, timezone: &str| Window::Monthly {
+            month_day: day,
+            month_week: week,
+            weekday,
+            months,
+            start: start.parse().unwrap(),
+            end: end.parse().unwrap(),
+            timezone: timezone.into(),
+        };
+        let mut new = campaign(&t);
+        new.windows = vec![
+            // The second Tuesday, 22:00 to 02:00 in Paris.
+            monthly(None, Some(2), Some(2), vec![], "22:00", "02:00", "Europe/Paris"),
+            // The last Friday, 10:00 to 11:00 UTC.
+            monthly(None, Some(5), Some(5), vec![], "10:00", "11:00", "UTC"),
+            // Every 31 December, 01:00 to 03:00 UTC.
+            monthly(Some(31), None, None, vec![12], "01:00", "03:00", "UTC"),
+        ];
+        let row = store.create(&new, USER).await.unwrap();
+        let stored = store.windows(row.id).await.unwrap();
+        assert!(matches!(&stored[0], Window::Monthly { months, .. } if months.len() == 12));
+        assert!(matches!(&stored[2], Window::Monthly { months, month_day: Some(31), .. } if months == &[12]));
+        let cases = [
+            // 1 December 2026 is the first Tuesday, the 8th the second.
+            ("2026-12-01T21:30:00Z", None),
+            ("2026-12-08T21:30:00Z", Some("2026-12-09T01:00:00Z")),
+            ("2026-12-09T00:30:00Z", Some("2026-12-09T01:00:00Z")),
+            ("2026-12-15T21:30:00Z", None),
+            // 27 November 2026 is the last Friday, the 20th is not.
+            ("2026-11-20T10:30:00Z", None),
+            ("2026-11-27T10:30:00Z", Some("2026-11-27T11:00:00Z")),
+            ("2026-12-31T02:00:00Z", Some("2026-12-31T03:00:00Z")),
+            ("2026-10-31T02:00:00Z", None),
+        ];
+        for (now, end) in cases {
+            assert_eq!(window_end(&pool, row.id, now).await, end.map(at), "{now}");
+        }
+    }
+
+    #[sqlx::test]
     async fn actions_follow_the_state_machine_and_are_audited(pool: PgPool) {
         let t = tenant(&pool, "acme").await;
         let store = CampaignStore::new(pool.clone());
