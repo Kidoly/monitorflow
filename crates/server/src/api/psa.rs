@@ -55,6 +55,8 @@ pub struct ConnectionView {
     pub created_at: DateTime<Utc>,
     /// When it was last changed.
     pub updated_at: DateTime<Utc>,
+    /// What tickets it opens and how it closes them.
+    pub tickets: psa::TicketSettings,
 }
 
 impl From<Connection> for ConnectionView {
@@ -72,6 +74,7 @@ impl From<Connection> for ConnectionView {
             last_error_at: c.last_error_at,
             created_at: c.created_at,
             updated_at: c.updated_at,
+            tickets: c.tickets,
         }
     }
 }
@@ -638,4 +641,145 @@ pub async fn delete_site_link(
     .await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Body of `GET /api/psa/categories`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = PsaCategoryList)]
+pub struct CategoryList {
+    /// First-level categories as tickets take them, like `Hardware>Server`.
+    pub categories: Vec<String>,
+}
+
+/// Body of `PUT /api/psa/ticket-settings`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = PsaTicketSettingsRequest)]
+#[serde(deny_unknown_fields)]
+pub struct TicketSettingsRequest {
+    /// A ticket type of `GET /api/psa/ticket-types`; `null` for the
+    /// PSA's default.
+    #[serde(default)]
+    pub ticket_type_id: Option<i64>,
+    /// A category of `GET /api/psa/categories`; `null` or empty for none.
+    #[serde(default)]
+    pub category: Option<String>,
+    /// `critical` or `warning`; absent keeps the current one.
+    #[serde(default)]
+    pub min_severity: Option<String>,
+    /// A status of `GET /api/psa/statuses` that resolved incidents move
+    /// their ticket to; `null` adds a note only.
+    #[serde(default)]
+    pub resolved_status_id: Option<i64>,
+}
+
+/// `GET /api/psa/ticket-types`: the PSA's ticket types for tickets.
+pub async fn ticket_types(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+) -> Result<Json<RecordList>, ApiError> {
+    require_global_admin(&user)?;
+    let (connection, halo) = connected(&state).await?;
+    let records = recorded(&state, &connection, halo.ticket_types().await).await?;
+    Ok(Json(RecordList { records }))
+}
+
+/// `GET /api/psa/categories`: the PSA's first-level categories.
+pub async fn categories(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+) -> Result<Json<CategoryList>, ApiError> {
+    require_global_admin(&user)?;
+    let (connection, halo) = connected(&state).await?;
+    let categories = recorded(&state, &connection, halo.categories().await).await?;
+    Ok(Json(CategoryList { categories }))
+}
+
+/// `GET /api/psa/statuses`: the PSA's ticket statuses.
+pub async fn statuses(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+) -> Result<Json<RecordList>, ApiError> {
+    require_global_admin(&user)?;
+    let (connection, halo) = connected(&state).await?;
+    let records = recorded(&state, &connection, halo.statuses().await).await?;
+    Ok(Json(RecordList { records }))
+}
+
+/// `PUT /api/psa/ticket-settings`: the ticket type, category, least
+/// severity and resolved status, each checked against the PSA's lists;
+/// audited as `psa.connection.tickets`.
+pub async fn put_ticket_settings(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    request: Result<Json<TicketSettingsRequest>, JsonRejection>,
+) -> Result<Json<ConnectionView>, ApiError> {
+    require_global_admin(&user)?;
+    let request = body(request)?;
+    let (connection, halo) = connected(&state).await?;
+    let min_severity = request
+        .min_severity
+        .unwrap_or_else(|| connection.tickets.min_severity.clone());
+    if !["warning", "critical"].contains(&min_severity.as_str()) {
+        return Err(ApiError::Invalid(
+            "`min_severity` is `warning` or `critical`.".into(),
+        ));
+    }
+    let ticket_type = match request.ticket_type_id {
+        None => None,
+        Some(id) => Some(
+            recorded(&state, &connection, halo.ticket_types().await)
+                .await?
+                .into_iter()
+                .find(|t| t.id == id)
+                .ok_or_else(|| ApiError::Invalid("HaloPSA has no such ticket type.".into()))?,
+        ),
+    };
+    let category = given(request.category);
+    if let Some(category) = &category {
+        let known = recorded(&state, &connection, halo.categories().await).await?;
+        if !known.contains(category) {
+            return Err(ApiError::Invalid("HaloPSA has no such category.".into()));
+        }
+    }
+    let status = match request.resolved_status_id {
+        None => None,
+        Some(id) => Some(
+            recorded(&state, &connection, halo.statuses().await)
+                .await?
+                .into_iter()
+                .find(|s| s.id == id)
+                .ok_or_else(|| ApiError::Invalid("HaloPSA has no such status.".into()))?,
+        ),
+    };
+    let mut tx = state.pool.begin().await?;
+    sqlx::query(
+        "UPDATE psa_connections SET ticket_type_id = $2, ticket_type_name = $3, category = $4,
+             min_severity = $5, resolved_status_id = $6, resolved_status_name = $7,
+             updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(connection.id)
+    .bind(ticket_type.as_ref().map(|t| t.id))
+    .bind(ticket_type.as_ref().map(|t| t.name.as_str()))
+    .bind(&category)
+    .bind(&min_severity)
+    .bind(status.as_ref().map(|s| s.id))
+    .bind(status.as_ref().map(|s| s.name.as_str()))
+    .execute(&mut *tx)
+    .await?;
+    record(
+        &mut *tx,
+        &user,
+        "psa.connection.tickets",
+        json!({
+            "ticket_type_id": ticket_type.as_ref().map(|t| t.id),
+            "category": category,
+            "min_severity": min_severity,
+            "resolved_status_id": status.as_ref().map(|s| s.id),
+        }),
+    )
+    .await?;
+    let saved = psa::load(&mut *tx).await?.ok_or(ApiError::NotFound)?;
+    tx.commit().await?;
+    Ok(Json(saved.into()))
 }

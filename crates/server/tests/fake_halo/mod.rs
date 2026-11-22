@@ -45,6 +45,9 @@ impl FakeHalo {
             .route("/api/Client/{id}", get(client))
             .route("/api/Site", get(sites))
             .route("/api/Site/{id}", get(site))
+            .route("/api/TicketType", get(ticket_types))
+            .route("/api/Category", get(categories))
+            .route("/api/Status", get(statuses))
             .with_state(inner.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -192,4 +195,48 @@ async fn site(
         }
         None => (StatusCode::NOT_FOUND, "Site not found").into_response(),
     }
+}
+
+async fn ticket_types(State(inner): State<Arc<Inner>>, headers: HeaderMap) -> Response {
+    if !authorized(&inner, &headers, "GET /api/TicketType".into()) {
+        return unauthorized();
+    }
+    Json(json!([
+        {"id": 1, "name": "Incident", "use": "tickets"},
+        {"id": 3, "name": "Change Request", "use": "tickets"},
+        {"id": 20, "name": "Opportunity", "use": "opportunities"},
+    ]))
+    .into_response()
+}
+
+async fn categories(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if !authorized(&inner, &headers, query_line("/api/Category", &query)) {
+        return unauthorized();
+    }
+    Json(json!([
+        {"id": 5, "value": "Hardware>Server", "category_name": "Server", "type_id": 1},
+        {"id": 6, "value": "Network", "category_name": "Network", "type_id": 1},
+        {"id": 7, "value": "Resolved remotely", "category_name": "Remote", "type_id": 2},
+    ]))
+    .into_response()
+}
+
+async fn statuses(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if !authorized(&inner, &headers, query_line("/api/Status", &query)) {
+        return unauthorized();
+    }
+    Json(json!([
+        {"id": 9, "name": "Closed"},
+        {"id": 1, "name": "New"},
+        {"id": 2, "name": "In Progress"},
+    ]))
+    .into_response()
 }

@@ -37,6 +37,26 @@ pub struct Connection {
     pub last_error_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub tickets: TicketSettings,
+}
+
+/// What tickets the connection opens and how it closes them (ADR-0166).
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
+#[schema(as = PsaTicketSettings)]
+pub struct TicketSettings {
+    /// The PSA ticket type of new tickets; `null` for the PSA's default.
+    pub ticket_type_id: Option<i64>,
+    pub ticket_type_name: Option<String>,
+    /// The category of new tickets (HaloPSA's `category_1`), which some
+    /// instances require; `null` for none.
+    pub category: Option<String>,
+    /// `critical` (the default) or `warning`: the least severity whose
+    /// incidents open a ticket.
+    pub min_severity: String,
+    /// The status a ticket moves to when its incident is resolved, 9
+    /// (Closed) by default; `null` adds a note only.
+    pub resolved_status_id: Option<i64>,
+    pub resolved_status_name: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -54,6 +74,8 @@ struct Row {
     last_error_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    #[sqlx(flatten)]
+    tickets: TicketSettings,
 }
 
 impl From<Row> for Connection {
@@ -73,6 +95,7 @@ impl From<Row> for Connection {
             last_error_at: row.last_error_at,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            tickets: row.tickets,
         }
     }
 }
@@ -94,7 +117,9 @@ impl Connection {
 }
 
 const SELECT: &str = "SELECT id, kind, base_url, tenant, client_id, client_secret, enabled,
-        agent_name, last_success_at, last_error, last_error_at, created_at, updated_at
+        agent_name, last_success_at, last_error, last_error_at, created_at, updated_at,
+        ticket_type_id, ticket_type_name, category, min_severity, resolved_status_id,
+        resolved_status_name
     FROM psa_connections";
 
 /// The connection, if there is one.

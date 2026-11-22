@@ -12,7 +12,8 @@ use super::psa;
 #[derive(OpenApi)]
 #[openapi(
     paths(get_psa_connection, put_psa_connection, delete_psa_connection, test_psa_connection,
-          list_psa_clients, list_psa_client_sites, list_psa_site_links, put_psa_site_link, delete_psa_site_link),
+          list_psa_clients, list_psa_client_sites, list_psa_site_links, put_psa_site_link, delete_psa_site_link,
+          list_psa_ticket_types, list_psa_categories, list_psa_statuses, put_psa_ticket_settings),
     components(schemas(ErrorBody)),
     modifiers(&Common),
     tags((name = "psa", description = "The PSA connection: MonitorFlow calls a PSA's API with credentials \
@@ -41,6 +42,14 @@ fn connection() -> Value {
         "last_error_at": null,
         "created_at": "2026-11-22T09:00:00Z",
         "updated_at": "2026-11-22T09:00:00Z",
+        "tickets": {
+            "ticket_type_id": 1,
+            "ticket_type_name": "Incident",
+            "category": "Hardware>Server",
+            "min_severity": "critical",
+            "resolved_status_id": 9,
+            "resolved_status_name": "Closed",
+        },
     })
 }
 
@@ -208,3 +217,72 @@ fn put_psa_site_link() {}
         (status = 404, description = "`not_found`: the site is not matched", body = ErrorBody),
     ))]
 fn delete_psa_site_link() {}
+
+/// List the PSA's ticket types
+///
+/// Ticket types used for tickets (not opportunities or projects), by
+/// name, read through the connection. Global administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/ticket-types", tag = "psa",
+    responses(
+        (status = 200, description = "The ticket types", body = psa::RecordList, example = json!({
+            "records": [{"id": 3, "name": "Change Request"}, {"id": 1, "name": "Incident"}],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn list_psa_ticket_types() {}
+
+/// List the PSA's categories
+///
+/// First-level categories as a ticket's category takes them, by name.
+/// Some PSA instances refuse a ticket without one. Global administrators
+/// only.
+#[utoipa::path(get, path = "/api/v1/psa/categories", tag = "psa",
+    responses(
+        (status = 200, description = "The categories", body = psa::CategoryList, example = json!({
+            "categories": ["Hardware>Server", "Network"],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn list_psa_categories() {}
+
+/// List the PSA's ticket statuses
+///
+/// Ticket statuses by id; in HaloPSA, 1 is New and 9 Closed on every
+/// instance. Global administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/statuses", tag = "psa",
+    responses(
+        (status = 200, description = "The statuses", body = psa::RecordList, example = json!({
+            "records": [{"id": 1, "name": "New"}, {"id": 9, "name": "Closed"}],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn list_psa_statuses() {}
+
+/// Choose what tickets are opened
+///
+/// The ticket type and category of new tickets, the least severity whose
+/// incidents open one (`critical` by default), and the status a ticket
+/// moves to when its incident is resolved (9, Closed, by default; `null`
+/// adds a note only). Each is checked against the PSA's lists, which also
+/// give the names kept. Audited as `psa.connection.tickets`.
+#[utoipa::path(put, path = "/api/v1/psa/ticket-settings", tag = "psa",
+    request_body(content = psa::TicketSettingsRequest, example = json!({
+        "ticket_type_id": 1,
+        "category": "Hardware>Server",
+        "min_severity": "critical",
+        "resolved_status_id": 9,
+    })),
+    responses(
+        (status = 200, description = "Saved", body = psa::ConnectionView, example = json!(connection())),
+        (status = 400, description = "`invalid`: a ticket type, category or status the PSA does not have, or another severity", body = ErrorBody),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn put_psa_ticket_settings() {}

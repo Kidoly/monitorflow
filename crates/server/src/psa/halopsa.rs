@@ -430,6 +430,69 @@ impl Halo {
         Ok(sites)
     }
 
+    /// Ticket types for tickets (not opportunities or projects), by name.
+    pub async fn ticket_types(&self) -> Result<Vec<Record>, HaloError> {
+        let answer = self.get("the ticket type list", "TicketType", &[]).await?;
+        let mut types: Vec<Record> = records(&answer, "tickettypes")
+            .iter()
+            .filter(|t| {
+                t.get("use")
+                    .and_then(Value::as_str)
+                    .is_none_or(|u| u.eq_ignore_ascii_case("tickets"))
+            })
+            .filter_map(record)
+            .collect();
+        types.sort_by_key(|t| t.name.to_lowercase());
+        Ok(types)
+    }
+
+    /// The first-level categories, as `category_1` takes them: their
+    /// `value`, like `Hardware>Server`.
+    pub async fn categories(&self) -> Result<Vec<String>, HaloError> {
+        let answer = self
+            .get(
+                "the category list",
+                "Category",
+                &[("type_id", "1".to_owned())],
+            )
+            .await?;
+        let mut values: Vec<String> = records(&answer, "categories")
+            .iter()
+            .filter(|c| {
+                c.get("type_id")
+                    .and_then(Value::as_i64)
+                    .is_none_or(|t| t == 1)
+            })
+            .filter_map(|c| {
+                ["value", "category_name", "name"]
+                    .iter()
+                    .find_map(|k| c.get(*k).and_then(Value::as_str))
+                    .map(|v| v.trim().to_owned())
+            })
+            .filter(|v| !v.is_empty())
+            .collect();
+        values.sort_by_key(|v| v.to_lowercase());
+        values.dedup();
+        Ok(values)
+    }
+
+    /// Ticket statuses, by id: 1 is New and 9 Closed on every instance.
+    pub async fn statuses(&self) -> Result<Vec<Record>, HaloError> {
+        let answer = self
+            .get(
+                "the status list",
+                "Status",
+                &[("type", "ticket".to_owned())],
+            )
+            .await?;
+        let mut statuses: Vec<Record> = records(&answer, "statuses")
+            .iter()
+            .filter_map(record)
+            .collect();
+        statuses.sort_by_key(|s| s.id);
+        Ok(statuses)
+    }
+
     /// The site `id` and its client; `None` when Halo does not know it.
     pub async fn site(&self, id: i64) -> Result<Option<(Record, Option<i64>)>, HaloError> {
         match self.get("the site", &format!("Site/{id}"), &[]).await {

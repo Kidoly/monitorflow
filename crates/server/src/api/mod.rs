@@ -282,6 +282,10 @@
 //! | GET | `/api/psa/site-links` | global administrator | [`psa::SiteLinkList`]: every site with the PSA client and site it is matched to |
 //! | PUT | `/api/psa/site-links/{site_id}` | global administrator | body [`psa::SiteLinkRequest`]; checked with the PSA; 200 [`psa::SiteLink`]; audited |
 //! | DELETE | `/api/psa/site-links/{site_id}` | global administrator | 204, 404 when not matched; audited |
+//! | GET | `/api/psa/ticket-types` | global administrator | [`psa::RecordList`]: the PSA's ticket types for tickets |
+//! | GET | `/api/psa/categories` | global administrator | [`psa::CategoryList`]: the PSA's first-level categories |
+//! | GET | `/api/psa/statuses` | global administrator | [`psa::RecordList`]: the PSA's ticket statuses |
+//! | PUT | `/api/psa/ticket-settings` | global administrator | body [`psa::TicketSettingsRequest`], checked against the PSA's lists; 200 [`psa::ConnectionView`]; audited |
 //!
 //! # Authentication
 //!
@@ -1632,6 +1636,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/psa/clients", get(psa::clients))
         .route("/api/psa/clients/{id}/sites", get(psa::client_sites))
         .route("/api/psa/site-links", get(psa::site_links))
+        .route("/api/psa/ticket-types", get(psa::ticket_types))
+        .route("/api/psa/categories", get(psa::categories))
+        .route("/api/psa/statuses", get(psa::statuses))
+        .route("/api/psa/ticket-settings", put(psa::put_ticket_settings))
         .route(
             "/api/psa/site-links/{site_id}",
             put(psa::put_site_link).delete(psa::delete_site_link),

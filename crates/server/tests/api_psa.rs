@@ -332,4 +332,47 @@ db_tests! {
         let (_, body) = call(&pool, "GET", CONNECTION, &cookie, None).await;
         assert!(body["connection"]["last_error"].as_str().unwrap().contains("invalid_client"));
     }
+
+    #[sqlx::test]
+    async fn ticket_settings_come_from_the_psa_s_lists(pool: PgPool) {
+        secrets::install_for_tests();
+        let halo = FakeHalo::start().await;
+        let cookie = admin(&pool).await;
+        let (_, body) = call(&pool, "PUT", CONNECTION, &cookie, Some(settings(&halo))).await;
+        assert_eq!(
+            body["tickets"],
+            json!({"ticket_type_id": null, "ticket_type_name": null, "category": null,
+                   "min_severity": "critical", "resolved_status_id": 9, "resolved_status_name": "Closed"})
+        );
+        let (_, body) = call(&pool, "GET", "/api/psa/ticket-types", &cookie, None).await;
+        assert_eq!(body["records"], json!([{"id": 3, "name": "Change Request"}, {"id": 1, "name": "Incident"}]));
+        let (_, body) = call(&pool, "GET", "/api/psa/categories", &cookie, None).await;
+        assert_eq!(body["categories"], json!(["Hardware>Server", "Network"]));
+        let (_, body) = call(&pool, "GET", "/api/psa/statuses", &cookie, None).await;
+        assert_eq!(body["records"][0], json!({"id": 1, "name": "New"}));
+
+        let wanted = json!({"ticket_type_id": 1, "category": "Hardware>Server", "min_severity": "warning", "resolved_status_id": null});
+        let (status, body) = call(&pool, "PUT", "/api/psa/ticket-settings", &cookie, Some(wanted)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["tickets"],
+            json!({"ticket_type_id": 1, "ticket_type_name": "Incident", "category": "Hardware>Server",
+                   "min_severity": "warning", "resolved_status_id": null, "resolved_status_name": null})
+        );
+        // Saving the connection again keeps them.
+        let (_, body) = call(&pool, "PUT", CONNECTION, &cookie, Some(settings(&halo))).await;
+        assert_eq!(body["tickets"]["category"], "Hardware>Server");
+
+        for (bad, error) in [
+            (json!({"ticket_type_id": 20}), "HaloPSA has no such ticket type."),
+            (json!({"category": "Resolved remotely"}), "HaloPSA has no such category."),
+            (json!({"resolved_status_id": 77}), "HaloPSA has no such status."),
+            (json!({"min_severity": "info"}), "`min_severity` is `warning` or `critical`."),
+        ] {
+            let (status, body) = call(&pool, "PUT", "/api/psa/ticket-settings", &cookie, Some(bad)).await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some(error)));
+        }
+        let audited = actions(&pool).await;
+        assert_eq!(audited.iter().filter(|(a, _)| a == "psa.connection.tickets").count(), 1);
+    }
 }
