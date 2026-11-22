@@ -63,3 +63,60 @@ export function nearestIndex(times: number[], t: number): number {
   });
   return best;
 }
+
+/** A series stacked on those before it: each point's top, and the base it sits on. */
+export interface StackedSeries {
+  label: string;
+  points: [number, number | null][];
+  /** The base under each point, by index. */
+  base: number[];
+}
+
+/**
+ * `series` stacked in order, time by time: a point's top is its value plus
+ * the tops of the series before it at that time; a missing value adds
+ * nothing and draws nothing. Unstacked, every base is `floor`.
+ */
+export function stackSeries(series: { label: string; points: [number, number | null][] }[], stacked: boolean, floor = 0): StackedSeries[] {
+  const running = new Map<number, number>();
+  return series.map((s) => {
+    const base: number[] = [];
+    const points = s.points.map(([t, v]): [number, number | null] => {
+      const under = stacked ? (running.get(t) ?? 0) : floor;
+      base.push(under);
+      if (v === null) return [t, null];
+      const top = stacked ? under + v : v;
+      if (stacked) running.set(t, top);
+      return [t, top];
+    });
+    return { label: s.label, points, base };
+  });
+}
+
+/**
+ * `points` gathered into at most `count` buckets of equal time from
+ * `start`, each the average of its values (null when it has none), so
+ * columns stay wide enough to read. Returns the points and the bucket's
+ * length in seconds.
+ */
+export function buckets(
+  points: [number, number | null][],
+  start: number,
+  end: number,
+  step: number,
+  count: number,
+): { points: [number, number | null][]; width: number } {
+  const width = Math.max(step, Math.ceil((end - start) / count / step) * step);
+  if (width === step) return { points, width };
+  const sums = new Map<number, [number, number]>();
+  for (const [t, v] of points) {
+    const at = start + Math.floor((t - start) / width) * width;
+    const sum = sums.get(at) ?? [0, 0];
+    if (v !== null) sums.set(at, [sum[0] + v, sum[1] + 1]);
+    else sums.set(at, sum);
+  }
+  return {
+    points: [...sums.entries()].sort((a, b) => a[0] - b[0]).map(([t, [total, n]]) => [t, n ? total / n : null]),
+    width,
+  };
+}
