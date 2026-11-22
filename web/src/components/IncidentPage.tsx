@@ -25,7 +25,16 @@ import { followUpLine, listNames, minutesText } from "@/lib/followUp";
 import { INCIDENT_MARGINS, OFFLINE_AFTER_S, incidentTitle, incidentWindow, isOffline, resolvesWhen } from "@/lib/incidents";
 import { useMultiSite } from "@/lib/me";
 import { closeReason } from "@/lib/remediation";
-import { auditHref, incidentLogsHref, incidentPeerHref, incidentsHref, sensorHref } from "@/lib/routes";
+import {
+  AI_SETTINGS_PATH,
+  APPROVALS_PATH,
+  auditHref,
+  incidentLogsHref,
+  incidentPeerHref,
+  incidentsHref,
+  sensorHref,
+  serverHref,
+} from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue, seriesTitle } from "@/lib/sensors";
 import { describeRule, incidentValue, linesInMetricUnit } from "@/lib/rules";
@@ -305,8 +314,16 @@ export function IncidentPage({ id }: { id: string | null }) {
           </TableBox>
         )}
       </div>
-      {(attempts.length > 0 || (open && run?.can_run)) && (
-        <Remediation attempts={attempts} run={open ? run : null} alertId={incident.id} onStarted={refresh} />
+      {/* Always on an open alert: when AI did nothing, it says why (ADR-0175). */}
+      {(attempts.length > 0 || (open && run)) && (
+        <Remediation
+          attempts={attempts}
+          run={open ? run : null}
+          alertId={incident.id}
+          serverId={incident.server_id}
+          hostname={incident.hostname}
+          onStarted={refresh}
+        />
       )}
     </Page>
   );
@@ -512,14 +529,17 @@ function Timeline({ events, format, now }: { events: IncidentEvent[]; format: (v
 }
 
 /**
- * What the AI remediation loop did: one line for the latest attempt, one
- * per earlier attempt, and "Run AI again" on an open alert (ADR-0165). Its
- * decisions are made elsewhere.
+ * What the AI remediation loop did: one line for the latest attempt, its
+ * diagnosis, why it did not do more with the way to change that, one line
+ * per earlier attempt, and "Run AI again" on an open alert (ADR-0165,
+ * ADR-0175). Its decisions are made elsewhere.
  */
 function Remediation({
   attempts,
   run,
   alertId,
+  serverId,
+  hostname,
   onStarted,
 }: {
   /** Newest first. */
@@ -527,16 +547,24 @@ function Remediation({
   /** Null on a resolved alert, or when not readable. */
   run: RemediationRunStatus | null;
   alertId: string;
+  serverId: string | null;
+  hostname: string;
   onStarted: () => void;
 }) {
   const [latest, ...earlier] = attempts;
   const total = Math.max(run?.attempts ?? 0, attempts.length);
   const when = (iso: string) => `${formatShortDate(new Date(iso))} ${minutes(iso)}`;
+  const why = latest ? attemptWhy(latest, serverId, hostname) : noAttemptWhy(run);
   return (
-    <div className={styles.remediation}>
+    <div className={styles.remediation} aria-label={t("incidents.ai.title")} role="region">
       <div className={styles.remediationLine}>
         <strong>{t("incidents.ai.title")}</strong>
-        {latest && <StatusLabel kind="remediation" value={latest.state} />}
+        {latest &&
+          (latest.diagnosis_only && latest.state === "escalated" ? (
+            <Label tone="info">{t("incidents.ai.diagnosed")}</Label>
+          ) : (
+            <StatusLabel kind="remediation" value={latest.state} />
+          ))}
         {latest && (
           <span>
             {total > 1 && t("incidents.ai.attempt", { number: total })}
@@ -545,6 +573,20 @@ function Remediation({
           </span>
         )}
       </div>
+      {latest?.diagnosis && <Diagnosis attempt={latest} />}
+      {why && (
+        <p className={styles.remediationWhy}>
+          {why.text}
+          {why.link && (
+            <>
+              {" "}
+              <Link href={why.link.href} className={styles.underline}>
+                {why.link.label}
+              </Link>
+            </>
+          )}
+        </p>
+      )}
       {earlier.length > 0 && (
         <ul className={styles.remediationEarlier} aria-label={t("incidents.ai.earlier")}>
           {earlier.map((attempt, i) => (
@@ -565,6 +607,88 @@ function Remediation({
   );
 }
 
+/** The AI's latest diagnosis and what it advises, as its own words (untrusted text, shown as text). */
+function Diagnosis({ attempt }: { attempt: RemediationIncident }) {
+  const notRun = Boolean(attempt.diagnosis_only);
+  return (
+    <div className={styles.diagnosis}>
+      <p className={styles.diagnosisTitle}>
+        <strong>{t("incidents.ai.diagnosis")}</strong>
+        {attempt.diagnosed_at && <span className={styles.muted}> · {minutes(attempt.diagnosed_at)}</span>}
+      </p>
+      <p className={styles.diagnosisText}>{attempt.diagnosis}</p>
+      {attempt.ai_advice && (
+        <p className={styles.diagnosisText}>
+          <strong>{t("incidents.ai.advice")}</strong> {attempt.ai_advice}
+        </p>
+      )}
+      {attempt.ai_command && (
+        <p className={styles.diagnosisText}>
+          <strong>{notRun ? t("incidents.ai.suggested") : t("incidents.ai.proposed")}</strong>{" "}
+          <code>{attempt.ai_command}</code>
+        </p>
+      )}
+      <p className={styles.diagnosisNote}>
+        {notRun ? t("incidents.ai.fromDataOnly") : t("incidents.ai.untrusted")}{" "}
+        <Link href={auditHref({ incident: attempt.id })} className={styles.underline}>
+          {t("incidents.ai.seeAudit")}
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+/** One sentence on why the AI did not do more, and where to change that. */
+export type Why = { text: string; link?: { href: string; label: string } };
+
+const REFUSALS = ["commands_off", "commands_off_windows"];
+
+/** Why the latest attempt ended where it did, or what it does now. */
+export function attemptWhy(attempt: RemediationIncident, serverId: string | null, hostname: string): Why | null {
+  const commands = serverId ? { href: serverHref(serverId, "commands"), label: t("incidents.ai.why.turnOn") } : undefined;
+  const audit = { href: auditHref({ incident: attempt.id }), label: t("incidents.ai.seeAudit") };
+  switch (attempt.state) {
+    case "open":
+    case "running":
+      return { text: attempt.diagnosis_only ? t("incidents.ai.why.diagnosing") : t("incidents.ai.why.working") };
+    case "awaiting_approval":
+      return { text: t("incidents.ai.why.awaiting"), link: { href: APPROVALS_PATH, label: t("incidents.ai.why.review") } };
+    default:
+      break;
+  }
+  const only = attempt.diagnosis_only;
+  if (only) {
+    if (REFUSALS.includes(only)) return { text: t("incidents.ai.why.commandsOff", { hostname }), link: commands };
+    if (only === "device") return { text: t("incidents.ai.why.device") };
+    if (only === "offline") return { text: t("incidents.ai.why.offline") };
+    if (only === "agent_too_old") return { text: t("incidents.ai.why.agentTooOld") };
+    return { text: t("incidents.ai.why.unsupported") };
+  }
+  const code = attempt.close_code;
+  if (!code) return null;
+  const reason = closeReason(
+    { code, detail: attempt.close_detail ?? undefined, limit: attempt.close_limit ?? undefined },
+    attempt.close_reason ?? "",
+  );
+  if (code === "ai_failed") return { text: t("incidents.ai.why.ended", { reason }), link: { href: AI_SETTINGS_PATH, label: t("incidents.ai.why.checkAi") } };
+  if (REFUSALS.includes(code)) return { text: t("incidents.ai.why.ended", { reason }), link: commands };
+  return { text: t("incidents.ai.why.ended", { reason }), link: audit };
+}
+
+/** Why an open alert has no AI remediation yet. */
+export function noAttemptWhy(run: RemediationRunStatus | null): Why | null {
+  switch (run?.no_attempt) {
+    case "ai_off":
+      return { text: t("incidents.ai.why.aiOff"), link: { href: AI_SETTINGS_PATH, label: t("incidents.ai.why.turnAiOn") } };
+    case "too_old":
+      return { text: t("incidents.ai.why.tooOld") };
+    case "soon":
+      return { text: t("incidents.ai.why.soon") };
+    default:
+      return null;
+  }
+}
+
 /** Why AI cannot run again now, for the reasons a person can act on; null for the others. */
 export function runBlockedText(run: RemediationRunStatus): string | null {
   switch (run.blocked) {
@@ -583,9 +707,11 @@ export function runBlockedText(run: RemediationRunStatus): string | null {
 function RunAgain({ run, alertId, onStarted }: { run: RemediationRunStatus; alertId: string; onStarted: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const why = runBlockedText(run);
+  // AI off is said above, with the way to turn it on.
+  const why = run.no_attempt === "ai_off" ? null : runBlockedText(run);
   // In progress, or not the user's to start: the line above says enough.
   if (!run.can_run && !why) return null;
+  const only = run.can_run && run.diagnosis_only ? t("incidents.ai.diagnosisOnly") : null;
 
   async function start() {
     setBusy(true);
@@ -606,6 +732,7 @@ function RunAgain({ run, alertId, onStarted }: { run: RemediationRunStatus; aler
         {busy ? t("incidents.ai.starting") : run.attempts > 0 ? t("incidents.ai.runAgain") : t("incidents.ai.run")}
       </Button>
       {why && <span>{why}</span>}
+      {only && <span>{only}</span>}
       {error && (
         <span role="alert" className={styles.remediationError}>
           {error}

@@ -102,7 +102,7 @@ function Ai() {
       {header}
       {settings.enabled ? (
         <Banner tone="ok">
-          <strong>{t("ai.on")}</strong>
+          <strong>{t("ai.on")}</strong> {t("ai.onBody")}
         </Banner>
       ) : (
         <Banner tone="plain">{rich("ai.offBanner", { off: <strong>{t("ai.off")}</strong> })}</Banner>

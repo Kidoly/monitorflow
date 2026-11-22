@@ -2422,6 +2422,20 @@ export interface RemediationIncident {
   max_commands: number;
   max_duration_s: number;
   event_count: number;
+  /** The AI's latest diagnosis, untrusted text (ADR-0175); absent from older servers. */
+  diagnosis?: string | null;
+  diagnosed_at?: string | null;
+  /** What it said to do next with that diagnosis, untrusted text. */
+  ai_advice?: string | null;
+  /** The command it proposed with it; with `diagnosis_only`, a suggestion that never ran. */
+  ai_command?: string | null;
+  /** Why no command could run, so the AI only diagnosed: a refusal code, `device` or `offline`. */
+  diagnosis_only?: string | null;
+  /** Once closed, the code, English sentence, detail and limit of the event that closed it. */
+  close_code?: string | null;
+  close_reason?: string | null;
+  close_detail?: string | null;
+  close_limit?: number | null;
 }
 
 export interface RemediationIncidentList {
@@ -2449,8 +2463,14 @@ export interface RemediationRunStatus {
   blocked: RemediationRunBlocked | null;
   /** `blocked` in English. */
   reason: string | null;
-  /** With `commands_refused`: `commands_off`, `commands_off_windows`, `system_unsupported` or `agent_too_old`. */
+  /** When the server refuses AI commands: `commands_off`, `commands_off_windows`, `system_unsupported` or `agent_too_old`. */
   refusal: string | null;
+  /** Why an attempt now would only diagnose (ADR-0175): a refusal code, `device` or `offline`. */
+  diagnosis_only?: string | null;
+  diagnosis_only_reason?: string | null;
+  /** On an open alert without any remediation, why: `ai_off`, `too_old` or `soon`. */
+  no_attempt?: "ai_off" | "too_old" | "soon" | null;
+  no_attempt_reason?: string | null;
 }
 
 export interface RemediationRunStarted {

@@ -264,7 +264,7 @@ describe("IncidentPage", () => {
       render(<IncidentPage id={ID} />);
       expect(await screen.findByRole("button", { name: "Run AI again" })).toBeDisabled();
       expect(
-        screen.getByText("Not now: AI commands are off on this server. Run the installer there with MF_ALLOW_COMMANDS=1 to allow them."),
+        screen.getByText("Not now: AI commands are off on this server. The Commands tab of its page turns them on, or gives the line to run there."),
       ).toBeInTheDocument();
     });
 
@@ -302,6 +302,66 @@ describe("IncidentPage", () => {
       render(<IncidentPage id={ID} />);
       await userEvent.click(await screen.findByRole("button", { name: "Run AI again" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("already running or waiting for approval");
+    });
+
+    it("shows the AI's diagnosis where no command could run, with why and the way to change it (ADR-0175)", async () => {
+      const diagnosed = {
+        ...attempt("r1", "escalated", "2026-10-19T11:00:20Z"),
+        event_count: 4,
+        diagnosis: "/var grew 20% in an hour; journald writes most of it.",
+        diagnosed_at: "2026-10-19T11:00:25Z",
+        ai_advice: "Vacuum the journal and cap its size.",
+        ai_command: "journalctl --vacuum-size=500M",
+        diagnosis_only: "commands_off",
+        close_code: "commands_off",
+      };
+      stubIncident(open(), { status: 200, body: { incidents: [diagnosed], next_cursor: null } }, status({ diagnosis_only: "commands_off", refusal: "commands_off" }));
+      render(<IncidentPage id={ID} />);
+      const region = await screen.findByRole("region", { name: "AI remediation" });
+      expect(within(region).getByText("Diagnosed")).toBeInTheDocument();
+      expect(within(region).getByText("AI diagnosis")).toBeInTheDocument();
+      expect(within(region).getByText(diagnosed.diagnosis)).toBeInTheDocument();
+      expect(region).toHaveTextContent("Next: Vacuum the journal and cap its size.");
+      expect(region).toHaveTextContent("Command to run by hand, not run by AI: journalctl --vacuum-size=500M");
+      expect(region).toHaveTextContent("nothing ran on the machine");
+      expect(region).toHaveTextContent("The AI could not run checks or fixes: AI commands are off on web-1.");
+      expect(within(region).getByRole("link", { name: "Turn them on" })).toHaveAttribute(
+        "href",
+        expect.stringMatching(/^\/servers\/view\/?\?id=.+&tab=commands$/),
+      );
+      expect(region).toHaveTextContent("The AI will diagnose only: no command can run there.");
+      expect(within(region).getByRole("button", { name: "Run AI again" })).toBeEnabled();
+    });
+
+    it("says why AI did nothing, with the way out", async () => {
+      stubIncident(open(), none, status({ attempts: 0, latest_id: null, latest_state: null, can_run: false, blocked: "ai_off", no_attempt: "ai_off" }));
+      const { unmount } = render(<IncidentPage id={ID} />);
+      const region = await screen.findByRole("region", { name: "AI remediation" });
+      expect(region).toHaveTextContent("AI did not look at this alert: AI is off.");
+      expect(within(region).getByRole("link", { name: "Turn on AI" })).toHaveAttribute("href", expect.stringMatching(/^\/settings\/ai\/?$/));
+      // Said once, not again beside the button.
+      expect(screen.queryByText(/^AI is off\./)).not.toBeInTheDocument();
+      unmount();
+
+      stubIncident(open(), none, status({ attempts: 0, latest_id: null, latest_state: null, no_attempt: "too_old" }));
+      render(<IncidentPage id={ID} />);
+      expect(await screen.findByText(/AI did not look at this alert: it opened more than an hour before AI was on/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled();
+    });
+
+    it("says why an attempt ended, with where to fix it", async () => {
+      const failed = {
+        ...attempt("r1", "failed", "2026-10-19T11:00:20Z"),
+        closed_at: "2026-10-19T11:00:30Z",
+        close_code: "ai_failed",
+        close_detail: "401 Unauthorized",
+        close_reason: "the AI provider failed: 401 Unauthorized",
+      };
+      stubIncident(open(), { status: 200, body: { incidents: [failed], next_cursor: null } }, status({ latest_state: "failed" }));
+      render(<IncidentPage id={ID} />);
+      const region = await screen.findByRole("region", { name: "AI remediation" });
+      expect(region).toHaveTextContent("The AI provider failed: 401 Unauthorized.");
+      expect(within(region).getByRole("link", { name: "Check Settings › AI" })).toHaveAttribute("href", expect.stringMatching(/^\/settings\/ai\/?$/));
     });
 
     it("words it in French", async () => {

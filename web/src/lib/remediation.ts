@@ -106,6 +106,8 @@ const CLOSE_CODES = [
   "command_gone",
   "timed_out",
   "incomplete",
+  "device",
+  "offline",
 ] as const;
 type CloseCode = (typeof CLOSE_CODES)[number];
 
@@ -226,6 +228,8 @@ export function eventSummary(event: Pick<RemediationEvent, "kind" | "actor_kind"
     }
     case "escalation": {
       const reason = closeReason(p, text(p, "reason"));
+      // The AI diagnosed where no command can run (ADR-0175).
+      if (p.diagnosis_only === true) return t("remediation.summary.diagnosisOnly", { reason });
       return p.to === "failed" ? t("remediation.summary.failed", { reason }) : reason;
     }
     case "state_change":
