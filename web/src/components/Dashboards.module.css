@@ -230,6 +230,11 @@
 }
 
 .card {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -244,4 +249,155 @@
 .card:hover,
 .card:focus-visible {
   border-color: var(--text);
+}
+
+/* A gauge keeps a readable size in a wide panel. */
+.gauge {
+  width: 100%;
+  max-width: 280px;
+  margin: 0 auto;
+}
+
+/* A table panel scrolls sideways inside its box on a narrow screen. */
+.tableBox {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table thead th {
+  border-top: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.table th:first-child {
+  text-align: left;
+  font-weight: 500;
+}
+
+/* The panel form: choices beside a live preview, the rest under Advanced (ADR-0166). */
+.editor {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.editorChoices {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.preview {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.advanced {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.advanced > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.advanced[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.advanced[open] > summary {
+  margin-bottom: 2px;
+}
+
+.textarea {
+  height: auto;
+  min-height: 120px;
+  padding-top: 8px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.columnRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.optionsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 32px;
+  align-items: center;
+}
+
+.swatches {
+  display: flex;
+  gap: 6px;
+}
+
+.swatchChoice {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.swatchChoice input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.swatchChoice[data-checked] {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text);
+}
+
+.swatchChoice:focus-within {
+  outline: 2px solid var(--series-1);
+  outline-offset: 4px;
+}
+
+.check {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }

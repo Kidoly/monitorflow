@@ -493,6 +493,7 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
           isNew={editing === "new"}
           servers={choosable}
           within={within}
+          range={range}
           onCancel={() => setEditing(null)}
           onDone={(panel) => {
             setPanels(editing === "new" ? [...panels, panel] : panels.map((p, i) => (i === editing ? panel : p)));
@@ -501,13 +502,37 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
         />
       )}
 
+      {draft && panels.length === 0 && editing === null && (
+        <section className={admin.section} aria-labelledby="start-from">
+          <div className={admin.sectionHead}>
+            <h2 id="start-from" className={admin.sectionTitle}>
+              {t("dashboards.view.startFrom")}
+            </h2>
+            <InfoTip label={t("dashboards.list.about")}>{t("dashboards.view.startNote")}</InfoTip>
+          </div>
+          <ul className={styles.cards}>
+            {readyMades().map((d) => (
+              <li key={d.id}>
+                <button
+                  type="button"
+                  className={styles.card}
+                  onClick={() => editDraft && setDraft({ ...editDraft, name: editDraft.name || d.name, spec: d.spec })}
+                >
+                  <b>{d.name}</b>
+                  <span className={admin.dim}>{d.description}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {panels.length === 0 ? (
         <EmptyState
           title={t("dashboards.view.noPanels")}
           actions={
             draft ? (
               <Button variant="k" onClick={() => setEditing("new")} disabled={!servers}>
-                {t("dashboards.view.addPanel")}
+                {isNew ? t("dashboards.view.orAdd") : t("dashboards.view.addPanel")}
               </Button>
             ) : (
               canEdit && <Button onClick={startEditing}>{t("dashboards.view.edit")}</Button>

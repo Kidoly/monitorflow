@@ -1,0 +1,40 @@
+/* A heatmap (ADR-0166); sizes in em so a screen scales them. */
+.heatmap {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+}
+
+.row {
+  display: table-row;
+}
+
+.name {
+  display: table-cell;
+  max-width: 10em;
+  padding: 0 0.6em 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.cells {
+  display: table-cell;
+  width: 100%;
+  padding: 1px 0;
+  vertical-align: middle;
+}
+
+.strip {
+  display: flex;
+}
+
+.cell {
+  flex: 1 1 0;
+  height: 1.1em;
+  margin-right: 1px;
+  border-radius: 2px;
+  background: var(--hl);
+}

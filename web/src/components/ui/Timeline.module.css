@@ -1,0 +1,90 @@
+/* A timeline of alerts (ADR-0166); sizes in em so a screen scales it. */
+.timeline {
+  display: table;
+  width: 100%;
+  font-size: 0.85em;
+}
+
+.row {
+  display: table-row;
+}
+
+.name,
+.track,
+.share,
+.ticks {
+  display: table-cell;
+  vertical-align: middle;
+  padding: 0.15em 0;
+}
+
+.name {
+  max-width: 10em;
+  padding-right: 0.6em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track {
+  position: relative;
+  width: 100%;
+  height: 1.1em;
+  background: var(--series-3);
+  background-clip: content-box;
+  opacity: 1;
+}
+
+.track::before {
+  /* The clear time, quieter than the alerts. */
+  content: "";
+  position: absolute;
+  top: 0.15em;
+  right: 0;
+  bottom: 0.15em;
+  left: 0;
+  background: var(--surface);
+  opacity: 0.55;
+}
+
+.warning,
+.critical {
+  position: absolute;
+  top: 0.15em;
+  bottom: 0.15em;
+}
+
+.warning {
+  background: var(--threshold-warn);
+}
+
+.critical {
+  background: var(--threshold-crit);
+}
+
+.share {
+  padding-left: 0.6em;
+  color: var(--muted);
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ticks {
+  position: relative;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.ticks span {
+  display: inline-block;
+  width: 33.33%;
+}
+
+.ticks span:nth-child(2) {
+  text-align: center;
+}
+
+.ticks span:last-child {
+  text-align: right;
+}

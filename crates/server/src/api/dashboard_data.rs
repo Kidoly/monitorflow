@@ -27,9 +27,12 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use super::auth::CurrentUser;
-use super::dashboards::{check_panels, Combine, Order, Panel, PanelKind, Servers, TimeRange};
+use super::dashboards::{
+    check_panels, Combine, Order, Panel, PanelKind, Servers, TableColumn, TimeRange,
+};
 use super::metrics::{check_metric, quote, series, SeriesView, METRIC_PREFIX};
 use super::sensors::body;
+use super::servers::{states_of, ServerState};
 use super::{ApiError, ApiState};
 use crate::vm_query::{QueryError, VmQuery};
 
@@ -44,6 +47,12 @@ const CACHE_ENTRIES: usize = 2_000;
 pub const MAX_QUERY_BYTES: usize = 12_000;
 /// Lines of a chart showing each server.
 pub const EACH_LINES: usize = 8;
+/// Most squares of a states panel: the worst ones.
+pub const MAX_CELLS: usize = 500;
+/// Servers named in a pie of a metric; the rest are one slice.
+pub const PIE_SLICES: usize = 7;
+/// Most stretches of alerts in one row of a timeline.
+const MAX_SPANS: usize = 200;
 /// Figures and top lists show now, to this many seconds, so refreshes
 /// within it share one answer.
 const NOW_STEP: i64 = 30;
@@ -146,6 +155,62 @@ pub struct TopRow {
     pub value: Option<f64>,
 }
 
+/// One row of a table: a server and its value in each column.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TableRow {
+    pub server_id: Uuid,
+    pub hostname: String,
+    /// In the order of the panel's columns; `null` where the server does
+    /// not report it.
+    pub values: Vec<Option<f64>>,
+}
+
+/// One square of a states panel: a server's state, or its value.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct StateCell {
+    pub server_id: Uuid,
+    pub hostname: String,
+    /// Its state on the fleet's pages; absent for a panel of a metric.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<ServerState>,
+    /// Its value of the panel's metric, the worst of its instances;
+    /// absent for a panel of states.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+}
+
+/// One slice of a pie: a state and how many servers are in it, or a
+/// server and its share; neither for the rest of the servers.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PieSlice {
+    /// The state, the server's name, or `Other`.
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<ServerState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<Uuid>,
+    pub value: f64,
+}
+
+/// A stretch of time a server had an open alert.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct Span {
+    /// Unix seconds, within the range.
+    pub start: i64,
+    pub end: i64,
+    /// `warning` or `critical`.
+    pub severity: String,
+}
+
+/// One row of a timeline.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TimelineRow {
+    pub server_id: Uuid,
+    pub hostname: String,
+    /// By start; at most 200.
+    pub spans: Vec<Span>,
+}
+
 /// One open alert.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 #[schema(as = DashboardAlert)]
@@ -176,7 +241,10 @@ pub struct UnreachableServer {
     pub note: super::dependencies::UnreachableNote,
 }
 
-/// What a panel shows, by its `kind`.
+/// What a panel shows. `kind` is the shape of the data, the panel's kind
+/// or the one it draws differently: `chart` for `chart`, `area` and
+/// `columns` and `heatmap`; `figure` for `figure` and `gauge`; `top`
+/// for `top` and `bars` (ADR-0166).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum PanelResult {
@@ -188,6 +256,25 @@ pub enum PanelResult {
     },
     Top {
         rows: Vec<TopRow>,
+    },
+    /// A table: a row per server, sorted by its first column.
+    Table {
+        rows: Vec<TableRow>,
+    },
+    /// A text panel, which reads nothing.
+    Text {},
+    /// Squares, worst first, at most 500.
+    States {
+        cells: Vec<StateCell>,
+    },
+    /// Slices, largest or worst first.
+    Pie {
+        slices: Vec<PieSlice>,
+    },
+    /// A row per server, those with the most time in alert first, from the
+    /// start of the range to `now`.
+    Timeline {
+        rows: Vec<TimelineRow>,
     },
     Alerts {
         alerts: Vec<AlertRow>,
@@ -391,7 +478,20 @@ pub fn build(panel: &Panel, selector: &str, range: TimeRange) -> Option<Call> {
     let metric = panel.metric.as_deref()?;
     let combine = panel.combine.unwrap_or(Combine::Avg);
     Some(match panel.kind {
-        PanelKind::Chart => {
+        PanelKind::Heatmap => {
+            let rolled = if range.rolls_up() {
+                format!("{}({selector}[{}s])", rollup(metric), range.step())
+            } else {
+                selector.to_owned()
+            };
+            let count = panel.count.unwrap_or(10);
+            Call::Range(if low_is_bad(metric) {
+                format!("bottomk_min({count}, {rolled})")
+            } else {
+                format!("topk_max({count}, {rolled})")
+            })
+        }
+        PanelKind::Chart | PanelKind::Area | PanelKind::Columns => {
             let rolled = if range.rolls_up() {
                 format!("{}({selector}[{}s])", rollup(metric), range.step())
             } else {
@@ -405,11 +505,11 @@ pub fn build(panel: &Panel, selector: &str, range: TimeRange) -> Option<Call> {
                 other => format!("{}({rolled})", aggregation(other)),
             })
         }
-        PanelKind::Figure => Call::Instant(match combine {
+        PanelKind::Figure | PanelKind::Gauge => Call::Instant(match combine {
             Combine::Count => format!("count(count by (peer) ({selector}))"),
             other => format!("{}({selector})", aggregation(other)),
         }),
-        PanelKind::Top => {
+        PanelKind::Top | PanelKind::Bars => {
             let function = match panel.order {
                 Some(Order::Lowest) => "bottomk",
                 _ => "topk",
@@ -419,8 +519,54 @@ pub fn build(panel: &Panel, selector: &str, range: TimeRange) -> Option<Call> {
                 panel.count.unwrap_or(5)
             ))
         }
-        PanelKind::Alerts => return None,
+        PanelKind::States => {
+            let (function, worst) = if low_is_bad(metric) {
+                ("bottomk", "min")
+            } else {
+                ("topk", "max")
+            };
+            Call::Instant(format!(
+                "{function}({MAX_CELLS}, {worst} by (peer) ({selector}))"
+            ))
+        }
+        PanelKind::Pie => Call::Instant(format!("topk({PIE_SLICES}, sum by (peer) ({selector}))")),
+        PanelKind::Alerts | PanelKind::Table | PanelKind::Text | PanelKind::Timeline => {
+            return None
+        }
     })
+}
+
+/// The queries of a table, one per column: each server's value, the worst
+/// of its instances when the column names none, for the `count` servers
+/// first by the first column, so no answer has more series than rows.
+pub fn table_calls(
+    columns: &[TableColumn],
+    selection: &Selection,
+    order: Option<Order>,
+    count: u32,
+) -> Vec<Call> {
+    let value = |c: &TableColumn| {
+        let worst = if low_is_bad(&c.metric) { "min" } else { "max" };
+        format!(
+            "{worst} by (peer) ({})",
+            selection.selector(&c.metric, c.instance.as_deref())
+        )
+    };
+    let Some(first) = columns.first() else {
+        return Vec::new();
+    };
+    let function = match order {
+        Some(Order::Lowest) => "bottomk",
+        _ => "topk",
+    };
+    let rows = format!("{function}({count}, {})", value(first));
+    std::iter::once(Call::Instant(rows.clone()))
+        .chain(
+            columns[1..]
+                .iter()
+                .map(|c| Call::Instant(format!("{} and on (peer) {rows}", value(c)))),
+        )
+        .collect()
 }
 
 fn combined_label(combine: Combine) -> &'static str {
@@ -493,13 +639,233 @@ async fn visible_servers(
     .await?)
 }
 
+/// How bad a state is, worst first, to order squares and slices.
+fn rank(state: ServerState) -> u8 {
+    match state {
+        ServerState::Critical => 0,
+        ServerState::Warning => 1,
+        ServerState::Unreachable => 2,
+        ServerState::Offline => 3,
+        ServerState::Acknowledged => 4,
+        ServerState::Silenced => 5,
+        ServerState::Waiting => 6,
+        ServerState::Ok => 7,
+    }
+}
+
+/// The servers' states as squares, or as a pie's slices, worst first.
+pub fn by_state(
+    kind: PanelKind,
+    servers: &[&Visible],
+    states: &HashMap<Uuid, ServerState>,
+) -> PanelResult {
+    let mut known: Vec<(&Visible, ServerState)> = servers
+        .iter()
+        .filter_map(|s| Some((*s, *states.get(&s.id)?)))
+        .collect();
+    known.sort_by(|a, b| (rank(a.1), &a.0.hostname).cmp(&(rank(b.1), &b.0.hostname)));
+    if kind == PanelKind::Pie {
+        let mut slices: Vec<PieSlice> = Vec::new();
+        for (_, state) in known {
+            match slices.last_mut() {
+                Some(last) if last.state == Some(state) => last.value += 1.0,
+                _ => slices.push(PieSlice {
+                    label: serde_json::to_value(state)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_owned))
+                        .unwrap_or_default(),
+                    state: Some(state),
+                    server_id: None,
+                    value: 1.0,
+                }),
+            }
+        }
+        return PanelResult::Pie { slices };
+    }
+    PanelResult::States {
+        cells: known
+            .into_iter()
+            .take(MAX_CELLS)
+            .map(|(s, state)| StateCell {
+                server_id: s.id,
+                hostname: s.hostname.clone(),
+                state: Some(state),
+                value: None,
+            })
+            .collect(),
+    }
+}
+
+/// A pie of a metric: the largest servers' shares, then the rest as one
+/// slice, from the answers of `topk` and of the total.
+fn convert_pie(servers: &[&Visible], answers: Vec<Value>) -> Result<PanelResult, ApiError> {
+    let by_peer: HashMap<&str, &Visible> =
+        servers.iter().map(|s| (s.peer_id.as_str(), *s)).collect();
+    let mut answers = answers.into_iter();
+    let mut slices: Vec<PieSlice> = series(answers.next().unwrap_or_default())?
+        .into_iter()
+        .filter_map(|found| {
+            let server = by_peer.get(found.labels.get("peer")?.as_str())?;
+            let value = found.points.last()?.1.filter(|v| *v > 0.0)?;
+            Some(PieSlice {
+                label: server.hostname.clone(),
+                state: None,
+                server_id: Some(server.id),
+                value,
+            })
+        })
+        .collect();
+    slices.sort_by(|a, b| b.value.total_cmp(&a.value));
+    let total = answers
+        .next()
+        .map(series)
+        .transpose()?
+        .and_then(|all| all.first().and_then(|s| s.points.last()).and_then(|p| p.1));
+    let named: f64 = slices.iter().map(|s| s.value).sum();
+    if let Some(rest) = total
+        .map(|t| t - named)
+        .filter(|r| *r > named * 1e-9 && *r > 0.0)
+    {
+        slices.push(PieSlice {
+            label: "Other".into(),
+            state: None,
+            server_id: None,
+            value: rest,
+        });
+    }
+    Ok(PanelResult::Pie { slices })
+}
+
+/// A states panel of a metric: each server's worst value, worst first.
+fn convert_states(
+    panel: &Panel,
+    servers: &[&Visible],
+    data: Value,
+) -> Result<PanelResult, ApiError> {
+    let by_peer: HashMap<&str, &Visible> =
+        servers.iter().map(|s| (s.peer_id.as_str(), *s)).collect();
+    let mut cells: Vec<StateCell> = series(data)?
+        .into_iter()
+        .filter_map(|found| {
+            let server = by_peer.get(found.labels.get("peer")?.as_str())?;
+            Some(StateCell {
+                server_id: server.id,
+                hostname: server.hostname.clone(),
+                state: None,
+                value: found.points.last().and_then(|p| p.1),
+            })
+        })
+        .collect();
+    let low = low_is_bad(panel.metric.as_deref().unwrap_or_default());
+    cells.sort_by(|a, b| {
+        let (x, y) = (a.value.unwrap_or(f64::NAN), b.value.unwrap_or(f64::NAN));
+        let order = if low {
+            x.total_cmp(&y)
+        } else {
+            y.total_cmp(&x)
+        };
+        order.then_with(|| a.hostname.cmp(&b.hostname))
+    });
+    Ok(PanelResult::States { cells })
+}
+
+/// One incident's stretch: `(server, severity, opened, resolved)`.
+type IncidentRow = (Uuid, String, DateTime<Utc>, Option<DateTime<Utc>>);
+
+/// A timeline's rows: the servers with the most time in alert between
+/// `start` and `now`, then the others by name, at most `count`.
+pub fn timeline(
+    servers: &[&Visible],
+    incidents: &[IncidentRow],
+    start: i64,
+    now: i64,
+    count: usize,
+) -> PanelResult {
+    let mut rows: Vec<(i64, TimelineRow)> = servers
+        .iter()
+        .map(|server| {
+            let mut spans: Vec<Span> = incidents
+                .iter()
+                .filter(|(id, ..)| *id == server.id)
+                .map(|(_, severity, opened, resolved)| Span {
+                    start: opened.timestamp().max(start),
+                    end: resolved.map_or(now, |r| r.timestamp()).min(now),
+                    severity: severity.clone(),
+                })
+                .filter(|span| span.end > span.start)
+                .collect();
+            spans.sort_by_key(|span| span.start);
+            spans.truncate(MAX_SPANS);
+            let time: i64 = spans.iter().map(|span| span.end - span.start).sum();
+            (
+                time,
+                TimelineRow {
+                    server_id: server.id,
+                    hostname: server.hostname.clone(),
+                    spans,
+                },
+            )
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.hostname.cmp(&b.1.hostname)));
+    PanelResult::Timeline {
+        rows: rows.into_iter().take(count).map(|(_, row)| row).collect(),
+    }
+}
+
+/// What a table's answers, one per column, become: the servers reporting
+/// any column, sorted by the first, those without it last.
+fn convert_table(
+    panel: &Panel,
+    servers: &[&Visible],
+    answers: Vec<Value>,
+) -> Result<PanelResult, ApiError> {
+    let columns = answers.len();
+    let mut rows: Vec<TableRow> = Vec::new();
+    let mut at: HashMap<&str, usize> = HashMap::new();
+    let by_peer: HashMap<&str, &Visible> =
+        servers.iter().map(|s| (s.peer_id.as_str(), *s)).collect();
+    for (column, data) in answers.into_iter().enumerate() {
+        for found in series(data)? {
+            // Defense in depth: a series of a peer outside the panel is dropped.
+            let Some(server) = found
+                .labels
+                .get("peer")
+                .and_then(|p| by_peer.get(p.as_str()))
+            else {
+                continue;
+            };
+            let index = *at.entry(server.peer_id.as_str()).or_insert_with(|| {
+                rows.push(TableRow {
+                    server_id: server.id,
+                    hostname: server.hostname.clone(),
+                    values: vec![None; columns],
+                });
+                rows.len() - 1
+            });
+            rows[index].values[column] = found.points.last().and_then(|p| p.1);
+        }
+    }
+    let lowest = panel.order == Some(Order::Lowest);
+    rows.sort_by(|a, b| match (a.values[0], b.values[0]) {
+        (Some(x), Some(y)) if lowest => x.total_cmp(&y),
+        (Some(x), Some(y)) => y.total_cmp(&x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.hostname.cmp(&b.hostname),
+    });
+    rows.truncate(panel.count.unwrap_or(10) as usize);
+    Ok(PanelResult::Table { rows })
+}
+
 /// What one metric panel's answer becomes.
 fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResult, ApiError> {
     let by_peer: HashMap<&str, &Visible> =
         servers.iter().map(|s| (s.peer_id.as_str(), *s)).collect();
     let combine = panel.combine.unwrap_or(Combine::Avg);
-    let per_server = matches!(panel.kind, PanelKind::Top)
-        || (panel.kind == PanelKind::Chart && combine == Combine::Each);
+    let per_server = panel.kind.base() == PanelKind::Top
+        || panel.kind == PanelKind::Heatmap
+        || (panel.kind.base() == PanelKind::Chart && combine == Combine::Each);
     // Defense in depth: a series of a peer outside the panel is dropped.
     let found: Vec<(Option<&Visible>, SeriesView)> = series(data)?
         .into_iter()
@@ -510,7 +876,7 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
         })
         .collect();
     Ok(match panel.kind {
-        PanelKind::Chart => {
+        PanelKind::Chart | PanelKind::Area | PanelKind::Columns | PanelKind::Heatmap => {
             let mut lines: Vec<ChartSeries> = found
                 .into_iter()
                 .map(|(server, s)| {
@@ -533,13 +899,13 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
             lines.sort_by(|a, b| a.label.cmp(&b.label));
             PanelResult::Chart { series: lines }
         }
-        PanelKind::Figure => PanelResult::Figure {
+        PanelKind::Figure | PanelKind::Gauge => PanelResult::Figure {
             value: found
                 .first()
                 .and_then(|(_, s)| s.points.last())
                 .and_then(|p| p.1),
         },
-        PanelKind::Top => {
+        PanelKind::Top | PanelKind::Bars => {
             let mut rows: Vec<TopRow> = found
                 .into_iter()
                 .filter_map(|(server, s)| {
@@ -569,6 +935,13 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
             alerts: Vec::new(),
             unreachable: Vec::new(),
         },
+        // Read by `convert_table`, `convert_pie`, `convert_states` or from
+        // the database.
+        PanelKind::Table => PanelResult::Table { rows: Vec::new() },
+        PanelKind::Text => PanelResult::Text {},
+        PanelKind::States => PanelResult::States { cells: Vec::new() },
+        PanelKind::Pie => PanelResult::Pie { slices: Vec::new() },
+        PanelKind::Timeline => PanelResult::Timeline { rows: Vec::new() },
     })
 }
 
@@ -649,51 +1022,132 @@ pub(super) async fn compute(
     )
     .await?;
 
-    // Metric queries, at most PARALLEL at a time.
+    // States of the servers of states and pie panels without a metric, and
+    // the incidents of timelines, each in one read.
+    let of_kind = |wanted: &dyn Fn(&Panel) -> bool| -> Vec<Uuid> {
+        request
+            .panels
+            .iter()
+            .zip(&resolved)
+            .filter(|(p, _)| wanted(p))
+            .flat_map(|(_, (servers, _))| servers.iter().map(|s| s.id))
+            .collect::<BTreeSet<Uuid>>()
+            .into_iter()
+            .collect()
+    };
+    let states = states_of(
+        state,
+        &of_kind(&|p| matches!(p.kind, PanelKind::States | PanelKind::Pie) && p.metric.is_none()),
+    )
+    .await?;
+    let timeline_servers = of_kind(&|p| p.kind == PanelKind::Timeline);
+    let incidents: Vec<IncidentRow> = if timeline_servers.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_as(
+            "SELECT server_id, severity, opened_at, resolved_at FROM incidents
+             WHERE server_id = ANY($1) AND opened_at < to_timestamp($3)
+               AND (resolved_at IS NULL OR resolved_at > to_timestamp($2))",
+        )
+        .bind(&timeline_servers)
+        .bind(start as f64)
+        .bind(now as f64)
+        .fetch_all(&state.pool)
+        .await?
+    };
+
+    // Metric queries, at most PARALLEL at a time; a table sends one per column.
     let semaphore = Arc::new(Semaphore::new(PARALLEL));
     let mut tasks = JoinSet::new();
     let mut results: Vec<Option<PanelResult>> = Vec::new();
+    let mut answers: Vec<Vec<Option<Value>>> = Vec::new();
     for (index, (panel, (servers, _))) in request.panels.iter().zip(&resolved).enumerate() {
+        answers.push(Vec::new());
         let selection = Selection::new(
             servers,
             &visible,
             matches!(panel.servers, Servers::List { .. }),
         );
-        let selector = selection.selector(
-            panel.metric.as_deref().unwrap_or_default(),
-            panel.instance.as_deref(),
-        );
-        let call = build(panel, &selector, range);
+        let calls: Vec<Call> = match &panel.columns {
+            Some(columns) if panel.kind == PanelKind::Table => {
+                table_calls(columns, &selection, panel.order, panel.count.unwrap_or(10))
+            }
+            _ if panel.kind == PanelKind::Pie && panel.metric.is_some() => {
+                let selector = selection.selector(
+                    panel.metric.as_deref().unwrap_or_default(),
+                    panel.instance.as_deref(),
+                );
+                let call = build(panel, &selector, range);
+                call.into_iter()
+                    .chain([Call::Instant(format!("sum({selector})"))])
+                    .collect()
+            }
+            _ => {
+                let selector = selection.selector(
+                    panel.metric.as_deref().unwrap_or_default(),
+                    panel.instance.as_deref(),
+                );
+                build(panel, &selector, range).into_iter().collect()
+            }
+        };
         let empty = || match panel.kind {
-            PanelKind::Chart => PanelResult::Chart { series: Vec::new() },
-            PanelKind::Figure => PanelResult::Figure { value: None },
-            PanelKind::Top => PanelResult::Top { rows: Vec::new() },
+            PanelKind::Chart | PanelKind::Area | PanelKind::Columns | PanelKind::Heatmap => {
+                PanelResult::Chart { series: Vec::new() }
+            }
+            PanelKind::Figure | PanelKind::Gauge => PanelResult::Figure { value: None },
+            PanelKind::Top | PanelKind::Bars => PanelResult::Top { rows: Vec::new() },
+            PanelKind::Table => PanelResult::Table { rows: Vec::new() },
+            PanelKind::Text => PanelResult::Text {},
+            PanelKind::States => PanelResult::States { cells: Vec::new() },
+            PanelKind::Pie => PanelResult::Pie { slices: Vec::new() },
+            PanelKind::Timeline => PanelResult::Timeline { rows: Vec::new() },
             PanelKind::Alerts => PanelResult::Alerts {
                 alerts: Vec::new(),
                 unreachable: Vec::new(),
             },
         };
-        let (Some(call), false) = (call, servers.is_empty()) else {
+        if servers.is_empty() {
             results.push(Some(empty()));
             continue;
-        };
+        }
+        if calls.is_empty() {
+            // From the database: states, or a timeline of incidents.
+            results.push(Some(match panel.kind {
+                PanelKind::States | PanelKind::Pie => by_state(panel.kind, servers, &states),
+                PanelKind::Timeline => timeline(
+                    servers,
+                    &incidents,
+                    start,
+                    now,
+                    panel.count.unwrap_or(10) as usize,
+                ),
+                _ => empty(),
+            }));
+            continue;
+        }
         let filter = selection.filter();
-        let (path, mut params) = match call {
-            Call::Range(query) => (
-                "/api/v1/query_range",
-                vec![
-                    ("query", query),
-                    ("start", start.to_string()),
-                    ("end", end.to_string()),
-                    ("step", step.to_string()),
-                ],
-            ),
-            Call::Instant(query) => (
-                "/api/v1/query",
-                vec![("query", query), ("time", at.to_string())],
-            ),
-        };
-        if params[0].1.len() + filter.len() > MAX_QUERY_BYTES {
+        let requests: Vec<(&'static str, Vec<(&'static str, String)>)> = calls
+            .into_iter()
+            .map(|call| match call {
+                Call::Range(query) => (
+                    "/api/v1/query_range",
+                    vec![
+                        ("query", query),
+                        ("start", start.to_string()),
+                        ("end", end.to_string()),
+                        ("step", step.to_string()),
+                    ],
+                ),
+                Call::Instant(query) => (
+                    "/api/v1/query",
+                    vec![("query", query), ("time", at.to_string())],
+                ),
+            })
+            .collect();
+        if requests
+            .iter()
+            .any(|(_, params)| params[0].1.len() + filter.len() > MAX_QUERY_BYTES)
+        {
             results.push(Some(PanelResult::Error {
                 error: "Too many sites or servers for one panel. Choose a site or a customer."
                     .into(),
@@ -706,27 +1160,58 @@ pub(super) async fn compute(
             }));
             continue;
         };
-        params.push(("extra_filters[]", filter));
         results.push(None);
-        let (cache, semaphore) = (state.dashboard_cache.clone(), semaphore.clone());
-        tasks.spawn(async move {
-            let _permit = semaphore.acquire_owned().await;
-            (index, cached(&vm, &cache, path, &params).await)
-        });
+        answers[index] = vec![None; requests.len()];
+        for (sub, (path, mut params)) in requests.into_iter().enumerate() {
+            params.push(("extra_filters[]", filter.clone()));
+            let (vm, cache, semaphore) =
+                (vm.clone(), state.dashboard_cache.clone(), semaphore.clone());
+            tasks.spawn(async move {
+                let _permit = semaphore.acquire_owned().await;
+                (index, sub, cached(&vm, &cache, path, &params).await)
+            });
+        }
     }
     while let Some(joined) = tasks.join_next().await {
-        let (index, answer) = joined.map_err(|e| ApiError::Internal(e.to_string()))?;
-        let panel = &request.panels[index];
-        results[index] = Some(match answer {
-            Ok(data) => {
-                convert(panel, &resolved[index].0, data).unwrap_or_else(|e| PanelResult::Error {
-                    error: e.to_string(),
-                })
+        let (index, sub, answer) = joined.map_err(|e| ApiError::Internal(e.to_string()))?;
+        match answer {
+            Ok(data) => answers[index][sub] = Some(data),
+            // The first failure of a panel is the one it shows.
+            Err(error) if results[index].is_none() => {
+                results[index] = Some(PanelResult::Error {
+                    error: failure(&error),
+                });
             }
-            Err(error) => PanelResult::Error {
-                error: failure(&error),
-            },
-        });
+            Err(_) => {}
+        }
+    }
+    for (index, panel) in request.panels.iter().enumerate() {
+        if results[index].is_some() {
+            continue;
+        }
+        let data: Vec<Value> = std::mem::take(&mut answers[index])
+            .into_iter()
+            .flatten()
+            .collect();
+        let servers = &resolved[index].0;
+        let converted = if panel.kind == PanelKind::Table {
+            convert_table(panel, servers, data)
+        } else if panel.kind == PanelKind::Pie {
+            convert_pie(servers, data)
+        } else if panel.kind == PanelKind::States {
+            match data.into_iter().next() {
+                Some(data) => convert_states(panel, servers, data),
+                None => Err(ApiError::Internal("no answer".into())),
+            }
+        } else {
+            match data.into_iter().next() {
+                Some(data) => convert(panel, servers, data),
+                None => Err(ApiError::Internal("no answer".into())),
+            }
+        };
+        results[index] = Some(converted.unwrap_or_else(|e| PanelResult::Error {
+            error: e.to_string(),
+        }));
     }
 
     let panels = request
@@ -1039,6 +1524,32 @@ mod tests {
         );
         let alerts = panel(json!({"id": "a", "title": "t", "kind": "alerts", "count": 3}));
         assert_eq!(build(&alerts, s, TimeRange::Hour), None);
+        // Kinds drawing the same data run the same query.
+        for (kind, base) in [("area", "chart"), ("columns", "chart")] {
+            let fields = json!({"id": "a", "title": "t", "metric": cpu, "combine": "each"});
+            let mut other = fields.clone();
+            other["kind"] = json!(kind);
+            let mut same = fields;
+            same["kind"] = json!(base);
+            assert_eq!(
+                build(&panel(other), s, TimeRange::Day),
+                build(&panel(same), s, TimeRange::Day)
+            );
+        }
+        let gauge = panel(
+            json!({"id": "a", "title": "t", "kind": "gauge", "metric": cpu, "combine": "max"}),
+        );
+        assert_eq!(
+            build(&gauge, s, TimeRange::Hour),
+            Some(Call::Instant(format!("max({s})")))
+        );
+        let bars = panel(
+            json!({"id": "a", "title": "t", "kind": "bars", "metric": free, "order": "lowest", "count": 4}),
+        );
+        assert_eq!(
+            build(&bars, s, TimeRange::Hour),
+            Some(Call::Instant(format!("bottomk(4, {s})")))
+        );
     }
 
     #[test]
@@ -1080,6 +1591,181 @@ mod tests {
         assert_eq!(
             (series[0].label.as_str(), series[0].server_id),
             ("Average", None)
+        );
+        // Bars draw top rows, a gauge a figure.
+        let bars = panel(json!({"id": "a", "title": "t", "kind": "bars",
+            "metric": "monitorflow_disk_used_ratio", "order": "highest", "count": 1}));
+        assert!(
+            matches!(convert(&bars, &servers, matrix).unwrap(), PanelResult::Top { rows } if rows.len() == 1)
+        );
+        let gauge = panel(json!({"id": "a", "title": "t", "kind": "gauge",
+            "metric": "monitorflow_disk_used_ratio", "combine": "max"}));
+        let one = json!({"result": [{"metric": {}, "values": [[1, "0.7"]]}]});
+        assert!(
+            matches!(convert(&gauge, &servers, one).unwrap(), PanelResult::Figure { value: Some(v) } if v == 0.7)
+        );
+    }
+
+    #[test]
+    fn heatmaps_take_the_worst_rows_and_tables_a_query_per_column() {
+        let s = "m{site=~\"p\"}";
+        let heat = panel(json!({"id": "a", "title": "t", "kind": "heatmap",
+            "metric": "monitorflow_cpu_usage_ratio", "count": 12}));
+        assert_eq!(
+            build(&heat, s, TimeRange::Day),
+            Some(Call::Range(format!(
+                "topk_max(12, max_over_time({s}[300s]))"
+            )))
+        );
+        let visible = [server(1, "paris", 1, false)];
+        let servers: Vec<&Visible> = visible.iter().collect();
+        let selection = Selection::new(&servers, &visible, false);
+        let columns = vec![
+            TableColumn {
+                metric: "monitorflow_cpu_usage_ratio".into(),
+                instance: Some("total".into()),
+            },
+            TableColumn {
+                metric: "monitorflow_memory_available_ratio".into(),
+                instance: None,
+            },
+        ];
+        let first = r#"topk(5, max by (peer) (monitorflow_cpu_usage_ratio{site=~"paris",instance="total"}))"#;
+        assert_eq!(
+            table_calls(&columns, &selection, Some(Order::Highest), 5),
+            [
+                Call::Instant(first.into()),
+                Call::Instant(format!(
+                    r#"min by (peer) (monitorflow_memory_available_ratio{{site=~"paris"}}) and on (peer) {first}"#
+                )),
+            ]
+        );
+    }
+
+    #[test]
+    fn tables_sort_servers_by_their_first_column() {
+        let visible = [
+            server(1, "paris", 1, false),
+            server(2, "paris", 1, false),
+            server(3, "paris", 1, false),
+        ];
+        let servers: Vec<&Visible> = visible.iter().collect();
+        let table = panel(
+            json!({"id": "a", "title": "t", "kind": "table", "order": "highest", "count": 2,
+            "columns": [{"metric": "monitorflow_cpu_usage_ratio"}, {"metric": "monitorflow_disk_used_ratio"}]}),
+        );
+        let cpu = json!({"result": [
+            {"metric": {"peer": "agent-1"}, "value": [1, "0.2"]},
+            {"metric": {"peer": "agent-2"}, "value": [1, "0.9"]},
+            {"metric": {"peer": "intruder"}, "value": [1, "1"]}
+        ]});
+        let disk = json!({"result": [
+            {"metric": {"peer": "agent-3"}, "value": [1, "0.5"]},
+            {"metric": {"peer": "agent-2"}, "value": [1, "0.4"]}
+        ]});
+        let PanelResult::Table { rows } = convert_table(&table, &servers, vec![cpu, disk]).unwrap()
+        else {
+            panic!()
+        };
+        let shown: Vec<(&str, Vec<Option<f64>>)> = rows
+            .iter()
+            .map(|r| (r.hostname.as_str(), r.values.clone()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("web-2", vec![Some(0.9), Some(0.4)]),
+                ("web-1", vec![Some(0.2), None])
+            ]
+        );
+    }
+
+    #[test]
+    fn states_go_worst_first_as_squares_or_slices() {
+        let visible = [
+            server(1, "paris", 1, false),
+            server(2, "paris", 1, false),
+            server(3, "paris", 1, false),
+            server(4, "paris", 1, false),
+        ];
+        let servers: Vec<&Visible> = visible.iter().collect();
+        let states: HashMap<Uuid, ServerState> = [
+            (Uuid::from_u128(1), ServerState::Ok),
+            (Uuid::from_u128(2), ServerState::Critical),
+            (Uuid::from_u128(3), ServerState::Ok),
+        ]
+        .into();
+        let PanelResult::States { cells } = by_state(PanelKind::States, &servers, &states) else {
+            panic!()
+        };
+        let names: Vec<&str> = cells.iter().map(|c| c.hostname.as_str()).collect();
+        assert_eq!(names, ["web-2", "web-1", "web-3"]);
+        let PanelResult::Pie { slices } = by_state(PanelKind::Pie, &servers, &states) else {
+            panic!()
+        };
+        let shares: Vec<(&str, f64)> = slices.iter().map(|s| (s.label.as_str(), s.value)).collect();
+        assert_eq!(shares, [("critical", 1.0), ("ok", 2.0)]);
+    }
+
+    #[test]
+    fn pies_of_a_metric_name_the_largest_servers_and_the_rest() {
+        let visible = [server(1, "paris", 1, false), server(2, "paris", 1, false)];
+        let servers: Vec<&Visible> = visible.iter().collect();
+        let top = json!({"result": [
+            {"metric": {"peer": "agent-1"}, "value": [1, "30"]},
+            {"metric": {"peer": "agent-2"}, "value": [1, "60"]},
+            {"metric": {"peer": "intruder"}, "value": [1, "999"]}
+        ]});
+        let total = json!({"result": [{"metric": {}, "value": [1, "100"]}]});
+        let PanelResult::Pie { slices } = convert_pie(&servers, vec![top, total]).unwrap() else {
+            panic!()
+        };
+        let shares: Vec<(&str, f64)> = slices.iter().map(|s| (s.label.as_str(), s.value)).collect();
+        assert_eq!(shares, [("web-2", 60.0), ("web-1", 30.0), ("Other", 10.0)]);
+        let pie =
+            panel(json!({"id": "a", "title": "t", "kind": "pie", "metric": "monitorflow_x_bytes"}));
+        assert_eq!(
+            build(&pie, "m", TimeRange::Hour),
+            Some(Call::Instant("topk(7, sum by (peer) (m))".into()))
+        );
+        let states = panel(
+            json!({"id": "a", "title": "t", "kind": "states", "metric": "monitorflow_memory_available_ratio"}),
+        );
+        assert_eq!(
+            build(&states, "m", TimeRange::Hour),
+            Some(Call::Instant("bottomk(500, min by (peer) (m))".into()))
+        );
+    }
+
+    #[test]
+    fn timelines_clip_alerts_to_the_range_and_put_the_longest_first() {
+        let visible = [
+            server(1, "paris", 1, false),
+            server(2, "paris", 1, false),
+            server(3, "paris", 1, false),
+        ];
+        let servers: Vec<&Visible> = visible.iter().collect();
+        let at = |t: i64| DateTime::from_timestamp(t, 0).unwrap();
+        let incidents: Vec<IncidentRow> = vec![
+            (Uuid::from_u128(2), "warning".into(), at(50), Some(at(150))),
+            (Uuid::from_u128(3), "critical".into(), at(900), None),
+            (Uuid::from_u128(1), "warning".into(), at(10), Some(at(20))),
+        ];
+        let PanelResult::Timeline { rows } = timeline(&servers, &incidents, 100, 1_000, 2) else {
+            panic!()
+        };
+        let shown: Vec<(&str, Vec<(i64, i64)>)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.hostname.as_str(),
+                    r.spans.iter().map(|s| (s.start, s.end)).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            [("web-3", vec![(900, 1_000)]), ("web-2", vec![(100, 150)])]
         );
     }
 

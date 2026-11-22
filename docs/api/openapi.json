@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MonitorFlow public API",
-    "description": "The public API of MonitorFlow, for scripts and integrations: a ticketing tool reading alerts, a chat bot acknowledging them, a deployment script silencing a server while it works. It is the same API the web interface uses, under `/api/v1`, with the same rules about who may see and change what.\n\n## API keys\n\nAn administrator makes a key under **Admin › API keys**: a global administrator for anything, a customer's administrator for that customer, a site's administrator for that site. The key is shown once, when it is made: `mfk_` followed by 43 characters. MonitorFlow keeps only a hash of it, so a lost key cannot be shown again; make another one.\n\nWhat a key may do is chosen when it is made and never changes. To change it, make another key and turn the first one off.\n\n- **Access**: \"Read only\" (viewer, the default), \"Read and change\" (operator), \"Approve commands\" (approver) or \"Administer\" (administrator).\n- **Reach**: everything, one customer or one site. Outside its reach, servers, sites and incidents do not exist for the key: they answer 404, and lists leave them out.\n- **Areas**, all by default: `servers` (servers and relays, their metrics and logs), `alerts` (incidents, silences, on-call, follow-up, sensors, thresholds and check settings, offline alerts, notification channels), `updates` (commands, campaigns, packages, package sources, mirrors, rollback, update settings), `remediation` (AI remediation and AI commands), `dashboards`, and `administration` (everything else). A route outside the key's areas answers 403 `api_key_scope`. Any key may list servers, relays, sites and customers within its reach, to turn names into IDs. Each operation below says which area it belongs to.\n- **Expiry**: 30 days, 90 days, 1 year (the default) or never.\n\nA key acts as the person who made it, narrowed to its reach and access, checked again on every request. It never does more than its maker could at that moment: a maker who loses a role loses it for the key too, a maker who is disabled finds the key refused, and a maker who is deleted takes the key with them. The keys list shows when each key was last used, to the minute. Anyone who could have made a key can turn it off; it stops at its next request.\n\nWhat a key changes is written to the audit log as its maker's action, with the key's ID, so the log tells a person from their script. The secret never appears in the audit log or the server's logs.\n\n## Authentication\n\nSend the key in the `Authorization` header of every request:\n\n```\ncurl -H \"Authorization: Bearer mfk_…\" https://monitorflow.example.com/api/v1/servers\n```\n\nKeys work only under `/api/v1`; the web interface's own paths refuse them. A request with a key needs no CSRF header. A missing, malformed, unknown or expired key, or one whose maker is disabled, answers 401 `unauthenticated`.\n\nSigning in and out, first-run setup, password and acknowledge links, display links and screens, API keys themselves, a person's own on-call contact, and inviting users or issuing their password links are not part of the public API: they answer 404 under `/api/v1`. They are for people in a browser, or they hand out a credential that would outlive the key.\n\n## Versions and changes\n\n`/api/v1` is a contract. Within v1, MonitorFlow only adds: new fields in answers, new optional parameters, new routes, new values of `code`. Fields are never renamed or removed and their types never change. Your client must ignore fields it does not know. When a change would break v1, MonitorFlow keeps the old shape in v1 and makes a v2 only when that becomes unreasonable.\n\nThis document is served by every central server at `/api/v1/openapi.json`, without a key.\n\n## Conventions\n\n- Bodies are JSON objects with `snake_case` field names. Send `Content-Type: application/json`. Bodies are at most 64 KiB; a larger one answers 413. Most routes refuse a body with a field they do not know, with 400 `invalid`.\n- IDs are UUIDs. Times are RFC 3339 in UTC, like `2026-11-14T09:30:00Z`. Durations are in seconds (`_s`) or milliseconds (`_ms`), as the field name says.\n- An ID that is not a UUID answers 404, like an ID that does not exist.\n\n## Pagination\n\nLists that can grow without bound take `limit` and `cursor` and answer `next_cursor`: servers, relays, incidents, a server's commands and packages, campaigns, tokens, remediation incidents and events. Pass `next_cursor` as `cursor` to get the next page, with the same filters; it is `null` on the last page. Cursors are opaque: do not build or change them. A server or incident added between two pages neither repeats nor shifts the others. There are no page numbers or totals.\n\nLists that stay small (sites, customers, silences, approvals, dashboards) answer in full.\n\n## Filters\n\nFilters are query parameters, exact values ANDed together, like `GET /api/v1/incidents?state=open&severity=critical&site_id=…`. A bad value is 400 `invalid`, and so is an unknown parameter on the lists that say so.\n\n## Errors\n\nEvery error answers with a status and a JSON body:\n\n```json\n{\"error\": \"limit must be between 1 and 500\", \"code\": \"invalid\"}\n```\n\n`error` is a sentence in plain words, safe to show to a person; it may change between versions. `code` is stable: branch on it. Codes are only ever added.\n\n| Code | Status | Meaning |\n| --- | --- | --- |\n| `invalid_request` | 400 | The body could not be read as JSON (most routes answer `invalid` instead, with the parser's message) |\n| `invalid` | 400 | A parameter or field is wrong; `error` says which and why |\n| `unauthenticated` | 401 | No key, or one that is unknown, expired or turned off, or whose maker is disabled |\n| `invalid_credentials` | 401 | Wrong username or password (signing in, not in v1) |\n| `forbidden` | 403 | The key's access, or its maker's roles, do not allow this on something it can see |\n| `api_key_scope` | 403 | The route is outside the key's areas |\n| `cross_site` | 403 | A browser request without the CSRF header (sessions only) |\n| `not_found` | 404 | It does not exist, or is outside the key's reach |\n| `conflict` | 409 | The current state does not allow it, like a silence already over; `error` says why |\n| `idempotency_in_progress` | 409 | The first request with this `Idempotency-Key` is still running |\n| `gone` | 410 | A one-time link that was used or expired (not in v1) |\n| `idempotency_key_reused` | 422 | This `Idempotency-Key` was used for another request |\n| `rate_limited` | 429 | Over the key's rate limit |\n| `internal` | 500 | Something failed on the central server; the details are in its log |\n| `metrics_unavailable` | 502 | The metrics database is unreachable, failing or not configured |\n| `logs_unavailable` | 502 | The logs database is unreachable, failing or not configured |\n| `metrics_timeout` | 504 | The metrics database did not answer in time |\n| `logs_timeout` | 504 | The logs database did not answer in time |\n\n## Idempotency keys\n\nA `POST`, `PUT` or `DELETE` made with a key may carry `Idempotency-Key`: 1 to 255 visible ASCII characters, a UUID usually. The first request with a value runs and its answer is kept for 24 hours. The same request again (same method, path, query and body) gets that answer back with `Idempotent-Replayed: true`, instead of running a second time. A script that lost its connection can then retry without opening two silences or queuing two updates.\n\n- The same value with another request answers 422 `idempotency_key_reused`.\n- While the first request is still running, a retry answers 409 `idempotency_in_progress`; try again a moment later.\n- Answers of 500 and above are not kept, so a retry runs again. Answers over 1 MiB are not kept either.\n- Answers that hand out a secret once (tokens, install keys, signing secrets) are not stored: a replay says it was done, without the secret.\n- Values belong to a key: two keys never see each other's answers.\n\nWithout the header, writes behave as usual. Most are safe to repeat anyway, like acknowledging an incident or setting a value; the operations that are not say so.\n\n## Rate limits\n\nEach key may make 600 requests a minute, counted in fixed one-minute windows on each central server. Every answer to a key carries:\n\n- `RateLimit-Limit`: requests allowed in a window, 600.\n- `RateLimit-Remaining`: requests left in the current window.\n- `RateLimit-Reset`: seconds until the window ends.\n\nOver the limit, requests answer 429 `rate_limited` with `Retry-After`, in seconds. Requests made in a browser session are not limited.\n",
+    "description": "The public API of MonitorFlow, for scripts and integrations: a ticketing tool reading alerts, a chat bot acknowledging them, a deployment script silencing a server while it works. It is the same API the web interface uses, under `/api/v1`, with the same rules about who may see and change what.\n\n## API keys\n\nAn administrator makes a key under **Admin › API keys**: a global administrator for anything, a customer's administrator for that customer, a site's administrator for that site. The key is shown once, when it is made: `mfk_` followed by 43 characters. MonitorFlow keeps only a hash of it, so a lost key cannot be shown again; make another one.\n\nWhat a key may do is chosen when it is made and never changes. To change it, make another key and turn the first one off.\n\n- **Access**: \"Read only\" (viewer, the default), \"Read and change\" (operator), \"Approve commands\" (approver) or \"Administer\" (administrator).\n- **Reach**: everything, one customer or one site. Outside its reach, servers, sites and incidents do not exist for the key: they answer 404, and lists leave them out.\n- **Areas**, all by default: `servers` (servers and relays, their metrics and logs), `alerts` (incidents, silences, on-call, follow-up, sensors, thresholds and check settings, offline alerts, notification channels), `updates` (commands, campaigns, packages, package sources, mirrors, rollback, update settings), `remediation` (AI remediation and AI commands), `dashboards`, and `administration` (everything else). A route outside the key's areas answers 403 `api_key_scope`. Any key may list servers, relays, sites and customers within its reach, to turn names into IDs. Each operation below says which area it belongs to.\n- **Expiry**: 30 days, 90 days, 1 year (the default) or never.\n\nA key acts as the person who made it, narrowed to its reach and access, checked again on every request. It never does more than its maker could at that moment: a maker who loses a role loses it for the key too, a maker who is disabled finds the key refused, and a maker who is deleted takes the key with them. The keys list shows when each key was last used, to the minute. Anyone who could have made a key can turn it off; it stops at its next request.\n\nWhat a key changes is written to the audit log as its maker's action, with the key's ID, so the log tells a person from their script. The secret never appears in the audit log or the server's logs.\n\n## Authentication\n\nSend the key in the `Authorization` header of every request:\n\n```\ncurl -H \"Authorization: Bearer mfk_…\" https://monitorflow.example.com/api/v1/servers\n```\n\nKeys work only under `/api/v1`; the web interface's own paths refuse them. A request with a key needs no CSRF header. A missing, malformed, unknown or expired key, or one whose maker is disabled, answers 401 `unauthenticated`.\n\nSigning in and out, first-run setup, password and acknowledge links, display links and screens, API keys themselves, a person's own on-call contact, and inviting users or issuing their password links are not part of the public API: they answer 404 under `/api/v1`. They are for people in a browser, or they hand out a credential that would outlive the key.\n\n## Versions and changes\n\n`/api/v1` is a contract. Within v1, MonitorFlow only adds: new fields in answers, new optional parameters, new routes, new values of `code`. Fields are never renamed or removed and their types never change. Your client must ignore fields it does not know. When a change would break v1, MonitorFlow keeps the old shape in v1 and makes a v2 only when that becomes unreasonable.\n\nThis document is served by every central server at `/api/v1/openapi.json`, without a key.\n\n## Conventions\n\n- Bodies are JSON objects with `snake_case` field names. Send `Content-Type: application/json`. Bodies are at most 64 KiB; a larger one answers 413. Most routes refuse a body with a field they do not know, with 400 `invalid`.\n- IDs are UUIDs. Times are RFC 3339 in UTC, like `2026-11-14T09:30:00Z`. Durations are in seconds (`_s`) or milliseconds (`_ms`), as the field name says.\n- An ID that is not a UUID answers 404, like an ID that does not exist.\n\n## Pagination\n\nLists that can grow without bound take `limit` and `cursor` and answer `next_cursor`: servers, relays, incidents, a server's commands and packages, campaigns, tokens, remediation incidents and events. Pass `next_cursor` as `cursor` to get the next page, with the same filters; it is `null` on the last page. Cursors are opaque: do not build or change them. A server or incident added between two pages neither repeats nor shifts the others. There are no page numbers or totals.\n\nLists that stay small (sites, customers, silences, approvals, dashboards) answer in full.\n\n## Filters\n\nFilters are query parameters, exact values ANDed together, like `GET /api/v1/incidents?state=open&severity=critical&site_id=…`. A bad value is 400 `invalid`, and so is an unknown parameter on the lists that say so.\n\n## Errors\n\nEvery error answers with a status and a JSON body:\n\n```json\n{\"error\": \"limit must be between 1 and 500\", \"code\": \"invalid\"}\n```\n\n`error` is a sentence in plain words, safe to show to a person; it may change between versions. `code` is stable: branch on it. Codes are only ever added.\n\n| Code | Status | Meaning |\n| --- | --- | --- |\n| `invalid_request` | 400 | The body could not be read as JSON (most routes answer `invalid` instead, with the parser's message) |\n| `invalid` | 400 | A parameter or field is wrong; `error` says which and why |\n| `unauthenticated` | 401 | No key, or one that is unknown, expired or turned off, or whose maker is disabled |\n| `invalid_credentials` | 401 | Wrong username or password (signing in, not in v1) |\n| `forbidden` | 403 | The key's access, or its maker's roles, do not allow this on something it can see |\n| `api_key_scope` | 403 | The route is outside the key's areas |\n| `cross_site` | 403 | A browser request without the CSRF header (sessions only) |\n| `not_found` | 404 | It does not exist, or is outside the key's reach |\n| `conflict` | 409 | The current state does not allow it, like a silence already over; `error` says why |\n| `idempotency_in_progress` | 409 | The first request with this `Idempotency-Key` is still running |\n| `gone` | 410 | A one-time link that was used or expired (not in v1) |\n| `idempotency_key_reused` | 422 | This `Idempotency-Key` was used for another request |\n| `rate_limited` | 429 | Over the key's rate limit |\n| `internal` | 500 | Something failed on the central server; the details are in its log |\n| `metrics_unavailable` | 502 | The metrics database is unreachable, failing or not configured |\n| `logs_unavailable` | 502 | The logs database is unreachable, failing or not configured |\n| `metrics_timeout` | 504 | The metrics database did not answer in time |\n| `logs_timeout` | 504 | The logs database did not answer in time |\n\n## Acting on many at once\n\nThe checkboxes of the web interface's incident and fleet lists act on many items with the routes of one item, called once per item, a few at a time. Each item then succeeds or fails on its own, and the summary says how many went through and why the others did not (\"4 acknowledged, 1 refused: insufficient rights\"). A script does the same, and a 403 or 404 on one item leaves the others done. The web interface applies these one item at a time:\n\n| Action | Route, once per item |\n| --- | --- |\n| Acknowledge incidents | `POST /api/v1/incidents/acknowledge` with one ID in `incident_ids` |\n| Pause the sensors of incidents | `GET /api/v1/servers/{id}/sensors` once per server to find the check behind each incident's metric, then `POST /api/v1/silences` with `scope` `server` and that check in `checks`, once per check |\n| Silence the servers of incidents | `POST /api/v1/silences` with `scope` `server` (`relay` for a relay's offline incident), once per server however many incidents it has |\n| Acknowledge the alerts of servers | `POST /api/v1/incidents/acknowledge` with the server's open incidents nobody acknowledged, once per server (they share its site) |\n| Silence servers | `POST /api/v1/silences` with `scope` `server`, once per server |\n| Update the agents of servers | `POST /api/v1/servers/{id}/commands` with `kind` `self_update`, once per server whose agent is behind |\n| Turn offline alerts on or off | `PUT /api/v1/servers/{id}/offline-alerts`, once per server |\n| Maintenance window for servers of one site | `POST /api/v1/maintenance-windows` once, with them all in `server_ids` |\n| Remove servers | `POST /api/v1/servers/{id}/revoke`, once per server |\n| Pause a server's sensors | `POST /api/v1/silences` with `scope` `server` and the sensor in `checks`, once per check, with the reason and end typed; at most 30 days |\n| Turn off a server's sensors | once per sensor: `POST /api/v1/servers/{id}/sensor_configs` with `enabled` `false`; for one disk of several, `POST /api/v1/servers/{id}/thresholds` with `enabled` `false`; for a check added on that server, `DELETE /api/v1/sensor_configs/{id}` and its rows of `DELETE /api/v1/thresholds/{id}` |\n\n`POST /api/v1/incidents/acknowledge` also takes up to 500 incidents in one request, but all or none: one incident on a site the key may only read refuses the whole request with 403, before anything is written. Send one at a time when some may be out of reach.\n\n## Idempotency keys\n\nA `POST`, `PUT` or `DELETE` made with a key may carry `Idempotency-Key`: 1 to 255 visible ASCII characters, a UUID usually. The first request with a value runs and its answer is kept for 24 hours. The same request again (same method, path, query and body) gets that answer back with `Idempotent-Replayed: true`, instead of running a second time. A script that lost its connection can then retry without opening two silences or queuing two updates.\n\n- The same value with another request answers 422 `idempotency_key_reused`.\n- While the first request is still running, a retry answers 409 `idempotency_in_progress`; try again a moment later.\n- Answers of 500 and above are not kept, so a retry runs again. Answers over 1 MiB are not kept either.\n- Answers that hand out a secret once (tokens, install keys, signing secrets) are not stored: a replay says it was done, without the secret.\n- Values belong to a key: two keys never see each other's answers.\n\nWithout the header, writes behave as usual. Most are safe to repeat anyway, like acknowledging an incident or setting a value; the operations that are not say so.\n\n## Rate limits\n\nEach key may make 600 requests a minute, counted in fixed one-minute windows on each central server. Every answer to a key carries:\n\n- `RateLimit-Limit`: requests allowed in a window, 600.\n- `RateLimit-Remaining`: requests left in the current window.\n- `RateLimit-Reset`: seconds until the window ends.\n\nOver the limit, requests answer 429 `rate_limited` with `Retry-After`, in seconds. Requests made in a browser session are not limited.\n",
     "license": {
       "name": "AGPL-3.0-only"
     },
@@ -6043,6 +6043,42 @@
                     "width": 1
                   },
                   {
+                    "columns": [
+                      {
+                        "instance": "total",
+                        "metric": "monitorflow_cpu_usage_ratio"
+                      },
+                      {
+                        "metric": "monitorflow_disk_used_ratio"
+                      }
+                    ],
+                    "count": 20,
+                    "id": "servers",
+                    "kind": "table",
+                    "order": "highest",
+                    "servers": {
+                      "kind": "all"
+                    },
+                    "title": "Servers",
+                    "width": 3
+                  },
+                  {
+                    "combine": "max",
+                    "id": "cpu-now",
+                    "instance": "total",
+                    "kind": "gauge",
+                    "metric": "monitorflow_cpu_usage_ratio",
+                    "servers": {
+                      "kind": "all"
+                    },
+                    "thresholds": {
+                      "critical": 0.95,
+                      "warning": 0.8
+                    },
+                    "title": "CPU now, busiest server",
+                    "width": 1
+                  },
+                  {
                     "count": 10,
                     "id": "alerts",
                     "kind": "alerts",
@@ -6115,6 +6151,29 @@
                       ],
                       "servers": 1,
                       "unavailable": 0
+                    },
+                    {
+                      "id": "servers",
+                      "kind": "table",
+                      "rows": [
+                        {
+                          "hostname": "web-1",
+                          "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
+                          "values": [
+                            0.125,
+                            0.812
+                          ]
+                        }
+                      ],
+                      "servers": 4,
+                      "unavailable": 0
+                    },
+                    {
+                      "id": "cpu-now",
+                      "kind": "figure",
+                      "servers": 4,
+                      "unavailable": 0,
+                      "value": 0.83
                     },
                     {
                       "alerts": [
@@ -6574,6 +6633,42 @@
                       "width": 1
                     },
                     {
+                      "columns": [
+                        {
+                          "instance": "total",
+                          "metric": "monitorflow_cpu_usage_ratio"
+                        },
+                        {
+                          "metric": "monitorflow_disk_used_ratio"
+                        }
+                      ],
+                      "count": 20,
+                      "id": "servers",
+                      "kind": "table",
+                      "order": "highest",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "title": "Servers",
+                      "width": 3
+                    },
+                    {
+                      "combine": "max",
+                      "id": "cpu-now",
+                      "instance": "total",
+                      "kind": "gauge",
+                      "metric": "monitorflow_cpu_usage_ratio",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "thresholds": {
+                        "critical": 0.95,
+                        "warning": 0.8
+                      },
+                      "title": "CPU now, busiest server",
+                      "width": 1
+                    },
+                    {
                       "count": 10,
                       "id": "alerts",
                       "kind": "alerts",
@@ -6638,6 +6733,42 @@
                           "kind": "list"
                         },
                         "title": "Fullest disks",
+                        "width": 1
+                      },
+                      {
+                        "columns": [
+                          {
+                            "instance": "total",
+                            "metric": "monitorflow_cpu_usage_ratio"
+                          },
+                          {
+                            "metric": "monitorflow_disk_used_ratio"
+                          }
+                        ],
+                        "count": 20,
+                        "id": "servers",
+                        "kind": "table",
+                        "order": "highest",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "Servers",
+                        "width": 3
+                      },
+                      {
+                        "combine": "max",
+                        "id": "cpu-now",
+                        "instance": "total",
+                        "kind": "gauge",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "thresholds": {
+                          "critical": 0.95,
+                          "warning": 0.8
+                        },
+                        "title": "CPU now, busiest server",
                         "width": 1
                       },
                       {
@@ -6820,6 +6951,42 @@
                         "width": 1
                       },
                       {
+                        "columns": [
+                          {
+                            "instance": "total",
+                            "metric": "monitorflow_cpu_usage_ratio"
+                          },
+                          {
+                            "metric": "monitorflow_disk_used_ratio"
+                          }
+                        ],
+                        "count": 20,
+                        "id": "servers",
+                        "kind": "table",
+                        "order": "highest",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "Servers",
+                        "width": 3
+                      },
+                      {
+                        "combine": "max",
+                        "id": "cpu-now",
+                        "instance": "total",
+                        "kind": "gauge",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "thresholds": {
+                          "critical": 0.95,
+                          "warning": 0.8
+                        },
+                        "title": "CPU now, busiest server",
+                        "width": 1
+                      },
+                      {
                         "count": 10,
                         "id": "alerts",
                         "kind": "alerts",
@@ -6992,6 +7159,42 @@
                       "width": 1
                     },
                     {
+                      "columns": [
+                        {
+                          "instance": "total",
+                          "metric": "monitorflow_cpu_usage_ratio"
+                        },
+                        {
+                          "metric": "monitorflow_disk_used_ratio"
+                        }
+                      ],
+                      "count": 20,
+                      "id": "servers",
+                      "kind": "table",
+                      "order": "highest",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "title": "Servers",
+                      "width": 3
+                    },
+                    {
+                      "combine": "max",
+                      "id": "cpu-now",
+                      "instance": "total",
+                      "kind": "gauge",
+                      "metric": "monitorflow_cpu_usage_ratio",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "thresholds": {
+                        "critical": 0.95,
+                        "warning": 0.8
+                      },
+                      "title": "CPU now, busiest server",
+                      "width": 1
+                    },
+                    {
                       "count": 10,
                       "id": "alerts",
                       "kind": "alerts",
@@ -7056,6 +7259,42 @@
                           "kind": "list"
                         },
                         "title": "Fullest disks",
+                        "width": 1
+                      },
+                      {
+                        "columns": [
+                          {
+                            "instance": "total",
+                            "metric": "monitorflow_cpu_usage_ratio"
+                          },
+                          {
+                            "metric": "monitorflow_disk_used_ratio"
+                          }
+                        ],
+                        "count": 20,
+                        "id": "servers",
+                        "kind": "table",
+                        "order": "highest",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "Servers",
+                        "width": 3
+                      },
+                      {
+                        "combine": "max",
+                        "id": "cpu-now",
+                        "instance": "total",
+                        "kind": "gauge",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "thresholds": {
+                          "critical": 0.95,
+                          "warning": 0.8
+                        },
+                        "title": "CPU now, busiest server",
                         "width": 1
                       },
                       {
@@ -45627,7 +45866,7 @@
               "string",
               "null"
             ],
-            "description": "What the user is doing about them, up to 500 characters, shown with\nthe acknowledgement (ADR-0130). Required when signed in; optional\nfor API keys, so older scripts keep working."
+            "description": "What the user is doing about them, up to 500 characters, shown with\nthe acknowledgement (ADR-0130). Optional, for people and API keys\nalike (ADR-0166)."
           }
         },
         "additionalProperties": false
@@ -56613,6 +56852,25 @@
           "kind"
         ],
         "properties": {
+          "color": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The first colour of the palette it uses, 1 to 8; 1 when absent.",
+            "minimum": 0
+          },
+          "columns": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PanelColumn"
+            },
+            "description": "A table's columns, 1 to 6, sorted by the first."
+          },
           "combine": {
             "oneOf": [
               {
@@ -56647,12 +56905,35 @@
           "kind": {
             "$ref": "#/components/schemas/PanelKind"
           },
+          "legend": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a chart names its lines; `true` when absent."
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The high end of the scale."
+          },
           "metric": {
             "type": [
               "string",
               "null"
             ],
             "description": "Full name, `monitorflow_…`; not for alerts."
+          },
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The low end of the scale; from the values when absent (0 to 1 for\nratios)."
           },
           "order": {
             "oneOf": [
@@ -56669,15 +56950,65 @@
             "$ref": "#/components/schemas/PanelServers",
             "description": "Every server of the dashboard when absent."
           },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A text panel's Markdown, up to 4000 characters."
+          },
+          "thresholds": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PanelThresholds",
+                "description": "Lines on charts, colours of figures, gauges and bars."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "title": {
             "type": "string",
             "description": "1 to 80 characters."
+          },
+          "unit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PanelUnit",
+                "description": "How values are written; from the metric's name when absent."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "width": {
             "type": "integer",
             "format": "int32",
             "description": "Columns of the three-column grid, 1 to 3; 1 when absent.",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "PanelColumn": {
+        "type": "object",
+        "description": "One column of a table: a metric, of one instance or the worst of all.",
+        "required": [
+          "metric"
+        ],
+        "properties": {
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only this instance; the worst of the server's instances when absent."
+          },
+          "metric": {
+            "type": "string",
+            "description": "Full name, `monitorflow_…`."
           }
         },
         "additionalProperties": false
@@ -56728,12 +57059,22 @@
       },
       "PanelKind": {
         "type": "string",
-        "description": "`chart`: lines over the range. `figure`: one number now. `top`: the\nhighest or lowest servers now. `alerts`: open incidents.",
+        "description": "What a panel draws (ADR-0095, ADR-0166). Several kinds draw the same\ndata differently, so the data answer names its shape, the\n[`PanelKind::base`] kind: `chart` for `chart`, `area` and `columns`,\n`figure` for `figure` and `gauge`, `top` for `top` and `bars`.",
         "enum": [
           "chart",
           "figure",
           "top",
-          "alerts"
+          "alerts",
+          "gauge",
+          "bars",
+          "area",
+          "columns",
+          "heatmap",
+          "table",
+          "text",
+          "states",
+          "pie",
+          "timeline"
         ]
       },
       "PanelOrder": {
@@ -56811,6 +57152,109 @@
           },
           {
             "type": "object",
+            "description": "A table: a row per server, sorted by its first column.",
+            "required": [
+              "rows",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "table"
+                ]
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TableRow"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A text panel, which reads nothing.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "text"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Squares, worst first, at most 500.",
+            "required": [
+              "cells",
+              "kind"
+            ],
+            "properties": {
+              "cells": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StateCell"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "states"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Slices, largest or worst first.",
+            "required": [
+              "slices",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "pie"
+                ]
+              },
+              "slices": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PieSlice"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A row per server, those with the most time in alert first, from the\nstart of the range to `now`.",
+            "required": [
+              "rows",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "timeline"
+                ]
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TimelineRow"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
             "required": [
               "alerts",
               "unreachable",
@@ -56858,7 +57302,7 @@
             }
           }
         ],
-        "description": "What a panel shows, by its `kind`."
+        "description": "What a panel shows. `kind` is the shape of the data, the panel's kind\nor the one it draws differently: `chart` for `chart`, `area` and\n`columns` and `heatmap`; `figure` for `figure` and `gauge`; `top`\nfor `top` and `bars` (ADR-0166)."
       },
       "PanelServers": {
         "oneOf": [
@@ -56940,6 +57384,41 @@
           }
         ],
         "description": "Which servers a panel shows, within the dashboard's sharing."
+      },
+      "PanelThresholds": {
+        "type": "object",
+        "description": "Values at which a panel turns amber and red, in the metric's unit (a\nratio from 0 to 1 for `_ratio` metrics). Above them, or below for\nmetrics where low is bad (available, free).",
+        "properties": {
+          "critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "warning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PanelUnit": {
+        "type": "string",
+        "description": "How values are written, when the metric's name does not say it well:\n`ratio` is shown as a percentage.",
+        "enum": [
+          "ratio",
+          "bytes",
+          "bytes_per_second",
+          "bits_per_second",
+          "per_second",
+          "seconds",
+          "celsius",
+          "number"
+        ]
       },
       "PendingHost": {
         "type": "object",
@@ -57152,6 +57631,41 @@
           "tier": {
             "$ref": "#/components/schemas/Tier",
             "description": "`low_impact` or `high_impact`, from the rules, never from the AI."
+          }
+        }
+      },
+      "PieSlice": {
+        "type": "object",
+        "description": "One slice of a pie: a state and how many servers are in it, or a\nserver and its share; neither for the rest of the servers.",
+        "required": [
+          "label",
+          "value"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "The state, the server's name, or `Other`."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "state": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ServerState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "type": "number",
+            "format": "double"
           }
         }
       },
@@ -63493,6 +64007,66 @@
           "own"
         ]
       },
+      "Span": {
+        "type": "object",
+        "description": "A stretch of time a server had an open alert.",
+        "required": [
+          "start",
+          "end",
+          "severity"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "severity": {
+            "type": "string",
+            "description": "`warning` or `critical`."
+          },
+          "start": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds, within the range."
+          }
+        }
+      },
+      "StateCell": {
+        "type": "object",
+        "description": "One square of a states panel: a server's state, or its value.",
+        "required": [
+          "server_id",
+          "hostname"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ServerState",
+                "description": "Its state on the fleet's pages; absent for a panel of a metric."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Its value of the panel's metric, the worst of its instances;\nabsent for a panel of states."
+          }
+        }
+      },
       "StateFilter": {
         "type": "string",
         "enum": [
@@ -63624,6 +64198,35 @@
           "source": {
             "type": "string",
             "description": "`vg/lv` for LVM, the dataset for ZFS, the device otherwise."
+          }
+        }
+      },
+      "TableRow": {
+        "type": "object",
+        "description": "One row of a table: a server and its value in each column.",
+        "required": [
+          "server_id",
+          "hostname",
+          "values"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "In the order of the panel's columns; `null` where the server does\nnot report it."
           }
         }
       },
@@ -64133,6 +64736,31 @@
           "high_impact",
           "forbidden"
         ]
+      },
+      "TimelineRow": {
+        "type": "object",
+        "description": "One row of a timeline.",
+        "required": [
+          "server_id",
+          "hostname",
+          "spans"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "spans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Span"
+            },
+            "description": "By start; at most 200."
+          }
+        }
       },
       "TokenRole": {
         "type": "string",
@@ -65445,7 +66073,7 @@
     },
     {
       "name": "dashboards",
-      "description": "Pages of panels (charts, figures, top lists and open alerts) kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a site or customer see its dashboards; any role above viewer makes, changes and deletes them; anyone who can read makes their own. With a key, the \"dashboards\" area; a key sees, changes and deletes its maker's \"Only me\" dashboards whatever its reach, but the data of any panel is only ever read within the key's reach. A panel never shows more than the person asking may read: its servers are resolved again on every read, and servers they cannot see are counted, not named.\n\nDisplay links, which show dashboards on a wall screen without signing in, are made, listed and turned off only in the web interface, by an administrator of the dashboards' site or customer (or of anything for their own). A link's secret is in the URL fragment, shown once; a screen trades it for a session of one hour. Whoever holds the URL sees the link's dashboards, up to 12, and nothing else: no other page, no settings, no change. Each screen request reads as the link's maker with their roles of the moment, so a maker who is disabled or loses the role stops their links. A link may expire or never; deleting a dashboard removes it from its links. Because a link reads with all its maker's roles and outlives a key, `/api/v1/display-links`, `/api/v1/dashboards/{id}/display-links` and `/api/v1/display` answer 404."
+      "description": "Pages of panels kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a site or customer see its dashboards; any role above viewer makes, changes and deletes them; anyone who can read makes their own. With a key, the \"dashboards\" area; a key sees, changes and deletes its maker's \"Only me\" dashboards whatever its reach, but the data of any panel is only ever read within the key's reach. A panel never shows more than the person asking may read: its servers are resolved again on every read, and servers they cannot see are counted, not named.\n\nA panel's `kind` says how it is drawn: `chart` (lines), `area` (areas, stacked when there is one per server), `columns` (a column per step, stacked likewise), `figure` (one number), `gauge` (one number on a dial), `top` (a list of the highest or lowest servers), `bars` (the same as horizontal bars), `alerts` (open alerts), `heatmap` (a row per server over time, coloured by value: the `count` worst servers), `table` (a row per server, a column per metric of `columns`, sorted by the first, the `count` first), `text` (Markdown in `text`, no data), `states` (a square per server, coloured by its state as on the fleet's pages, or with a `metric` by its worst value against the thresholds; the worst 500), `pie` (the servers by state, or with a `metric` the largest 7 servers' share and the rest as `Other`) and `timeline` (when each server had open alerts, from its incidents, the `count` servers with the most time in alert first; stretches run from the start of the range to `now`). Kinds that draw the same data take the same fields and answer the same data shape: `area`, `columns` and `heatmap` as `chart`, `gauge` as `figure`, `bars` as `top`; a table answers `table`, a text panel `text`; `states`, `pie` and `timeline` answer their own kind. A table column without an instance shows the worst of the server's instances. Optional display fields, ignored by the data: `unit`, `min` and `max` of the scale, `thresholds` (`warning`, `critical`) that colour figures, gauges and bars and draw lines on charts, `legend` (charts over time only) and `color`, the first colour of the eight of the palette. Alerts panels take none of them. Dashboards saved before these kinds and fields existed read unchanged.\n\nDisplay links, which show dashboards on a wall screen without signing in, are made, listed and turned off only in the web interface, by an administrator of the dashboards' site or customer (or of anything for their own). A link's secret is in the URL fragment, shown once; a screen trades it for a session of one hour. Whoever holds the URL sees the link's dashboards, up to 12, and nothing else: no other page, no settings, no change. Each screen request reads as the link's maker with their roles of the moment, so a maker who is disabled or loses the role stops their links. A link may expire or never; deleting a dashboard removes it from its links. Because a link reads with all its maker's roles and outlives a key, `/api/v1/display-links`, `/api/v1/dashboards/{id}/display-links` and `/api/v1/display` answer 404."
     },
     {
       "name": "plugins",

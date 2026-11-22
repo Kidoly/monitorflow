@@ -91,7 +91,7 @@ pub enum Status {
 /// is down (ADR-0152), then being offline, then the worst open
 /// incident nobody acknowledged; a server whose open incidents are all
 /// acknowledged is `acknowledged`, the rest `ok`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerState {
     Critical,
@@ -430,25 +430,66 @@ pub async fn summary(
     };
     let mut summary = ServerSummary::default();
     for row in rows {
-        if row.awaiting_agent {
-            summary.add(ServerState::Waiting);
-            continue;
-        }
-        if !row.silenced && super::dependencies::unreachable(&holds, row.id) {
-            summary.add(ServerState::Unreachable);
-            continue;
-        }
-        // A device is never offline: its checks say what is wrong.
-        let online = row.device || state.registry.live(PeerRole::Agent, &row.peer_id).is_some();
-        summary.add(ServerState::of(
-            row.silenced,
-            online,
-            row.open_incidents,
-            row.unacknowledged,
-            row.unacknowledged_critical,
-        ));
+        summary.add(row_state(&state, &holds, &row));
     }
     Ok(Json(summary))
+}
+
+/// The one state of a server of the summary (ADR-0130).
+fn row_state(
+    state: &ApiState,
+    holds: &crate::dependencies::Holds,
+    row: &SummaryRow,
+) -> ServerState {
+    if row.awaiting_agent {
+        return ServerState::Waiting;
+    }
+    if !row.silenced && super::dependencies::unreachable(holds, row.id) {
+        return ServerState::Unreachable;
+    }
+    // A device is never offline: its checks say what is wrong.
+    let online = row.device || state.registry.live(PeerRole::Agent, &row.peer_id).is_some();
+    ServerState::of(
+        row.silenced,
+        online,
+        row.open_incidents,
+        row.unacknowledged,
+        row.unacknowledged_critical,
+    )
+}
+
+/// The state of each of `ids`, as the fleet's pages show it (ADR-0130),
+/// for dashboard panels (ADR-0166). The caller has checked they may be
+/// read.
+pub(super) async fn states_of(
+    state: &ApiState,
+    ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, ServerState>, ApiError> {
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let rows: Vec<SummaryRow> = sqlx::query_as(concat!(
+        "SELECT s.id, s.peer_id, s.awaiting_agent, s.kind = 'device' AS device,
+                silenced_until(s.id, NULL, s.site_id, si.customer_id) IS NOT NULL AS silenced,
+                o.open_incidents, o.unacknowledged, o.unacknowledged_critical
+         FROM servers s
+         JOIN sites si ON si.id = s.site_id
+         ",
+        open_counts!(),
+        "
+         WHERE s.id = ANY($1)",
+    ))
+    .bind(ids)
+    .fetch_all(&state.pool)
+    .await?;
+    let holds = {
+        let mut conn = state.pool.acquire().await?;
+        super::dependencies::holds(state, &mut conn).await?
+    };
+    Ok(rows
+        .iter()
+        .map(|row| (row.id, row_state(state, &holds, row)))
+        .collect())
 }
 
 #[derive(sqlx::FromRow)]

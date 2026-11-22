@@ -5,7 +5,8 @@ import { type KeyboardEvent, type PointerEvent, type ReactNode, useId, useState 
 import { t } from "@/i18n";
 import { formatNumber } from "@/lib/format";
 
-import { niceTicks, nearestIndex, segments, timeTicks } from "./chartScale";
+import { niceTicks, nearestIndex, timeTicks } from "./chartScale";
+import { ChartMarks, type ChartVariant, shapeSeries } from "./ChartMarks";
 import { cx } from "./cx";
 import { missingText } from "./Missing";
 import { dateLocale } from "@/i18n/locale";
@@ -78,6 +79,10 @@ export function TimeChart({
   band,
   emptyText = t("ui.chart.empty"),
   footer,
+  variant = "line",
+  additive = true,
+  legend = true,
+  color = (i) => `var(--series-${i + 1})`,
 }: {
   title: string;
   /** Grey text beside the title: "Last 6 h · now 94.2 %". */
@@ -101,6 +106,14 @@ export function TimeChart({
   emptyText?: string;
   /** At the right end of the legend row, like a "Download CSV" link. */
   footer?: ReactNode;
+  /** Lines, areas or columns; areas and columns stack several series (ADR-0166). */
+  variant?: ChartVariant;
+  /** False draws several areas or columns over each other instead of stacking them. */
+  additive?: boolean;
+  /** False hides the series' names under the chart. */
+  legend?: boolean;
+  /** The colour of the `i`th series, a CSS value. */
+  color?: (index: number) => string;
 }) {
   const titleId = useId();
   const series = allSeries.slice(0, MAX_SERIES);
@@ -108,9 +121,10 @@ export function TimeChart({
   const [cursor, setCursor] = useState<number | null>(null);
 
   const times = [...new Set(series.flatMap((s) => s.points.map((p) => p[0])))].sort((a, b) => a - b);
-  const values = series.flatMap((s) => s.points.map((p) => p[1])).filter((v): v is number => v !== null);
   const start = startProp ?? times[0] ?? 0;
   const end = endProp ?? times[times.length - 1] ?? start + 1;
+  const shaped = shapeSeries(series, variant, start, end, step, additive);
+  const values = shaped.series.flatMap((s) => s.points.map((p) => p[1])).filter((v): v is number => v !== null);
   const yTicks = niceTicks(
     min ?? Math.min(0, ...values, ...thresholds.map((t) => t.value)),
     max ?? Math.max(...values, ...thresholds.map((t) => t.value), (min ?? 0) + 1),
@@ -246,18 +260,18 @@ export function TimeChart({
               <line x1={LEFT} y1={y(t.value)} x2={RIGHT} y2={y(t.value)} strokeDasharray="4 3" strokeWidth={1.5} />
             </g>
           ))}
-          {series.map((s, i) => (
-            <g key={s.label} className={cx(hidden.has(s.label) && styles.off)} data-testid="chart-series">
-              {segments(s.points, step).map((segment) => (
-                <polyline
-                  key={segment[0]![0]}
-                  className={styles.line}
-                  stroke={`var(--series-${i + 1})`}
-                  points={segment.map(([t, v]) => `${x(t)},${y(v)}`).join(" ")}
-                />
-              ))}
-            </g>
-          ))}
+          <ChartMarks
+            series={shaped.series}
+            variant={variant}
+            step={shaped.step}
+            x={x}
+            y={y}
+            low={low}
+            right={RIGHT}
+            color={color}
+            className={(i) => cx(hidden.has(series[i]!.label) && styles.off)}
+            lineClassName={styles.line}
+          />
           {markers
             .filter((m) => m.t >= start && m.t <= end)
             .map((m) => {
@@ -293,7 +307,7 @@ export function TimeChart({
                       y={TOP + 65 + 16 * i}
                       width={10}
                       height={3}
-                      fill={`var(--series-${series.indexOf(r.s) + 1})`}
+                      fill={color(series.indexOf(r.s))}
                     />
                     <text x={boxX + 24} y={TOP + 71 + 16 * i}>
                       {r.s.label}
@@ -329,7 +343,7 @@ export function TimeChart({
       </p>
       <div className={styles.legend}>
         {/* A lone series is the chart's title: no legend button to repeat it. */}
-        {series.length > 1 && series.map((s, i) => (
+        {legend && series.length > 1 && series.map((s, i) => (
           <button
             key={s.label}
             type="button"
@@ -337,7 +351,7 @@ export function TimeChart({
             aria-pressed={!hidden.has(s.label)}
             onClick={() => toggle(s.label)}
           >
-            <i className={styles.swatch} style={{ background: `var(--series-${i + 1})` }} aria-hidden="true" />
+            <i className={styles.swatch} style={{ background: color(i) }} aria-hidden="true" />
             {s.label}
           </button>
         ))}

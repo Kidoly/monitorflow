@@ -2,19 +2,28 @@ import { describe, expect, it } from "vitest";
 
 import type { DashboardSpec, Panel, Server, Sharing } from "./api";
 import {
+  KINDS_FOR,
+  baseKind,
+  defaultKind,
+  sourceOf,
+  withSource,
   copyName,
   copySpec,
   defaultInstance,
   dropMissingServers,
+  levelOf,
   lowIsBad,
   movePanel,
   newPanel,
   newPanelId,
+  panelFormat,
+  panelScale,
   placePanel,
   readyMades,
   serversWithin,
   sharingLabel,
   suggestedTitle,
+  thresholdBands,
   withKind,
   withinOf,
 } from "./dashboards";
@@ -137,5 +146,93 @@ describe("dashboards", () => {
         expect(withKind(p, p.kind)).toEqual(p);
       }
     }
+  });
+});
+
+describe("panel kinds and display options", () => {
+  it("draws the data of a base kind", () => {
+    expect(["area", "columns", "gauge", "bars", "chart", "alerts"].map((k) => baseKind(k as Panel["kind"]))).toEqual([
+      "chart",
+      "chart",
+      "figure",
+      "top",
+      "chart",
+      "alerts",
+    ]);
+  });
+
+  it("keeps the display options when the kind changes, a legend only over time", () => {
+    const withOptions: Panel = { ...chart, legend: false, thresholds: { warning: 0.8 }, color: 2, unit: "ratio" };
+    const gauge = withKind(withOptions, "gauge");
+    expect(gauge).toMatchObject({ kind: "gauge", combine: "max", thresholds: { warning: 0.8 }, color: 2, unit: "ratio" });
+    expect(gauge.legend).toBeUndefined();
+    expect(withKind(withOptions, "area")).toMatchObject({ kind: "area", combine: "each", legend: false });
+    expect(withKind(withOptions, "bars")).toMatchObject({ kind: "bars", order: "highest", count: 5 });
+    expect(withKind(withOptions, "heatmap")).toMatchObject({ kind: "heatmap", metric: chart.metric, count: 10, color: 2 });
+    expect(withKind(withOptions, "table")).toMatchObject({ kind: "table", columns: [{ metric: chart.metric, instance: "total" }], order: "highest", count: 20 });
+    const text = withKind({ ...withOptions, servers: { kind: "site", id: "x" } }, "text");
+    expect(text).toMatchObject({ kind: "text", servers: { kind: "all" } });
+    expect(text.text).toBeTruthy();
+    expect(text.metric).toBeUndefined();
+    const alerts = withKind(withOptions, "alerts");
+    expect(alerts.thresholds).toBeUndefined();
+    expect(alerts.color).toBeUndefined();
+  });
+
+  it("reads thresholds upward, or downward where low is bad", () => {
+    const cpu: Panel = { ...chart, thresholds: { warning: 0.8, critical: 0.9 } };
+    expect([0.5, 0.8, 0.95, null].map((v) => levelOf(cpu, v))).toEqual(["ok", "warning", "critical", null]);
+    expect(levelOf(chart, 0.99)).toBeNull();
+    const free: Panel = { ...chart, metric: "monitorflow_memory_available_ratio", thresholds: { warning: 0.2, critical: 0.1 } };
+    expect([0.5, 0.15, 0.05].map((v) => levelOf(free, v))).toEqual(["ok", "warning", "critical"]);
+    expect(thresholdBands(free, 0, 1)).toEqual([
+      { from: 0, to: 0.1, color: "var(--threshold-crit)" },
+      { from: 0.1, to: 0.2, color: "var(--threshold-warn)" },
+    ]);
+    expect(thresholdBands(cpu, 0, 1)).toEqual([
+      { from: 0.8, to: 0.9, color: "var(--threshold-warn)" },
+      { from: 0.9, to: 1, color: "var(--threshold-crit)" },
+    ]);
+  });
+
+  it("scales ratios from 0 to 100 %, the rest from 0 to the highest value", () => {
+    expect(panelScale(chart, [0.4])).toEqual({ min: 0, max: 1 });
+    const bytes: Panel = { ...chart, metric: "monitorflow_memory_used_bytes" };
+    expect(panelScale(bytes, [10, 40, null])).toEqual({ min: 0, max: 40 });
+    expect(panelScale({ ...bytes, thresholds: { critical: 50 } }, [10])).toEqual({ min: 0, max: 50 });
+    expect(panelScale({ ...bytes, min: 5, max: 20 }, [40])).toEqual({ min: 5, max: 20 });
+  });
+
+  it("writes values in the panel's unit, a count as a number", () => {
+    expect(panelFormat(chart)(0.5)).toBe("50%");
+    expect(panelFormat({ ...chart, unit: "bytes", metric: "monitorflow_x_total" })(2048)).toBe("2 KiB");
+    expect(panelFormat({ ...chart, kind: "figure", combine: "count" })(12)).toBe("12");
+  });
+});
+
+const CPU_METRIC = "monitorflow_cpu_usage_ratio";
+
+describe("what a panel shows", () => {
+  it("reads the source of each kind", () => {
+    const of = (fields: Partial<Panel>) => sourceOf({ ...chart, ...fields });
+    expect([of({}), of({ kind: "table" }), of({ kind: "timeline" }), of({ kind: "text" })]).toEqual(["metric", "metric", "alerts", "text"]);
+    expect([of({ kind: "states", metric: undefined }), of({ kind: "pie" })]).toEqual(["states", "metric"]);
+    for (const [source, kinds] of Object.entries(KINDS_FOR)) {
+      for (const kind of kinds) expect(sourceOf(withSource(withKind(chart, kind), source as keyof typeof KINDS_FOR))).toBe(source);
+    }
+  });
+
+  it("switches source, keeping how a metric is drawn", () => {
+    const area = withKind(chart, "area");
+    const disk = withSource(area, "metric", "monitorflow_disk_used_ratio");
+    expect(disk).toMatchObject({ kind: "area", metric: "monitorflow_disk_used_ratio" });
+    expect(disk.instance).toBeUndefined();
+    const states = withSource(area, "states");
+    expect(states).toMatchObject({ kind: "states" });
+    expect(states.metric).toBeUndefined();
+    expect(withSource(states, "metric", "monitorflow_ping_up").kind).toBe("states");
+    expect(withSource(states, "metric", CPU_METRIC)).toMatchObject({ kind: "chart", instance: "total", combine: "each" });
+    expect(withSource(chart, "alerts")).toMatchObject({ kind: "alerts", count: 10 });
+    expect(defaultKind("monitorflow_http_shop_up")).toBe("states");
   });
 });

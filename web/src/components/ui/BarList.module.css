@@ -1,0 +1,42 @@
+/* Bars of a dashboard (ADR-0166); sizes in em so a screen scales them. */
+.bars {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bar {
+  margin: 0 0 0.55em;
+}
+
+.line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.value {
+  margin-left: 0.6em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.track {
+  height: 0.5em;
+  margin-top: 0.2em;
+  border-radius: 0.25em;
+  background: var(--chart-grid);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 0.25em;
+}

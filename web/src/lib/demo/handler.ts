@@ -25,6 +25,7 @@ import {
   type RequestOptions,
   type Server,
   type ServerDetail,
+  type ServerState,
   type ServerSettings,
   type ServerUpdateView,
   type Site,
@@ -69,6 +70,7 @@ import {
   serverRow,
   summary,
 } from "./fleet";
+import { baseKind } from "../dashboards";
 import { ALL_METRICS, instancesOf, metricsOf, rangeSeries, sensorValues, sensorsOf, valueAt } from "./series";
 import { DAY, HOUR, ago, later } from "./time";
 
@@ -524,7 +526,7 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
       const servers = panelServers(panel);
       const metric = panel.metric ?? "";
       const base = { id: panel.id, servers: servers.length, unavailable: 0 };
-      switch (panel.kind) {
+      switch (baseKind(panel.kind)) {
         case "alerts":
           return {
             ...base, kind: "alerts",
@@ -544,6 +546,50 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
             .slice(0, panel.count ?? 5);
           return { ...base, kind: "top", rows };
         }
+        case "text":
+          return { ...base, kind: "text" };
+        case "states":
+          return {
+            ...base,
+            kind: "states",
+            cells: servers.map((s) => {
+              if (!panel.metric) return { server_id: s.id, hostname: s.hostname, state: demoState(s.id) };
+              const values = latest(s, metric, panel.instance).map((v) => v.value).filter((v): v is number => v !== null);
+              return { server_id: s.id, hostname: s.hostname, value: values.length ? Math.max(...values) : null };
+            }),
+          };
+        case "pie": {
+          const counts = new Map<ServerState, number>();
+          for (const s of servers) counts.set(demoState(s.id), (counts.get(demoState(s.id)) ?? 0) + 1);
+          return { ...base, kind: "pie", slices: [...counts].map(([state, value]) => ({ label: state, state, value })) };
+        }
+        case "timeline":
+          return {
+            ...base,
+            kind: "timeline",
+            rows: servers.slice(0, panel.count ?? 10).map((s) => ({
+              server_id: s.id,
+              hostname: s.hostname,
+              spans: INCIDENTS.filter((i) => i.server_id === s.id).map((i) => ({
+                start: Math.max(start, Math.floor(Date.parse(i.opened_at) / 1000)),
+                end: i.resolved_at ? Math.floor(Date.parse(i.resolved_at) / 1000) : now,
+                severity: i.severity,
+              })).filter((x) => x.end > x.start),
+            })),
+          };
+        case "table": {
+          const columns = panel.columns ?? [];
+          const worst = (s: DemoServer, metric: string, instance?: string) => {
+            const values = latest(s, metric, instance).map((v) => v.value).filter((v): v is number => v !== null);
+            return values.length ? Math.max(...values) : null;
+          };
+          const rows = servers
+            .map((s) => ({ server_id: s.id, hostname: s.hostname, values: columns.map((c) => worst(s, c.metric, c.instance)) }))
+            .filter((r) => r.values[0] !== null)
+            .sort((a, b) => (panel.order === "lowest" ? a.values[0]! - b.values[0]! : b.values[0]! - a.values[0]!))
+            .slice(0, panel.count ?? 20);
+          return { ...base, kind: "table", rows };
+        }
         case "chart": {
           const lines = servers.flatMap((s) =>
             rangeSeries(s, metric, panel.instance, start, end, step).map((series) => ({
@@ -552,6 +598,7 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
               points: series.points,
             })),
           );
+          if (panel.kind === "heatmap") return { ...base, kind: "chart", series: lines.slice(0, panel.count ?? 10) };
           if ((panel.combine ?? "each") === "each") return { ...base, kind: "chart", series: lines };
           const points = lines[0]?.points.map(([t], i) => {
             const values = lines.map((l) => l.points[i]?.[1]).filter((v): v is number => typeof v === "number");
@@ -562,6 +609,12 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
       }
     }),
   };
+}
+
+/** A demo server's state: its worst open incident, else OK. */
+function demoState(serverId: string): ServerState {
+  const open = INCIDENTS.filter((i) => i.state === "open" && i.server_id === serverId);
+  return open.some((i) => i.severity === "critical") ? "critical" : open.length ? "warning" : "ok";
 }
 
 function combine(values: number[], how: string): number | null {

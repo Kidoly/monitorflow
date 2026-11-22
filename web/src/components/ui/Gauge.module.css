@@ -1,0 +1,40 @@
+/* A dial (ADR-0166); sizes are in the SVG's own units, so it scales. */
+.gauge {
+  display: block;
+  width: 100%;
+  max-height: 100%;
+  overflow: visible;
+}
+
+.track,
+.value,
+.band {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.track {
+  stroke: var(--chart-grid);
+  stroke-width: 16;
+}
+
+.value {
+  stroke-width: 16;
+}
+
+.band {
+  stroke-width: 4;
+  stroke-linecap: butt;
+}
+
+.figure {
+  fill: var(--text);
+  font-size: 30px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.end {
+  fill: var(--muted);
+  font-size: 12px;
+}

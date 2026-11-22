@@ -1,0 +1,75 @@
+/* A ring of shares (ADR-0166); sizes in em so a screen scales it. */
+.box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ring {
+  display: block;
+  width: 9em;
+  height: 9em;
+  margin: 0 1.2em 0.4em 0;
+  flex: none;
+}
+
+.track {
+  fill: none;
+  stroke: var(--chart-grid);
+  stroke-width: 16;
+}
+
+.slice {
+  fill: none;
+  stroke-width: 16;
+}
+
+.total {
+  fill: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend {
+  flex: 1 1 10em;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9em;
+}
+
+.legend li {
+  display: flex;
+  align-items: baseline;
+  padding: 0.15em 0;
+  white-space: nowrap;
+}
+
+.swatch {
+  flex: none;
+  width: 0.7em;
+  height: 0.7em;
+  margin-right: 0.45em;
+  border-radius: 0.15em;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.legend b {
+  margin-left: auto;
+  padding-left: 0.6em;
+  font-variant-numeric: tabular-nums;
+}
+
+.share {
+  width: 3.2em;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

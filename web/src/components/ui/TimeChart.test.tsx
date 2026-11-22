@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
 
-import { niceTicks, segments, timeTicks } from "./chartScale";
+import { buckets, niceTicks, segments, stackSeries, timeTicks } from "./chartScale";
 import { TimeChart, type TimeSeries } from "./TimeChart";
 
 // 08:30 local time, then one sample every 10 minutes for 6 hours.
@@ -164,6 +164,49 @@ describe("chart scales", () => {
     } finally {
       setActiveLocale("en");
     }
+  });
+
+  it("stacks series time by time, a missing value adding nothing", () => {
+    const stacked = stackSeries(
+      [
+        { label: "a", points: [[0, 1], [10, 2]] },
+        { label: "b", points: [[0, 3], [10, null]] },
+        { label: "c", points: [[0, 1], [10, 1]] },
+      ],
+      true,
+    );
+    expect(stacked.map((s) => s.points)).toEqual([
+      [[0, 1], [10, 2]],
+      [[0, 4], [10, null]],
+      [[0, 5], [10, 3]],
+    ]);
+    expect(stacked[2]!.base).toEqual([4, 2]);
+    expect(stackSeries([{ label: "a", points: [[0, 5]] }], false)[0]!.base).toEqual([0]);
+  });
+
+  it("gathers points into wider columns, averaging each", () => {
+    const points: [number, number | null][] = Array.from({ length: 12 }, (_, i) => [i * 10, i < 6 ? 1 : i === 11 ? null : 3]);
+    expect(buckets(points, 0, 120, 10, 3)).toEqual({ points: [[0, 1], [40, 2], [80, 3]], width: 40 });
+    expect(buckets(points, 0, 120, 10, 60).width).toBe(10);
+  });
+
+  it("draws areas and columns as well as lines", () => {
+    const series = [
+      { label: "web-1", points: [[START, 1], [START + 60, 2]] as [number, number][] },
+      { label: "web-2", points: [[START, 2], [START + 60, 1]] as [number, number][] },
+    ];
+    const { container, unmount } = render(<TimeChart title="Memory" series={series} step={60} variant="area" />);
+    expect(container.querySelectorAll("polygon")).toHaveLength(2);
+    unmount();
+    const columns = render(<TimeChart title="Memory" series={series} step={60} variant="columns" legend={false} />);
+    expect(columns.container.querySelectorAll("[data-testid=chart-series] rect")).toHaveLength(4);
+    // No legend: the lines are not named under the chart.
+    expect(screen.queryByRole("button", { name: "web-1" })).toBeNull();
+    columns.unmount();
+    // Percentages overlap rather than add up: the scale stops at the highest value.
+    render(<TimeChart title="CPU" series={series} step={60} variant="area" additive={false} />);
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.queryByText("3")).toBeNull();
   });
 
   it("breaks lines at nulls and long gaps", () => {

@@ -100,6 +100,8 @@
 }
 
 .title {
+  /* A tall panel never squeezes its title away. */
+  flex: none;
   margin: 0 0 0.3em;
   font-size: 1em;
   font-weight: 600;
@@ -259,4 +261,48 @@
   font: inherit;
   text-decoration: none;
   cursor: pointer;
+}
+
+/* A gauge fills the panel's height without overflowing it. */
+.dial {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dial svg {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+}
+
+/* A table on a screen: no scrolling, rows that do not fit are cut. */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 0.15em 0.4em;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table thead th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.8em;
+}
+
+.table th:first-child {
+  max-width: 10em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-weight: 500;
 }

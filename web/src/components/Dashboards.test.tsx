@@ -173,6 +173,185 @@ describe("DashboardPanel", () => {
     expect(screen.getByText("on db-1")).toBeInTheDocument();
   });
 
+  it("draws a gauge and bars coloured by their thresholds", () => {
+    const thresholds = { warning: 0.8, critical: 0.9 };
+    const { unmount } = render1(
+      { ...chart, kind: "gauge", combine: "max", title: "Busiest CPU", thresholds },
+      { id: "c", servers: 4, unavailable: 0, kind: "figure", value: 0.85 },
+    );
+    expect(screen.getByRole("img", { name: "Busiest CPU: 85%" })).toBeInTheDocument();
+    expect(screen.getByTestId("gauge-value")).toHaveAttribute("stroke", "var(--threshold-warn)");
+    unmount();
+
+    render1(
+      { ...chart, kind: "bars", metric: "monitorflow_disk_used_ratio", instance: undefined, order: "highest", count: 5, title: "Fullest disks", thresholds },
+      {
+        id: "c",
+        servers: 3,
+        unavailable: 0,
+        kind: "top",
+        rows: [
+          { server_id: "s1", hostname: "db-1", instance: "/var", value: 0.95 },
+          { server_id: "s2", hostname: "db-2", instance: "/", value: 0.5 },
+        ],
+      },
+    );
+    const bars = screen.getByRole("list", { name: "Fullest disks" });
+    expect(within(bars).getByRole("link", { name: "db-1" })).toHaveAttribute("href", "/servers/sensor?id=s1&sensor=disk_used_ratio&instance=%2Fvar");
+    const fills = bars.querySelectorAll<HTMLElement>("li > div:last-child > div");
+    expect(fills[0]!.style.width).toBe("95%");
+    expect(fills[0]!.style.background).toBe("var(--threshold-crit)");
+    expect(fills[1]!.style.background).toBe("var(--series-1)");
+  });
+
+  it("stacks the areas of values that add up, and overlaps percentages", () => {
+    const overlap = render1(
+      { ...chart, kind: "area" },
+      {
+        id: "c",
+        servers: 2,
+        unavailable: 0,
+        kind: "chart",
+        series: [
+          { label: "web-1", server_id: "s1", points: [[1_800_000_000, 0.75]] },
+          { label: "web-2", server_id: "s2", points: [[1_800_000_000, 0.75]] },
+        ],
+      },
+    );
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.queryByText("150%")).toBeNull();
+    overlap.unmount();
+    const { container } = render1(
+      { ...chart, kind: "area", color: 3, metric: "monitorflow_memory_used_bytes", instance: undefined },
+      {
+        id: "c",
+        servers: 2,
+        unavailable: 0,
+        kind: "chart",
+        series: [
+          { label: "web-1", server_id: "s1", points: [[1_800_000_000, 768]] },
+          { label: "web-2", server_id: "s2", points: [[1_800_000_000, 768]] },
+        ],
+      },
+    );
+    expect(container.querySelector("polyline")).toHaveAttribute("stroke", "var(--series-3)");
+    // 1.5 KiB stacked: the axis reaches 2 KiB.
+    expect(screen.getByText("2 KiB")).toBeInTheDocument();
+  });
+
+  it("draws a table with a column per metric, and text without waiting for data", () => {
+    const { unmount } = render1(
+      {
+        id: "t",
+        title: "Servers",
+        kind: "table",
+        width: 3,
+        servers: { kind: "all" },
+        order: "highest",
+        count: 20,
+        columns: [{ metric: "monitorflow_cpu_usage_ratio", instance: "total" }, { metric: "monitorflow_disk_used_ratio", instance: "/var" }],
+      },
+      { id: "t", servers: 2, unavailable: 0, kind: "table", rows: [{ server_id: "s1", hostname: "db-1", values: [0.5, null] }] },
+    );
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Server", "CPU usage", "Disk used /var"]);
+    expect(screen.getByRole("link", { name: "db-1" })).toHaveAttribute("href", "/servers/view?id=s1");
+    expect(screen.getAllByRole("cell").map((c) => c.textContent)).toEqual(["50%", "–"]);
+    unmount();
+
+    render(
+      <DashboardPanel
+        panel={{ id: "x", title: "On call", kind: "text", width: 1, servers: { kind: "all" }, text: "Call **Bob**." }}
+        data={undefined}
+        window={undefined}
+        scope={NO_SCOPE}
+      />,
+    );
+    expect(screen.getByText("Bob").tagName).toBe("STRONG");
+  });
+
+  it("puts the worst servers of a heatmap first, linked to their page", () => {
+    render1(
+      { ...chart, kind: "heatmap", count: 5, combine: undefined },
+      {
+        id: "c",
+        servers: 2,
+        unavailable: 0,
+        kind: "chart",
+        series: [
+          { label: "web-1", server_id: "s1", points: [[1_800_000_000, 0.2]] },
+          { label: "web-2", server_id: "s2", points: [[1_800_000_000, 0.9]] },
+        ],
+      },
+    );
+    expect(screen.getAllByRole("rowheader").map((h) => h.textContent)).toEqual(["web-2", "web-1"]);
+    expect(screen.getByRole("link", { name: "web-2" })).toHaveAttribute("href", "/servers/view?id=s2");
+  });
+
+  it("draws the servers' states as squares and a pie, and their alerts over time", () => {
+    const states: Panel = { id: "s", title: "Server states", kind: "states", width: 1, servers: { kind: "all" } };
+    const first = render1(states, {
+      id: "s",
+      servers: 3,
+      unavailable: 0,
+      kind: "states",
+      cells: [
+        { server_id: "s1", hostname: "db-1", state: "critical" },
+        { server_id: "s2", hostname: "web-1", state: "ok" },
+        { server_id: "s3", hostname: "web-2", state: "ok" },
+      ],
+    });
+    expect(screen.getByRole("link", { name: "db-1: Critical" })).toHaveAttribute("href", "/servers/view?id=s1");
+    expect(screen.getByText("2 OK")).toBeInTheDocument();
+    first.unmount();
+
+    const pie = render1(
+      { ...states, kind: "pie", title: "Servers by state" },
+      {
+        id: "s",
+        servers: 3,
+        unavailable: 0,
+        kind: "pie",
+        slices: [
+          { label: "critical", state: "critical", value: 1 },
+          { label: "ok", state: "ok", value: 2 },
+        ],
+      },
+    );
+    expect(screen.getByRole("img", { name: "Servers by state" })).toHaveTextContent("3");
+    expect(screen.getAllByRole("listitem").map((l) => l.textContent)).toEqual(["Critical133%", "OK267%"]);
+    pie.unmount();
+
+    render1(
+      { ...states, kind: "timeline", title: "Alerts over time", count: 10 },
+      {
+        id: "s",
+        servers: 3,
+        unavailable: 0,
+        kind: "timeline",
+        rows: [{ server_id: "s1", hostname: "db-1", spans: [{ start: WINDOW.start, end: WINDOW.start + 360, severity: "critical" }] }],
+      },
+    );
+    expect(screen.getByRole("link", { name: "db-1" })).toHaveAttribute("href", "/servers/view?id=s1");
+    expect(screen.getByText("90% without alerts")).toBeInTheDocument();
+  });
+
+  it("names a metric pie's servers and the rest", () => {
+    render1(
+      { id: "p", title: "Traffic", kind: "pie", width: 1, servers: { kind: "all" }, metric: "monitorflow_network_receive_bytes_per_second" },
+      {
+        id: "p",
+        servers: 3,
+        unavailable: 0,
+        kind: "pie",
+        slices: [
+          { label: "web-1", server_id: "s1", value: 3072 },
+          { label: "Other", value: 1024 },
+        ],
+      },
+    );
+    expect(screen.getAllByRole("listitem").map((l) => l.textContent)).toEqual(["web-13 KiB/s75%", "Other servers1 KiB/s25%"]);
+  });
+
   it("says how many servers of the panel its lines show", () => {
     const lines = Array.from({ length: 8 }, (_, i) => ({ label: `web-${i}`, server_id: `s${i}`, points: [[1_800_000_000, 0.5]] as [number, number][] }));
     render1(chart, { id: "c", servers: 16, unavailable: 0, kind: "chart", series: lines });
@@ -209,20 +388,16 @@ describe("DashboardPanel", () => {
 });
 
 describe("PanelForm", () => {
-  it("builds a panel from lists, the title following the choices", async () => {
-    stubFetch({
-      "GET /api/dashboard-metrics": { status: 200, body: { metrics: ["monitorflow_cpu_usage_ratio", "monitorflow_disk_used_ratio"], instances: [] } },
-      "GET /api/dashboard-metrics?metric=monitorflow_cpu_usage_ratio": {
-        status: 200,
-        body: { metrics: [], instances: ["cpu0", "total"] },
-      },
-      "GET /api/dashboard-metrics?metric=monitorflow_disk_used_ratio": { status: 200, body: { metrics: [], instances: ["/", "/var"] } },
-    });
-    const onDone = vi.fn();
-    const start: Panel = { id: "n", title: "", kind: "chart", width: 2, servers: { kind: "all" }, metric: "monitorflow_cpu_usage_ratio", combine: "each" };
+  const catalog = {
+    "GET /api/dashboard-metrics": { status: 200, body: { metrics: ["monitorflow_cpu_usage_ratio", "monitorflow_disk_used_ratio"], instances: [] } },
+    "GET /api/dashboard-metrics?metric=monitorflow_cpu_usage_ratio": { status: 200, body: { metrics: [], instances: ["cpu0", "total"] } },
+    "GET /api/dashboard-metrics?metric=monitorflow_disk_used_ratio": { status: 200, body: { metrics: [], instances: ["/", "/var"] } },
+  };
+  const start: Panel = { id: "n", title: "", kind: "chart", width: 2, servers: { kind: "all" }, metric: "monitorflow_cpu_usage_ratio", combine: "each" };
+  const form = (onDone = vi.fn(), initial = start) =>
     render(
       <PanelForm
-        initial={start}
+        initial={initial}
         isNew
         servers={[server("s1", "web-1"), server("s2", "db-1", "site-2")]}
         within={{ kind: "all" }}
@@ -230,14 +405,35 @@ describe("PanelForm", () => {
         onCancel={() => {}}
       />,
     );
+
+  it("starts from what to show, draws it as a tile and keeps the rest under Advanced", async () => {
+    stubFetch({
+      ...catalog,
+      "POST /api/dashboard-data": {
+        status: 200,
+        body: data([{ id: "n", servers: 2, unavailable: 0, kind: "top", rows: [{ server_id: "s2", hostname: "db-1", instance: "/var", value: 0.9 }] }]),
+      },
+    });
+    const onDone = vi.fn();
+    form(onDone);
     // The total is watched by default once the instances are known.
     expect(await screen.findByRole("option", { name: "total" })).toBeInTheDocument();
     expect(screen.getByLabelText("Watches")).toHaveValue("total");
+    // Advanced is closed until asked for.
+    const advanced = screen.getByText("Advanced").closest("details")!;
+    expect(advanced).not.toHaveAttribute("open");
 
-    await userEvent.click(screen.getByRole("radio", { name: "Top list" }));
-    await userEvent.selectOptions(screen.getByLabelText("Metric"), "monitorflow_disk_used_ratio");
+    await userEvent.selectOptions(screen.getByLabelText("Show"), "metric:monitorflow_disk_used_ratio");
+    await userEvent.click(screen.getByRole("radio", { name: "Bars" }));
+    await userEvent.click(screen.getByText("Advanced"));
     await userEvent.selectOptions(await screen.findByLabelText("Watches"), "/var");
     expect(screen.getByLabelText("Title")).toHaveValue("Highest: Disk used /var");
+    await userEvent.type(screen.getByLabelText("Critical at"), "0.95");
+
+    // The preview shows the panel with live data.
+    const preview = screen.getByRole("region", { name: "Preview" });
+    expect(await within(preview).findByRole("list", { name: "Highest: Disk used /var" })).toHaveTextContent("db-1");
+
     await userEvent.selectOptions(screen.getByLabelText("Servers"), "list");
     await userEvent.click(screen.getByRole("button", { name: "Add panel" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Choose at least one server.");
@@ -246,14 +442,34 @@ describe("PanelForm", () => {
     expect(onDone).toHaveBeenCalledWith({
       id: "n",
       title: "Highest: Disk used /var",
-      kind: "top",
+      kind: "bars",
       width: 2,
       servers: { kind: "list", ids: ["s2"] },
       metric: "monitorflow_disk_used_ratio",
       instance: "/var",
       order: "highest",
       count: 5,
+      thresholds: { critical: 0.95 },
     });
+  });
+
+  it("offers the ways to draw states, alerts and notes", async () => {
+    stubFetch({ ...catalog, "POST /api/dashboard-data": { status: 200, body: data([]) } });
+    const onDone = vi.fn();
+    form(onDone);
+    await screen.findByRole("option", { name: "total" });
+    await userEvent.selectOptions(screen.getByLabelText("Show"), "states");
+    expect(screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual(["State grid", "Pie"]);
+    await userEvent.selectOptions(screen.getByLabelText("Show"), "alerts");
+    expect(screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual(["Open alerts", "Alert timeline"]);
+    await userEvent.click(screen.getByRole("radio", { name: "Alert timeline" }));
+    await userEvent.selectOptions(screen.getByLabelText("Show"), "text");
+    const text = screen.getByLabelText(/^Text/);
+    await userEvent.clear(text);
+    await userEvent.type(text, "Call **Bob**");
+    expect(within(screen.getByRole("region", { name: "Preview" })).getByText("Bob").tagName).toBe("STRONG");
+    await userEvent.click(screen.getByRole("button", { name: "Add panel" }));
+    expect(onDone).toHaveBeenCalledWith({ id: "n", title: "Notes", kind: "text", width: 2, servers: { kind: "all" }, text: "Call **Bob**" });
   });
 });
 
@@ -407,7 +623,7 @@ describe("Dashboards", () => {
         <DashboardView />
       </As>,
     );
-    const add = await screen.findByRole("button", { name: "Add a panel" });
+    const add = await screen.findByRole("button", { name: "Or add panels one by one" });
     // "Only me" once, in the Shared with field: no badge, no note; no moving help without panels.
     expect(screen.getAllByText("Only me")).toHaveLength(1);
     expect(screen.queryByText(/Only you see it/)).toBeNull();
@@ -430,6 +646,30 @@ describe("Dashboards", () => {
         panels: [expect.objectContaining({ kind: "chart", metric: "monitorflow_cpu_usage_ratio", instance: "total", title: "CPU usage" })],
       },
     });
+  });
+
+  it("starts a new dashboard from a layout", async () => {
+    setUrl("/dashboards/view/?new=1");
+    const fetchMock = stubFetch({
+      "GET /api/servers": { status: 200, body: { servers: [server("s1", "web-1")], next_cursor: null } },
+      "POST /api/dashboard-data": { status: 200, body: data([]) },
+      "POST /api/dashboards": { status: 201, body: dashboard({ name: "Health at a glance", shared_with: { kind: "personal" } }) },
+    });
+    render(
+      <As user={viewer}>
+        <DashboardView />
+      </As>,
+    );
+    const layouts = await screen.findByRole("region", { name: "Start from a layout" });
+    await userEvent.click(within(layouts).getByRole("button", { name: /Health at a glance/ }));
+    // The layout's panels are there to change before saving; the choice of layouts goes.
+    expect(screen.queryByRole("region", { name: "Start from a layout" })).toBeNull();
+    expect(screen.getByLabelText("Name")).toHaveValue("Health at a glance");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
+    const body = bodyOf(fetchMock, "POST /api/dashboards") as { spec: { range: string; panels: Panel[] } };
+    expect(body.spec.range).toBe("24h");
+    expect(body.spec.panels.map((p) => p.kind)).toEqual(["states", "pie", "timeline", "heatmap", "alerts"]);
   });
 
   it("deletes after a confirmation naming it", async () => {

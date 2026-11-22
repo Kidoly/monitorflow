@@ -317,7 +317,28 @@ export type PanelServers =
   | { kind: "customer"; id: string }
   | { kind: "list"; ids: string[] };
 
-export type PanelKind = "chart" | "figure" | "top" | "alerts";
+/**
+ * How a panel is drawn (ADR-0166). `area`, `columns` and `heatmap` draw
+ * a chart's data, `gauge` a figure's, `bars` a top list's.
+ */
+export type PanelKind =
+  | "chart"
+  | "figure"
+  | "top"
+  | "alerts"
+  | "gauge"
+  | "bars"
+  | "area"
+  | "columns"
+  | "heatmap"
+  | "table"
+  | "text"
+  | "states"
+  | "pie"
+  | "timeline";
+
+/** How a panel writes values when the metric's name does not say it well. */
+export type PanelUnit = "ratio" | "bytes" | "bytes_per_second" | "bits_per_second" | "per_second" | "seconds" | "celsius" | "number";
 export type Combine = "each" | "avg" | "max" | "min" | "sum" | "count";
 
 /** One panel of a dashboard; fields not of its kind are absent. */
@@ -333,6 +354,21 @@ export interface Panel {
   combine?: Combine;
   order?: "highest" | "lowest";
   count?: number;
+  /** From the metric's name when absent. */
+  unit?: PanelUnit;
+  /** The scale; from the values when absent. */
+  min?: number;
+  max?: number;
+  /** Where values turn amber and red, in the metric's unit. */
+  thresholds?: { warning?: number; critical?: number };
+  /** Whether a chart names its lines; true when absent. */
+  legend?: boolean;
+  /** The first colour of the palette, 1 to 8. */
+  color?: number;
+  /** A table's columns, sorted by the first. */
+  columns?: { metric: string; instance?: string }[];
+  /** A text panel's Markdown. */
+  text?: string;
 }
 
 export interface DashboardSpec {
@@ -383,6 +419,13 @@ export interface TopRow {
   value: number | null;
 }
 
+/** A row of a table panel: a value per column, null where not reported. */
+export interface TableRow {
+  server_id: string;
+  hostname: string;
+  values: (number | null)[];
+}
+
 export interface PanelAlert {
   id: string;
   server_id: string;
@@ -402,6 +445,14 @@ export type PanelData = { id: string; servers: number; unavailable: number } & (
   | { kind: "chart"; series: ChartLine[] }
   | { kind: "figure"; value: number | null }
   | { kind: "top"; rows: TopRow[] }
+  | { kind: "table"; rows: TableRow[] }
+  | { kind: "text" }
+  /** Worst first; `state` without a metric, `value` with one. */
+  | { kind: "states"; cells: { server_id: string; hostname: string; state?: ServerState; value?: number | null }[] }
+  /** A slice with neither `state` nor `server_id` is the other servers. */
+  | { kind: "pie"; slices: { label: string; state?: ServerState; server_id?: string; value: number }[] }
+  /** Stretches in unix seconds, from the range's start to `now`. */
+  | { kind: "timeline"; rows: { server_id: string; hostname: string; spans: { start: number; end: number; severity: "warning" | "critical" }[] }[] }
   /** `unreachable`: its servers behind a parent that is down (ADR-0152); absent before it. */
   | { kind: "alerts"; alerts: PanelAlert[]; unreachable?: (Unreachable & { server_id: string; hostname: string })[] }
   | { kind: "error"; error: string }
