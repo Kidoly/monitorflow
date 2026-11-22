@@ -18,6 +18,7 @@ import { usePolledData } from "@/lib/usePolledData";
 import styles from "./AdminPages.module.css";
 import own from "./IntegrationsCatalogue.module.css";
 import { psaStatus } from "./IntegrationsCatalogue";
+import { PsaSiteLinks } from "./PsaSiteLinks";
 import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, fieldClass } from "./ui/Button";
 import { InlineConfirm } from "./ui/InlineConfirm";
@@ -71,6 +72,13 @@ function HaloPsa() {
       {header}
       <p className={styles.footnote}>{t("psa.intro")}</p>
       <ConnectionForm key={data.connection?.updated_at ?? "new"} saved={data.connection} onSaved={refresh} />
+      {data.connection ? (
+        <PsaSiteLinks key={data.connection.base_url} />
+      ) : (
+        <p className={styles.footnote}>
+          <strong>{t("psa.step.sites")}</strong> {t("psa.sites.saveFirst")}
+        </p>
+      )}
     </div>
   );
 }

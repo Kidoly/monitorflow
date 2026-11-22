@@ -50,6 +50,7 @@ describe("HaloPsaPage", () => {
       [`GET ${CONNECTION}`]: [none, { status: 200, body: { connection: connection() } }],
       [`POST ${CONNECTION}/test`]: { status: 200, body: { ok: true, agent_name: "MonitorFlow", error: null } },
       [`PUT ${CONNECTION}`]: { status: 200, body: connection() },
+      "GET /api/psa/site-links": { status: 200, body: { sites: [] } },
     });
     const user = userEvent.setup();
     page();
@@ -77,6 +78,7 @@ describe("HaloPsaPage", () => {
   it("keeps the saved secret for the same address only, and shows Halo's error", async () => {
     stubFetch({
       [`GET ${CONNECTION}`]: { status: 200, body: { connection: connection() } },
+      "GET /api/psa/site-links": { status: 200, body: { sites: [] } },
       [`POST ${CONNECTION}/test`]: {
         status: 200,
         body: { ok: false, agent_name: null, error: "halo.example.com answered 401 Unauthorized to the sign-in: invalid_client" },

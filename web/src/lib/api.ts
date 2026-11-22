@@ -3476,6 +3476,33 @@ export interface PsaConnectionRequest {
   enabled?: boolean;
 }
 
+/** A client or site of the PSA, as its lists give it. */
+export interface PsaRecord {
+  id: number;
+  name: string;
+}
+
+export interface PsaRecordList {
+  records: PsaRecord[];
+}
+
+/** A MonitorFlow site and the PSA client and site it is matched to; nulls when not matched. */
+export interface PsaSiteLink {
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  client_id: number | null;
+  client_name: string | null;
+  psa_site_id: number | null;
+  psa_site_name: string | null;
+  linked_at: string | null;
+}
+
+export interface PsaSiteLinkList {
+  sites: PsaSiteLink[];
+}
+
 export interface PsaConnectionTest {
   ok: boolean;
   agent_name: string | null;
@@ -4605,6 +4632,22 @@ export const api = {
     request<PsaConnection>("/api/psa/connection", { method: "PUT", body }),
 
   deletePsaConnection: () => request<void>("/api/psa/connection", { method: "DELETE" }),
+
+  /** The PSA's active clients whose name holds `search`, read through the connection. */
+  psaClients: (search: string, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/clients?search=${encodeURIComponent(search)}`, { signal }),
+
+  psaClientSites: (client: number, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/clients/${client}/sites`, { signal }),
+
+  /** Every site with the PSA client and site it is matched to. */
+  psaSiteLinks: (signal?: AbortSignal) => request<PsaSiteLinkList>("/api/psa/site-links", { signal }),
+
+  linkPsaSite: (site: string, body: { client_id: number; psa_site_id: number | null }) =>
+    request<PsaSiteLink>(`/api/psa/site-links/${encodeURIComponent(site)}`, { method: "PUT", body }),
+
+  unlinkPsaSite: (site: string) =>
+    request<void>(`/api/psa/site-links/${encodeURIComponent(site)}`, { method: "DELETE" }),
 
   /** Signs in to the PSA with the form's values, the saved ones filling the gaps; changes nothing there. */
   testPsaConnection: (body: PsaConnectionRequest) =>
