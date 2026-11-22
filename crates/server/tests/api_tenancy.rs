@@ -824,6 +824,17 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 StatusCode::FORBIDDEN
             );
         }
+        // Server-wide: one PSA connection serves every customer, so only
+        // global administrators manage it (ADR-0164).
+        ("GET", "/api/psa/connection")
+        | ("PUT", "/api/psa/connection")
+        | ("DELETE", "/api/psa/connection")
+        | ("POST", "/api/psa/connection/test") => {
+            let body = matches!(method, "PUT" | "POST").then(|| {
+                json!({ "base_url": "https://halo.example.com", "client_id": "x", "client_secret": "y" })
+            });
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         // Personal (ADR-0137): only the signed-in person's own preferences,
         // no customer or site in them.
         ("GET", "/api/me/preferences") => {
