@@ -388,20 +388,16 @@ describe("DashboardPanel", () => {
 });
 
 describe("PanelForm", () => {
-  it("builds a panel from lists, the title following the choices", async () => {
-    stubFetch({
-      "GET /api/dashboard-metrics": { status: 200, body: { metrics: ["monitorflow_cpu_usage_ratio", "monitorflow_disk_used_ratio"], instances: [] } },
-      "GET /api/dashboard-metrics?metric=monitorflow_cpu_usage_ratio": {
-        status: 200,
-        body: { metrics: [], instances: ["cpu0", "total"] },
-      },
-      "GET /api/dashboard-metrics?metric=monitorflow_disk_used_ratio": { status: 200, body: { metrics: [], instances: ["/", "/var"] } },
-    });
-    const onDone = vi.fn();
-    const start: Panel = { id: "n", title: "", kind: "chart", width: 2, servers: { kind: "all" }, metric: "monitorflow_cpu_usage_ratio", combine: "each" };
+  const catalog = {
+    "GET /api/dashboard-metrics": { status: 200, body: { metrics: ["monitorflow_cpu_usage_ratio", "monitorflow_disk_used_ratio"], instances: [] } },
+    "GET /api/dashboard-metrics?metric=monitorflow_cpu_usage_ratio": { status: 200, body: { metrics: [], instances: ["cpu0", "total"] } },
+    "GET /api/dashboard-metrics?metric=monitorflow_disk_used_ratio": { status: 200, body: { metrics: [], instances: ["/", "/var"] } },
+  };
+  const start: Panel = { id: "n", title: "", kind: "chart", width: 2, servers: { kind: "all" }, metric: "monitorflow_cpu_usage_ratio", combine: "each" };
+  const form = (onDone = vi.fn(), initial = start) =>
     render(
       <PanelForm
-        initial={start}
+        initial={initial}
         isNew
         servers={[server("s1", "web-1"), server("s2", "db-1", "site-2")]}
         within={{ kind: "all" }}
@@ -409,14 +405,35 @@ describe("PanelForm", () => {
         onCancel={() => {}}
       />,
     );
+
+  it("starts from what to show, draws it as a tile and keeps the rest under Advanced", async () => {
+    stubFetch({
+      ...catalog,
+      "POST /api/dashboard-data": {
+        status: 200,
+        body: data([{ id: "n", servers: 2, unavailable: 0, kind: "top", rows: [{ server_id: "s2", hostname: "db-1", instance: "/var", value: 0.9 }] }]),
+      },
+    });
+    const onDone = vi.fn();
+    form(onDone);
     // The total is watched by default once the instances are known.
     expect(await screen.findByRole("option", { name: "total" })).toBeInTheDocument();
     expect(screen.getByLabelText("Watches")).toHaveValue("total");
+    // Advanced is closed until asked for.
+    const advanced = screen.getByText("Advanced").closest("details")!;
+    expect(advanced).not.toHaveAttribute("open");
 
-    await userEvent.click(screen.getByLabelText("Top list"));
-    await userEvent.selectOptions(screen.getByLabelText("Metric"), "monitorflow_disk_used_ratio");
+    await userEvent.selectOptions(screen.getByLabelText("Show"), "metric:monitorflow_disk_used_ratio");
+    await userEvent.click(screen.getByRole("radio", { name: "Bars" }));
+    await userEvent.click(screen.getByText("Advanced"));
     await userEvent.selectOptions(await screen.findByLabelText("Watches"), "/var");
     expect(screen.getByLabelText("Title")).toHaveValue("Highest: Disk used /var");
+    await userEvent.type(screen.getByLabelText("Critical at"), "0.95");
+
+    // The preview shows the panel with live data.
+    const preview = screen.getByRole("region", { name: "Preview" });
+    expect(await within(preview).findByRole("list", { name: "Highest: Disk used /var" })).toHaveTextContent("db-1");
+
     await userEvent.selectOptions(screen.getByLabelText("Servers"), "list");
     await userEvent.click(screen.getByRole("button", { name: "Add panel" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Choose at least one server.");
@@ -425,14 +442,34 @@ describe("PanelForm", () => {
     expect(onDone).toHaveBeenCalledWith({
       id: "n",
       title: "Highest: Disk used /var",
-      kind: "top",
+      kind: "bars",
       width: 2,
       servers: { kind: "list", ids: ["s2"] },
       metric: "monitorflow_disk_used_ratio",
       instance: "/var",
       order: "highest",
       count: 5,
+      thresholds: { critical: 0.95 },
     });
+  });
+
+  it("offers the ways to draw states, alerts and notes", async () => {
+    stubFetch({ ...catalog, "POST /api/dashboard-data": { status: 200, body: data([]) } });
+    const onDone = vi.fn();
+    form(onDone);
+    await screen.findByRole("option", { name: "total" });
+    await userEvent.selectOptions(screen.getByLabelText("Show"), "states");
+    expect(screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual(["State grid", "Pie"]);
+    await userEvent.selectOptions(screen.getByLabelText("Show"), "alerts");
+    expect(screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual(["Open alerts", "Alert timeline"]);
+    await userEvent.click(screen.getByRole("radio", { name: "Alert timeline" }));
+    await userEvent.selectOptions(screen.getByLabelText("Show"), "text");
+    const text = screen.getByLabelText(/^Text/);
+    await userEvent.clear(text);
+    await userEvent.type(text, "Call **Bob**");
+    expect(within(screen.getByRole("region", { name: "Preview" })).getByText("Bob").tagName).toBe("STRONG");
+    await userEvent.click(screen.getByRole("button", { name: "Add panel" }));
+    expect(onDone).toHaveBeenCalledWith({ id: "n", title: "Notes", kind: "text", width: 2, servers: { kind: "all" }, text: "Call **Bob**" });
   });
 });
 

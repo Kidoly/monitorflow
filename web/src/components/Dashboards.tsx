@@ -493,6 +493,7 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
           isNew={editing === "new"}
           servers={choosable}
           within={within}
+          range={range}
           onCancel={() => setEditing(null)}
           onDone={(panel) => {
             setPanels(editing === "new" ? [...panels, panel] : panels.map((p, i) => (i === editing ? panel : p)));
