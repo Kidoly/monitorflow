@@ -72,6 +72,10 @@ pub enum ApiError {
     LogsUnavailable(String),
     #[error("logs backend timed out")]
     LogsTimeout,
+    /// The PSA refused or did not answer (ADR-0164); the message says why
+    /// in its words and is safe to show.
+    #[error("{0}")]
+    PsaUnavailable(String),
     #[error("internal error")]
     Database(#[from] sqlx::Error),
     /// Any other server-side failure; the message is logged, not returned.
@@ -95,7 +99,7 @@ impl ApiError {
             Self::IdempotencyInProgress => StatusCode::CONFLICT,
             Self::MetricsUnavailable(_) => StatusCode::BAD_GATEWAY,
             Self::MetricsTimeout | Self::LogsTimeout => StatusCode::GATEWAY_TIMEOUT,
-            Self::LogsUnavailable(_) => StatusCode::BAD_GATEWAY,
+            Self::LogsUnavailable(_) | Self::PsaUnavailable(_) => StatusCode::BAD_GATEWAY,
             Self::Database(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -122,13 +126,14 @@ impl ApiError {
             Self::MetricsTimeout => "metrics_timeout",
             Self::LogsUnavailable(_) => "logs_unavailable",
             Self::LogsTimeout => "logs_timeout",
+            Self::PsaUnavailable(_) => "psa_unavailable",
             Self::Database(_) | Self::Internal(_) => "internal",
         }
     }
 }
 
 /// Every code [`ApiError::code`] can give, for the OpenAPI document.
-pub const CODES: [&str; 19] = [
+pub const CODES: [&str; 20] = [
     "invalid_request",
     "invalid",
     "not_found",
@@ -147,6 +152,7 @@ pub const CODES: [&str; 19] = [
     "metrics_timeout",
     "logs_unavailable",
     "logs_timeout",
+    "psa_unavailable",
     "internal",
 ];
 
@@ -228,6 +234,7 @@ mod tests {
             ApiError::MetricsTimeout,
             ApiError::LogsUnavailable(String::new()),
             ApiError::LogsTimeout,
+            ApiError::PsaUnavailable(String::new()),
             ApiError::Internal(String::new()),
         ];
         let codes: std::collections::BTreeSet<_> = errors.iter().map(ApiError::code).collect();

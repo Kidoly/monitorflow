@@ -135,13 +135,13 @@ describe("IntegrationsPage", () => {
     expect(
       screen.queryByLabelText("Send events about"),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "All events" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "All events" })).toBeChecked();
     await user.type(screen.getByLabelText("Name"), "Ticketing");
     await user.type(
       screen.getByLabelText(/^URL/),
       "https://psa.example/hooks/monitorflow",
     );
-    await user.click(screen.getByRole("checkbox", { name: "Acknowledged" }));
+    await user.click(screen.getByRole("switch", { name: "Acknowledged" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByDisplayValue("mfwh_abc")).toBeInTheDocument();
@@ -330,7 +330,7 @@ describe("IntegrationsPage", () => {
     expect(await screen.findByText("acme")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add integration" }));
     expect(
-      screen.queryByRole("checkbox", { name: /Allow private addresses/ }),
+      screen.queryByRole("switch", { name: /Allow private addresses/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -397,7 +397,7 @@ describe("IntegrationsPage", () => {
       await screen.findByRole("button", { name: "Add integration" }),
     );
     expect(
-      screen.getByRole("checkbox", { name: /Allow private addresses/ }),
+      screen.getByRole("switch", { name: /Allow private addresses/ }),
     ).not.toBeChecked();
   });
 });

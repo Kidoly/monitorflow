@@ -1,4 +1,4 @@
-/* Event checkboxes, one column per group, tops aligned. */
+/* Event switches, one column per group, tops aligned. */
 .events {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
@@ -6,8 +6,10 @@
   align-items: start;
 }
 
-.events label {
-  display: block;
+.events fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 /* Send a time range again: the fields and the button on one line when it fits. */

@@ -43,6 +43,47 @@
   color: var(--muted);
 }
 
+/* A one-line note with its details folded under "Learn more". */
+.learnText {
+  margin: 0;
+}
+
+.learnMore > summary {
+  width: fit-content;
+  margin-top: 4px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.learnMore > .learnText {
+  margin-top: 6px;
+}
+
+/* A note straight in the page column, not in a box, lines up with the column. */
+.page > .sectionNote {
+  padding: 0;
+}
+
+/*
+ * Blocks put straight in a section keep the section's inner margins, so
+ * buttons and tiles never touch its border.
+ */
+.section > .buttons,
+.section > .buttonRow {
+  padding: 14px 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.section > .sectionNote + .buttons,
+.section > .sectionNote + .buttonRow {
+  padding-top: 0;
+}
+
+.section > [data-stat-tiles] {
+  margin: 16px 20px;
+}
+
 /* The grey sentence closing a list page. */
 .footnote {
   margin: 0;
@@ -161,33 +202,17 @@ tr td.wrap {
   font-weight: 500;
 }
 
-.radios {
-  display: flex;
-  gap: 16px;
-  height: 36px;
-  align-items: center;
-}
-
-.radios label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-/* Choices with longer words, on several lines at phone width. */
-.radiosWrap {
-  flex-wrap: wrap;
-  height: auto;
-  min-height: 36px;
-  row-gap: 6px;
-}
-
 /* A form or control under a section's note. */
 .sectionBody {
   padding: 0 20px 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* A body right under the title line, with no note between them. */
+.sectionHead + .sectionBody {
+  padding-top: 14px;
 }
 
 .linkList {

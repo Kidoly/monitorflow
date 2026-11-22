@@ -5,23 +5,30 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { t } from "@/i18n";
-import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
+import { type EffectiveSensor, type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
 import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffline } from "@/lib/incidents";
-import { administersEverything, multiCustomer, multiSite, useMe } from "@/lib/me";
+import { administersEverything, modifiesSite, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref, incidentsHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { incidentValue } from "@/lib/rules";
+import { sensorOf } from "@/lib/sensors";
+import { RowMenu } from "@/components/ui/RowMenu";
+import { oncePer, useBulkRunner, useSelection } from "@/lib/bulk";
 import { usePolledData } from "@/lib/usePolledData";
 import { replaceParams } from "@/lib/urlState";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { ButtonLink } from "@/components/ui/Button";
+import { BulkBar } from "@/components/ui/BulkBar";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
+import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
 import { AcknowledgeButton } from "./AcknowledgeButton";
+import { type SilencePeriod, useBulkSilence } from "./BulkSilence";
+import { type Pause, PauseButton } from "./PauseButton";
 import styles from "./IncidentList.module.css";
 
 /** A threshold incident's value; offline ones have none. */
@@ -41,39 +48,17 @@ function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {
   return incident.silenced ? <span className={styles.small}>{t("incidents.wasSilencedShort")}</span> : null;
 }
 
-/** Who said they are on it (ADR-0082), or the button to say so. */
-function Acknowledged({
-  incident,
-  now,
-  onAcknowledge,
-}: {
-  incident: Incident;
-  now: Date;
-  onAcknowledge: (ids: string[], note: string) => Promise<void>;
-}) {
-  if (incident.state !== "open") return null;
-  if (incident.acknowledged_at) {
-    return (
-      <span className={styles.small}>
-        {t("incidents.acknowledgedBy", {
-          name: incident.acknowledged_by ?? t("incidents.someone"),
-          when: formatSince(new Date(incident.acknowledged_at), now),
-        })}
-        {incident.acknowledged_note && `: ${incident.acknowledged_note}`}
-      </span>
-    );
-  }
-  if (!incident.can_acknowledge) return null;
+/** Who said they are on it (ADR-0082); the checkboxes and the bulk bar acknowledge (ADR-0166). */
+function Acknowledged({ incident, now }: { incident: Incident; now: Date }) {
+  if (incident.state !== "open" || !incident.acknowledged_at) return null;
   return (
-    <>
-      {" "}
-      <AcknowledgeButton
-        size="small"
-        name={t("incidents.acknowledgeHost", { host: incident.hostname })}
-        onAcknowledge={(note) => onAcknowledge([incident.id], note)}
-        describeError={describeError}
-      />
-    </>
+    <span className={styles.small}>
+      {t("incidents.acknowledgedBy", {
+        name: incident.acknowledged_by ?? t("incidents.someone"),
+        when: formatSince(new Date(incident.acknowledged_at), now),
+      })}
+      {incident.acknowledged_note && `: ${incident.acknowledged_note}`}
+    </span>
   );
 }
 
@@ -128,16 +113,22 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     await api.acknowledgeIncidents(ids, note);
     refresh();
   }
+  const selection = useSelection();
+  const rowName = (i: Incident) => t("incidents.bulk.row", { title: incidentTitle(i), host: i.hostname });
+  const bulk = useBulkRunner<Incident>(selection, (i) => i.id, rowName, refresh);
 
   const me = useMe();
   const inScope = scopeSites(scope, sites);
   const visible = (i: Incident) => !inScope || inScope.has(i.site_id);
   const incidents = data?.incidents.filter(visible) ?? [];
   const customers = new Map(sites.map((s) => [s.id, s.customer_name]));
+  const customerIds = new Map(sites.map((s) => [s.id, s.customer_id]));
   const now = updatedAt ?? new Date();
   const filtered = Boolean(
-    filters.severity || filters.serverId || filters.groupId || filters.state !== "all" || (filters.siteId && !scope.siteId),
+    filters.severity || filters.serverId || filters.groupId || (filters.siteId && !scope.siteId),
   );
+  // Open or History tab; a notification's incidents (`all`) have no tab, their banner says what they are.
+  const history = filters.state === "all" ? null : filters.state === "resolved";
 
   const siteChoices = sites.filter((s) => !scope.customerId || s.customer_id === scope.customerId);
   const serverChoices = servers
@@ -193,7 +184,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
             {formatDuration(((i.resolved_at ? Date.parse(i.resolved_at) : now.getTime()) - Date.parse(i.opened_at)) / 1000)}
           </span>
           <SilencedSign incident={i} now={now} />
-          <Acknowledged incident={i} now={now} onAcknowledge={acknowledge} />
+          <Acknowledged incident={i} now={now} />
         </>
       ),
     },
@@ -211,23 +202,89 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     },
   ];
 
+  // Checked rows a filter or a refresh took away are out of reach.
+  const chosen = incidents.filter((i) => selection.selected.has(i.id));
+  // One at a time, so each succeeds or fails on its own (the route refuses a whole batch for one read-only site).
+  const acknowledgeChosen = (note: string) =>
+    bulk.run(chosen, {
+      done: (count) => t("incidents.bulk.acknowledged", { count }),
+      skipped: (count) => t("incidents.bulk.alreadyAcknowledged", { count }),
+      allowed: (i) => i.state !== "open" || Boolean(i.acknowledged_at) || Boolean(i.can_acknowledge),
+      act: async (i) => {
+        if (i.state !== "open" || i.acknowledged_at) return "skipped";
+        const { acknowledged } = await api.acknowledgeIncidents([i.id], note);
+        return acknowledged.length > 0 ? "done" : "skipped";
+      },
+    });
+
+  const writable = (i: Incident) => modifiesSite(me, i.customer_id ?? customerIds.get(i.site_id) ?? "", i.site_id);
+
+  // Its server, or its relay for a relay's offline incident: once each, however many incidents share it.
+  function silenceChosen(period: SilencePeriod) {
+    const silence = oncePer(
+      (i: Incident) => i.server_id ?? i.relay_id ?? i.id,
+      async (i) => {
+        const target = i.server_id
+          ? { scope: "server" as const, target_id: i.server_id }
+          : { scope: "relay" as const, target_id: i.relay_id ?? "" };
+        await api.createSilence({ ...target, ...period });
+        return "done" as const;
+      },
+    );
+    return bulk.run(chosen, {
+      done: (count) => t("incidents.bulk.silenced", { count }),
+      skipped: (count) => t("incidents.bulk.alreadyResolved", { count }),
+      allowed: writable,
+      act: async (i) => (i.state === "open" ? silence(i) : "skipped"),
+    });
+  }
+  const silenceMenu = useBulkSilence(t("incidents.bulk.silenceSubmit"), silenceChosen, (choice) =>
+    t("incidents.bulk.silenceItem", { choice }),
+  );
+
+  /**
+   * Pauses the check that opened each incident (ADR-0151), found from its
+   * server's sensors as the Sensors tab does: once per check however many
+   * of its incidents are checked. Offline incidents have no check.
+   */
+  function pauseChosen(pause: Pause) {
+    const sensors = new Map<string, Promise<EffectiveSensor[]>>();
+    const sensorsOf = (id: string) => {
+      let list = sensors.get(id);
+      if (!list) {
+        list = api.serverSensors(id).then((r) => r.sensors);
+        sensors.set(id, list);
+      }
+      return list;
+    };
+    const calls = new Map<string, Promise<unknown>>();
+    return bulk.run(chosen, {
+      done: (count) => t("incidents.bulk.paused", { count }),
+      skipped: (count) => t("incidents.bulk.nothingToPause", { count }),
+      allowed: writable,
+      act: async (i) => {
+        if (i.state !== "open" || !i.server_id || isOffline(i)) return "skipped";
+        const sensor = sensorOf(await sensorsOf(i.server_id), i.metric);
+        if (!sensor) return "skipped";
+        const check = { name: sensor.name, instance: sensor.instance };
+        const key = `${i.server_id}\t${check.name}\t${check.instance}`;
+        let call = calls.get(key);
+        if (!call) {
+          call = api.createSilence({ scope: "server", target_id: i.server_id, ...pause, checks: [check] });
+          calls.set(key, call);
+        }
+        await call;
+        return "done";
+      },
+    });
+  }
+
+
   const acknowledgeable = incidents.filter((i) => i.state === "open" && i.can_acknowledge && !i.acknowledged_at);
-  return (
-    <Page>
-      <PageHeader
-        title={t("incidents.title")}
-        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
-      />
+  const body = (
+    <>
       <FilterBar
         filters={[
-          {
-            name: "state",
-            label: t("incidents.filter.state"),
-            options: [
-              { value: "open", label: t("incidents.open") },
-              { value: "resolved", label: t("incidents.resolved") },
-            ],
-          },
           {
             name: "severity",
             label: t("incidents.filter.severity"),
@@ -248,7 +305,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       {filters.groupId && (
         <Banner tone="info">
           {t("incidents.group.banner")}{" "}
-          <Link href={scopedHref(incidentsHref({ ...filters, groupId: null }), scope)}>{t("incidents.group.showAll")}</Link>
+          <Link href={scopedHref(incidentsHref({ ...filters, groupId: null, state: "open" }), scope)}>{t("incidents.group.showAll")}</Link>
           {acknowledgeable.length > 1 && (
             <>
               {" "}
@@ -267,7 +324,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         <ErrorState what={t("incidents.load.list")} error={describeError(error)} onRetry={refresh} />
       ) : data && incidents.length === 0 ? (
         filtered ? (
-          <NoMatches names={["state", "severity", "server", "group", ...(scope.siteId ? [] : ["site"])]}>
+          <NoMatches names={["severity", "server", "group", ...(scope.siteId ? [] : ["site"])]}>
             {t("incidents.noMatch")}
           </NoMatches>
         ) : (
@@ -280,20 +337,69 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
               )
             }
           >
-            {t("incidents.empty")}
+            {history ? t("incidents.history.empty") : t("incidents.empty")}
           </EmptyState>
         )
       ) : (
-        <DataTable
-          label={t("incidents.title")}
-          columns={columns}
-          rows={incidents}
-          rowKey={(i) => i.id}
-          rowMuted={(i) => i.state === "resolved"}
-          loading={!data}
-          hasMore={Boolean(data?.more) && limit < MAX_LIMIT}
-          onLoadMore={() => setLimit((n) => Math.min(MAX_LIMIT, n + PAGE_SIZE))}
-        />
+        // One block, so the bar takes no gap of the page while it is empty.
+        <div>
+          <BulkBar count={chosen.length} onClear={selection.clear} summary={bulk.summary} onDismiss={bulk.dismiss}>
+            <AcknowledgeButton
+              size="small"
+              variant="k"
+              name={t("incidents.bulk.acknowledgeName", { count: chosen.length })}
+              disabled={bulk.busy}
+              onAcknowledge={acknowledgeChosen}
+              describeError={describeError}
+            />
+            <PauseButton
+              name={t("incidents.bulk.pauseName", { count: chosen.length })}
+              disabled={bulk.busy}
+              onPause={pauseChosen}
+              describeError={describeError}
+            />
+            <RowMenu label={t("incidents.bulk.moreName", { count: chosen.length })} disabled={bulk.busy} items={silenceMenu.items} />
+            {silenceMenu.form}
+          </BulkBar>
+          <DataTable
+            label={t("incidents.title")}
+            columns={columns}
+            rows={incidents}
+            rowKey={(i) => i.id}
+            rowMuted={(i) => i.state === "resolved"}
+            loading={!data}
+            hasMore={Boolean(data?.more) && limit < MAX_LIMIT}
+            onLoadMore={() => setLimit((n) => Math.min(MAX_LIMIT, n + PAGE_SIZE))}
+            selection={{ selected: selection.selected, onChange: selection.change, rowLabel: rowName }}
+          />
+        </div>
+      )}
+    </>
+  );
+  return (
+    <Page>
+      <PageHeader
+        title={t("incidents.title")}
+        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
+      />
+      {history === null ? (
+        <div className={styles.panel}>{body}</div>
+      ) : (
+        <>
+          <Tabs
+            idBase="incidents"
+            label={t("incidents.tabs.label")}
+            tabs={[
+              { id: "open", label: t("incidents.tabs.open") },
+              { id: "history", label: t("incidents.tabs.history") },
+            ]}
+            selected={history ? "history" : "open"}
+            onSelect={(id) => replaceParams({ state: id === "history" ? "resolved" : null })}
+          />
+          <TabPanel idBase="incidents" id={history ? "history" : "open"}>
+            <div className={styles.panel}>{body}</div>
+          </TabPanel>
+        </>
       )}
     </Page>
   );

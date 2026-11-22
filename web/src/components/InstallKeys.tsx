@@ -8,6 +8,7 @@ import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Missing } from "@/components/ui/Missing";
 import { StatusLabel } from "@/components/ui/StatusLabel";
 import { formatAgo } from "@/components/ui/time";
+import { Switch } from "@/components/ui/Switch";
 import { t } from "@/i18n";
 import { type CreatedInstallKey, type InstallKey, type PendingHost, type Site, api, describeError } from "@/lib/api";
 import { formatWhen } from "@/lib/clock";
@@ -78,7 +79,6 @@ export function CreateInstallKey({
       <h2 id={titleId} className={styles.sectionTitle}>
         {t("install.key.title")}
       </h2>
-      <p className={styles.sectionNote}>{t("install.key.note")}</p>
       <div className={styles.formGrid}>
         <label className={styles.field}>
           {t("install.key.site")}
@@ -115,10 +115,7 @@ export function CreateInstallKey({
           />
         </label>
       </div>
-      <label className={styles.check}>
-        <input type="checkbox" checked={approval} onChange={(e) => setApproval(e.target.checked)} />{" "}
-        {t("install.key.approval")}
-      </label>
+      <Switch checked={approval} onChange={setApproval} label={t("install.key.approval")} />
       <div className={styles.formFoot}>
         <Button variant="k" type="submit" disabled={busy || sites.length === 0}>
           {t("install.key.create")}

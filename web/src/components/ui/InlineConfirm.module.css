@@ -55,13 +55,3 @@
   flex-basis: 100%;
 }
 
-/* `acknowledge`: the checkbox to tick before confirming. */
-.acknowledge {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.acknowledge input {
-  margin-top: 3px;
-}

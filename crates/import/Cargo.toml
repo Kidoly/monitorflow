@@ -8,6 +8,7 @@ description = "Reads the configuration of another monitoring tool into a neutral
 
 [dependencies]
 async-trait.workspace = true
+base64.workspace = true
 chrono.workspace = true
 monitorflow-common.workspace = true
 quick-xml.workspace = true

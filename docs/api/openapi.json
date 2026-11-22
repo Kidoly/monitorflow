@@ -1338,7 +1338,7 @@
           "alerts"
         ],
         "summary": "Download an availability report",
-        "description": "The same report as a file to keep or send: `pdf`, a document to send to a customer as it is (a summary in plain words, then the details), or `csv`, one row per service, server, device and check with its numbers, then one row per outage and per planned maintenance, with a `kind` column. CSV numbers are plain (seconds, dot decimals); words are in `language`; times are in `time_zone`.\n\n**Who**: any role, as above. **Area**: `alerts`.",
+        "description": "The same report as a file to keep or send: `pdf`, a document to send to a customer as it is (a header with the logo on every page, a summary in plain words, the uptime over 24 hours, 7, 30 and 90 days at the period's end with a bar per day of the period, then the details), or `csv`, one row per service, server, device and check with its numbers, then one row per outage and per planned maintenance, with a `kind` column. CSV numbers are plain (seconds, dot decimals); words are in `language`; times are in `time_zone`.\n\n**Who**: any role, as above. **Area**: `alerts`.",
         "operationId": "availability_file",
         "parameters": [
           {
@@ -1419,6 +1419,161 @@
           },
           "400": {
             "description": "An unknown format, language or time zone, or a period as above: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The customer does not exist or is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/availability/uptime": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Uptime over 24 hours, 7, 30 and 90 days, with daily bars",
+        "description": "For each business service, server and device the key reads, and each check that had an outage in the 90 days, its availability over the last 24 hours, 7, 30 and 90 days (`windows`, in percent), its number of outages over the 90 days, and one entry per day for 90 days (`days`, the oldest first, today so far last) with its availability, down time and planned maintenance. Days are cut at midnight in `time_zone`. Down time and planned maintenance follow the same rule as the availability report, so the numbers match it. `null` means nothing was counted: before the thing was added, or all of it under planned maintenance.\n\n`at` moves the end of the windows to a past instant, to see the uptime as it was then.\n\n**Who**: any role. With `customer_id`, only that customer's sites the key reads; business services only of customers the key is granted as a whole. **Area**: `alerts`.",
+        "operationId": "availability_uptime",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only this customer's sites and services.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "The instant the windows end at, RFC 3339; now when absent or in\nthe future.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "time_zone",
+            "in": "query",
+            "description": "IANA time zone days are cut in, like `Europe/Paris`; UTC when\nabsent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The uptime",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Uptime"
+                },
+                "example": {
+                  "at": "2026-11-22T17:00:00Z",
+                  "rows": [
+                    {
+                      "check": null,
+                      "days": [
+                        {
+                          "availability": 97.083,
+                          "date": "2026-11-21",
+                          "down_seconds": 2520.0,
+                          "maintenance_seconds": 0.0
+                        },
+                        {
+                          "availability": 100.0,
+                          "date": "2026-11-22",
+                          "down_seconds": 0.0,
+                          "maintenance_seconds": 0.0
+                        }
+                      ],
+                      "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "kind": "server",
+                      "name": "mail-1",
+                      "outages": 1,
+                      "site_name": "main",
+                      "windows": {
+                        "day": 100.0,
+                        "month": 99.903,
+                        "quarter": 99.968,
+                        "week": 99.583
+                      }
+                    }
+                  ],
+                  "time_zone": "Europe/Paris"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown time zone, an `at` that is not RFC 3339, or an unknown parameter: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -21513,6 +21668,7 @@
                       "fallback": [
                         "carol"
                       ],
+                      "follow_up_only": false,
                       "handoff_day": 1,
                       "handoff_time": "09:00",
                       "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -21534,19 +21690,44 @@
                         "ends_at": "2026-11-23T08:00:00Z",
                         "override_id": null,
                         "problem": "no_contact",
+                        "seat": 0,
                         "starts_at": "2026-11-16T08:00:00Z",
                         "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                         "username": "bob"
                       },
+                      "next_all": [
+                        {
+                          "ends_at": "2026-11-23T08:00:00Z",
+                          "override_id": null,
+                          "problem": "no_contact",
+                          "seat": 0,
+                          "starts_at": "2026-11-16T08:00:00Z",
+                          "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                          "username": "bob"
+                        }
+                      ],
                       "now": {
                         "ends_at": "2026-11-16T08:00:00Z",
                         "override_id": null,
                         "problem": null,
+                        "seat": 0,
                         "starts_at": "2026-11-09T08:00:00Z",
                         "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                         "username": "alice"
                       },
+                      "now_all": [
+                        {
+                          "ends_at": "2026-11-16T08:00:00Z",
+                          "override_id": null,
+                          "problem": null,
+                          "seat": 0,
+                          "starts_at": "2026-11-09T08:00:00Z",
+                          "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                          "username": "alice"
+                        }
+                      ],
                       "overrides": [],
+                      "people_per_turn": 1,
                       "rotation": "weekly",
                       "site_id": null,
                       "site_name": null,
@@ -21556,6 +21737,7 @@
                           "ends_at": "2026-11-16T08:00:00Z",
                           "override_id": null,
                           "problem": null,
+                          "seat": 0,
                           "starts_at": "2026-11-09T08:00:00Z",
                           "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                           "username": "alice"
@@ -21564,6 +21746,7 @@
                           "ends_at": "2026-11-23T08:00:00Z",
                           "override_id": null,
                           "problem": "no_contact",
+                          "seat": 0,
                           "starts_at": "2026-11-16T08:00:00Z",
                           "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                           "username": "bob"
@@ -21650,7 +21833,7 @@
           "on-call"
         ],
         "summary": "Add an on-call schedule",
-        "description": "Administrators of its place. The first member is on call from the last\nhand-off, so someone is on call at once. Audited as\n`on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`\nto retry.",
+        "description": "Administrators of its place. The first member is on call from the last\nhand-off, so someone is on call at once. With `people_per_turn` above\n1, that many members are on call together and all are told (ADR-0170).\nWith `follow_up_only`, its people hear only of alerts nobody\nacknowledged, through a follow-up step that names the schedule: a\nsecond level (ADR-0171). Audited as\n`on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`\nto retry.",
         "operationId": "create_on_call_schedule",
         "parameters": [
           {
@@ -21673,6 +21856,7 @@
               },
               "example": {
                 "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "follow_up_only": false,
                 "handoff_day": 1,
                 "handoff_time": "09:00",
                 "members": [
@@ -21680,6 +21864,7 @@
                   "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"
                 ],
                 "name": "acme night shift",
+                "people_per_turn": 1,
                 "rotation": "weekly",
                 "site_id": null,
                 "time_zone": "Europe/Paris"
@@ -21703,6 +21888,7 @@
                   "fallback": [
                     "carol"
                   ],
+                  "follow_up_only": false,
                   "handoff_day": 1,
                   "handoff_time": "09:00",
                   "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -21724,19 +21910,44 @@
                     "ends_at": "2026-11-23T08:00:00Z",
                     "override_id": null,
                     "problem": "no_contact",
+                    "seat": 0,
                     "starts_at": "2026-11-16T08:00:00Z",
                     "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                     "username": "bob"
                   },
+                  "next_all": [
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "seat": 0,
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
                   "now": {
                     "ends_at": "2026-11-16T08:00:00Z",
                     "override_id": null,
                     "problem": null,
+                    "seat": 0,
                     "starts_at": "2026-11-09T08:00:00Z",
                     "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                     "username": "alice"
                   },
+                  "now_all": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "seat": 0,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    }
+                  ],
                   "overrides": [],
+                  "people_per_turn": 1,
                   "rotation": "weekly",
                   "site_id": null,
                   "site_name": null,
@@ -21746,6 +21957,7 @@
                       "ends_at": "2026-11-16T08:00:00Z",
                       "override_id": null,
                       "problem": null,
+                      "seat": 0,
                       "starts_at": "2026-11-09T08:00:00Z",
                       "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                       "username": "alice"
@@ -21754,6 +21966,7 @@
                       "ends_at": "2026-11-23T08:00:00Z",
                       "override_id": null,
                       "problem": "no_contact",
+                      "seat": 0,
                       "starts_at": "2026-11-16T08:00:00Z",
                       "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                       "username": "bob"
@@ -21764,7 +21977,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: no name or one over 80 characters, an unknown time zone, a rotation other than `daily` or `weekly`, a time not `HH:MM`, no day for a weekly hand-off, no members, over 50, the same one twice, someone who does not see all of the place, a customer and a site together, an unknown customer or site",
+            "description": "`invalid`: no name or one over 80 characters, an unknown time zone, a rotation other than `daily` or `weekly`, a time not `HH:MM`, no day for a weekly hand-off, no members, over 50, the same one twice, `people_per_turn` outside 1 to 5 or above the number of members, someone who does not see all of the place, a customer and a site together, an unknown customer or site",
             "content": {
               "application/json": {
                 "schema": {
@@ -21893,6 +22106,7 @@
               },
               "example": {
                 "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "follow_up_only": false,
                 "handoff_day": 1,
                 "handoff_time": "09:00",
                 "members": [
@@ -21900,6 +22114,7 @@
                   "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"
                 ],
                 "name": "acme night shift",
+                "people_per_turn": 1,
                 "rotation": "weekly",
                 "site_id": null,
                 "time_zone": "Europe/Paris"
@@ -21923,6 +22138,7 @@
                   "fallback": [
                     "carol"
                   ],
+                  "follow_up_only": false,
                   "handoff_day": 1,
                   "handoff_time": "09:00",
                   "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -21944,19 +22160,44 @@
                     "ends_at": "2026-11-23T08:00:00Z",
                     "override_id": null,
                     "problem": "no_contact",
+                    "seat": 0,
                     "starts_at": "2026-11-16T08:00:00Z",
                     "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                     "username": "bob"
                   },
+                  "next_all": [
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "seat": 0,
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
                   "now": {
                     "ends_at": "2026-11-16T08:00:00Z",
                     "override_id": null,
                     "problem": null,
+                    "seat": 0,
                     "starts_at": "2026-11-09T08:00:00Z",
                     "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                     "username": "alice"
                   },
+                  "now_all": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "seat": 0,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    }
+                  ],
                   "overrides": [],
+                  "people_per_turn": 1,
                   "rotation": "weekly",
                   "site_id": null,
                   "site_name": null,
@@ -21966,6 +22207,7 @@
                       "ends_at": "2026-11-16T08:00:00Z",
                       "override_id": null,
                       "problem": null,
+                      "seat": 0,
                       "starts_at": "2026-11-09T08:00:00Z",
                       "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                       "username": "alice"
@@ -21974,6 +22216,7 @@
                       "ends_at": "2026-11-23T08:00:00Z",
                       "override_id": null,
                       "problem": "no_contact",
+                      "seat": 0,
                       "starts_at": "2026-11-16T08:00:00Z",
                       "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                       "username": "bob"
@@ -22204,7 +22447,7 @@
           "on-call"
         ],
         "summary": "Add a cover",
-        "description": "Puts a member, or anyone who could be one, on call for a period,\nwhatever the rotation says: for a holiday or a swap. A start absent or\npast is now. Administrators of the schedule's place. Answers the\nschedule. Audited as `on_call.override_create`. Not safe to repeat:\nsend `Idempotency-Key` to retry.",
+        "description": "Puts a member, or anyone who could be one, on call for a period,\nwhatever the rotation says: for a holiday or a swap. With several\npeople on call at once, `seat` says whose place it takes, 0 for the\nfirst person of the turn. A start absent or past is now. Administrators of the schedule's place. Answers the\nschedule. Audited as `on_call.override_create`. Not safe to repeat:\nsend `Idempotency-Key` to retry.",
         "operationId": "add_on_call_cover",
         "parameters": [
           {
@@ -22237,6 +22480,7 @@
               },
               "example": {
                 "ends_at": "2026-12-27T08:00:00Z",
+                "seat": 0,
                 "starts_at": "2026-12-24T18:00:00Z",
                 "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f"
               }
@@ -22259,6 +22503,7 @@
                   "fallback": [
                     "carol"
                   ],
+                  "follow_up_only": false,
                   "handoff_day": 1,
                   "handoff_time": "09:00",
                   "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
@@ -22280,19 +22525,44 @@
                     "ends_at": "2026-11-23T08:00:00Z",
                     "override_id": null,
                     "problem": "no_contact",
+                    "seat": 0,
                     "starts_at": "2026-11-16T08:00:00Z",
                     "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                     "username": "bob"
                   },
+                  "next_all": [
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "seat": 0,
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
                   "now": {
                     "ends_at": "2026-11-16T08:00:00Z",
                     "override_id": null,
                     "problem": null,
+                    "seat": 0,
                     "starts_at": "2026-11-09T08:00:00Z",
                     "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                     "username": "alice"
                   },
+                  "now_all": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "seat": 0,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    }
+                  ],
                   "overrides": [],
+                  "people_per_turn": 1,
                   "rotation": "weekly",
                   "site_id": null,
                   "site_name": null,
@@ -22302,6 +22572,7 @@
                       "ends_at": "2026-11-16T08:00:00Z",
                       "override_id": null,
                       "problem": null,
+                      "seat": 0,
                       "starts_at": "2026-11-09T08:00:00Z",
                       "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
                       "username": "alice"
@@ -22310,6 +22581,7 @@
                       "ends_at": "2026-11-23T08:00:00Z",
                       "override_id": null,
                       "problem": "no_contact",
+                      "seat": 0,
                       "starts_at": "2026-11-16T08:00:00Z",
                       "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
                       "username": "bob"
@@ -22320,7 +22592,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: an end not after the start, over 90 days, a start over a year away, someone who does not see all of the place",
+            "description": "`invalid`: an end not after the start, over 90 days, a start over a year away, a `seat` not below the schedule's `people_per_turn`, someone who does not see all of the place",
             "content": {
               "application/json": {
                 "schema": {
@@ -24290,6 +24562,1840 @@
         }
       }
     },
+    "/api/v1/psa/categories": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List the PSA's categories",
+        "description": "First-level categories as a ticket's category takes them, by name.\nSome PSA instances refuse a ticket without one. Global administrators\nonly.",
+        "operationId": "list_psa_categories",
+        "responses": {
+          "200": {
+            "description": "The categories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaCategoryList"
+                },
+                "example": {
+                  "categories": [
+                    "Hardware>Server",
+                    "Network"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/clients": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Search the PSA's clients",
+        "description": "The PSA's active clients whose name holds `search`, by name, at most\n50, read through the connection. Global administrators only.",
+        "operationId": "list_psa_clients",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Part of the client's name; absent or empty lists the first ones.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The clients",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaRecordList"
+                },
+                "example": {
+                  "records": [
+                    {
+                      "id": 10,
+                      "name": "Example Industries"
+                    },
+                    {
+                      "id": 11,
+                      "name": "Example Logistics"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer; `error` has its words",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/clients/{id}/sites": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List a PSA client's sites",
+        "description": "The sites of one PSA client, by name. Global administrators only.",
+        "operationId": "list_psa_client_sites",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The PSA client's id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Its sites",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaRecordList"
+                },
+                "example": {
+                  "records": [
+                    {
+                      "id": 100,
+                      "name": "Main office"
+                    },
+                    {
+                      "id": 101,
+                      "name": "Warehouse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/connection": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Read the PSA connection",
+        "description": "The connection without its Client Secret, or `null` when none is set\nup. Global administrators only.",
+        "operationId": "get_psa_connection",
+        "responses": {
+          "200": {
+            "description": "The connection, or `null`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaConnectionState"
+                },
+                "example": {
+                  "connection": {
+                    "agent_name": "MonitorFlow",
+                    "base_url": "https://halo.example.com",
+                    "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                    "created_at": "2026-11-22T09:00:00Z",
+                    "enabled": true,
+                    "kind": "halopsa",
+                    "last_error": null,
+                    "last_error_at": null,
+                    "last_success_at": "2026-11-22T09:30:00Z",
+                    "secret_error": null,
+                    "tenant": null,
+                    "tickets": {
+                      "category": "Hardware>Server",
+                      "min_severity": "critical",
+                      "resolved_status_id": 9,
+                      "resolved_status_name": "Closed",
+                      "ticket_type_id": 1,
+                      "ticket_type_name": "Incident"
+                    },
+                    "updated_at": "2026-11-22T09:00:00Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Set up or change the PSA connection",
+        "description": "Sets the address, the tenant of a hosted instance, the Client ID and\nthe Client Secret, and whether MonitorFlow uses the connection. Saving\ntests nothing: test first with the same body. An empty or absent\n`client_secret` keeps the stored one, only for the same address. A new\naddress or Client ID clears the last success and error. Audited as\n`psa.connection.create` or `psa.connection.update`, without the secret.\nSafe to repeat.",
+        "operationId": "put_psa_connection",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaConnectionRequest"
+              },
+              "example": {
+                "base_url": "https://halo.example.com",
+                "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                "client_secret": "the application's secret",
+                "enabled": true,
+                "kind": "halopsa",
+                "tenant": null
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaConnection"
+                },
+                "example": {
+                  "agent_name": "MonitorFlow",
+                  "base_url": "https://halo.example.com",
+                  "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                  "created_at": "2026-11-22T09:00:00Z",
+                  "enabled": true,
+                  "kind": "halopsa",
+                  "last_error": null,
+                  "last_error_at": null,
+                  "last_success_at": "2026-11-22T09:30:00Z",
+                  "secret_error": null,
+                  "tenant": null,
+                  "tickets": {
+                    "category": "Hardware>Server",
+                    "min_severity": "critical",
+                    "resolved_status_id": 9,
+                    "resolved_status_name": "Closed",
+                    "ticket_type_id": 1,
+                    "ticket_type_name": "Incident"
+                  },
+                  "updated_at": "2026-11-22T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: an address that is not http or https or holds a user, a missing Client ID, a missing secret for a new address, another `kind`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Remove the PSA connection",
+        "description": "MonitorFlow stops calling the PSA. Audited as `psa.connection.delete`.",
+        "operationId": "delete_psa_connection",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/connection/test": {
+      "post": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Test the PSA connection",
+        "description": "Signs in to the PSA and reads the agent the application acts as,\nread-only: no ticket is created. The body's values are tested, the\nstored ones filling what it leaves out, so a form can be tested before\nit is saved; `{}` tests the stored connection and records the outcome\non it. A failure is answered with 200 and the PSA's own words.",
+        "operationId": "test_psa_connection",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaConnectionRequest"
+              },
+              "example": {
+                "base_url": "https://halo.example.com",
+                "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                "client_secret": "the application's secret"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Whether it worked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaConnectionTest"
+                },
+                "example": {
+                  "agent_name": null,
+                  "error": "halo.example.com answered 401 Unauthorized to the sign-in: invalid_client. Check the Client ID and Secret, and that the application uses Client Credentials.",
+                  "ok": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: as when saving",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/site-links": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List sites and their PSA match",
+        "description": "Every MonitorFlow site, by customer and name, with the PSA client and\nsite it is matched to, or `null`s. Read from MonitorFlow only. Global\nadministrators only.",
+        "operationId": "list_psa_site_links",
+        "responses": {
+          "200": {
+            "description": "The sites",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaSiteLinkList"
+                },
+                "example": {
+                  "sites": [
+                    {
+                      "client_id": 10,
+                      "client_name": "Example Industries",
+                      "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                      "customer_name": "Example Industries",
+                      "linked_at": "2026-11-22T10:00:00Z",
+                      "psa_site_id": 100,
+                      "psa_site_name": "Main office",
+                      "site_id": "9a3c1e52-6b7d-4f8e-a1b2-c3d4e5f60718",
+                      "site_name": "paris"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/site-links/{site_id}": {
+      "put": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Match a site to a PSA client",
+        "description": "Sets the PSA client, and optionally one of its sites, that the site's\nincidents open tickets for. Both are checked with the PSA, which also\ngives the names kept; a PSA site must belong to the client and match\none MonitorFlow site at most. Audited as `psa.link.update`. Safe to\nrepeat.",
+        "operationId": "put_psa_site_link",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "description": "The MonitorFlow site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaSiteLinkRequest"
+              },
+              "example": {
+                "client_id": 10,
+                "psa_site_id": 100
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Matched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaSiteLink"
+                },
+                "example": {
+                  "client_id": 10,
+                  "client_name": "Example Industries",
+                  "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                  "customer_name": "Example Industries",
+                  "linked_at": "2026-11-22T10:00:00Z",
+                  "psa_site_id": 100,
+                  "psa_site_name": "Main office",
+                  "site_id": "9a3c1e52-6b7d-4f8e-a1b2-c3d4e5f60718",
+                  "site_name": "paris"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: the PSA has no such client or site, or the site belongs to another client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such MonitorFlow site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up, or the PSA site is matched to another site; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Unmatch a site",
+        "description": "The site's incidents open no more tickets. Audited as\n`psa.link.delete`.",
+        "operationId": "delete_psa_site_link",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "description": "The MonitorFlow site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unmatched"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: the site is not matched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/statuses": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List the PSA's ticket statuses",
+        "description": "Ticket statuses by id; in HaloPSA, 1 is New and 9 Closed on every\ninstance. Global administrators only.",
+        "operationId": "list_psa_statuses",
+        "responses": {
+          "200": {
+            "description": "The statuses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaRecordList"
+                },
+                "example": {
+                  "records": [
+                    {
+                      "id": 1,
+                      "name": "New"
+                    },
+                    {
+                      "id": 9,
+                      "name": "Closed"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/ticket-settings": {
+      "put": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Choose what tickets are opened",
+        "description": "The ticket type and category of new tickets, the least severity whose\nincidents open one (`critical` by default), and the status a ticket\nmoves to when its incident is resolved (9, Closed, by default; `null`\nadds a note only). Each is checked against the PSA's lists, which also\ngive the names kept. Audited as `psa.connection.tickets`.",
+        "operationId": "put_psa_ticket_settings",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaTicketSettingsRequest"
+              },
+              "example": {
+                "category": "Hardware>Server",
+                "min_severity": "critical",
+                "resolved_status_id": 9,
+                "ticket_type_id": 1
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaConnection"
+                },
+                "example": {
+                  "agent_name": "MonitorFlow",
+                  "base_url": "https://halo.example.com",
+                  "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                  "created_at": "2026-11-22T09:00:00Z",
+                  "enabled": true,
+                  "kind": "halopsa",
+                  "last_error": null,
+                  "last_error_at": null,
+                  "last_success_at": "2026-11-22T09:30:00Z",
+                  "secret_error": null,
+                  "tenant": null,
+                  "tickets": {
+                    "category": "Hardware>Server",
+                    "min_severity": "critical",
+                    "resolved_status_id": 9,
+                    "resolved_status_name": "Closed",
+                    "ticket_type_id": 1,
+                    "ticket_type_name": "Incident"
+                  },
+                  "updated_at": "2026-11-22T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: a ticket type, category or status the PSA does not have, or another severity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/ticket-types": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List the PSA's ticket types",
+        "description": "Ticket types used for tickets (not opportunities or projects), by\nname, read through the connection. Global administrators only.",
+        "operationId": "list_psa_ticket_types",
+        "responses": {
+          "200": {
+            "description": "The ticket types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaRecordList"
+                },
+                "example": {
+                  "records": [
+                    {
+                      "id": 3,
+                      "name": "Change Request"
+                    },
+                    {
+                      "id": 1,
+                      "name": "Incident"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/tickets": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List tickets opened for incidents",
+        "description": "The 50 most recently changed: created, closed when their incident\nresolved, skipped because the site has no PSA client, or refused by\nthe PSA with its words. Global administrators only.",
+        "operationId": "list_psa_tickets",
+        "responses": {
+          "200": {
+            "description": "The tickets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaTicketList"
+                },
+                "example": {
+                  "tickets": [
+                    {
+                      "closed_at": null,
+                      "created_at": "2026-11-22T10:00:05Z",
+                      "error": null,
+                      "incident_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                      "metric": "disk_used_percent",
+                      "server_name": "web-01",
+                      "severity": "critical",
+                      "site_name": "paris",
+                      "state": "open",
+                      "ticket_id": 5001,
+                      "updated_at": "2026-11-22T10:00:05Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/relays": {
       "get": {
         "tags": [
@@ -25339,6 +27445,258 @@
           },
           "409": {
             "description": "The relay is removed, or has an update in flight: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/alerts/{id}": {
+      "get": {
+        "tags": [
+          "remediation"
+        ],
+        "summary": "Whether AI remediation can run again on an alert",
+        "description": "The alert's remediations so far, one remediation incident per attempt,\nand whether the caller may start a new one now with\n`POST .../run`. When not, `blocked` says why with a stable code and\n`reason` in English; a server that reports refusing AI commands is\n`commands_refused`, with the refusal's code in `refusal`, so the reason\nshows before anyone starts an attempt that could only stop on it.\n\nThe loop starts an attempt by itself, once, when the latest one stopped\nbecause the server refused AI commands and the server accepts them\nsince (ADR-0165).\n\nNeeds any role on the alert's site and the key area \"remediation\".",
+        "operationId": "run_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The alert, an incident of `/incidents`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Where its remediations stand",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationRunStatus"
+                },
+                "example": {
+                  "alert_incident_id": "2f3a4b5c-6d7e-4f80-9a1b-2c3d4e5f6a7b",
+                  "attempts": 1,
+                  "blocked": "commands_refused",
+                  "can_run": false,
+                  "latest_id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+                  "latest_state": "escalated",
+                  "reason": "AI commands are off on this server; run the installer there with MF_ALLOW_COMMANDS=1 to allow them",
+                  "refusal": "commands_off"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such alert, or one on a site the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/alerts/{id}/run": {
+      "post": {
+        "tags": [
+          "remediation"
+        ],
+        "summary": "Run AI remediation again on an alert",
+        "description": "Opens a new remediation incident for an open alert whose remediations\nare all closed (escalated, failed, or resolved while the alert stayed\nopen), or that never had one. The remediation loop drives it on its next\npoll, with the configured limits, and the AI gets how the earlier\nattempts ended in its context. Its first event is a `note` with `code`\n`attempt`, `trigger` `person`, the user as actor, its `attempt` number\nand `previous`, how the one before ended; the audit log records\n`remediation.run`.\n\nNeeds an approver or administrator role on the alert's site and the key\narea \"remediation\".",
+        "operationId": "run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The alert, an incident of `/incidents`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The attempt opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationRunStarted"
+                },
+                "example": {
+                  "alert_incident_id": "2f3a4b5c-6d7e-4f80-9a1b-2c3d4e5f6a7b",
+                  "attempt": 2,
+                  "id": "6e7f8091-a2b3-4c4d-9e5f-6a7b8c9d0e1f",
+                  "previous_id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+                  "state": "open"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller is no approver on the alert's site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such alert, or one on a site the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`, with `error` saying why: the alert is resolved, it is on a device or an offline host, an attempt is running or waits for approval, AI is off, or the server reports refusing AI commands (with how to allow them); or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -44350,6 +46708,16 @@
           }
         }
       },
+      "AvailabilityThing": {
+        "type": "string",
+        "description": "What a thing of a report is: a business service, a server or device,\nor one check of a server or device.",
+        "enum": [
+          "service",
+          "server",
+          "device",
+          "check"
+        ]
+      },
       "AvailableRelease": {
         "type": "object",
         "description": "A release newer than the running server, as `GET /api/server-update`\nshows it.",
@@ -47963,6 +50331,7 @@
               "metrics_timeout",
               "logs_unavailable",
               "logs_timeout",
+              "psa_unavailable",
               "internal"
             ]
           },
@@ -53114,6 +55483,7 @@
         "required": [
           "id",
           "user_id",
+          "seat",
           "starts_at",
           "ends_at"
         ],
@@ -53127,6 +55497,12 @@
             "type": "string",
             "format": "uuid",
             "description": "The cover's ID, to remove it."
+          },
+          "seat": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The place of the turn it covers, 0 for the first person.",
+            "minimum": 0
           },
           "starts_at": {
             "type": "string",
@@ -53159,6 +55535,15 @@
             "type": "string",
             "format": "date-time",
             "description": "After the start, at most 90 days after it; the start within a\nyear."
+          },
+          "seat": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Which place of the turn they cover, 0 (the default) for the first\nperson; below the schedule's `people_per_turn`.",
+            "minimum": 0
           },
           "starts_at": {
             "type": [
@@ -53278,7 +55663,11 @@
           "rotation",
           "handoff_time",
           "members",
+          "people_per_turn",
+          "follow_up_only",
           "overrides",
+          "now_all",
+          "next_all",
           "turns",
           "fallback",
           "can_manage"
@@ -53309,6 +55698,10 @@
               "type": "string"
             },
             "description": "Who is told during a gap; empty when nobody can be, and for members\nwho do not manage it."
+          },
+          "follow_up_only": {
+            "type": "boolean",
+            "description": "Told only when a follow-up step names it, never of an alert's\nfirst message: a second level (ADR-0171)."
           },
           "handoff_day": {
             "type": [
@@ -53350,23 +55743,37 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/OnCallTurn",
-                "description": "The next one who takes over; `null` when nobody else does within\nthe horizon."
+                "description": "Who takes the first place next; `null` when nobody else does within\nthe horizon."
               },
               {
                 "type": "null"
               }
             ]
           },
+          "next_all": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallTurn"
+            },
+            "description": "Who takes each place next, in the order of the places; a place\nnobody else takes within the horizon is left out."
+          },
           "now": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/OnCallTurn",
-                "description": "Who is on call now; `null` only without members."
+                "description": "Who holds the first place now; `null` only without members."
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "now_all": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallTurn"
+            },
+            "description": "Everyone on call now, one per place, the first being `now`."
           },
           "overrides": {
             "type": "array",
@@ -53374,6 +55781,12 @@
               "$ref": "#/components/schemas/OnCallCover"
             },
             "description": "Covers not over yet, by start."
+          },
+          "people_per_turn": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many people are on call at once, 1 to 5 (ADR-0170).",
+            "minimum": 0
           },
           "rotation": {
             "$ref": "#/components/schemas/OnCallRotation",
@@ -53403,7 +55816,7 @@
             "items": {
               "$ref": "#/components/schemas/OnCallTurn"
             },
-            "description": "The turns that start within the next 28 days, the one running\nnow first."
+            "description": "The turns that start within the next 28 days, the ones running\nnow first, by start and then by place."
           }
         }
       },
@@ -53442,6 +55855,10 @@
             "format": "uuid",
             "description": "The customer it is for; with `site_id` also `null`, everything."
           },
+          "follow_up_only": {
+            "type": "boolean",
+            "description": "`true`: its people are told only by the follow-up steps that name\nit, when nobody acknowledged in time, never of an alert's first\nmessage (ADR-0171). `false` by default."
+          },
           "handoff_day": {
             "type": [
               "integer",
@@ -53467,6 +55884,15 @@
             "type": "string",
             "description": "1 to 80 characters, trimmed."
           },
+          "people_per_turn": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many people are on call at once: 1 (the default) to 5, and at\nmost the number of members. Turns take them in order: with 2,\nthe first and second members, then the third and fourth.",
+            "minimum": 0
+          },
           "rotation": {
             "type": "string",
             "description": "`daily` or `weekly`."
@@ -53490,6 +55916,7 @@
         "type": "object",
         "description": "One period with one person on call.",
         "required": [
+          "seat",
           "starts_at",
           "ends_at"
         ],
@@ -53517,6 +55944,12 @@
                 "type": "null"
               }
             ]
+          },
+          "seat": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The place in the turn, 0 for the first person; always 0 with one\nperson per turn (ADR-0170).",
+            "minimum": 0
           },
           "starts_at": {
             "type": "string",
@@ -55084,6 +57517,516 @@
           }
         }
       },
+      "PsaCategoryList": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/categories`.",
+        "required": [
+          "categories"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "First-level categories as tickets take them, like `Hardware>Server`."
+          }
+        }
+      },
+      "PsaConnection": {
+        "type": "object",
+        "description": "The connection as the web interface shows it; never its secret.",
+        "required": [
+          "kind",
+          "base_url",
+          "client_id",
+          "enabled",
+          "created_at",
+          "updated_at",
+          "tickets"
+        ],
+        "properties": {
+          "agent_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The PSA agent the application acts as, from the last success;\n`null` before the first."
+          },
+          "base_url": {
+            "type": "string",
+            "description": "The PSA's address, like `https://halo.example.com`."
+          },
+          "client_id": {
+            "type": "string",
+            "description": "The API application's Client ID."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was set up."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether MonitorFlow uses the connection."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`halopsa`, the only kind so far."
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The last failure, in the PSA's words when it gave some; `null`\nonce a request works again."
+          },
+          "last_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When `last_error` happened."
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last request that worked; `null` before the first."
+          },
+          "secret_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the stored secret does not open (ADR-0125), so it must be\nentered again; `null` when it opens."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tenant named on the token request of hosted instances; `null`\nwhen none."
+          },
+          "tickets": {
+            "$ref": "#/components/schemas/PsaTicketSettings",
+            "description": "What tickets it opens and how it closes them."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was last changed."
+          }
+        }
+      },
+      "PsaConnectionRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/psa/connection` and of\n`POST /api/psa/connection/test`.",
+        "properties": {
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The PSA's address, like `https://halo.example.com`; a trailing\n`/api` is taken off. On the test, absent means the stored one."
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The API application's Client ID. On the test, absent means the\nstored one."
+          },
+          "client_secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The application's Client Secret. Write-only. Absent or empty keeps\nthe stored one, but only for the same address."
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether MonitorFlow uses it; absent means `true`. Ignored by the\ntest."
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`halopsa`; absent means `halopsa`."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tenant of a hosted instance; absent, `null` or empty for none."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PsaConnectionState": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/connection`.",
+        "properties": {
+          "connection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PsaConnection",
+                "description": "The connection; `null` when none is set up."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PsaConnectionTest": {
+        "type": "object",
+        "description": "Body of `POST /api/psa/connection/test`.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "agent_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The PSA agent the application acts as, when it worked."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, in the PSA's words when it gave some; `null` when\nit worked."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Whether MonitorFlow signed in and read the application's agent."
+          }
+        }
+      },
+      "PsaRecord": {
+        "type": "object",
+        "description": "A client or site of Halo, as the matching shows it.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Halo's id."
+          },
+          "name": {
+            "type": "string",
+            "description": "Halo's name for it."
+          }
+        }
+      },
+      "PsaRecordList": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/clients` and `GET /api/psa/clients/{id}/sites`.",
+        "required": [
+          "records"
+        ],
+        "properties": {
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PsaRecord"
+            },
+            "description": "By name; clients at most 50 per search."
+          }
+        }
+      },
+      "PsaSiteLink": {
+        "type": "object",
+        "description": "One MonitorFlow site and the PSA client and site it is matched to.",
+        "required": [
+          "site_id",
+          "site_name",
+          "customer_id",
+          "customer_name"
+        ],
+        "properties": {
+          "client_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA client its tickets go to; `null` when not matched."
+          },
+          "client_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The client's name when matched; `null` otherwise."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Its customer."
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "linked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was matched; `null` when not."
+          },
+          "psa_site_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA site within that client; `null` for none."
+          },
+          "psa_site_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The MonitorFlow site."
+          },
+          "site_name": {
+            "type": "string"
+          }
+        }
+      },
+      "PsaSiteLinkList": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/site-links`.",
+        "required": [
+          "sites"
+        ],
+        "properties": {
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PsaSiteLink"
+            },
+            "description": "Every MonitorFlow site, by customer and name."
+          }
+        }
+      },
+      "PsaSiteLinkRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/psa/site-links/{site_id}`.",
+        "required": [
+          "client_id"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The PSA client, an `id` of `GET /api/psa/clients`."
+          },
+          "psa_site_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "One of that client's sites, from `GET /api/psa/clients/{id}/sites`;\nabsent or `null` lets the PSA choose."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PsaTicket": {
+        "type": "object",
+        "description": "One incident's ticket, as the HaloPSA page lists them.",
+        "required": [
+          "incident_id",
+          "state",
+          "metric",
+          "severity",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it was skipped or failed, or the last failure while retrying,\nin the PSA's words; `null` otherwise."
+          },
+          "incident_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The incident."
+          },
+          "metric": {
+            "type": "string",
+            "description": "The incident's measure, severity, and server or relay."
+          },
+          "server_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": "string"
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "description": "`creating`, `open`, `closed` (its incident resolved), `skipped`\n(its site has no PSA client) or `failed` (the PSA refused)."
+          },
+          "ticket_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA's ticket number; `null` until created."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PsaTicketList": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/tickets`.",
+        "required": [
+          "tickets"
+        ],
+        "properties": {
+          "tickets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PsaTicket"
+            },
+            "description": "The 50 most recently changed, newest first."
+          }
+        }
+      },
+      "PsaTicketSettings": {
+        "type": "object",
+        "description": "What tickets the connection opens and how it closes them (ADR-0166).",
+        "required": [
+          "min_severity"
+        ],
+        "properties": {
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The category of new tickets (HaloPSA's `category_1`), which some\ninstances require; `null` for none."
+          },
+          "min_severity": {
+            "type": "string",
+            "description": "`critical` (the default) or `warning`: the least severity whose\nincidents open a ticket."
+          },
+          "resolved_status_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The status a ticket moves to when its incident is resolved, 9\n(Closed) by default; `null` adds a note only."
+          },
+          "resolved_status_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ticket_type_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA ticket type of new tickets; `null` for the PSA's default."
+          },
+          "ticket_type_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PsaTicketSettingsRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/psa/ticket-settings`.",
+        "properties": {
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A category of `GET /api/psa/categories`; `null` or empty for none."
+          },
+          "min_severity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`critical` or `warning`; absent keeps the current one."
+          },
+          "resolved_status_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A status of `GET /api/psa/statuses` that resolved incidents move\ntheir ticket to; `null` adds a note only."
+          },
+          "ticket_type_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A ticket type of `GET /api/psa/ticket-types`; `null` for the\nPSA's default."
+          }
+        },
+        "additionalProperties": false
+      },
       "PublicAddress": {
         "type": "object",
         "description": "Body of `GET` and `PUT /api/settings/public-address`, and the\n`address` object of a new token.",
@@ -56338,6 +59281,108 @@
           }
         },
         "additionalProperties": false
+      },
+      "RemediationRunStarted": {
+        "type": "object",
+        "description": "Body of `POST /api/remediation/alerts/{id}/run`.",
+        "required": [
+          "id",
+          "alert_incident_id",
+          "attempt",
+          "state"
+        ],
+        "properties": {
+          "alert_incident_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its number among the alert's remediations, from 1."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The new remediation incident, see `/api/remediation/incidents/{id}`."
+          },
+          "previous_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The remediation before it, if any."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RemediationIncidentState",
+            "description": "`open`: the loop takes it on its next poll."
+          }
+        }
+      },
+      "RemediationRunStatus": {
+        "type": "object",
+        "description": "Body of `GET /api/remediation/alerts/{id}`. Field names and types are\npart of the API contract: add fields, never rename or remove them.",
+        "required": [
+          "alert_incident_id",
+          "attempts",
+          "can_run"
+        ],
+        "properties": {
+          "alert_incident_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The alert, see `/api/incidents`."
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Remediation incidents of the alert so far, one per attempt."
+          },
+          "blocked": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not: `alert_resolved`, `no_agent` (a device, or the server is\noffline), `in_progress` (an attempt is running or waits for\napproval), `ai_off`, `commands_refused` (the server reports refusing\nAI commands, see `refusal`), or `role` (the caller is no approver on\nthe site). `null` when it can run."
+          },
+          "can_run": {
+            "type": "boolean",
+            "description": "Whether the caller may start an attempt now: `blocked` is `null`."
+          },
+          "latest_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The latest of them; `null` when the alert never had one."
+          },
+          "latest_state": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RemediationIncidentState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`blocked` as an English sentence."
+          },
+          "refusal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `commands_refused`, why the server refuses: `commands_off`,\n`commands_off_windows`, `system_unsupported` or `agent_too_old`,\nthe codes of remediation events (ADR-0076)."
+          }
+        }
       },
       "ReportSchedule": {
         "type": "object",
@@ -60935,6 +63980,161 @@
           }
         }
       },
+      "Uptime": {
+        "type": "object",
+        "description": "Body of `GET /api/availability/uptime`.",
+        "required": [
+          "at",
+          "time_zone",
+          "rows"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The instant the windows end at."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UptimeRow"
+            },
+            "description": "Services first, then each server or device followed by its checks\nthat had outages; checks without any are left out."
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "The IANA zone days are cut in."
+          }
+        }
+      },
+      "UptimeDay": {
+        "type": "object",
+        "description": "One day of one thing.",
+        "required": [
+          "date",
+          "down_seconds",
+          "maintenance_seconds"
+        ],
+        "properties": {
+          "availability": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "In percent; `null` when nothing was counted: before it existed, or\nall of it under planned maintenance."
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "The local date, in the view's time zone."
+          },
+          "down_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Down time that day, seconds."
+          },
+          "maintenance_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Planned maintenance that day, seconds, left out of the count."
+          }
+        }
+      },
+      "UptimeRow": {
+        "type": "object",
+        "description": "One service, server, device or check.",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "windows",
+          "outages",
+          "days"
+        ],
+        "properties": {
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The check's name, for a check; `null` otherwise."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UptimeDay"
+            },
+            "description": "One per day, the oldest first, the last being today so far."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The service's ID, or the server's or device's (a check's too)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AvailabilityThing",
+            "description": "`service`, `server`, `device` or `check`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The service's, server's or device's name."
+          },
+          "outages": {
+            "type": "integer",
+            "description": "Outages over the 90 days.",
+            "minimum": 0
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The site; `null` for a service."
+          },
+          "windows": {
+            "$ref": "#/components/schemas/UptimeWindows"
+          }
+        }
+      },
+      "UptimeWindows": {
+        "type": "object",
+        "description": "Availability over the windows that end at the view's instant, in\npercent; `null` when nothing was counted (\"Not measured\").",
+        "properties": {
+          "day": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 24 hours."
+          },
+          "month": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 30 days."
+          },
+          "quarter": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 90 days."
+          },
+          "week": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The last 7 days."
+          }
+        }
+      },
       "UsablePlugin": {
         "type": "object",
         "description": "A plugin as those who use it see it: what it is and the places they\ncan see where it may be used.",
@@ -61778,7 +64978,7 @@
     },
     {
       "name": "imports",
-      "description": "Moving from another monitoring tool. An import reads the other tool's configuration, from export files or through its API, and shows first what MonitorFlow would create: servers waiting for their agent, checks, thresholds, silences (of servers or of chosen checks), maintenance windows that come back (ADR-0151) and notification channels. Windows whose source does not say its time zone, like Zabbix's and PRTG's, are read in the request's `time_zone`. Each item is in one of three lists: `exact` (MonitorFlow does the same), `approximated` (close, the note says how it differs) or `not_movable` (the note says why), and says whether MonitorFlow has it already (`present`). Nothing is created until the preview is confirmed, with the items to leave out; items that need one left out are left out too. Importing the same configuration again creates nothing twice. An import can be undone: what it created goes, except servers an agent has taken over. Servers then only need the agent: one that enrolls with a server's ID, or with an install key of its site from a host of that name, takes it over with its checks. The other tool is only read, never changed, and can keep running. A connection's token is used for the request and never stored. Administrators of the target site only; everything is in the audit log. API keys need the `administration` area."
+      "description": "Moving from another monitoring tool. An import reads the other tool's configuration, from export files or through its API, and shows first what MonitorFlow would create: servers waiting for their agent, checks, thresholds, silences (of servers or of chosen checks), maintenance windows that come back (ADR-0151) and notification channels. Windows whose source does not say its time zone, like Zabbix's and PRTG's, are read in the request's `time_zone`. Each item is in one of three lists: `exact` (MonitorFlow does the same), `approximated` (close, the note says how it differs) or `not_movable` (the note says why), and says whether MonitorFlow has it already (`present`). Nothing is created until the preview is confirmed, with the items to leave out; items that need one left out are left out too. Importing the same configuration again creates nothing twice. An import can be undone: what it created goes, except servers an agent has taken over. Servers then only need the agent: one that enrolls with a server's ID, or with an install key of its site from a host of that name, takes it over with its checks. The other tool is only read, never changed, and can keep running. A connection's token or password is used for the request and never stored. PRTG behind a reverse proxy asking for HTTP basic authentication takes `proxy_user` and `proxy_password` beside its token or passhash. Administrators of the target site only; everything is in the audit log. API keys need the `administration` area."
     },
     {
       "name": "devices",
@@ -61795,6 +64995,10 @@
     {
       "name": "snmp",
       "description": "What custom SNMP checks of devices read (ADR-0157): lookups that name the values of an enumerated object and give each a state (`ok`, `warning`, `critical`), built in or a customer's own; MIB files a customer uploads to name the objects of its devices; and the names the library of common vendor objects and those MIBs give to OIDs. Lookups and MIBs belong to a customer: anyone who reads one of its sites reads them, and operators and above of the whole customer change them. Custom checks of a device, with their channels and limits, and Test and Browse from the device's probe, are under `/api/v1/devices/{id}/snmp-checks` and `/api/v1/devices/{id}/snmp`. Area `servers`."
+    },
+    {
+      "name": "psa",
+      "description": "The PSA connection: MonitorFlow calls a PSA's API with credentials it keeps, HaloPSA first. One per installation, managed by global administrators (a key with every reach), since one PSA serves every customer. In HaloPSA, create an API application (Configuration, Integrations, HaloPSA API, View Applications) with the authentication method Client ID and Secret (Client Credentials), acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never answered. Each MonitorFlow site is then matched to a PSA client, and optionally one of its sites, chosen from the PSA's lists read through the connection; incidents of a site without a match open no ticket. An incident at the chosen severity then opens one ticket for its site's client, with the chosen ticket type and category, and its resolution adds a private note and moves the ticket to the chosen status. When the PSA refuses or does not answer, the answer is 502 `psa_unavailable` with its own words. Every change is in the audit log, with the key's ID. API keys need the `administration` area."
     }
   ]
 }

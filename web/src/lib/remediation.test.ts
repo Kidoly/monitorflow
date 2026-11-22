@@ -86,6 +86,29 @@ describe("eventSummary", () => {
     }
   });
 
+  it("words the note that starts an attempt (ADR-0165)", () => {
+    const previous = { id: "r1", state: "escalated", code: "incomplete", reason: "the command did not run to completion: x" };
+    expect(eventSummary(event({ kind: "note", payload: { text: "attempt 2", code: "attempt", trigger: "person", attempt: 2, previous } }))).toBe(
+      "Attempt 2, started by hand. The one before: The command did not complete",
+    );
+    expect(
+      eventSummary(event({ kind: "note", payload: { text: "attempt 3", code: "attempt", trigger: "commands_accepted", attempt: 3, previous: { ...previous, code: "commands_off" } } })),
+    ).toBe(
+      "Attempt 3, started because the server now accepts AI commands. The one before: AI commands are off on this server. Run the installer there with MF_ALLOW_COMMANDS=1 to allow them.",
+    );
+    expect(eventSummary(event({ kind: "note", payload: { text: "attempt 1", code: "attempt", trigger: "person", attempt: 1, previous: null } }))).toBe(
+      "Attempt 1, started by hand",
+    );
+    setActiveLocale("fr");
+    try {
+      expect(eventSummary(event({ kind: "note", payload: { code: "attempt", trigger: "person", attempt: 2, previous } }))).toBe(
+        "Tentative 2, lancée à la main. La précédente\u00a0: La commande ne s’est pas terminée",
+      );
+    } finally {
+      setActiveLocale("en");
+    }
+  });
+
   it("speaks French when that is the language", () => {
     setActiveLocale("fr");
     expect(eventSummary(event({ kind: "command_result", payload: { exit_code: 0, duration_ms: 1500 } }))).toBe(

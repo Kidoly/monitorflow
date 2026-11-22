@@ -26,6 +26,8 @@ import { RowMenu } from "@/components/ui/RowMenu";
 import { Banner, EmptyState, ErrorState } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
 import { formatDay } from "@/components/ui/time";
+import { Switch } from "@/components/ui/Switch";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import admin from "./AdminPages.module.css";
 import styles from "./Silences.module.css";
@@ -219,16 +221,15 @@ export function WindowForm({
       </label>
       <fieldset className={admin.fieldset}>
         <legend className={admin.legend}>{t("maintenance.form.cover")}</legend>
-        <div className={admin.radios}>
-          <label>
-            <input type="radio" name="cover" checked={draft.wholeSite} onChange={() => set("wholeSite", true)} />
-            {t("maintenance.form.wholeSite")}
-          </label>
-          <label>
-            <input type="radio" name="cover" checked={!draft.wholeSite} onChange={() => set("wholeSite", false)} />
-            {t("maintenance.form.someServers")}
-          </label>
-        </div>
+        <SegmentedControl
+          label={t("maintenance.form.cover")}
+          options={[
+            { value: "site", label: t("maintenance.form.wholeSite") },
+            { value: "servers", label: t("maintenance.form.someServers") },
+          ]}
+          value={draft.wholeSite ? "site" : "servers"}
+          onChange={(v) => set("wholeSite", v === "site")}
+        />
         {!draft.wholeSite && (
           <div className={styles.choices} role="group" aria-label={t("maintenance.form.servers")}>
             {servers.map((s) => (
@@ -292,16 +293,19 @@ export function WindowForm({
         <>
           <fieldset className={admin.fieldset}>
             <legend className={admin.legend}>{t("maintenance.form.monthBy")}</legend>
-            <div className={admin.radios}>
-              <label>
-                <input type="radio" name="monthBy" checked={!draft.byWeek} onChange={() => set("byWeek", false)} />
-                {t("maintenance.form.monthByDay")}
-              </label>
-              <label>
-                <input type="radio" name="monthBy" checked={draft.byWeek} onChange={() => setDraft((d) => ({ ...d, byWeek: true, weekdays: d.weekdays.slice(0, 1).length ? d.weekdays.slice(0, 1) : ["tuesday"] }))} />
-                {t("maintenance.form.monthByWeek")}
-              </label>
-            </div>
+            <SegmentedControl
+              label={t("maintenance.form.monthBy")}
+              options={[
+                { value: "day", label: t("maintenance.form.monthByDay") },
+                { value: "week", label: t("maintenance.form.monthByWeek") },
+              ]}
+              value={draft.byWeek ? "week" : "day"}
+              onChange={(v) =>
+                v === "day"
+                  ? set("byWeek", false)
+                  : setDraft((d) => ({ ...d, byWeek: true, weekdays: d.weekdays.slice(0, 1).length ? d.weekdays.slice(0, 1) : ["tuesday"] }))
+              }
+            />
           </fieldset>
           <div className={admin.formGrid}>
             {draft.byWeek ? (
@@ -337,10 +341,11 @@ export function WindowForm({
           <fieldset className={admin.fieldset}>
             <legend className={admin.legend}>{t("maintenance.form.months")}</legend>
             <div className={styles.choices}>
-              <label>
-                <input type="checkbox" checked={draft.months.length === 0} onChange={() => set("months", draft.months.length === 0 ? [new Date().getMonth() + 1] : [])} />
-                {t("maintenance.form.everyMonth")}
-              </label>
+              <Switch
+                checked={draft.months.length === 0}
+                onChange={(every) => set("months", every ? [] : [new Date().getMonth() + 1])}
+                label={t("maintenance.form.everyMonth")}
+              />
               {draft.months.length > 0 &&
                 MONTHS.map((m) => (
                   <label key={m}>

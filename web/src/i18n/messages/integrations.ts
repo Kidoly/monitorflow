@@ -43,6 +43,7 @@ export const en = {
   "note.customer": "Events of {customer} and all its sites. Nothing from other customers.",
   "note.everything": "Events of every customer and site.",
   title: "Integrations",
+  webhooksTitle: "Custom webhooks",
   what: "integrations",
   add: "Add integration",
   intro:
@@ -162,6 +163,7 @@ export const fr: Translation<typeof en> = {
   "note.customer": "Événements de {customer} et de tous ses sites. Rien des autres clients.",
   "note.everything": "Événements de tous les clients et sites.",
   title: "Intégrations",
+  webhooksTitle: "Webhooks personnalisés",
   what: "les intégrations",
   add: "Ajouter une intégration",
   intro:

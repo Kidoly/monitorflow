@@ -1,9 +1,10 @@
 /* Copied verbatim from docs/design/tokens.css; keep the two in sync. */
 :root{
-  --bg:#f7f7f8; --surface:#ffffff; --sidebar:#f2f2f4; --nav-active:#ffffff; --hl:#f0f0f3; --text:#0a0a0a; --muted:#62626b; --border:#e3e3e8; --border-strong:#c4c4cc;
-  --ok-bg:#dff3e6; --ok:#0b5c27; --bad-bg:#fde3e3; --bad:#9b1c1c; --warn-bg:#fff0c2; --warn:#6d4e00;
-  --neutral-bg:#ececef; --neutral:#43434a; --info-bg:#e3edff; --info:#1b3f8f;
-  --chart-grid:#e8e8ec; --threshold-warn:#b77f00; --threshold-crit:#d03b3b;
+  --bg:#eef0f3; --surface:#fbfbfc; --sidebar:#e7e9ed; --nav-active:#fbfbfc; --hl:#eceef2; --text:#16181d; --muted:#5a5d66; --border:#dadde3; --border-strong:#b9bdc6;
+  --ok-bg:#c9ead5; --ok:#0b5c27; --bad-bg:#f8cfcf; --bad:#8f1a1a; --warn-bg:#fbe19a; --warn:#5f4400;
+  --neutral-bg:#e0e2e7; --neutral:#3d3f46; --info-bg:#cfdfff; --info:#1a3c87;
+  --accent:#1f5fd1; --on-accent:#ffffff; --switch-off:#7a7d86;
+  --chart-grid:#e1e3e8; --threshold-warn:#b77f00; --threshold-crit:#d03b3b;
   --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a; --series-4:#eda100; --series-5:#e87ba4; --series-6:#008300; --series-7:#6250d6; --series-8:#e34948;
   --shadow-panel:0 1px 2px rgb(16 24 40 / .04), 0 1px 3px rgb(16 24 40 / .05); --shadow-nav:0 1px 2px rgb(16 24 40 / .06), 0 0 0 1px rgb(16 24 40 / .04);
   --shadow-menu:0 8px 24px rgb(16 24 40 / .12), 0 1px 3px rgb(16 24 40 / .06);
@@ -16,6 +17,7 @@
   --bg:#09090b; --surface:#121214; --sidebar:#0c0c0e; --nav-active:#1d1d21; --hl:#18181b; --text:#ededef; --muted:#a1a1aa; --border:#232327; --border-strong:#3a3a41;
   --ok-bg:#0f2e1c; --ok:#7ee2a0; --bad-bg:#3b1515; --bad:#ffa3a3; --warn-bg:#3a2a08; --warn:#ffd37a;
   --neutral-bg:#27272a; --neutral:#c9c9cf; --info-bg:#14264d; --info:#b9d0ff;
+  --accent:#7aa7ff; --on-accent:#09090b; --switch-off:#6b6b75;
   --chart-grid:#232327; --threshold-warn:#e0a21a; --threshold-crit:#ff6b6b;
   --shadow-panel:none; --shadow-nav:none; --shadow-menu:0 8px 24px rgb(0 0 0 / .5), 0 0 0 1px #2c2c31;
 }
@@ -23,6 +25,7 @@
   --bg:#09090b; --surface:#121214; --sidebar:#0c0c0e; --nav-active:#1d1d21; --hl:#18181b; --text:#ededef; --muted:#a1a1aa; --border:#232327; --border-strong:#3a3a41;
   --ok-bg:#0f2e1c; --ok:#7ee2a0; --bad-bg:#3b1515; --bad:#ffa3a3; --warn-bg:#3a2a08; --warn:#ffd37a;
   --neutral-bg:#27272a; --neutral:#c9c9cf; --info-bg:#14264d; --info:#b9d0ff;
+  --accent:#7aa7ff; --on-accent:#09090b; --switch-off:#6b6b75;
   --chart-grid:#232327; --threshold-warn:#e0a21a; --threshold-crit:#ff6b6b;
   --shadow-panel:none; --shadow-nav:none; --shadow-menu:0 8px 24px rgb(0 0 0 / .5), 0 0 0 1px #2c2c31;
 }}

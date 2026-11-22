@@ -435,8 +435,8 @@ pub struct AcknowledgeRequest {
     /// 1 to [`MAX_LIMIT`] incidents, like a group of a notification.
     pub incident_ids: Vec<Uuid>,
     /// What the user is doing about them, up to 500 characters, shown with
-    /// the acknowledgement (ADR-0130). Required when signed in; optional
-    /// for API keys, so older scripts keep working.
+    /// the acknowledgement (ADR-0130). Optional, for people and API keys
+    /// alike (ADR-0166).
     #[serde(default)]
     pub note: Option<String>,
 }
@@ -444,12 +444,11 @@ pub struct AcknowledgeRequest {
 /// Longest acknowledgement note, in characters.
 pub const MAX_NOTE: usize = 500;
 
-/// The note trimmed, `None` when blank, or why it is refused: a person
-/// signed in must say something, a script need not.
-pub fn acknowledgement_note(note: Option<&str>, required: bool) -> Result<Option<String>, String> {
+/// The note trimmed, `None` when blank or missing (ADR-0166), or why it
+/// is refused: too long.
+pub fn acknowledgement_note(note: Option<&str>) -> Result<Option<String>, String> {
     let note = note.map(str::trim).filter(|n| !n.is_empty());
     match note {
-        None if required => Err("Say what you are doing about it in the note.".into()),
         Some(n) if n.chars().count() > MAX_NOTE => {
             Err(format!("Keep the note under {MAX_NOTE} characters."))
         }
@@ -506,8 +505,7 @@ pub async fn acknowledge(
         authorize(&user, Some(*site), true)?;
     }
     // After the permissions, so a note never tells what an ID is.
-    let note = acknowledgement_note(request.note.as_deref(), user.api_key.is_none())
-        .map_err(ApiError::Invalid)?;
+    let note = acknowledgement_note(request.note.as_deref()).map_err(ApiError::Invalid)?;
     let mut tx = state.pool.begin().await?;
     let acknowledged = follow_up::acknowledge(
         &mut tx,
@@ -566,18 +564,16 @@ mod tests {
     }
 
     #[test]
-    fn a_person_says_what_they_do_a_script_need_not() {
+    fn a_note_is_trimmed_optional_and_short() {
         assert_eq!(
-            acknowledgement_note(Some("  swapping the disk "), true),
+            acknowledgement_note(Some("  swapping the disk ")),
             Ok(Some("swapping the disk".into()))
         );
-        assert!(acknowledgement_note(None, true).is_err());
-        assert!(acknowledgement_note(Some("   "), true).is_err());
-        assert_eq!(acknowledgement_note(None, false), Ok(None));
-        assert_eq!(acknowledgement_note(Some(" "), false), Ok(None));
+        assert_eq!(acknowledgement_note(None), Ok(None));
+        assert_eq!(acknowledgement_note(Some("   ")), Ok(None));
         let long = "x".repeat(MAX_NOTE + 1);
-        assert!(acknowledgement_note(Some(&long), false).is_err());
-        assert!(acknowledgement_note(Some(&long[1..]), true).is_ok());
+        assert!(acknowledgement_note(Some(&long)).is_err());
+        assert!(acknowledgement_note(Some(&long[1..])).is_ok());
     }
 
     #[test]

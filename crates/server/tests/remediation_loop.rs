@@ -31,6 +31,7 @@ use monitorflow_server::remediation::approval::{self, Verdict};
 use monitorflow_server::remediation::audit::{self, StoredEvent};
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::hook::{self, Change, ChangeHook};
+use monitorflow_server::remediation::runner::retry;
 use monitorflow_server::remediation::runner::{Remediation, Settings};
 use monitorflow_server::remediation::switch;
 use prost::Message;
@@ -697,6 +698,50 @@ fn real_provider(kind: AiProviderKind, base_url: String, model: &str) -> Arc<dyn
     }
     .provider()
     .unwrap()
+}
+
+/// The alert's remediations, oldest first, with their state.
+async fn attempts(h: &Harness) -> Vec<(Uuid, String)> {
+    sqlx::query_as(
+        "SELECT id, state FROM remediation_incidents WHERE alert_incident_id = $1
+         ORDER BY opened_at, id",
+    )
+    .bind(h.alert)
+    .fetch_all(&h.pool)
+    .await
+    .unwrap()
+}
+
+/// Waits for the alert's `n`th remediation to reach `state`.
+async fn wait_attempt(h: &Harness, n: usize, state: &str) -> Uuid {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let all = attempts(h).await;
+        if let Some((id, now)) = all.get(n - 1) {
+            if now == state {
+                return *id;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "attempt {n} not {state}: {all:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// What the server's agent reports for `shell` commands (ADR-0076).
+async fn report_shell(h: &Harness, word: &str) {
+    sqlx::query("UPDATE servers SET command_kinds = jsonb_build_object('shell', $1::text)")
+        .bind(word)
+        .execute(&h.pool)
+        .await
+        .unwrap();
+}
+
+/// Several polls of the loop of [`settings`].
+async fn some_polls() {
+    tokio::time::sleep(Duration::from_millis(600)).await;
 }
 
 async fn last_escalation(h: &Harness) -> String {
@@ -1420,6 +1465,100 @@ db_tests! {
             CommandOutcome::NotRun { reason: "rejected by an approver: not during business hours".into() }
         );
         assert_eq!(last_escalation(&h).await, "the AI escalated: a human must restart nginx");
+        h.close().await;
+    }
+
+    /// ADR-0165: the production case. The agent refused the command, the
+    /// alert stayed open; once the server accepts AI commands the loop
+    /// tries again, by itself, once per change, telling the AI how the
+    /// attempt before went.
+    #[sqlx::test]
+    async fn a_refused_remediation_runs_again_once_per_change_to_accepted(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let refusal = "shell commands are disabled on this agent (commands.shell)";
+        let h = Harness::start(&pool, &[("df -h /", Reply::Refuse(refusal))]).await;
+        let ai = Arc::new(MockProvider::new([
+            Step::run("full", "df -h /", "usage"),
+            Step::run("full", "df -h /", "usage"),
+            Step::run("full", "df -h /", "usage"),
+        ]));
+        let running = h.remediation(&ai, settings());
+        let first = wait_attempt(&h, 1, "escalated").await;
+        some_polls().await;
+        assert_eq!(attempts(&h).await.len(), 1, "nothing changed yet");
+
+        report_shell(&h, "accepted").await;
+        let second = wait_attempt(&h, 2, "escalated").await;
+        let events = audit::events(&pool, second).await.unwrap();
+        let note = &events[0];
+        assert_eq!((kind_of(note).as_str(), note.actor_kind.as_str()), ("note", "system"));
+        assert_eq!(note.payload["code"], "attempt");
+        assert_eq!(note.payload["trigger"], "commands_accepted");
+        assert_eq!(note.payload["attempt"], 2);
+        assert_eq!(note.payload["previous"]["id"], first.to_string());
+        assert_eq!(note.payload["previous"]["code"], "incomplete");
+        let context = of_kind(&events, "context_sent")[0]["context"]["rendered"].as_str().unwrap().to_owned();
+        assert!(context.contains("=== BEGIN DATA earlier_attempts"), "{context}");
+        assert!(context.contains(&format!("did not complete: {refusal}")), "{context}");
+        assert!(audit::verify(&pool, second).await.unwrap().valid);
+
+        // Refused again, while the report still says accepted: no loop.
+        some_polls().await;
+        assert_eq!(attempts(&h).await.len(), 2);
+
+        // A new change is a new chance.
+        report_shell(&h, "off").await;
+        some_polls().await;
+        assert_eq!(attempts(&h).await.len(), 2);
+        report_shell(&h, "accepted").await;
+        wait_attempt(&h, 3, "escalated").await;
+        some_polls().await;
+        running.stop().await;
+        assert_eq!(attempts(&h).await.len(), 3);
+        assert_eq!(ai.requests().len(), 3);
+        h.close().await;
+    }
+
+    /// Only a refusal earns an attempt of its own, and never next to one
+    /// in progress.
+    #[sqlx::test]
+    async fn no_attempt_starts_next_to_one_in_progress_or_after_another_end(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let refusal = "shell commands are disabled on this agent (commands.shell)";
+        let h = Harness::start(&pool, &[("df -h /", Reply::Refuse(refusal))]).await;
+        let ai = Arc::new(MockProvider::new([
+            Step::run("full", "df -h /", "usage"),
+            Step::run("full", "apt-get autoremove -y", "free space"),
+        ]));
+        let running = h.remediation(&ai, settings());
+        wait_attempt(&h, 1, "escalated").await;
+        // A person starts the next one, which waits for approval.
+        let mut tx = pool.begin().await.unwrap();
+        let attempt = retry::Attempt {
+            trigger: retry::Trigger::Person(Uuid::new_v4()),
+            after: None,
+            max_commands: 5,
+            max_duration: Duration::from_secs(600),
+        };
+        retry::open(&mut tx, h.alert, attempt).await.unwrap();
+        tx.commit().await.unwrap();
+        wait_attempt(&h, 2, "awaiting_approval").await;
+        report_shell(&h, "accepted").await;
+        some_polls().await;
+        assert_eq!(attempts(&h).await.len(), 2);
+        // Another can neither open beside it.
+        let mut tx = pool.begin().await.unwrap();
+        let blocked = retry::open(&mut tx, h.alert, attempt).await.unwrap_err();
+        assert!(matches!(blocked, retry::RetryError::Blocked(retry::Blocked::InProgress)), "{blocked:?}");
+        drop(tx);
+        // Resolved by the alert: nothing more either.
+        h.resolve_alert().await;
+        wait_attempt(&h, 2, "resolved").await;
+        report_shell(&h, "off").await;
+        report_shell(&h, "accepted").await;
+        some_polls().await;
+        running.stop().await;
+        assert_eq!(attempts(&h).await.len(), 2);
         h.close().await;
     }
 }

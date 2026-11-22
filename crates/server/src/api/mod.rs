@@ -125,6 +125,7 @@
 //! | PUT, DELETE | `/api/report-schedules/{id}` | the same | the same body; [`report_schedules::ScheduleView`], 204; audited |
 //! | POST | `/api/report-schedules/{id}/send` | the same | [`report_schedules::SentView`]: the latest period sent now; audited as `report.sent` |
 //! | GET | `/api/availability/report` | any role | the same and `format` (`csv` or `pdf`), `language`, `time_zone`; the report as a file |
+//! | GET | `/api/availability/uptime` | any role | `customer_id`, `at`, `time_zone`; [`crate::availability::uptime::Uptime`]: 24 h, 7, 30 and 90 days and 90 daily bars (ADR-0172) |
 //! | GET | `/api/dependencies` | any role | `server_id` or `relay_id`; [`dependencies::DependencyList`]: what is behind what (ADR-0152) |
 //! | POST | `/api/dependencies` | modify every end's site | body [`dependencies::DependencyRequest`]: children behind one parent, all or none; 201 [`dependencies::DependencyList`]; 409 on a loop or a duplicate; audited |
 //! | DELETE | `/api/dependencies/{id}` | modify both ends' sites | 204; audited |
@@ -173,6 +174,8 @@
 //! | POST | `/api/remediation/approvals/{id}/approve` | approver, see below | body `{"command"?}`; 200 [`approvals::DecisionView`]; 409 once decided, past the deadline, or when the server refuses these commands (ADR-0076) |
 //! | POST | `/api/remediation/approvals/{id}/reject` | approver | body `{"reason"}`; 200 [`approvals::DecisionView`]; 409 as for approve |
 //! | GET | `/api/remediation/events` | any role | [`remediation_events::EventList`], see below |
+//! | GET | `/api/remediation/alerts/{id}` | read | [`remediation_runs::RunStatus`]: the alert's attempts and whether the user may start one now (ADR-0165) |
+//! | POST | `/api/remediation/alerts/{id}/run` | approver | 201 [`remediation_runs::RunStarted`]: a new remediation of the open alert; 409 when the alert is resolved or has no agent, one is in progress, AI is off, or the server refuses AI commands |
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
 //! | GET | `/api/servers/{id}/thresholds` | read | [`thresholds::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
@@ -275,6 +278,20 @@
 //! | POST | `/api/integrations/{id}/test` | administrator of what it covers | sends a `test` event now; 200 [`integrations::TestResult`] `{"ok", "status", "error"}` |
 //! | GET | `/api/integrations/{id}/deliveries` | administrator of what it covers | `?before=`; [`integrations::DeliveryList`], newest first |
 //! | POST | `/api/integrations/{id}/replay` | administrator of what it covers | body [`integrations::ReplayRequest`], `event_id` or `from` and `to`; 200 [`integrations::ReplayResult`]; 404 for an event it does not want or cover; audited |
+//! | GET | `/api/psa/connection` | global administrator | [`psa::ConnectionState`]: the PSA connection without its secret, or `null` (ADR-0164, ADR-0166) |
+//! | PUT | `/api/psa/connection` | global administrator | body [`psa::ConnectionRequest`]; sets it up or changes it, an empty secret keeps the stored one for the same address; 200 [`psa::ConnectionView`]; audited |
+//! | DELETE | `/api/psa/connection` | global administrator | 204, 404 when none; audited |
+//! | POST | `/api/psa/connection/test` | global administrator | body [`psa::ConnectionRequest`], absent values from the stored connection; signs in and reads the agent, read-only; 200 [`psa::TestResult`] |
+//! | GET | `/api/psa/clients` | global administrator | `?search=`; [`psa::RecordList`]: the PSA's active clients, read through the connection; 409 without a connection, 502 `psa_unavailable` with the PSA's words |
+//! | GET | `/api/psa/clients/{id}/sites` | global administrator | [`psa::RecordList`]: that client's sites |
+//! | GET | `/api/psa/site-links` | global administrator | [`psa::SiteLinkList`]: every site with the PSA client and site it is matched to |
+//! | PUT | `/api/psa/site-links/{site_id}` | global administrator | body [`psa::SiteLinkRequest`]; checked with the PSA; 200 [`psa::SiteLink`]; audited |
+//! | DELETE | `/api/psa/site-links/{site_id}` | global administrator | 204, 404 when not matched; audited |
+//! | GET | `/api/psa/ticket-types` | global administrator | [`psa::RecordList`]: the PSA's ticket types for tickets |
+//! | GET | `/api/psa/categories` | global administrator | [`psa::CategoryList`]: the PSA's first-level categories |
+//! | GET | `/api/psa/statuses` | global administrator | [`psa::RecordList`]: the PSA's ticket statuses |
+//! | PUT | `/api/psa/ticket-settings` | global administrator | body [`psa::TicketSettingsRequest`], checked against the PSA's lists; 200 [`psa::ConnectionView`]; audited |
+//! | GET | `/api/psa/tickets` | global administrator | [`psa::TicketList`]: the latest tickets opened for incidents, closed, skipped or refused |
 //!
 //! # Authentication
 //!
@@ -473,7 +490,10 @@
 //!
 //! # Remediation incidents
 //!
-//! Read-only: the AI remediation loop owns them (ADR-0042).
+//! Read-only: the AI remediation loop owns them (ADR-0042), except that
+//! an approver may open a new attempt on an open alert with
+//! `POST /api/remediation/alerts/{id}/run` (ADR-0165). An alert can have
+//! several, one per attempt, the latest first.
 //! `GET /api/remediation/incidents` takes optional `state` (`open`,
 //! `running`, `awaiting_approval`, `resolved`, `escalated`, `failed`),
 //! `customer_id`, `site_id`, `server_id`, `alert_incident_id`, `limit` (1
@@ -770,6 +790,7 @@ mod openapi_imports;
 mod openapi_maintenance;
 mod openapi_network_scans;
 mod openapi_plugins;
+mod openapi_psa;
 pub mod openapi_remediation;
 mod openapi_reports;
 mod openapi_settings;
@@ -785,6 +806,7 @@ pub mod password;
 pub mod plugins;
 pub mod preferences;
 pub mod proxmox;
+pub mod psa;
 pub mod public_address;
 pub mod recommendations;
 pub mod relays;
@@ -792,6 +814,7 @@ pub mod release_import;
 pub mod remediation;
 pub mod remediation_events;
 pub mod remediation_incidents;
+pub mod remediation_runs;
 pub mod report_schedules;
 pub mod revoke;
 pub mod roles;
@@ -881,6 +904,8 @@ pub struct ApiSettings {
     pub web_url: String,
     /// `[ai]`, which wins over the settings of the web interface (ADR-0064).
     pub ai: ai::AiSettings,
+    /// `[remediation]`: the limits of an attempt a person starts (ADR-0165).
+    pub remediation: monitorflow_common::config::RemediationConfig,
     /// The public keys license keys are checked with (ADR-0100): the
     /// built-in ones, or a throwaway key in tests.
     #[cfg(feature = "enterprise")]
@@ -902,6 +927,7 @@ impl ApiSettings {
             auto_update_enabled: config.auto_update.enabled,
             web_url: config.web_base_url(),
             ai: ai::AiSettings::from_config(config),
+            remediation: config.remediation.clone(),
             #[cfg(feature = "enterprise")]
             license_keys: crate::edition::Verifier::built_in(),
             proxmox_enabled: config.proxmox.enabled,
@@ -1164,6 +1190,7 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/availability", get(availability::get))
         .route("/api/availability/report", get(availability::file))
+        .route("/api/availability/uptime", get(availability::uptime))
         .route(
             "/api/report-schedules",
             get(report_schedules::list).post(report_schedules::create),
@@ -1321,6 +1348,14 @@ pub fn router(state: ApiState) -> Router {
             post(approvals::reject),
         )
         .route("/api/remediation/events", get(remediation_events::list))
+        .route(
+            "/api/remediation/alerts/{id}",
+            get(remediation_runs::status),
+        )
+        .route(
+            "/api/remediation/alerts/{id}/run",
+            post(remediation_runs::run),
+        )
         .route("/api/devices", post(devices::create))
         .route("/api/devices/templates", get(devices::templates))
         .route("/api/devices/detect", post(devices::detect))
@@ -1619,6 +1654,25 @@ pub fn router(state: ApiState) -> Router {
             get(integrations::deliveries),
         )
         .route("/api/integrations/{id}/replay", post(integrations::replay))
+        .route(
+            "/api/psa/connection",
+            get(psa::get_connection)
+                .put(psa::put_connection)
+                .delete(psa::delete_connection),
+        )
+        .route("/api/psa/connection/test", post(psa::test_connection))
+        .route("/api/psa/clients", get(psa::clients))
+        .route("/api/psa/clients/{id}/sites", get(psa::client_sites))
+        .route("/api/psa/site-links", get(psa::site_links))
+        .route("/api/psa/ticket-types", get(psa::ticket_types))
+        .route("/api/psa/categories", get(psa::categories))
+        .route("/api/psa/statuses", get(psa::statuses))
+        .route("/api/psa/ticket-settings", put(psa::put_ticket_settings))
+        .route("/api/psa/tickets", get(psa::tickets))
+        .route(
+            "/api/psa/site-links/{site_id}",
+            put(psa::put_site_link).delete(psa::delete_site_link),
+        )
         .route(
             "/api/servers/{id}/proxmox",
             get(proxmox::get).put(proxmox::set).delete(proxmox::clear),

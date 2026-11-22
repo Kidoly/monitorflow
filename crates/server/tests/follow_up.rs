@@ -498,9 +498,16 @@ db_tests! {
         assert_eq!(detail["follow_up"]["state"], "waiting");
         assert_eq!(detail["follow_up"]["next"], json!(["boss"]));
         assert_eq!(detail["follow_up"]["policy"], "default");
-        // Signed in, a note is required (ADR-0130).
-        let (status, _) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(ask)).await;
+        // A note is optional (ADR-0166), but not a long one.
+        let long = json!({ "incident_ids": [incident], "note": "x".repeat(501) });
+        let (status, _) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(long)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        let other = disk(&pool, a.site, "db-2", "critical").await;
+        let bare = json!({ "incident_ids": [other] });
+        let (status, body) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(bare)).await;
+        assert_eq!((status, &body["acknowledged"]), (StatusCode::OK, &json!([other])));
+        let (_, detail) = call(&pool, "GET", &format!("/api/incidents/{other}"), Some(&cookie), None).await;
+        assert_eq!((&detail["acknowledged_by"], &detail["acknowledged_note"]), (&json!("alice"), &Value::Null));
         let ask = json!({ "incident_ids": [incident], "note": " replacing the disk " });
         let (status, body) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(ask.clone())).await;
         assert_eq!(status, StatusCode::OK);
@@ -637,6 +644,44 @@ db_tests! {
         resolve(&pool, incident).await;
         dispatcher.pass().await.unwrap();
         assert_eq!(inbox.who(), ["alice", "bob", "managers", "team"]);
+    }
+
+    #[sqlx::test]
+    async fn a_second_level_hears_only_what_the_first_did_not_acknowledge(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let a = place(&pool, "acme").await;
+        let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
+        let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
+        user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
+        let inbox = Inbox::start().await;
+        inbox.contact(&pool, alice, "alice").await;
+        inbox.contact(&pool, bob, "bob").await;
+        let cookie = login(&pool, "boss").await;
+        schedule(&pool, Coverage::Customer(a.customer), &[alice]).await;
+        let request = json!({
+            "name": "Second level", "customer_id": a.customer, "time_zone": "UTC",
+            "rotation": "weekly", "handoff_time": "09:00", "handoff_day": 1,
+            "members": [bob], "follow_up_only": true,
+        });
+        let (status, body) = call(&pool, "POST", "/api/on-call/schedules", Some(&cookie), Some(request)).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["follow_up_only"], true);
+        let second = body["id"].as_str().unwrap().to_owned();
+        let policy = json!({
+            "customer_id": a.customer,
+            "steps": [{ "after_minutes": 15, "on_call": [second] }],
+        });
+        let (status, view) = call(&pool, "PUT", "/api/follow-up/policies", Some(&cookie), Some(policy)).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+
+        let incident = disk(&pool, a.site, "db-1", "critical").await;
+        let dispatcher = dispatcher(&pool);
+        dispatcher.pass().await.unwrap();
+        assert_eq!(inbox.who(), ["alice"]);
+        due(&pool).await;
+        dispatcher.pass().await.unwrap();
+        assert_eq!(inbox.who(), ["bob"]);
+        assert_eq!(follow_up(&pool, incident).await.unwrap().2.as_deref(), Some("finished"));
     }
 
     #[sqlx::test]

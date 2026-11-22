@@ -318,6 +318,12 @@ async fn credentials_are_a_token_or_a_user_and_passhash() {
             ("passhash", "p"),
         ],
         &[("url", "https://prtg.example"), ("username", "u")],
+        // A proxy user without its password.
+        &[
+            ("url", "https://prtg.example"),
+            ("apitoken", "t"),
+            ("proxy_user", "u"),
+        ],
     ] {
         let error = Prtg.read(connect(pairs), &context).await.unwrap_err();
         assert!(matches!(error, ReadError::Input(_)), "{pairs:?}: {error}");
@@ -337,6 +343,12 @@ fn values_as_prtg_writes_them() {
     );
     assert_eq!(
         api::property("<prtg><result>(Property not found)</result></prtg>"),
+        None
+    );
+    // A channel without a lookup, as PRTG 24.3 answers: once read as a
+    // lookup named "not found", missing from every file.
+    assert_eq!(
+        api::property("<prtg><version>24.3.98.1210</version><result>Not found</result></prtg>"),
         None
     );
     assert_eq!(api::unescape("&#233;t&#xE9; &bogus; &"), "été &bogus; &");
@@ -447,4 +459,89 @@ async fn custom_snmp_sensors_with_their_lookup_files() {
     );
     // Hosts watched by SNMP only are devices.
     assert!(inv.hosts.iter().all(|h| h.agentless), "{:?}", inv.hosts);
+}
+
+/// What a real PRTG answers without a filter: every node of the tree in
+/// `probenodes`, devices and sensors under their probe.
+#[test]
+fn the_probe_table_keeps_children_of_the_root_only() {
+    let body = r#"{"prtg-version":"24.3","treesize":4,"probenodes":[
+        {"objid":0,"name":"Root","parentid":-1000,"status":3},
+        {"objid":1,"name":"Local Probe","parentid":0,"status":3},
+        {"objid":2001,"name":"Server","parentid":1,"status":3},
+        {"objid":3001,"name":"Ping","parentid":2001,"status":3},
+        {"objid":60,"name":"Older answer without parent","status":3}]}"#;
+    let ids: Vec<i64> = api::objects(body, Kind::Probe)
+        .unwrap()
+        .iter()
+        .map(|o| o.id)
+        .collect();
+    assert_eq!(ids, [1, 60]);
+}
+
+#[test]
+fn the_time_zone_comes_from_the_status() {
+    // 18:46:21 local when it is 17:46:21 UTC: one hour ahead.
+    let status = r#"{"Clock":"21/11/2026 18:46:21","jsClock":1795283181}"#;
+    let far = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap();
+    assert_eq!(
+        api::status_offset(status, far),
+        Some(chrono::Duration::hours(1))
+    );
+    // Without `jsClock`, against our clock.
+    let status = r#"{"Clock":"11/17/2026 1:00:00 PM"}"#;
+    assert_eq!(
+        api::status_offset(status, now()),
+        Some(chrono::Duration::hours(1))
+    );
+    assert_eq!(api::status_offset("<html>", now()), None);
+}
+
+/// Answers as [`Recorded`], but the status as `status` says.
+struct NoStatus(Recorded, fn() -> ReadError);
+
+#[async_trait::async_trait]
+impl Fetch for NoStatus {
+    async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<String, ReadError> {
+        if path == "/api/status.json" {
+            return Err((self.1)());
+        }
+        self.0.get(path, query).await
+    }
+}
+
+#[tokio::test]
+async fn a_missing_status_reads_windows_as_utc_but_a_refusal_stops() {
+    let recorded = || Recorded(serde_json::from_str(API).unwrap());
+    let missing = NoStatus(recorded(), || {
+        ReadError::Connect("https://prtg.example.com/api/status.json answered 404.".into())
+    });
+    let tree = api::read(Arc::new(missing), now()).await.unwrap();
+    assert!(tree.objects.iter().any(|o| o.kind == Kind::Probe));
+    let refused = NoStatus(recorded(), || ReadError::Refused("refused".into()));
+    let error = api::read(Arc::new(refused), now()).await.unwrap_err();
+    assert!(matches!(error, ReadError::Refused(_)), "{error}");
+}
+
+#[test]
+fn a_proxy_in_front_gets_basic_authentication() {
+    let connection = |pairs: &[(&str, &str)]| {
+        Connection(
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        )
+    };
+    let headers = super::proxy_auth(&connection(&[
+        ("proxy_user", "Aladdin"),
+        ("proxy_password", "open sesame"),
+    ]))
+    .unwrap();
+    let value = &headers[reqwest::header::AUTHORIZATION];
+    assert_eq!(value, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+    // Kept out of debug output.
+    assert!(value.is_sensitive());
+    assert!(super::proxy_auth(&connection(&[])).unwrap().is_empty());
+    assert!(super::proxy_auth(&connection(&[("proxy_password", "p")])).is_err());
 }

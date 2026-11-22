@@ -251,6 +251,21 @@ const ROUTES: [RegExp, Handler][] = [
       services: [], machines, checks: [], maintenance: [],
     };
   }],
+  // Uptime (ADR-0172): the same servers, up every day.
+  [/^\/api\/availability\/uptime$/, (_, q) => {
+    const today = new Date();
+    const days = Array.from({ length: 90 }, (_, i) => {
+      const date = new Date(today.getTime() - (89 - i) * 86_400_000).toISOString().slice(0, 10);
+      return { date, availability: 100, down_seconds: 0, maintenance_seconds: 0 };
+    });
+    const windows = { day: 100, week: 100, month: 100, quarter: 100 };
+    return {
+      at: today.toISOString(), time_zone: q.get("time_zone") ?? "UTC",
+      rows: SERVERS.map((s) => ({
+        kind: "server", id: s.id, name: s.hostname, check: null, site_name: s.site_name, windows, outages: 0, days,
+      })),
+    };
+  }],
   [/^\/api\/business-services$/, () => ({ services: [] })],
   [/^\/api\/silences$/, (_, q) => {
     const target = q.get("server_id") ?? q.get("relay_id") ?? q.get("site_id");
@@ -271,6 +286,18 @@ const ROUTES: [RegExp, Handler][] = [
     return { incidents: list.map(({ events, chain, site_name, customer_name, ...row }) => row), next_cursor: null };
   }],
   [/^\/api\/remediation\/incidents\/([^/]+)$/, ([id]) => found(REMEDIATIONS.find((r) => r.id === id))],
+  [/^\/api\/remediation\/alerts\/([^/]+)$/, ([id]) => {
+    const alert = found(INCIDENTS.find((i) => i.id === id));
+    const list = REMEDIATIONS.filter((r) => r.alert_incident_id === id);
+    const latest = list[0] ?? null;
+    const busy = latest !== null && !["resolved", "escalated", "failed"].includes(latest.state);
+    const blocked = alert.state !== "open" ? "alert_resolved" : busy ? "in_progress" : null;
+    // Offered, so the page shows "Run AI again"; starting it is refused like every change in the demo.
+    return {
+      alert_incident_id: id, attempts: list.length, latest_id: latest?.id ?? null, latest_state: latest?.state ?? null,
+      can_run: blocked === null, blocked, reason: null, refusal: null,
+    };
+  }],
   [/^\/api\/remediation\/events$/, (_, q) => {
     const events = AUDIT.filter(
       (e) =>

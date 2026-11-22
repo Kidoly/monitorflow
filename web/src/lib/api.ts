@@ -2378,6 +2378,38 @@ export interface RemediationIncidentList {
   next_cursor: string | null;
 }
 
+/** Why AI remediation cannot run on an alert now (ADR-0165). */
+export type RemediationRunBlocked =
+  | "alert_resolved"
+  | "no_agent"
+  | "in_progress"
+  | "ai_off"
+  | "commands_refused"
+  | "role"
+  | "changed";
+
+/** `GET /api/remediation/alerts/{id}`: an alert's attempts and whether the user may start one. */
+export interface RemediationRunStatus {
+  alert_incident_id: string;
+  attempts: number;
+  latest_id: string | null;
+  latest_state: RemediationState | null;
+  can_run: boolean;
+  blocked: RemediationRunBlocked | null;
+  /** `blocked` in English. */
+  reason: string | null;
+  /** With `commands_refused`: `commands_off`, `commands_off_windows`, `system_unsupported` or `agent_too_old`. */
+  refusal: string | null;
+}
+
+export interface RemediationRunStarted {
+  id: string;
+  alert_incident_id: string;
+  attempt: number;
+  previous_id: string | null;
+  state: RemediationState;
+}
+
 export type RemediationEventKind =
   | "context_sent"
   | "ai_proposal"
@@ -3513,6 +3545,104 @@ export interface IntegrationDeliveryList {
 /** One event by its ID, or every event from `from` to `to` (now when absent). */
 export type IntegrationReplay = { event_id: string } | { from: string; to?: string };
 
+/** The PSA connection of `GET /api/psa/connection` (ADR-0164, ADR-0166). Never its secret. */
+export interface PsaConnection {
+  kind: "halopsa";
+  base_url: string;
+  tenant: string | null;
+  client_id: string;
+  /** Why the saved secret does not open; null when it does. */
+  secret_error: string | null;
+  enabled: boolean;
+  /** The PSA agent the application acts as, from the last success. */
+  agent_name: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  created_at: string;
+  updated_at: string;
+  tickets: PsaTicketSettings;
+}
+
+/** What tickets the PSA connection opens and how it closes them (ADR-0166). */
+export interface PsaTicketSettings {
+  ticket_type_id: number | null;
+  ticket_type_name: string | null;
+  category: string | null;
+  min_severity: "warning" | "critical";
+  /** Null adds a note only. */
+  resolved_status_id: number | null;
+  resolved_status_name: string | null;
+}
+
+export interface PsaTicketSettingsRequest {
+  ticket_type_id: number | null;
+  category: string | null;
+  min_severity: "warning" | "critical";
+  resolved_status_id: number | null;
+}
+
+/** One incident's ticket in the PSA. */
+export interface PsaTicket {
+  incident_id: string;
+  ticket_id: number | null;
+  state: "creating" | "open" | "closed" | "skipped" | "failed";
+  error: string | null;
+  metric: string;
+  severity: string;
+  server_name: string | null;
+  site_name: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+export interface PsaConnectionState {
+  connection: PsaConnection | null;
+}
+
+/** Body of `PUT /api/psa/connection` and of its test; an empty secret keeps the saved one for the same address. */
+export interface PsaConnectionRequest {
+  base_url?: string;
+  tenant?: string | null;
+  client_id?: string;
+  client_secret?: string;
+  enabled?: boolean;
+}
+
+/** A client or site of the PSA, as its lists give it. */
+export interface PsaRecord {
+  id: number;
+  name: string;
+}
+
+export interface PsaRecordList {
+  records: PsaRecord[];
+}
+
+/** A MonitorFlow site and the PSA client and site it is matched to; nulls when not matched. */
+export interface PsaSiteLink {
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  client_id: number | null;
+  client_name: string | null;
+  psa_site_id: number | null;
+  psa_site_name: string | null;
+  linked_at: string | null;
+}
+
+export interface PsaSiteLinkList {
+  sites: PsaSiteLink[];
+}
+
+export interface PsaConnectionTest {
+  ok: boolean;
+  agent_name: string | null;
+  error: string | null;
+}
+
 /** A channel run by a plugin (ADR-0103); its secret settings never come back. */
 export interface PluginChannelSettings {
   plugin: string;
@@ -3622,6 +3752,8 @@ export type OnCallProblem = "nobody" | "removed" | "disabled" | "no_access" | "n
 
 /** One period with one person on call. */
 export interface OnCallTurn {
+  /** The place in the turn, 0 for the first person (ADR-0170). */
+  seat: number;
   starts_at: string;
   ends_at: string;
   /** Null for a removed user's turn or a schedule without people. */
@@ -3635,6 +3767,8 @@ export interface OnCallTurn {
 export interface OnCallOverride {
   id: string;
   user_id: string;
+  /** The place of the turn it covers. */
+  seat: number;
   username: string | null;
   starts_at: string;
   ends_at: string;
@@ -3657,9 +3791,17 @@ export interface OnCallSchedule {
   /** 1 for Monday to 7 for Sunday; null when daily. */
   handoff_day: number | null;
   members: { user_id: string | null; username: string | null; problem: OnCallProblem | null }[];
+  /** How many people are on call at once, 1 to 5. */
+  people_per_turn: number;
+  /** Told only when a follow-up step names it (ADR-0171). */
+  follow_up_only: boolean;
   overrides: OnCallOverride[];
   now: OnCallTurn | null;
   next: OnCallTurn | null;
+  /** Everyone on call now, one per place. */
+  now_all: OnCallTurn[];
+  /** Who takes each place next. */
+  next_all: OnCallTurn[];
   /** From now to four weeks ahead. */
   turns: OnCallTurn[];
   /** Who is told during a gap; empty when nobody can be. Empty too for members who do not manage it. */
@@ -3679,6 +3821,10 @@ export interface OnCallScheduleRequest {
   handoff_day: number | null;
   /** In order of their turns. */
   members: string[];
+  /** 1 to 5, at most the number of members. */
+  people_per_turn: number;
+  /** Told only when a follow-up step names it. */
+  follow_up_only: boolean;
 }
 
 /** Someone the user may put on a schedule. */
@@ -3920,6 +4066,37 @@ export interface ReportSent {
   recipients: string[];
 }
 
+/** One day of uptime (ADR-0172). */
+export interface UptimeDay {
+  /** Local date, "2026-11-22". */
+  date: string;
+  /** Percent; null when nothing was counted. */
+  availability: number | null;
+  down_seconds: number;
+  maintenance_seconds: number;
+}
+
+/** One service, server, device or check with its windows and daily bars. */
+export interface UptimeRow {
+  kind: "service" | "server" | "device" | "check";
+  id: string;
+  name: string;
+  check: string | null;
+  site_name: string | null;
+  /** Percent over the last 24 hours, 7, 30 and 90 days; null when not measured. */
+  windows: { day: number | null; week: number | null; month: number | null; quarter: number | null };
+  outages: number;
+  /** 90 days, the oldest first, today so far last. */
+  days: UptimeDay[];
+}
+
+/** `GET /api/availability/uptime`. */
+export interface Uptime {
+  at: string;
+  time_zone: string;
+  rows: UptimeRow[];
+}
+
 /** The query of an availability report: a period and, for an MSP, a customer. */
 export interface AvailabilityQuery {
   from: string;
@@ -4016,6 +4193,9 @@ export function isUnauthorized(error: unknown): boolean {
 export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
+
+/** The attempts of AI remediation an incident's page lists. */
+export const MAX_ATTEMPTS_SHOWN = 20;
 
 /** A short English sentence for showing `error` to the user. */
 export function describeError(error: unknown): string {
@@ -4346,6 +4526,13 @@ export const api = {
   availability: (query: AvailabilityQuery, signal?: AbortSignal) =>
     request<AvailabilityReport>(`/api/availability?${availabilityQuery(query)}`, { signal }),
 
+  /** The last 24 hours, 7, 30 and 90 days and 90 daily bars, days cut in `time_zone` (ADR-0172). */
+  uptime: (query: { customer_id?: string | null; time_zone: string }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ time_zone: query.time_zone });
+    if (query.customer_id) params.set("customer_id", query.customer_id);
+    return request<Uptime>(`/api/availability/uptime?${params.toString()}`, { signal });
+  },
+
   /** Business services of the customers the user is granted as a whole. */
   businessServices: (signal?: AbortSignal) => request<{ services: BusinessService[] }>("/api/business-services", { signal }),
 
@@ -4494,7 +4681,7 @@ export const api = {
     request<void>(`/api/on-call/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Puts `user_id` on call instead of the rotation for a while. */
-  addOnCallOverride: (id: string, body: { user_id: string; starts_at?: string; ends_at: string }) =>
+  addOnCallOverride: (id: string, body: { user_id: string; seat?: number; starts_at?: string; ends_at: string }) =>
     request<OnCallSchedule>(`/api/on-call/schedules/${encodeURIComponent(id)}/overrides`, { method: "POST", body }),
 
   deleteOnCallOverride: (id: string) => request<void>(`/api/on-call/overrides/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -4628,6 +4815,46 @@ export const api = {
 
   replayIntegration: (id: string, body: IntegrationReplay) =>
     request<{ queued: number }>(`/api/integrations/${encodeURIComponent(id)}/replay`, { method: "POST", body }),
+
+  /** The PSA connection, global administrators only (ADR-0164). */
+  psaConnection: (signal?: AbortSignal) => request<PsaConnectionState>("/api/psa/connection", { signal }),
+
+  savePsaConnection: (body: PsaConnectionRequest) =>
+    request<PsaConnection>("/api/psa/connection", { method: "PUT", body }),
+
+  deletePsaConnection: () => request<void>("/api/psa/connection", { method: "DELETE" }),
+
+  /** The PSA's active clients whose name holds `search`, read through the connection. */
+  psaClients: (search: string, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/clients?search=${encodeURIComponent(search)}`, { signal }),
+
+  psaClientSites: (client: number, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/clients/${client}/sites`, { signal }),
+
+  /** Every site with the PSA client and site it is matched to. */
+  psaSiteLinks: (signal?: AbortSignal) => request<PsaSiteLinkList>("/api/psa/site-links", { signal }),
+
+  linkPsaSite: (site: string, body: { client_id: number; psa_site_id: number | null }) =>
+    request<PsaSiteLink>(`/api/psa/site-links/${encodeURIComponent(site)}`, { method: "PUT", body }),
+
+  unlinkPsaSite: (site: string) =>
+    request<void>(`/api/psa/site-links/${encodeURIComponent(site)}`, { method: "DELETE" }),
+
+  psaTicketTypes: (signal?: AbortSignal) => request<PsaRecordList>("/api/psa/ticket-types", { signal }),
+
+  psaCategories: (signal?: AbortSignal) => request<{ categories: string[] }>("/api/psa/categories", { signal }),
+
+  psaStatuses: (signal?: AbortSignal) => request<PsaRecordList>("/api/psa/statuses", { signal }),
+
+  savePsaTicketSettings: (body: PsaTicketSettingsRequest) =>
+    request<PsaConnection>("/api/psa/ticket-settings", { method: "PUT", body }),
+
+  /** The latest tickets opened for incidents, closed, skipped or refused. */
+  psaTickets: (signal?: AbortSignal) => request<{ tickets: PsaTicket[] }>("/api/psa/tickets", { signal }),
+
+  /** Signs in to the PSA with the form's values, the saved ones filling the gaps; changes nothing there. */
+  testPsaConnection: (body: PsaConnectionRequest) =>
+    request<PsaConnectionTest>("/api/psa/connection/test", { method: "POST", body }),
 
   /** Install keys and hosts waiting for approval, of the customers the user administers (ADR-0073). */
   installKeys: (signal?: AbortSignal) =>
@@ -5251,12 +5478,22 @@ export const api = {
       signal,
     }),
 
-  /** The remediation incidents a threshold incident opened, newest first. */
+  /** The remediation incidents of a threshold incident, one per attempt, newest first. */
   remediationIncidents: (alertIncidentId: string, signal?: AbortSignal) =>
     request<RemediationIncidentList>(
-      `/api/remediation/incidents?alert_incident_id=${encodeURIComponent(alertIncidentId)}&limit=1`,
+      `/api/remediation/incidents?alert_incident_id=${encodeURIComponent(alertIncidentId)}&limit=${MAX_ATTEMPTS_SHOWN}`,
       { signal },
     ),
+
+  /** Whether the user may run AI remediation again on an alert, and why not (ADR-0165). */
+  remediationRunStatus: (alertIncidentId: string, signal?: AbortSignal) =>
+    request<RemediationRunStatus>(`/api/remediation/alerts/${encodeURIComponent(alertIncidentId)}`, { signal }),
+
+  /** Starts a new AI remediation of an open alert; 409 with the reason when it cannot. */
+  runRemediation: (alertIncidentId: string) =>
+    request<RemediationRunStarted>(`/api/remediation/alerts/${encodeURIComponent(alertIncidentId)}/run`, {
+      method: "POST",
+    }),
 
   /** Every command waiting for approval in the user's sites, nearest deadline first. */
   approvals: (signal?: AbortSignal) =>

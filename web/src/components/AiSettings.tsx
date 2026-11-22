@@ -19,10 +19,10 @@ import { type Acceptance, aiCommands } from "@/lib/commandKinds";
 import { administersEverything, useMe } from "@/lib/me";
 import { serverHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import styles from "./AdminPages.module.css";
 import { Button, fieldClass } from "./ui/Button";
-import { cx } from "./ui/cx";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 import { Label } from "./ui/StatusLabel";
@@ -285,14 +285,12 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
       <form className={styles.panel} onSubmit={submit} aria-label={t("ai.formLabel")}>
         <fieldset className={styles.fieldset}>
           <legend className={styles.legend}>{t("ai.which")}</legend>
-          <div className={cx(styles.radios, styles.radiosWrap)}>
-            {PROVIDERS.map((p) => (
-              <label key={p}>
-                <input type="radio" name="provider" checked={provider === p} onChange={() => choose(p)} />{" "}
-                {t(`ai.provider.${p}`)}
-              </label>
-            ))}
-          </div>
+          <SegmentedControl
+            label={t("ai.which")}
+            options={PROVIDERS.map((p) => ({ value: p, label: t(`ai.provider.${p}`) }))}
+            value={provider}
+            onChange={choose}
+          />
           <span className={styles.fieldNote}>{t(`ai.providerNote.${provider}`)}</span>
         </fieldset>
         {local && (

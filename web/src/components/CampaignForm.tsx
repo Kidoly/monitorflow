@@ -26,6 +26,8 @@ import {
 import { formatDuration } from "@/lib/format";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
+import { Switch } from "@/components/ui/Switch";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import own from "./Campaigns.module.css";
 import { Breadcrumb } from "./ui/Breadcrumb";
@@ -238,17 +240,12 @@ export function CampaignForm({ me }: { me: Me }) {
 
         <Fieldset legend={t("campaigns.form.update")}>
           {!agentUpdate && (
-            <div className={own.row} role="radiogroup" aria-label={t("campaigns.form.sources")}>
-              {SOURCES.map(([sources, label]) => (
-                <label key={sources} className={own.inline}>
-                  <input type="radio" name="sources" checked={draft.sources === sources} onChange={() =>
-                      set({ sources, ...(sources === "apps" && draft.update !== "agent" && { update: "all" as const }) })
-                    }
-                  />
-                  {t(label)}
-                </label>
-              ))}
-            </div>
+            <SegmentedControl
+              label={t("campaigns.form.sources")}
+              options={SOURCES.map(([value, label]) => ({ value, label: t(label) }))}
+              value={draft.sources}
+              onChange={(sources) => set({ sources, ...(sources === "apps" && draft.update !== "agent" && { update: "all" as const }) })}
+            />
           )}
           {!agentUpdate && draft.sources !== "os" && (
             <>
@@ -275,16 +272,14 @@ export function CampaignForm({ me }: { me: Me }) {
               </p>
             </>
           )}
-          <div className={own.row} role="radiogroup" aria-label={t("campaigns.form.updateKind")}>
-            {UPDATE_KINDS.filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
+          <SegmentedControl
+            label={t("campaigns.form.updateKind")}
+            options={UPDATE_KINDS.filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
               .filter(([kind]) => draft.sources !== "apps" || kind === "all" || kind === "agent")
-              .map(([kind, label]) => (
-                <label key={kind} className={own.inline}>
-                  <input type="radio" name="update" checked={draft.update === kind} onChange={() => set({ update: kind })} />
-                  {t(label)}
-                </label>
-              ))}
-          </div>
+              .map(([value, label]) => ({ value, label: t(label) }))}
+            value={draft.update}
+            onChange={(update) => set({ update })}
+          />
           {draft.update === "agent" && (
             <label className={own.fld}>
               {t("campaigns.form.agentVersion")}
@@ -311,10 +306,12 @@ export function CampaignForm({ me }: { me: Me }) {
           )}
           <div className={own.row}>
             {draft.update !== "agent" && (
-              <label className={own.inline}>
-                <input type="checkbox" checked={draft.allowReboot} onChange={(e) => set({ allowReboot: e.target.checked })} />
-                {t("campaigns.form.reboot")}
-              </label>
+              <Switch
+                rowClassName={own.inline}
+                checked={draft.allowReboot}
+                onChange={(allowReboot) => set({ allowReboot })}
+                label={t("campaigns.form.reboot")}
+              />
             )}
             <label className={own.fld}>
               {t("campaigns.form.ttl")}

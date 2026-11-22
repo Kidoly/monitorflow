@@ -1,0 +1,47 @@
+/* Grouped buttons in one bordered pill; wraps onto a second line on a narrow screen. */
+.group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.option {
+  min-height: calc(var(--control-h) - 6px);
+  padding: 4px 12px;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 2px);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+  text-align: center;
+  cursor: pointer;
+}
+
+.option:hover:not(:disabled):not([aria-checked="true"]) {
+  background: var(--hl);
+}
+
+.option[aria-checked="true"] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.option:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

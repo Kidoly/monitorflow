@@ -16,6 +16,7 @@ pub const SEALED: &[Column] = &[
     Column::SensorConfigs,
     Column::NetworkScans,
     Column::VmwareCredentials,
+    Column::PsaConnections,
 ];
 
 #[derive(Debug, thiserror::Error)]

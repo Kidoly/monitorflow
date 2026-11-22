@@ -55,7 +55,7 @@ describe("arrangedNavigation", () => {
 
   it("orders items within their section", () => {
     const sections = ids(as(null), { order: ["incidents", "fleet", "audit", "approvals"] });
-    expect(sections[0]).toEqual(["incidents", "dashboards", "fleet", "silences", "onCall", "reports"]);
+    expect(sections[0]).toEqual(["incidents", "dashboards", "fleet", "onCall", "reports"]);
     expect(sections[2]).toEqual(["audit", "approvals"]);
   });
 

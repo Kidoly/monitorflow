@@ -166,7 +166,7 @@ describe("ImportPage", () => {
       "GET /api/imports/r1": { status: 200, body: run() },
     });
     renderPage();
-    await userEvent.click(await screen.findByLabelText("Connect to its API"));
+    await userEvent.click(await screen.findByRole("radio", { name: "Connect to its API" }));
     const read = screen.getByRole("button", { name: "Read and preview" });
     expect(read).toBeDisabled();
     await userEvent.type(

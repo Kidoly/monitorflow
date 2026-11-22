@@ -25,15 +25,26 @@
   white-space: nowrap;
 }
 
-.tinted {
-  border-color: transparent;
+/* A plain count stands on the page like a field. */
+.item:not(.tinted) {
+  background: var(--surface);
 }
 
-/* Tinted counts carry their own colour; the border follows it. */
+/* A tinted count is framed in its own colour, so the tint reads at a glance
+   even on a pale screen. */
+.tinted {
+  border-color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
 .item:hover,
 .active {
   text-decoration: none;
   border-color: currentColor;
+}
+
+/* The state the fleet is filtered to: a thicker frame. */
+.active {
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 
 .count {

@@ -11,7 +11,6 @@ import { usePolledData } from "@/lib/usePolledData";
 import styles from "./AdminPages.module.css";
 import { ServerAddress } from "./TokensAdmin";
 import { Button, fieldClass } from "./ui/Button";
-import { cx } from "./ui/cx";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 
@@ -256,7 +255,7 @@ function MirrorSection({ settings, onSaved }: { settings: ServerSettings; onSave
             </>
           ) : (
             <input
-              className={cx(fieldClass, styles.mono)}
+              className={fieldClass}
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={mirror.default ?? "http://monitor.example.com:7480"}

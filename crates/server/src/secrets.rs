@@ -88,6 +88,8 @@ pub enum Column {
     NetworkScans,
     /// The password of a vCenter or ESXi host (ADR-0156).
     VmwareCredentials,
+    /// The PSA connection's client secret (ADR-0164).
+    PsaConnections,
 }
 
 impl Column {
@@ -105,6 +107,7 @@ impl Column {
             Self::SensorConfigs => "sensor_configs.secret",
             Self::NetworkScans => "network_scans.snmp_secret",
             Self::VmwareCredentials => "vmware_credentials.secret",
+            Self::PsaConnections => "psa_connections.client_secret",
         }
     }
 

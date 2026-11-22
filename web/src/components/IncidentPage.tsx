@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { rich, t } from "@/i18n";
 import {
@@ -11,6 +11,7 @@ import {
   type IncidentEvent,
   type MetricSeries,
   type RemediationIncident,
+  type RemediationRunStatus,
   type Incident,
   type ThresholdSnapshot,
   api,
@@ -23,7 +24,8 @@ import { formatSeconds } from "@/lib/format";
 import { followUpLine, listNames, minutesText } from "@/lib/followUp";
 import { INCIDENT_MARGINS, OFFLINE_AFTER_S, incidentTitle, incidentWindow, isOffline, resolvesWhen } from "@/lib/incidents";
 import { useMultiSite } from "@/lib/me";
-import { incidentLogsHref, incidentPeerHref, incidentsHref, sensorHref } from "@/lib/routes";
+import { closeReason } from "@/lib/remediation";
+import { auditHref, incidentLogsHref, incidentPeerHref, incidentsHref, sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue, seriesTitle } from "@/lib/sensors";
 import { describeRule, incidentValue, linesInMetricUnit } from "@/lib/rules";
@@ -62,23 +64,24 @@ interface Loaded {
   incident: IncidentDetail;
   /** Null for an offline incident, which has no metric to draw. */
   chart: Chart | null;
-  /** What the AI remediation loop did about it; null when nothing, or not readable. */
-  remediation: RemediationIncident | null;
+  /** What the AI remediation loop did about it, one remediation per attempt, newest first; empty when nothing, or not readable. */
+  attempts: RemediationIncident[];
+  /** Whether the user may run AI again on it (ADR-0165); null when not readable. */
+  run: RemediationRunStatus | null;
   margin: Margin;
 }
 
 async function loadIncident(id: string, margin: Margin, signal: AbortSignal): Promise<Loaded> {
-  const [incident, remediation] = await Promise.all([
+  const optional = (e: unknown) => {
+    if (isAbortError(e)) throw e;
+    return null;
+  };
+  const [incident, attempts, run] = await Promise.all([
     api.incident(id, signal),
-    api.remediationIncidents(id, signal).then(
-      (page) => page.incidents[0] ?? null,
-      (e: unknown) => {
-        if (isAbortError(e)) throw e;
-        return null;
-      },
-    ),
+    api.remediationIncidents(id, signal).then((page) => page.incidents, (e: unknown) => optional(e) ?? []),
+    api.remediationRunStatus(id, signal).catch(optional),
   ]);
-  if (isOffline(incident) || !incident.server_id) return { incident, chart: null, remediation, margin };
+  if (isOffline(incident) || !incident.server_id) return { incident, chart: null, attempts, run, margin };
   const window = incidentWindow(incident.opened_at, incident.resolved_at, new Date(), margin.seconds);
   let chart: Chart;
   try {
@@ -99,7 +102,7 @@ async function loadIncident(id: string, margin: Margin, signal: AbortSignal): Pr
     if (isAbortError(e)) throw e;
     chart = { ...window, error: metricsError(e) };
   }
-  return { incident, chart, remediation, margin };
+  return { incident, chart, attempts, run, margin };
 }
 
 const minutes = (iso: string) => formatClock(new Date(iso)).slice(0, 5);
@@ -147,7 +150,7 @@ export function IncidentPage({ id }: { id: string | null }) {
     );
   }
 
-  const { chart, remediation } = data;
+  const { chart, attempts, run } = data;
   const now = updatedAt;
   const open = incident.state === "open";
   const format = (v: number) => formatSensorValue(incident.metric, v);
@@ -302,7 +305,9 @@ export function IncidentPage({ id }: { id: string | null }) {
           </TableBox>
         )}
       </div>
-      {remediation && <Remediation remediation={remediation} />}
+      {(attempts.length > 0 || (open && run?.can_run)) && (
+        <Remediation attempts={attempts} run={open ? run : null} alertId={incident.id} onStarted={refresh} />
+      )}
     </Page>
   );
 }
@@ -506,16 +511,106 @@ function Timeline({ events, format, now }: { events: IncidentEvent[]; format: (v
   return <DataTable bare dense label={t("incidents.timeline")} columns={columns} rows={events} rowKey={(e) => String(e.id)} pageSize={100} />;
 }
 
-/** One line on what the AI remediation loop did; its decisions are made elsewhere. */
-function Remediation({ remediation }: { remediation: RemediationIncident }) {
+/**
+ * What the AI remediation loop did: one line for the latest attempt, one
+ * per earlier attempt, and "Run AI again" on an open alert (ADR-0165). Its
+ * decisions are made elsewhere.
+ */
+function Remediation({
+  attempts,
+  run,
+  alertId,
+  onStarted,
+}: {
+  /** Newest first. */
+  attempts: RemediationIncident[];
+  /** Null on a resolved alert, or when not readable. */
+  run: RemediationRunStatus | null;
+  alertId: string;
+  onStarted: () => void;
+}) {
+  const [latest, ...earlier] = attempts;
+  const total = Math.max(run?.attempts ?? 0, attempts.length);
+  const when = (iso: string) => `${formatShortDate(new Date(iso))} ${minutes(iso)}`;
   return (
     <div className={styles.remediation}>
-      <strong>{t("incidents.ai.title")}</strong>
-      <StatusLabel kind="remediation" value={remediation.state} />
-      <span>
-        {t("incidents.ai.events", { count: remediation.event_count, time: minutes(remediation.opened_at) })}
-        {remediation.closed_at && t("incidents.ai.closed", { time: minutes(remediation.closed_at) })}
-      </span>
+      <div className={styles.remediationLine}>
+        <strong>{t("incidents.ai.title")}</strong>
+        {latest && <StatusLabel kind="remediation" value={latest.state} />}
+        {latest && (
+          <span>
+            {total > 1 && t("incidents.ai.attempt", { number: total })}
+            {t("incidents.ai.events", { count: latest.event_count, time: minutes(latest.opened_at) })}
+            {latest.closed_at && t("incidents.ai.closed", { time: minutes(latest.closed_at) })}
+          </span>
+        )}
+      </div>
+      {earlier.length > 0 && (
+        <ul className={styles.remediationEarlier} aria-label={t("incidents.ai.earlier")}>
+          {earlier.map((attempt, i) => (
+            <li key={attempt.id}>
+              <Link href={auditHref({ incident: attempt.id })}>
+                {t("incidents.ai.earlierLine", {
+                  number: total - 1 - i,
+                  state: t(`remediation.state.${attempt.state}`),
+                  time: when(attempt.opened_at),
+                })}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      {run && <RunAgain run={run} alertId={alertId} onStarted={onStarted} />}
+    </div>
+  );
+}
+
+/** Why AI cannot run again now, for the reasons a person can act on; null for the others. */
+export function runBlockedText(run: RemediationRunStatus): string | null {
+  switch (run.blocked) {
+    case "ai_off":
+      return t("incidents.ai.blocked.aiOff");
+    case "no_agent":
+      return t("incidents.ai.blocked.noAgent");
+    case "commands_refused":
+      return t("incidents.ai.blocked.refused", { reason: closeReason({ code: run.refusal }, run.reason ?? "") });
+    default:
+      return null;
+  }
+}
+
+/** "Run AI again", or why it cannot run, said before anyone clicks. */
+function RunAgain({ run, alertId, onStarted }: { run: RemediationRunStatus; alertId: string; onStarted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const why = runBlockedText(run);
+  // In progress, or not the user's to start: the line above says enough.
+  if (!run.can_run && !why) return null;
+
+  async function start() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.runRemediation(alertId);
+      onStarted();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={styles.remediationLine}>
+      <Button size="small" disabled={!run.can_run || busy} onClick={() => void start()}>
+        {busy ? t("incidents.ai.starting") : run.attempts > 0 ? t("incidents.ai.runAgain") : t("incidents.ai.run")}
+      </Button>
+      {why && <span>{why}</span>}
+      {error && (
+        <span role="alert" className={styles.remediationError}>
+          {error}
+        </span>
+      )}
     </div>
   );
 }

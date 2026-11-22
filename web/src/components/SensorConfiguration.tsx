@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { t } from "@/i18n";
 import {
@@ -47,6 +47,7 @@ import { cx } from "@/components/ui/cx";
 import { type Fact, FactsBox } from "@/components/ui/FactsBox";
 import { missingText } from "@/components/ui/Missing";
 import { Label } from "@/components/ui/StatusLabel";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import admin from "./AdminPages.module.css";
 import styles from "./SensorConfiguration.module.css";
@@ -388,7 +389,6 @@ function RuleEditor({
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const siteServers = useSiteServerCount(place.siteId);
-  const id = useId();
   // What the alert judges (ADR-0153): the plain threshold keeps its form.
   const [kind, setKind] = useState<RuleKind>("value");
   const ofKind = (k: RuleKind) => richer.find((r) => kindOf(r) === k);
@@ -539,24 +539,25 @@ function RuleEditor({
       <SlowNote durationS={Math.max(0, Number(form.minutes) || 0) * 60} intervalS={intervalMs / 1000} />
       <fieldset className={styles.applyTo}>
         <legend>{t("sensors.edit.applyTo")}</legend>
-        {choices.map((choice) => (
-          <label key={choice.value}>
-            <input
-              type="radio"
-              name={`${id}-apply`}
-              value={choice.value}
-              checked={applyTo === choice.value}
-              onChange={() => setApplyTo(choice.value)}
-            />{" "}
-            {choice.label}
-            {(choice.value !== "site" || siteServers !== null) && (
-              <span className={admin.dim}>
-                {" · "}
-                {t("sensors.apply.count", { count: choice.value === "site" ? siteServers! : 1 })}
-              </span>
-            )}
-          </label>
-        ))}
+        <SegmentedControl
+          label={t("sensors.edit.applyTo")}
+          options={choices.map((choice) => ({
+            value: choice.value,
+            label: (
+              <>
+                {choice.label}
+                {(choice.value !== "site" || siteServers !== null) && (
+                  <span className={styles.count}>
+                    {" · "}
+                    {t("sensors.apply.count", { count: choice.value === "site" ? siteServers! : 1 })}
+                  </span>
+                )}
+              </>
+            ),
+          }))}
+          value={applyTo}
+          onChange={setApplyTo}
+        />
         {applyTo === "site" && hasOwn && (
           <span className={admin.fieldNote}>{t("sensors.edit.keepsOwn")}</span>
         )}

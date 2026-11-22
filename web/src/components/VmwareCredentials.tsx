@@ -12,6 +12,7 @@ import {
   describeError,
 } from "@/lib/api";
 import { Button, fieldClass } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 
 import styles from "./AdminPages.module.css";
 
@@ -170,14 +171,11 @@ export function VmwareTest({
                   <code>{certificate.fingerprint}</code>
                 </p>
                 <p>{t("virtualization.vmware.certificateUntrusted")}</p>
-                <label className={styles.check}>
-                  <input
-                    type="checkbox"
-                    checked={pinned}
-                    onChange={(e) => onTrust(e.target.checked ? certificate.fingerprint : null)}
-                  />{" "}
-                  {t("virtualization.vmware.trust")}
-                </label>
+                <Switch
+                  checked={pinned}
+                  onChange={(on) => onTrust(on ? certificate.fingerprint : null)}
+                  label={t("virtualization.vmware.trust")}
+                />
               </>
             ))}
           {tested.login === true && (
