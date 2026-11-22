@@ -36,7 +36,7 @@ export interface SilenceTarget {
  * The way to silence a form's values: reason, an optional start, an end.
  * `onSubmit` rejecting keeps the form open with the error.
  */
-function SilenceForm({
+export function SilenceForm({
   submitLabel,
   onSubmit,
   onCancel,

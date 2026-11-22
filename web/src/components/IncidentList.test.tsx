@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setActiveLocale } from "@/i18n/locale";
 import { NO_FILTERS } from "@/lib/incidents";
-import { As, oneSite, viewer } from "@/test/admin";
+import { As, me, oneSite, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { SERVER_ID, SITE_ID, incident } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
@@ -265,6 +265,71 @@ describe("IncidentList", () => {
     expect(screen.getByRole("checkbox", { name: "Select every row shown" })).not.toBeChecked();
     await user.click(within(bar).getByRole("button", { name: "Hide" }));
     expect(within(bar).getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("silences the servers of the checked incidents, once per server", async () => {
+    const RELAY = "6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a09";
+    const a = incident({ id: "2a6a9a3e-5b7c-4d8e-9f01-23456789abcd" });
+    const b = incident({ id: "2b6a9a3e-5b7c-4d8e-9f01-23456789abcd", metric: "monitorflow_memory_used_bytes", instance: "" });
+    const relayDown = incident({ id: "2c6a9a3e-5b7c-4d8e-9f01-23456789abcd", server_id: null, relay_id: RELAY, hostname: "relay-1", metric: "offline", instance: "" });
+    const over = incident({ id: "2d6a9a3e-5b7c-4d8e-9f01-23456789abcd", state: "resolved", resolved_at: NOW.toISOString() });
+    const berlin = incident({ id: "2e6a9a3e-5b7c-4d8e-9f01-23456789abcd", hostname: "db-1", server_id: "7f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a02", site_id: OTHER_SITE, site_name: "berlin" });
+    const fetchMock = stubFetch({
+      ...options,
+      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [a, b, relayDown, over, berlin], next_cursor: null } },
+      "POST /api/silences": { status: 201, body: {} },
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    // An operator of paris only: berlin's server is refused without a request.
+    render(
+      <As user={me({ role: "operator", customer_id: null, site_id: SITE_ID })}>
+        <IncidentList filters={NO_FILTERS} />
+      </As>,
+    );
+    await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(6));
+    await user.click(screen.getByRole("checkbox", { name: "Select every row shown" }));
+    const bar = screen.getByRole("region", { name: "Bulk actions" });
+    await user.click(within(bar).getByRole("button", { name: "Silence the servers of the 5 selected incidents" }));
+    await user.click(screen.getByRole("menuitem", { name: "1 hour" }));
+    expect(await within(bar).findByRole("status")).toHaveTextContent(
+      /^3 silenced, 1 already resolved, 1 refused: insufficient rights \(Disk used \/var on db-1\)/,
+    );
+    const bodies = fetchMock.mock.calls
+      .filter(([url]) => url === "/api/silences")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies).toEqual([
+      { scope: "server", target_id: SERVER_ID, ends_at: expect.any(String), reason: "Planned maintenance" },
+      { scope: "relay", target_id: RELAY, ends_at: expect.any(String), reason: "Planned maintenance" },
+    ]);
+    // An hour from now; the fake clock moves on a little while the test clicks.
+    expect(Date.parse(bodies[0].ends_at) - NOW.getTime()).toBeGreaterThanOrEqual(3_600_000);
+    expect(Date.parse(bodies[0].ends_at) - NOW.getTime()).toBeLessThan(3_660_000);
+  });
+
+  it("silences for a custom period", async () => {
+    const fetchMock = stubFetch({
+      ...options,
+      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open], next_cursor: null } },
+      "POST /api/silences": { status: 403, body: { error: "forbidden", code: "forbidden" } },
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <As user={me({ role: "operator", customer_id: null, site_id: null })}>
+        <IncidentList filters={NO_FILTERS} />
+      </As>,
+    );
+    await user.click(await screen.findByRole("checkbox", { name: "Select Disk used /var on web-1" }));
+    await user.click(screen.getByRole("button", { name: "Silence the server of the selected incident" }));
+    await user.click(screen.getByRole("menuitem", { name: "Custom…" }));
+    const reason = screen.getByRole("textbox", { name: "Why" });
+    await user.clear(reason);
+    await user.type(reason, "disk swap");
+    await user.type(screen.getByLabelText(/^Until/), "2026-10-19T18:00");
+    await user.click(screen.getByRole("button", { name: "Silence their servers" }));
+    // The API has the last word on rights.
+    expect(await screen.findByRole("status")).toHaveTextContent(/^1 refused: insufficient rights \(Disk used \/var on web-1\)/);
+    const [body] = fetchMock.mock.calls.filter(([url]) => url === "/api/silences").map(([, init]) => JSON.parse(String(init?.body)));
+    expect(body).toMatchObject({ scope: "server", target_id: SERVER_ID, reason: "disk swap", ends_at: new Date(2026, 9, 19, 18).toISOString() });
   });
 
   it("keeps the scope's customer only", async () => {

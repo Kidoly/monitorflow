@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { setActiveLocale } from "@/i18n/locale";
 
 import { ApiError } from "./api";
-import { type BulkAction, type BulkOutcome, runBulk, summarize, unsettled } from "./bulk";
+import { type BulkAction, type BulkOutcome, oncePer, runBulk, summarize, unsettled } from "./bulk";
 
 interface Item {
   id: string;
@@ -98,5 +98,15 @@ describe("summarize", () => {
     setActiveLocale("fr");
     const text = summarize(items, key, name, outcomes, { done: (n) => `${n} pris en charge` }).text;
     expect(text.replace(/ /g, " ")).toBe("4 pris en charge, 1 refusé : droits insuffisants (jellyfin)");
+  });
+});
+
+describe("oncePer", () => {
+  it("calls once per group and shares the outcome", async () => {
+    const act = vi.fn(async (i: Item) => (i.name.startsWith("db") ? Promise.reject(new ApiError(403, "no")) : ("done" as const)));
+    const items = [item("web-1"), item("web-2"), item("db-1"), item("db-2")];
+    const outcomes = await runBulk(items, key, { act: oncePer((i) => i.name.slice(0, 2), act) });
+    expect(act).toHaveBeenCalledTimes(2);
+    expect([...outcomes.values()].map((o) => o.kind)).toEqual(["done", "done", "refused", "refused"]);
   });
 });

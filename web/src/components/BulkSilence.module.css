@@ -1,0 +1,5 @@
+/* The custom period takes a line of its own under the bar's actions. */
+.form {
+  flex-basis: 100%;
+  padding: 4px 0;
+}

@@ -7,11 +7,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { t } from "@/i18n";
 import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
 import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffline } from "@/lib/incidents";
-import { administersEverything, multiCustomer, multiSite, useMe } from "@/lib/me";
+import { administersEverything, modifiesSite, multiCustomer, multiSite, useMe } from "@/lib/me";
 import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref, incidentsHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { incidentValue } from "@/lib/rules";
-import { useBulkRunner, useSelection } from "@/lib/bulk";
+import { oncePer, useBulkRunner, useSelection } from "@/lib/bulk";
 import { usePolledData } from "@/lib/usePolledData";
 import { replaceParams } from "@/lib/urlState";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
@@ -24,6 +24,7 @@ import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
 import { AcknowledgeButton } from "./AcknowledgeButton";
+import { BulkSilence, type SilencePeriod } from "./BulkSilence";
 import styles from "./IncidentList.module.css";
 
 /** A threshold incident's value; offline ones have none. */
@@ -139,6 +140,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
   const visible = (i: Incident) => !inScope || inScope.has(i.site_id);
   const incidents = data?.incidents.filter(visible) ?? [];
   const customers = new Map(sites.map((s) => [s.id, s.customer_name]));
+  const customerIds = new Map(sites.map((s) => [s.id, s.customer_id]));
   const now = updatedAt ?? new Date();
   const filtered = Boolean(
     filters.severity || filters.serverId || filters.groupId || filters.state !== "all" || (filters.siteId && !scope.siteId),
@@ -231,6 +233,26 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       },
     });
 
+  // Its server, or its relay for a relay's offline incident: once each, however many incidents share it.
+  function silenceChosen(period: SilencePeriod) {
+    const silence = oncePer(
+      (i: Incident) => i.server_id ?? i.relay_id ?? i.id,
+      async (i) => {
+        const target = i.server_id
+          ? { scope: "server" as const, target_id: i.server_id }
+          : { scope: "relay" as const, target_id: i.relay_id ?? "" };
+        await api.createSilence({ ...target, ...period });
+        return "done" as const;
+      },
+    );
+    return bulk.run(chosen, {
+      done: (count) => t("incidents.bulk.silenced", { count }),
+      skipped: (count) => t("incidents.bulk.alreadyResolved", { count }),
+      allowed: (i) => modifiesSite(me, i.customer_id ?? customerIds.get(i.site_id) ?? "", i.site_id),
+      act: async (i) => (i.state === "open" ? silence(i) : "skipped"),
+    });
+  }
+
   const acknowledgeable = incidents.filter((i) => i.state === "open" && i.can_acknowledge && !i.acknowledged_at);
   return (
     <Page>
@@ -314,6 +336,12 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
               disabled={bulk.busy}
               onAcknowledge={acknowledgeChosen}
               describeError={describeError}
+            />
+            <BulkSilence
+              label={t("incidents.bulk.silenceName", { count: chosen.length })}
+              submitLabel={t("incidents.bulk.silenceSubmit")}
+              disabled={bulk.busy}
+              onSilence={silenceChosen}
             />
           </BulkBar>
           <DataTable

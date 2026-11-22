@@ -185,3 +185,23 @@ export function useBulkRunner<T>(
   }
   return { busy, summary, run, dismiss: () => setSummary(null) };
 }
+
+/**
+ * `act` once per distinct `group` (a server several incidents share), every
+ * item of a group getting that one call's outcome. Make one per run.
+ */
+export function oncePer<T>(
+  group: (item: T) => string,
+  act: (item: T) => Promise<"done" | "skipped">,
+): (item: T) => Promise<"done" | "skipped"> {
+  const calls = new Map<string, Promise<"done" | "skipped">>();
+  return (item) => {
+    const key = group(item);
+    let call = calls.get(key);
+    if (!call) {
+      call = act(item);
+      calls.set(key, call);
+    }
+    return call;
+  };
+}
