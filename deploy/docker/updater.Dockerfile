@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && cp target/release/monitorflow-updater /usr/local/bin/
 
 # The Docker CLI and its compose plugin: static binaries.
-FROM docker:29.9.2-cli AS docker
+FROM docker:29.10.0-cli AS docker
 
 FROM debian:trixie-slim
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
