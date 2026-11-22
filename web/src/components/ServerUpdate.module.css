@@ -109,3 +109,61 @@
   display: flex;
   gap: 8px;
 }
+
+.milestones {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.milestones li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mark {
+  display: inline-block;
+  width: 1.2em;
+  text-align: center;
+  font-weight: 600;
+}
+
+.done .mark {
+  color: var(--ok);
+}
+
+.current .mark {
+  color: var(--info);
+}
+
+.failed .mark {
+  color: var(--bad);
+}
+
+.todo {
+  color: var(--muted);
+}
+
+.rawLog {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 12px 20px;
+}
+
+.rawLog summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.rawLog[open] summary {
+  margin-bottom: 10px;
+}
+
+.rawLog .note {
+  margin-bottom: 8px;
+}

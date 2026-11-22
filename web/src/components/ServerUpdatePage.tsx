@@ -14,7 +14,18 @@ import {
 } from "@/lib/api";
 import { administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { BACKUPS_PATH } from "@/lib/routes";
-import { changeLines, imageText, inProgress, isFinal, restoreCommand, STATE_TONES, stateWord } from "@/lib/serverUpdate";
+import {
+  changeLines,
+  imageText,
+  inProgress,
+  isFinal,
+  type MilestoneMark,
+  milestoneMarks,
+  milestoneWord,
+  restoreCommand,
+  STATE_TONES,
+  stateWord,
+} from "@/lib/serverUpdate";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { ReleaseImport } from "./ReleaseImport";
@@ -109,9 +120,10 @@ function ServerUpdate() {
       ) : (
         <CheckResult view={data} check={check} busy={busy} onStarted={refresh} />
       )}
-      {data.update && <LastUpdate run={data.update} requested={data.requested} loadedAt={loadedAt} />}
+      {data.update && <LastUpdate run={data.update} view={data} loadedAt={loadedAt} />}
       {!data.update && data.requested && <Banner tone="info">{t("serverUpdate.waiting")}</Banner>}
       <ReleaseImport source={data.source} />
+      {data.update && data.update.steps.length > 0 && <RawLog run={data.update} />}
     </div>
   );
 }
@@ -254,7 +266,8 @@ function CheckResult({
   );
 }
 
-function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; requested: boolean; loadedAt: Date }) {
+function LastUpdate({ run, view, loadedAt }: { run: ServerUpdateRun; view: ServerUpdateView; loadedAt: Date }) {
+  const requested = view.requested;
   const word = stateWord(run.state);
   const tone = STATE_TONES[run.state];
   const now = new Date();
@@ -312,9 +325,46 @@ function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; reques
         </Banner>
       )}
       {requested && <p className={styles.note}>{t("serverUpdate.last.another")}</p>}
-      {/* The updater writes these lines itself, untranslated: shown as its raw log. */}
-      {run.steps.length > 0 && <p className={styles.note}>{t("serverUpdate.last.rawLog")}</p>}
-      <ol className={styles.steps} aria-label={t("serverUpdate.last.steps")}>
+      {view.milestones.length > 0 && (
+        <ol className={styles.milestones} aria-label={t("serverUpdate.last.steps")}>
+          {milestoneMarks(view.milestones, run).map((m) => (
+            <li key={m.kind} className={MARK_CLASSES[m.mark]}>
+              <span className={styles.mark} aria-hidden="true">
+                {MARK_ICONS[m.mark]}
+              </span>
+              <span>{milestoneWord(m.kind)}</span>
+              <span className="visually-hidden"> ({t(`serverUpdate.mark.${m.mark}`)})</span>
+              {m.at && (
+                <time dateTime={m.at} className={styles.dim}>
+                  {formatClock(new Date(m.at))}
+                </time>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+const MARK_ICONS: Record<MilestoneMark, string> = { done: "✓", current: "…", failed: "✕", todo: "○" };
+const MARK_CLASSES: Record<MilestoneMark, string | undefined> = {
+  done: styles.done,
+  current: styles.current,
+  failed: styles.failed,
+  todo: styles.todo,
+};
+
+/**
+ * The updater's own lines, untranslated, closed at the bottom of the page:
+ * for support, the milestones above are what a person follows.
+ */
+function RawLog({ run }: { run: ServerUpdateRun }) {
+  return (
+    <details className={styles.rawLog}>
+      <summary>{t("serverUpdate.last.rawLog")}</summary>
+      <p className={styles.note}>{t("serverUpdate.last.rawLogNote")}</p>
+      <ol className={styles.steps} aria-label={t("serverUpdate.last.rawLog")}>
         {run.steps.map((step, i) => (
           <li key={i}>
             <time dateTime={step.at} className={styles.dim}>
@@ -324,6 +374,6 @@ function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; reques
           </li>
         ))}
       </ol>
-    </section>
+    </details>
   );
 }

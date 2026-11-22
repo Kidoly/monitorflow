@@ -13,7 +13,7 @@ use monitorflow_common::server_update::backup::{
     file_name, BackupFile, BackupKind, BackupRun, BackupState, Backups,
 };
 use monitorflow_common::server_update::channel::Channel;
-use monitorflow_common::server_update::{Running, Status, UpdateRun, UpdateState};
+use monitorflow_common::server_update::{Running, Status, Step, UpdateRun, UpdateState};
 use monitorflow_server::agent_releases::ReleaseCache;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::server_update::ServerUpdateSettings;
@@ -340,11 +340,24 @@ db_tests! {
         assert_eq!(body["enabled"], true);
         assert_eq!(body["updater"], Value::Null);
         assert_eq!(body["requested"], false);
+        assert_eq!(body["milestones"], json!([]));
 
         let mut done = run(UpdateState::RolledBack);
         done.migrated = true;
+        let at = Utc::now();
+        done.steps = ["release 0.1.0 verified: server a, web b, updater c", "images pulled", "the new version did not start"]
+            .map(|message| Step { at, message: message.into() })
+            .to_vec();
         h.write_status(10, Some(done));
         let (_, body) = h.call("GET", "/api/server-update", &admin, None).await;
+        // The milestones reached, in order, told from the updater's steps.
+        let milestones: Vec<(&str, bool)> = body["milestones"].as_array().unwrap().iter()
+            .map(|m| (m["kind"].as_str().unwrap(), m["done_at"].is_string()))
+            .collect();
+        assert_eq!(milestones, [
+            ("verified", true), ("images_pulled", true), ("backed_up", false),
+            ("database_migrated", false), ("server_restarted", false), ("agents_ready", false),
+        ]);
         assert_eq!(body["updater"]["alive"], true);
         assert_eq!(body["updater"]["running"]["web_image"], image("web"));
         assert_eq!(body["update"]["state"], "rolled_back");

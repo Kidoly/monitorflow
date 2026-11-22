@@ -27,11 +27,21 @@ function view(overrides: Partial<ServerUpdateView> = {}): ServerUpdateView {
       running: { version: "0.1.0", server_image: null, web_image: WEB, updater_image: null },
     },
     update: null,
+    milestones: [],
     requested: false,
     available: null,
     ...overrides,
   };
 }
+
+const MILESTONES: ServerUpdateView["milestones"] = [
+  { kind: "verified", done_at: "2026-10-27T10:00:00Z" },
+  { kind: "images_pulled", done_at: null },
+  { kind: "backed_up", done_at: "2026-10-27T10:01:00Z" },
+  { kind: "database_migrated", done_at: null },
+  { kind: "server_restarted", done_at: null },
+  { kind: "agents_ready", done_at: null },
+];
 
 function run(overrides: Partial<ServerUpdateRun> = {}): ServerUpdateRun {
   return {
@@ -90,7 +100,7 @@ describe("ServerUpdatePage", () => {
     setActiveLocale("fr");
     const user = userEvent.setup();
     stubFetch({
-      "GET /api/server-update": { status: 200, body: view({ update: run() }) },
+      "GET /api/server-update": { status: 200, body: view({ update: run(), milestones: MILESTONES }) },
       "POST /api/server-update/check": { status: 200, body: available },
       "GET /api/agent-releases": { status: 200, body: { versions: [] } },
     });
@@ -101,7 +111,16 @@ describe("ServerUpdatePage", () => {
     // The version is in the facts and the heading: no green box repeats it.
     expect(screen.queryByText("Le serveur est en version 0.2.0.")).not.toBeInTheDocument();
     expect(screen.getByText("Programme de mise à jour")).toBeInTheDocument();
-    expect(screen.getByText(/Journal brut du programme de mise à jour/)).toBeInTheDocument();
+    expect(screen.getByText("Journal du programme de mise à jour")).toBeInTheDocument();
+    const steps = within(screen.getByRole("list", { name: "Étapes" })).getAllByRole("listitem");
+    expect(steps.map((li) => li.textContent?.replace(/[\d:]+$/, ""))).toEqual([
+      "✓Version vérifiée (Fait)",
+      "○Images téléchargées (Non fait)",
+      "✓Sauvegarde créée (Fait)",
+      "○Base migrée (Non fait)",
+      "○Serveur redémarré (Non fait)",
+      "○Agents prêts (Non fait)",
+    ]);
     // The check is a button of the page header, not a section of its own.
     expect(screen.queryByRole("heading", { name: "Mises à jour" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Rechercher des mises à jour" }));
@@ -254,10 +273,36 @@ describe("ServerUpdatePage", () => {
     expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
   });
 
+  it("tells the steps in words, with the updater's own log closed at the bottom", async () => {
+    stubFetch({
+      "GET /api/server-update": {
+        status: 200,
+        body: view({ update: run({ state: "rolled_back", error: "the new version did not start" }), milestones: MILESTONES }),
+      },
+    });
+    renderPage();
+    const steps = await screen.findByRole("list", { name: "Steps" });
+    const items = within(steps).getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual([
+      expect.stringMatching(/^✓Version verified \(Done\)[\d:]+$/),
+      "✕Images downloaded (Stopped here)",
+      expect.stringMatching(/^✓Backup created \(Done\)[\d:]+$/),
+      "○Database migrated (Not done)",
+      "○Server restarted (Not done)",
+      "○Agents ready (Not done)",
+    ]);
+    // The raw lines are not in the middle of the page any more.
+    expect(steps).not.toHaveTextContent("database and server data saved");
+    const log = screen.getByText("Updater log").closest("details")!;
+    expect(log).not.toHaveAttribute("open");
+    expect(log).toHaveTextContent("database and server data saved to monitorflow-backup-20261027T100100Z-update.tar.gz");
+    expect(log.parentElement!.lastElementChild).toBe(log);
+  });
+
   it("follows an update through the restart", async () => {
     stubFetch({
       "GET /api/server-update": [
-        { status: 200, body: view({ update: run({ state: "updating", finished_at: null }) }) },
+        { status: 200, body: view({ update: run({ state: "updating", finished_at: null }), milestones: MILESTONES }) },
         { status: 502, body: { error: "bad gateway" } },
       ],
     });
@@ -269,7 +314,8 @@ describe("ServerUpdatePage", () => {
       await vi.advanceTimersByTimeAsync(3_500);
       expect(await screen.findByText(/Reconnecting…/)).toBeInTheDocument();
       // The last status stays on screen.
-      expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("release 0.2.0 verified");
+      const steps = screen.getByRole("list", { name: "Steps" });
+      expect(steps).toHaveTextContent("Version verified");
     } finally {
       vi.useRealTimers();
     }

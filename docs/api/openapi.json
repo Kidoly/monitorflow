@@ -28320,7 +28320,7 @@
           "server-update"
         ],
         "summary": "Read the server's update status",
-        "description": "The running version, what the updater service last reported, the last\nupdate with its steps, and a newer release the daily check saw.\n`enabled` is false when the deployment has no updater (a package\ninstall, for one): updates are then done by hand. Changes nothing.",
+        "description": "The running version, what the updater service last reported, the last\nupdate with its steps (the updater's own words), its `milestones` in\norder (`verified`, `images_pulled`, `backed_up`, `database_migrated`,\n`server_restarted`, `agents_ready`) each with when it was reached, and\na newer release the daily check saw.\n`enabled` is false when the deployment has no updater (a package\ninstall, for one): updates are then done by hand. Changes nothing.",
         "operationId": "update_status",
         "responses": {
           "200": {
@@ -28334,6 +28334,32 @@
                   "available": null,
                   "channel": "regular",
                   "enabled": true,
+                  "milestones": [
+                    {
+                      "done_at": "2026-11-12T20:00:03Z",
+                      "kind": "verified"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:00:41Z",
+                      "kind": "images_pulled"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:01:40Z",
+                      "kind": "backed_up"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:01:52Z",
+                      "kind": "database_migrated"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:02:30Z",
+                      "kind": "server_restarted"
+                    },
+                    {
+                      "done_at": "2026-11-12T20:03:05Z",
+                      "kind": "agents_ready"
+                    }
+                  ],
                   "requested": false,
                   "running_version": "0.4.0",
                   "source": "https://releases.example.com/monitorflow",
@@ -28350,15 +28376,31 @@
                     "steps": [
                       {
                         "at": "2026-11-12T20:00:03Z",
-                        "message": "Release 0.4.0 verified"
+                        "message": "release 0.4.0 verified: server, web and updater images"
+                      },
+                      {
+                        "at": "2026-11-12T20:00:41Z",
+                        "message": "images pulled"
                       },
                       {
                         "at": "2026-11-12T20:01:40Z",
-                        "message": "Backup taken"
+                        "message": "database and server data saved to monitorflow-backup-20261112T200005Z-update.tar.gz"
+                      },
+                      {
+                        "at": "2026-11-12T20:01:41Z",
+                        "message": "new images pinned; migrating the database"
+                      },
+                      {
+                        "at": "2026-11-12T20:01:52Z",
+                        "message": "recreating server and web"
+                      },
+                      {
+                        "at": "2026-11-12T20:02:30Z",
+                        "message": "server 0.4.0 is healthy"
                       },
                       {
                         "at": "2026-11-12T20:03:05Z",
-                        "message": "0.4.0 is running"
+                        "message": "agent release 0.4.0 cached for agents"
                       }
                     ],
                     "to": "0.4.0"
@@ -60415,6 +60457,38 @@
           "tested"
         ]
       },
+      "UpdateMilestone": {
+        "type": "object",
+        "description": "One milestone and when it was reached.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "done_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` while not reached, and for good once the update ended\nwithout it."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/UpdateMilestoneKind"
+          }
+        }
+      },
+      "UpdateMilestoneKind": {
+        "type": "string",
+        "description": "A milestone of an update, as people follow it: each one the updater\nreached, told by the step it wrote then.",
+        "enum": [
+          "verified",
+          "images_pulled",
+          "backed_up",
+          "database_migrated",
+          "server_restarted",
+          "agents_ready"
+        ]
+      },
       "UpdateMirrorRequest": {
         "type": "object",
         "description": "Body of `PATCH /api/mirrors/{id}`.",
@@ -60543,6 +60617,7 @@
           "running_version",
           "enabled",
           "source",
+          "milestones",
           "requested",
           "channel"
         ],
@@ -60565,6 +60640,13 @@
           "enabled": {
             "type": "boolean",
             "description": "Whether `server_update_dir` is set."
+          },
+          "milestones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpdateMilestone"
+            },
+            "description": "The milestones of `update` in order, each with when it was\nreached, from its steps; empty without an update. The steps stay\nthe updater's own words; these are what a person follows."
           },
           "requested": {
             "type": "boolean",

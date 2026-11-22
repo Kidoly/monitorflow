@@ -309,3 +309,93 @@ fn small_reads_do_not_wait_on_a_fifo() {
     let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
     assert!(read_small(&socket, 10).is_err());
 }
+
+/// The steps of the update of the screenshot that asked for this, as the
+/// updater wrote them.
+fn run_with(messages: &[&str]) -> UpdateRun {
+    let at = |i: usize| {
+        "2026-11-21T21:05:57Z".parse::<DateTime<Utc>>().unwrap()
+            + chrono::Duration::seconds(i as i64)
+    };
+    UpdateRun {
+        id: "id".into(),
+        from: Some("0.9.0".into()),
+        to: "0.9.1".into(),
+        requested_by: "admin".into(),
+        state: UpdateState::Succeeded,
+        steps: messages
+            .iter()
+            .enumerate()
+            .map(|(i, m)| Step {
+                at: at(i),
+                message: (*m).into(),
+            })
+            .collect(),
+        error: None,
+        backup: None,
+        migrated: false,
+        started_at: at(0),
+        finished_at: None,
+    }
+}
+
+#[test]
+fn every_milestone_of_a_successful_update_is_found_in_its_steps() {
+    let run = run_with(&[
+        "release 0.9.1 verified: server ghcr.io/x/server@sha256:aa, web ghcr.io/x/web@sha256:bb, updater ghcr.io/x/updater@sha256:cc",
+        "agent release downloaded: install.sh, monitorflow-agent-linux-x86_64",
+        "images pulled",
+        "database and server data saved to monitorflow-backup-20261121T200632Z-update.tar.gz",
+        "new images pinned; migrating the database",
+        "recreating server and web",
+        "server 0.9.1 is healthy",
+        "agent release 0.9.1 cached for agents",
+        "replacing the updater with the new release's",
+    ]);
+    let done: Vec<(MilestoneKind, i64)> = run
+        .milestones()
+        .into_iter()
+        .map(|m| (m.kind, (m.done_at.unwrap() - run.started_at).num_seconds()))
+        .collect();
+    use MilestoneKind::*;
+    assert_eq!(
+        done,
+        [
+            (Verified, 0),
+            (ImagesPulled, 2),
+            (BackedUp, 3),
+            (DatabaseMigrated, 5),
+            (ServerRestarted, 6),
+            (AgentsReady, 7)
+        ]
+    );
+}
+
+#[test]
+fn milestones_not_reached_stay_open() {
+    // The migration failed: the rollback's steps reach nothing.
+    let run = run_with(&[
+        "release 0.9.1 verified: server a, web b, updater c",
+        "images pulled",
+        "database and server data saved to backup.tar.gz",
+        "new images pinned; migrating the database",
+        "the new version did not migrate the database: exit 1",
+        "previous images pinned again",
+        "previous version restarted",
+    ]);
+    let reached: Vec<bool> = run
+        .milestones()
+        .iter()
+        .map(|m| m.done_at.is_some())
+        .collect();
+    assert_eq!(reached, [true, true, true, false, false, false]);
+    // Warnings are not milestones.
+    assert_eq!(
+        MilestoneKind::of_step("warning: agent release not cached: no space"),
+        None
+    );
+    assert_eq!(
+        MilestoneKind::of_step("server 0.9.1 is healthy"),
+        Some(MilestoneKind::ServerRestarted)
+    );
+}

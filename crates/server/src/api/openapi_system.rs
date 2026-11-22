@@ -90,7 +90,10 @@ fn ready() {}
 /// Read the server's update status
 ///
 /// The running version, what the updater service last reported, the last
-/// update with its steps, and a newer release the daily check saw.
+/// update with its steps (the updater's own words), its `milestones` in
+/// order (`verified`, `images_pulled`, `backed_up`, `database_migrated`,
+/// `server_restarted`, `agents_ready`) each with when it was reached, and
+/// a newer release the daily check saw.
 /// `enabled` is false when the deployment has no updater (a package
 /// install, for one): updates are then done by hand. Changes nothing.
 #[utoipa::path(get, path = "/api/v1/server-update", tag = "server-update",
@@ -116,9 +119,13 @@ fn ready() {}
             "requested_by": "admin",
             "state": "succeeded",
             "steps": [
-                { "at": "2026-11-12T20:00:03Z", "message": "Release 0.4.0 verified" },
-                { "at": "2026-11-12T20:01:40Z", "message": "Backup taken" },
-                { "at": "2026-11-12T20:03:05Z", "message": "0.4.0 is running" }
+                { "at": "2026-11-12T20:00:03Z", "message": "release 0.4.0 verified: server, web and updater images" },
+                { "at": "2026-11-12T20:00:41Z", "message": "images pulled" },
+                { "at": "2026-11-12T20:01:40Z", "message": "database and server data saved to monitorflow-backup-20261112T200005Z-update.tar.gz" },
+                { "at": "2026-11-12T20:01:41Z", "message": "new images pinned; migrating the database" },
+                { "at": "2026-11-12T20:01:52Z", "message": "recreating server and web" },
+                { "at": "2026-11-12T20:02:30Z", "message": "server 0.4.0 is healthy" },
+                { "at": "2026-11-12T20:03:05Z", "message": "agent release 0.4.0 cached for agents" }
             ],
             "error": null,
             "backup": "monitorflow-backup-20261112T200005Z-update.tar.gz",
@@ -126,6 +133,14 @@ fn ready() {}
             "started_at": "2026-11-12T20:00:01Z",
             "finished_at": "2026-11-12T20:03:05Z"
         },
+        "milestones": [
+            { "kind": "verified", "done_at": "2026-11-12T20:00:03Z" },
+            { "kind": "images_pulled", "done_at": "2026-11-12T20:00:41Z" },
+            { "kind": "backed_up", "done_at": "2026-11-12T20:01:40Z" },
+            { "kind": "database_migrated", "done_at": "2026-11-12T20:01:52Z" },
+            { "kind": "server_restarted", "done_at": "2026-11-12T20:02:30Z" },
+            { "kind": "agents_ready", "done_at": "2026-11-12T20:03:05Z" }
+        ],
         "requested": false,
         "available": null,
         "channel": "regular"

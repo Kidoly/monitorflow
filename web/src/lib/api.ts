@@ -1967,6 +1967,21 @@ export interface ServerUpdateRun {
 }
 
 /** `GET /api/server-update`. */
+/** What a person follows of an update, in order. */
+export type ServerUpdateMilestoneKind =
+  | "verified"
+  | "images_pulled"
+  | "backed_up"
+  | "database_migrated"
+  | "server_restarted"
+  | "agents_ready";
+
+export interface ServerUpdateMilestone {
+  kind: ServerUpdateMilestoneKind;
+  /** Null while not reached, and for good once the update ended without it. */
+  done_at: string | null;
+}
+
 export interface ServerUpdateView {
   running_version: string;
   /** The server is set up for updates from the web interface. */
@@ -1986,6 +2001,8 @@ export interface ServerUpdateView {
     } | null;
   } | null;
   update: ServerUpdateRun | null;
+  /** The milestones of `update` in order, from its steps; empty without one. */
+  milestones: ServerUpdateMilestone[];
   /** A request waits for the updater. */
   requested: boolean;
   /** A newer release the daily check saw (ADR-0061). */

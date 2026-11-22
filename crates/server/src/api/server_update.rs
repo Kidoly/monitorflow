@@ -15,8 +15,8 @@ use monitorflow_common::config::ServerConfig;
 use monitorflow_common::release::{self, PublicKey, Version};
 use monitorflow_common::server_update::channel::{fetch_channel, Channel};
 use monitorflow_common::server_update::{
-    self as update, read_small, write_atomic, Images, Request, Running, Status, UpdateError,
-    UpdateRun, HEARTBEAT, MAX_STATE_FILE, REQUEST_FILE, STATUS_FILE,
+    self as update, read_small, write_atomic, Images, Milestone, Request, Running, Status,
+    UpdateError, UpdateRun, HEARTBEAT, MAX_STATE_FILE, REQUEST_FILE, STATUS_FILE,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -81,6 +81,10 @@ pub struct UpdateView {
     pub updater: Option<UpdaterView>,
     /// The last update, running or finished.
     pub update: Option<UpdateRun>,
+    /// The milestones of `update` in order, each with when it was
+    /// reached, from its steps; empty without an update. The steps stay
+    /// the updater's own words; these are what a person follows.
+    pub milestones: Vec<Milestone>,
     /// A request waits for the updater to take it.
     pub requested: bool,
     /// A newer release the last check saw.
@@ -209,12 +213,17 @@ pub async fn get(
             status.update,
         ),
     };
+    let milestones = update
+        .as_ref()
+        .map(UpdateRun::milestones)
+        .unwrap_or_default();
     Ok(Json(UpdateView {
         running_version: monitorflow_common::VERSION,
         enabled: settings.dir.is_some(),
         source: settings.source.clone(),
         updater,
         update,
+        milestones,
         requested,
         available,
         channel,

@@ -588,12 +588,24 @@ const SERVER_UPDATE: ServerUpdateView = {
   update: {
     id: "00000000-0000-4000-801a-000000000001", from: "0.5.2", to: SERVER_VERSION, requested_by: "alex", state: "succeeded",
     steps: [
-      { at: ago(10 * DAY + 9), message: "Backing up the database" },
-      { at: ago(10 * DAY + 6), message: "Starting the new version" },
-      { at: ago(10 * DAY + 4), message: "The new version answers" },
+      { at: ago(10 * DAY + 10), message: `release ${SERVER_VERSION} verified: server, web and updater images` },
+      { at: ago(10 * DAY + 9), message: "images pulled" },
+      { at: ago(10 * DAY + 8), message: "database and server data saved to monitorflow-update-0.5.2.dump" },
+      { at: ago(10 * DAY + 7), message: "new images pinned; migrating the database" },
+      { at: ago(10 * DAY + 6), message: "recreating server and web" },
+      { at: ago(10 * DAY + 4), message: `server ${SERVER_VERSION} is healthy` },
+      { at: ago(10 * DAY + 3), message: `agent release ${SERVER_VERSION} cached for agents` },
     ],
     error: null, backup: "monitorflow-update-0.5.2.dump", migrated: true, started_at: ago(10 * DAY + 10), finished_at: ago(10 * DAY + 3),
   },
+  milestones: [
+    { kind: "verified", done_at: ago(10 * DAY + 10) },
+    { kind: "images_pulled", done_at: ago(10 * DAY + 9) },
+    { kind: "backed_up", done_at: ago(10 * DAY + 8) },
+    { kind: "database_migrated", done_at: ago(10 * DAY + 6) },
+    { kind: "server_restarted", done_at: ago(10 * DAY + 4) },
+    { kind: "agents_ready", done_at: ago(10 * DAY + 3) },
+  ],
   requested: false,
   available: null,
 };
