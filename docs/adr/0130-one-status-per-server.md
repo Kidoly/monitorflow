@@ -1,7 +1,7 @@
 # ADR-0130: One status per server, a status strip and a site tree
 
 Date: 2026-11-14
-Status: accepted; amends the fleet screen of the design handoff (`docs/design/`); the required note amended by ADR-0166
+Status: accepted; amends the fleet screen of the design handoff (`docs/design/`); the required note amended by ADR-0166; the strip's colors amended by ADR-0174
 
 ## Context
 
