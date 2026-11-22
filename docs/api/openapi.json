@@ -2498,7 +2498,7 @@
           "campaigns"
         ],
         "summary": "Create a campaign",
-        "description": "Makes a `draft` campaign: nothing is sent to any server until it is\nstarted. Its servers are frozen now: those of `server_ids` and the\nunrevoked servers of `site_id`, all of the customer, sorted by host\nname. A server added to the site later is not added to the campaign.\nThey are split into batches by `waves`, in order: explicit server\nlists first, then `{\"size\": n}` and `{\"percent\": p}` (of all servers,\nrounded up) take the next servers by host name; the servers left form\none last batch. Without `waves`, one batch.\n\nOnce started, each server gets one signed command, sent when its agent\nis connected and has no other command in flight:\n\n- a package update (`apply_updates` with `packages`, `security_only`\n  and `allow_reboot`; empty `packages` upgrades everything). A server\n  whose agent does not accept package updates is left out of its\n  batch. Where it can, MonitorFlow takes a local snapshot of the server\n  first (`snapshot_command_id`). With `sources`, the server's package\n  sources are first pointed at the pinned mirror snapshots and put back\n  after the update (`sources_command_id`, `restore_command_id`); the\n  central server needs mirrors and `mirror_public_url` for that;\n- or, with `agent_version`, an agent update (`self_update`) to that\n  version, which takes no package options.\n\nThese commands come from an administrator, so they are not classified\nby the risk rules and need no approval.\n\nTo copy a campaign, read it and send its `name`, `customer_id`,\n`site_id`, `server_ids`, `wave_specs` (as `waves`), the fields of\n`spec`, `command_ttl_s`, `failure_threshold`, `windows`, `sources` and\n`agent_version` here: the copy is a new draft, with the servers of the\nsite as they are now.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.create`. Not safe to repeat: send\n`Idempotency-Key` to retry.",
+        "description": "Makes a `draft` campaign: nothing is sent to any server until it is\nstarted. Its servers are frozen now: those of `server_ids` and the\nunrevoked servers of `site_id`, all of the customer, sorted by host\nname. A server added to the site later is not added to the campaign.\nThey are split into batches by `waves`, in order: explicit server\nlists first, then `{\"size\": n}` and `{\"percent\": p}` (of all servers,\nrounded up) take the next servers by host name; the servers left form\none last batch. Without `waves`, one batch.\n\nOnce started, each server gets one signed command, sent when its agent\nis connected and has no other command in flight:\n\n- a package update (`apply_updates` with `packages`, `security_only`\n  and `allow_reboot`; empty `packages` upgrades everything). A server\n  whose agent does not accept package updates is left out of its\n  batch. Where it can, MonitorFlow takes a local snapshot of the server\n  first (`snapshot_command_id`). With `sources`, the server's package\n  sources are first pointed at the pinned mirror snapshots and put back\n  after the update (`sources_command_id`, `restore_command_id`); the\n  central server needs mirrors and `mirror_public_url` for that;\n- or, with `agent_version`, an agent update (`self_update`) to that\n  version, which takes no package options.\n\nThese commands come from an administrator, so they are not classified\nby the risk rules and need no approval.\n\nCommands are queued only while a maintenance window of `windows` is\nopen, or at any time without windows: `weekly` on chosen weekdays,\n`monthly` on a day of the month (`{\"kind\": \"monthly\", \"month_day\": 15,\n...}`) or a weekday of a week of it (the second Tuesday is\n`\"month_week\": 2, \"weekday\": 2`, the last Friday `\"month_week\": 5,\n\"weekday\": 5`) in chosen `months` (one month for a yearly window), or\n`once` between two times.\n\nTo copy a campaign, read it and send its `name`, `customer_id`,\n`site_id`, `server_ids`, `wave_specs` (as `waves`), the fields of\n`spec`, `command_ttl_s`, `failure_threshold`, `windows`, `sources` and\n`agent_version` here: the copy is a new draft, with the servers of the\nsite as they are now.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"updates\". Audited as `campaign.create`. Not safe to repeat: send\n`Idempotency-Key` to retry.",
         "operationId": "create_campaign",
         "parameters": [
           {
@@ -45653,6 +45653,71 @@
                   "format": "int32",
                   "minimum": 0
                 }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Every month in `months` (1 is January; empty or absent is every\nmonth), on day `month_day` (1 to 31; a month without that day has\nno window), or on the `weekday` (ISO) of week `month_week` of the\nmonth (1 to 4, or 5 for the last), from `start` to `end` local time\nin `timezone`. One month in `months` makes a yearly window\n(ADR-0167).",
+            "required": [
+              "start",
+              "end",
+              "timezone",
+              "kind"
+            ],
+            "properties": {
+              "end": {
+                "type": "string",
+                "description": "`HH:MM`, local time; `00:00` and `24:00` are the end of the day.",
+                "example": "04:00"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "monthly"
+                ]
+              },
+              "month_day": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "Set alone, or `month_week` and `weekday` together.",
+                "minimum": 0
+              },
+              "month_week": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "months": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              },
+              "start": {
+                "type": "string",
+                "description": "`HH:MM`, local time.",
+                "example": "22:00"
+              },
+              "timezone": {
+                "type": "string",
+                "description": "An IANA time zone, like `Europe/Paris`."
+              },
+              "weekday": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
               }
             }
           },

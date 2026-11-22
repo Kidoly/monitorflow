@@ -123,9 +123,16 @@ impl CampaignRow {
     }
 }
 
+/// The columns of a [`WindowRow`].
+pub(super) const WINDOW_COLUMNS: &str = "kind, weekdays, start_minute, end_minute, timezone, \
+     starts_at, ends_at, month_day, month_week, months";
+
 #[derive(sqlx::FromRow)]
 pub(super) struct WindowRow {
     kind: String,
+    month_day: Option<i16>,
+    month_week: Option<i16>,
+    months: Option<Vec<i16>>,
     weekdays: Option<Vec<i16>>,
     start_minute: Option<i16>,
     end_minute: Option<i16>,
@@ -139,6 +146,15 @@ impl WindowRow {
         match self.kind.as_str() {
             "weekly" => Some(Window::Weekly {
                 weekdays: self.weekdays?.into_iter().map(|d| d as u8).collect(),
+                start: LocalTime(self.start_minute? as u16),
+                end: LocalTime(self.end_minute? as u16),
+                timezone: self.timezone?,
+            }),
+            "monthly" => Some(Window::Monthly {
+                month_day: self.month_day.map(|d| d as u8),
+                month_week: self.month_week.map(|w| w as u8),
+                weekday: self.weekdays.and_then(|d| d.first().map(|&d| d as u8)),
+                months: self.months?.into_iter().map(|m| m as u8).collect(),
                 start: LocalTime(self.start_minute? as u16),
                 end: LocalTime(self.end_minute? as u16),
                 timezone: self.timezone?,
@@ -359,10 +375,11 @@ impl CampaignStore {
 
     /// The campaign's windows, in the order they were given.
     pub async fn windows(&self, id: Uuid) -> Result<Vec<Window>, sqlx::Error> {
-        let rows: Vec<WindowRow> = sqlx::query_as(
-            "SELECT kind, weekdays, start_minute, end_minute, timezone, starts_at, ends_at
-             FROM campaign_windows WHERE campaign_id = $1 ORDER BY position",
-        )
+        // SQL-safe: interpolates only the constant WINDOW_COLUMNS.
+        let rows: Vec<WindowRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {WINDOW_COLUMNS}
+             FROM campaign_windows WHERE campaign_id = $1 ORDER BY position"
+        )))
         .bind(id)
         .fetch_all(&self.pool)
         .await?;
@@ -794,7 +811,9 @@ async fn check_timezones(conn: &mut PgConnection, windows: &[Window]) -> Result<
     let zones: Vec<&str> = windows
         .iter()
         .filter_map(|w| match w {
-            Window::Weekly { timezone, .. } => Some(timezone.as_str()),
+            Window::Weekly { timezone, .. } | Window::Monthly { timezone, .. } => {
+                Some(timezone.as_str())
+            }
             Window::Once { .. } => None,
         })
         .collect();
@@ -901,11 +920,12 @@ async fn insert_window(
 ) -> Result<(), sqlx::Error> {
     let query = sqlx::query(
         "INSERT INTO campaign_windows (campaign_id, position, kind, weekdays, start_minute,
-             end_minute, timezone, starts_at, ends_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+             end_minute, timezone, starts_at, ends_at, month_day, month_week, months)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
     )
     .bind(campaign)
     .bind(position);
+    let small = |values: &[u8]| values.iter().map(|&v| i16::from(v)).collect::<Vec<_>>();
     let query = match window {
         Window::Weekly {
             weekdays,
@@ -914,12 +934,34 @@ async fn insert_window(
             timezone,
         } => query
             .bind("weekly")
-            .bind(weekdays.iter().map(|&d| i16::from(d)).collect::<Vec<_>>())
+            .bind(small(weekdays))
             .bind(start.0 as i16)
             .bind(end.0 as i16)
             .bind(timezone)
             .bind(None::<DateTime<Utc>>)
-            .bind(None::<DateTime<Utc>>),
+            .bind(None::<DateTime<Utc>>)
+            .bind(None::<i16>)
+            .bind(None::<i16>)
+            .bind(None::<Vec<i16>>),
+        Window::Monthly {
+            month_day,
+            month_week,
+            weekday,
+            months,
+            start,
+            end,
+            timezone,
+        } => query
+            .bind("monthly")
+            .bind(weekday.map(|d| vec![i16::from(d)]))
+            .bind(start.0 as i16)
+            .bind(end.0 as i16)
+            .bind(timezone)
+            .bind(None::<DateTime<Utc>>)
+            .bind(None::<DateTime<Utc>>)
+            .bind(month_day.map(i16::from))
+            .bind(month_week.map(i16::from))
+            .bind(small(months)),
         Window::Once { starts_at, ends_at } => query
             .bind("once")
             .bind(None::<Vec<i16>>)
@@ -927,7 +969,10 @@ async fn insert_window(
             .bind(None::<i16>)
             .bind(None::<String>)
             .bind(starts_at)
-            .bind(ends_at),
+            .bind(ends_at)
+            .bind(None::<i16>)
+            .bind(None::<i16>)
+            .bind(None::<Vec<i16>>),
     };
     query.execute(conn).await?;
     Ok(())

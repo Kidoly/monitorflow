@@ -322,6 +322,8 @@ db_tests! {
             json!({"windows": [{"kind": "weekly", "weekdays": [8], "start": "22:00", "end": "04:00", "timezone": "UTC"}]}),
             json!({"windows": [{"kind": "weekly", "weekdays": [1], "start": "22:00", "end": "04:00", "timezone": "Mars/Olympus"}]}),
             json!({"windows": [{"kind": "weekly", "weekdays": [1], "start": "9:00", "end": "10:00", "timezone": "UTC"}]}),
+            json!({"windows": [{"kind": "monthly", "month_day": 1, "month_week": 1, "start": "22:00", "end": "04:00", "timezone": "UTC"}]}),
+            json!({"windows": [{"kind": "monthly", "month_day": 1, "start": "22:00", "end": "04:00", "timezone": "Mars/Olympus"}]}),
             json!({"unknown": true}),
         ] {
             let (status, body) = h.send("POST", "/api/campaigns", &admin, Some(with(patch.clone()))).await;

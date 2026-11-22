@@ -1,7 +1,7 @@
 # ADR-0033: Update campaigns
 
 Date: 2026-10-24
-Status: accepted; amended by ADR-0166 (editing and deleting campaigns)
+Status: accepted; amended by ADR-0166 (editing and deleting campaigns) and ADR-0167 (monthly and yearly windows)
 
 ## Context
 

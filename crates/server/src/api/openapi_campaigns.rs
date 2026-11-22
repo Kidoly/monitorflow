@@ -201,6 +201,14 @@ fn list_campaigns() {}
 /// These commands come from an administrator, so they are not classified
 /// by the risk rules and need no approval.
 ///
+/// Commands are queued only while a maintenance window of `windows` is
+/// open, or at any time without windows: `weekly` on chosen weekdays,
+/// `monthly` on a day of the month (`{"kind": "monthly", "month_day": 15,
+/// ...}`) or a weekday of a week of it (the second Tuesday is
+/// `"month_week": 2, "weekday": 2`, the last Friday `"month_week": 5,
+/// "weekday": 5`) in chosen `months` (one month for a yearly window), or
+/// `once` between two times.
+///
 /// To copy a campaign, read it and send its `name`, `customer_id`,
 /// `site_id`, `server_ids`, `wave_specs` (as `waves`), the fields of
 /// `spec`, `command_ttl_s`, `failure_threshold`, `windows`, `sources` and

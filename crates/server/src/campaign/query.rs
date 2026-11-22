@@ -6,7 +6,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::model::{CampaignState, PinnedMirror, Window};
-use super::store::{CampaignRow, WindowRow, COLUMNS};
+use super::store::{CampaignRow, WindowRow, COLUMNS, WINDOW_COLUMNS};
 use crate::commands::State as CommandState;
 
 /// What `GET /api/campaigns` filters on.
@@ -125,10 +125,11 @@ pub async fn windows(
     pool: &PgPool,
     campaigns: &[Uuid],
 ) -> Result<Vec<(Uuid, Window)>, sqlx::Error> {
-    let rows: Vec<WindowWithCampaign> = sqlx::query_as(
-        "SELECT campaign_id, kind, weekdays, start_minute, end_minute, timezone, starts_at, ends_at
-         FROM campaign_windows WHERE campaign_id = ANY($1) ORDER BY campaign_id, position",
-    )
+    // SQL-safe: interpolates only the constant WINDOW_COLUMNS.
+    let rows: Vec<WindowWithCampaign> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT campaign_id, {WINDOW_COLUMNS}
+         FROM campaign_windows WHERE campaign_id = ANY($1) ORDER BY campaign_id, position"
+    )))
     .bind(campaigns)
     .fetch_all(pool)
     .await?;
