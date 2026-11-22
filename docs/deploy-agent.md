@@ -35,7 +35,7 @@ One command serves every server of a site, for 30 days by default[^0073]. Each s
 | `MF_TIMEOUT` | Seconds to wait for the first connection, 120 by default |
 | `MF_REQUIRE_SIGNATURE=1` | Fail instead of warning when OpenSSL 3 is missing and the signature cannot be checked |
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
-| `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. Either value also undoes what the web interface last set. Each server shows whether it accepts AI commands[^0064] |
+| `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. Either value also undoes what the web interface last set. Each server shows whether it accepts AI commands[^0064]. An open alert whose AI remediation stopped because they were off gets a new attempt by itself once they are allowed[^0165] |
 | `MF_AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page (`commands.from_web`), through a systemd drop-in. Without it, the web interface can only turn them off. Works on an installed agent too; `MF_AI_COMMANDS_FROM_WEB=0` takes it back. "Allow AI commands to be turned on from the web interface" on the Add servers page adds it to the command[^0098] |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
@@ -390,3 +390,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0126]: [ADR-0126: Containers without capabilities, third-party images by digest](adr/0126-container-hardening-and-pinned-images.md)
 [^0139]: [ADR-0139: Third-party updates on Windows through winget](adr/0139-winget-updates.md)
 [^0140]: [ADR-0140: Flatpak and Snap updates on Linux](adr/0140-flatpak-and-snap-updates.md)
+[^0165]: [ADR-0165: New AI remediation attempts on an alert still open](adr/0165-new-remediation-attempts.md)
