@@ -176,7 +176,7 @@ describe("IncidentList", () => {
     expect(screen.getByRole("link", { name: "Show all incidents" })).toHaveAttribute("href", expect.stringMatching(/^\/incidents\/?$/));
   });
 
-  it("acknowledges one incident, or all of a notification's at once", async () => {
+  it("acknowledges one incident without a note, or all of a notification's at once", async () => {
     const GROUP = "9a3e2c1b-7d4f-4e6a-8b5c-1d2e3f4a5b6c";
     setUrl(`/incidents/?group=${GROUP}`);
     const mine = incident({ can_acknowledge: true });
@@ -197,20 +197,23 @@ describe("IncidentList", () => {
     render(<IncidentList filters={{ ...NO_FILTERS, state: "all", groupId: GROUP }} />);
     await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(4));
     expect(screen.getByText(/Acknowledged by bob 13:50: swapping the disk/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Acknowledge web-2" }));
-    await user.type(screen.getByRole("textbox", { name: "What are you doing about it?" }), "on it");
-    await user.click(screen.getByRole("button", { name: "Acknowledge" }));
+    // No button per row: the checkbox and the bulk bar acknowledge (ADR-0166).
+    expect(screen.queryByRole("button", { name: "Acknowledge web-2" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Select Disk used /var on web-2" }));
+    // The note is optional: Enter acknowledges at once.
+    await user.click(screen.getByRole("button", { name: "Acknowledge the selected incident" }));
+    await user.keyboard("{Enter}");
     await user.click(screen.getByRole("button", { name: "Acknowledge all 2" }));
     // Escape closes the note without acknowledging; the button gets focus back.
     await user.keyboard("{Escape}");
     expect(screen.getByRole("button", { name: "Acknowledge all 2" })).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Acknowledge all 2" }));
-    await user.type(screen.getByRole("textbox", { name: "What are you doing about it?" }), "restarting{Enter}");
+    await user.type(screen.getByRole("textbox", { name: "What are you doing about it? (optional)" }), "restarting{Enter}");
     const bodies = fetchMock.mock.calls
       .filter(([url]) => url === "/api/incidents/acknowledge")
       .map(([, init]) => JSON.parse(String(init?.body)));
     expect(bodies).toEqual([
-      { incident_ids: [other.id], note: "on it" },
+      { incident_ids: [other.id], note: "" },
       { incident_ids: [mine.id, other.id], note: "restarting" },
     ]);
   });
@@ -246,7 +249,7 @@ describe("IncidentList", () => {
     expect(within(bar).getByText("4 selected")).toBeInTheDocument();
 
     await user.click(within(bar).getByRole("button", { name: "Acknowledge the 4 selected incidents" }));
-    await user.type(within(bar).getByRole("textbox", { name: "What are you doing about it?" }), "on it{Enter}");
+    await user.type(within(bar).getByRole("textbox", { name: "What are you doing about it? (optional)" }), "on it{Enter}");
     expect(await within(bar).findByRole("status")).toHaveTextContent(
       /^1 acknowledged, 1 already acknowledged or resolved, 1 refused: insufficient rights \(Disk used \/var on web-c\), 1 failed: The server could not handle the request\. Try again later\. \(Disk used \/var on web-b\)/,
     );

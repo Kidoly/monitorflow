@@ -334,7 +334,7 @@ describe("FleetOverview", () => {
     expect(screen.queryByRole("checkbox", { name: "Select web-2" })).not.toBeInTheDocument();
 
     await user.click(within(bar).getByRole("button", { name: "Acknowledge the alerts of the 2 selected servers" }));
-    await user.type(within(bar).getByRole("textbox", { name: "What are you doing about it?" }), "on it{Enter}");
+    await user.type(within(bar).getByRole("textbox", { name: "What are you doing about it? (optional)" }), "on it{Enter}");
     expect(await within(bar).findByRole("status")).toHaveTextContent(/^1 acknowledged, 1 with no alert to acknowledge/);
     const bodies = fetchMock.mock.calls
       .filter(([url]) => url === "/api/incidents/acknowledge")

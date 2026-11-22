@@ -45,39 +45,17 @@ function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {
   return incident.silenced ? <span className={styles.small}>{t("incidents.wasSilencedShort")}</span> : null;
 }
 
-/** Who said they are on it (ADR-0082), or the button to say so. */
-function Acknowledged({
-  incident,
-  now,
-  onAcknowledge,
-}: {
-  incident: Incident;
-  now: Date;
-  onAcknowledge: (ids: string[], note: string) => Promise<void>;
-}) {
-  if (incident.state !== "open") return null;
-  if (incident.acknowledged_at) {
-    return (
-      <span className={styles.small}>
-        {t("incidents.acknowledgedBy", {
-          name: incident.acknowledged_by ?? t("incidents.someone"),
-          when: formatSince(new Date(incident.acknowledged_at), now),
-        })}
-        {incident.acknowledged_note && `: ${incident.acknowledged_note}`}
-      </span>
-    );
-  }
-  if (!incident.can_acknowledge) return null;
+/** Who said they are on it (ADR-0082); the checkboxes and the bulk bar acknowledge (ADR-0166). */
+function Acknowledged({ incident, now }: { incident: Incident; now: Date }) {
+  if (incident.state !== "open" || !incident.acknowledged_at) return null;
   return (
-    <>
-      {" "}
-      <AcknowledgeButton
-        size="small"
-        name={t("incidents.acknowledgeHost", { host: incident.hostname })}
-        onAcknowledge={(note) => onAcknowledge([incident.id], note)}
-        describeError={describeError}
-      />
-    </>
+    <span className={styles.small}>
+      {t("incidents.acknowledgedBy", {
+        name: incident.acknowledged_by ?? t("incidents.someone"),
+        when: formatSince(new Date(incident.acknowledged_at), now),
+      })}
+      {incident.acknowledged_note && `: ${incident.acknowledged_note}`}
+    </span>
   );
 }
 
@@ -203,7 +181,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
             {formatDuration(((i.resolved_at ? Date.parse(i.resolved_at) : now.getTime()) - Date.parse(i.opened_at)) / 1000)}
           </span>
           <SilencedSign incident={i} now={now} />
-          <Acknowledged incident={i} now={now} onAcknowledge={acknowledge} />
+          <Acknowledged incident={i} now={now} />
         </>
       ),
     },
