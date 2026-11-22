@@ -19,6 +19,7 @@ import { ButtonLink } from "@/components/ui/Button";
 import { BulkBar } from "@/components/ui/BulkBar";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
+import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
@@ -143,8 +144,10 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
   const customerIds = new Map(sites.map((s) => [s.id, s.customer_id]));
   const now = updatedAt ?? new Date();
   const filtered = Boolean(
-    filters.severity || filters.serverId || filters.groupId || filters.state !== "all" || (filters.siteId && !scope.siteId),
+    filters.severity || filters.serverId || filters.groupId || (filters.siteId && !scope.siteId),
   );
+  // Open or History tab; a notification's incidents (`all`) have no tab, their banner says what they are.
+  const history = filters.state === "all" ? null : filters.state === "resolved";
 
   const siteChoices = sites.filter((s) => !scope.customerId || s.customer_id === scope.customerId);
   const serverChoices = servers
@@ -254,22 +257,10 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
   }
 
   const acknowledgeable = incidents.filter((i) => i.state === "open" && i.can_acknowledge && !i.acknowledged_at);
-  return (
-    <Page>
-      <PageHeader
-        title={t("incidents.title")}
-        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
-      />
+  const body = (
+    <>
       <FilterBar
         filters={[
-          {
-            name: "state",
-            label: t("incidents.filter.state"),
-            options: [
-              { value: "open", label: t("incidents.open") },
-              { value: "resolved", label: t("incidents.resolved") },
-            ],
-          },
           {
             name: "severity",
             label: t("incidents.filter.severity"),
@@ -290,7 +281,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       {filters.groupId && (
         <Banner tone="info">
           {t("incidents.group.banner")}{" "}
-          <Link href={scopedHref(incidentsHref({ ...filters, groupId: null }), scope)}>{t("incidents.group.showAll")}</Link>
+          <Link href={scopedHref(incidentsHref({ ...filters, groupId: null, state: "open" }), scope)}>{t("incidents.group.showAll")}</Link>
           {acknowledgeable.length > 1 && (
             <>
               {" "}
@@ -309,7 +300,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         <ErrorState what={t("incidents.load.list")} error={describeError(error)} onRetry={refresh} />
       ) : data && incidents.length === 0 ? (
         filtered ? (
-          <NoMatches names={["state", "severity", "server", "group", ...(scope.siteId ? [] : ["site"])]}>
+          <NoMatches names={["severity", "server", "group", ...(scope.siteId ? [] : ["site"])]}>
             {t("incidents.noMatch")}
           </NoMatches>
         ) : (
@@ -322,7 +313,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
               )
             }
           >
-            {t("incidents.empty")}
+            {history ? t("incidents.history.empty") : t("incidents.empty")}
           </EmptyState>
         )
       ) : (
@@ -356,6 +347,33 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
             selection={{ selected: selection.selected, onChange: selection.change, rowLabel: rowName }}
           />
         </div>
+      )}
+    </>
+  );
+  return (
+    <Page>
+      <PageHeader
+        title={t("incidents.title")}
+        meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
+      />
+      {history === null ? (
+        <div className={styles.panel}>{body}</div>
+      ) : (
+        <>
+          <Tabs
+            idBase="incidents"
+            label={t("incidents.tabs.label")}
+            tabs={[
+              { id: "open", label: t("incidents.tabs.open") },
+              { id: "history", label: t("incidents.tabs.history") },
+            ]}
+            selected={history ? "history" : "open"}
+            onSelect={(id) => replaceParams({ state: id === "history" ? "resolved" : null })}
+          />
+          <TabPanel idBase="incidents" id={history ? "history" : "open"}>
+            <div className={styles.panel}>{body}</div>
+          </TabPanel>
+        </>
       )}
     </Page>
   );

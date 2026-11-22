@@ -433,7 +433,7 @@ describe("FleetOverview", () => {
     const [row] = await rows();
     expect(within(row!).getByRole("link", { name: "1 open incident" })).toHaveAttribute(
       "href",
-      expect.stringMatching(/^\/incidents\/?\?state=open&server=s1$/),
+      expect.stringMatching(/^\/incidents\/?\?server=s1$/),
     );
   });
 

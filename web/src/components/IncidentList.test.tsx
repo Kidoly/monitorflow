@@ -64,7 +64,7 @@ describe("IncidentList", () => {
   it("lists incidents with readable metrics, values and durations", async () => {
     stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
     });
     render(<IncidentList filters={NO_FILTERS} />);
     const rows = within(await table()).getAllByRole("row");
@@ -88,7 +88,7 @@ describe("IncidentList", () => {
     const hushed = incident({ id: "3e7b0b4f-0000-4000-8000-000000000009", silenced_until: until, in_maintenance: false });
     stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [quiet, hushed], next_cursor: null } },
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [quiet, hushed], next_cursor: null } },
     });
     render(<IncidentList filters={NO_FILTERS} />);
     const rows = within(await table()).getAllByRole("row");
@@ -99,7 +99,7 @@ describe("IncidentList", () => {
   it("names no site while there is only one", async () => {
     stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open], next_cursor: null } },
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open], next_cursor: null } },
     });
     render(
       <As user={oneSite(viewer)}>
@@ -115,7 +115,7 @@ describe("IncidentList", () => {
     setActiveLocale("fr");
     stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
     });
     render(<IncidentList filters={NO_FILTERS} />);
     const rows = within(await screen.findByRole("table", { name: "Incidents" })).getAllByRole("row");
@@ -130,8 +130,8 @@ describe("IncidentList", () => {
     const page = (n: number) => Array.from({ length: n }, (_, i) => incident({ id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }));
     const fetchMock = stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: page(PAGE_SIZE), next_cursor: "c1" } },
-      [`GET /api/incidents?limit=${2 * PAGE_SIZE}`]: { status: 200, body: { incidents: page(PAGE_SIZE + 10), next_cursor: null } },
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: page(PAGE_SIZE), next_cursor: "c1" } },
+      [`GET /api/incidents?state=open&limit=${2 * PAGE_SIZE}`]: { status: 200, body: { incidents: page(PAGE_SIZE + 10), next_cursor: null } },
     });
     render(<IncidentList filters={NO_FILTERS} />);
     await userEvent.click(await screen.findByRole("button", { name: "Load more" }));
@@ -139,12 +139,12 @@ describe("IncidentList", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
 
     await act(() => vi.advanceTimersByTimeAsync(REFRESH_MS));
-    expect(fetchMock.mock.calls.filter(([url]) => url === `/api/incidents?limit=${2 * PAGE_SIZE}`).length).toBeGreaterThan(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === `/api/incidents?state=open&limit=${2 * PAGE_SIZE}`).length).toBeGreaterThan(1);
     expect(screen.getAllByRole("row")).toHaveLength(PAGE_SIZE + 11);
   });
 
   it("passes filters to the API and writes changes to the URL", async () => {
-    setUrl(`/incidents/?state=open&server=${SERVER_ID}`);
+    setUrl(`/incidents/?server=${SERVER_ID}`);
     stubFetch({
       ...options,
       [`GET /api/incidents?state=open&server_id=${SERVER_ID}&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [], next_cursor: null } },
@@ -156,9 +156,9 @@ describe("IncidentList", () => {
     expect(screen.getByRole("combobox", { name: "Server" })).toHaveValue(SERVER_ID);
 
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Severity" }), "critical");
-    expect(window.location.search).toBe(`?state=open&server=${SERVER_ID}&severity=critical`);
+    expect(window.location.search).toBe(`?server=${SERVER_ID}&severity=critical`);
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Site" }), "Site: berlin");
-    expect(window.location.search).toBe(`?state=open&severity=critical&site=${OTHER_SITE}`);
+    expect(window.location.search).toBe(`?severity=critical&site=${OTHER_SITE}`);
     await userEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(window.location.search).toBe("");
   });
@@ -170,7 +170,7 @@ describe("IncidentList", () => {
       ...options,
       [`GET /api/incidents?group=${GROUP}&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
     });
-    render(<IncidentList filters={{ ...NO_FILTERS, groupId: GROUP }} />);
+    render(<IncidentList filters={{ ...NO_FILTERS, state: "all", groupId: GROUP }} />);
     await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(3));
     expect(screen.getByText(/Sent together in one notification/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Show all incidents" })).toHaveAttribute("href", expect.stringMatching(/^\/incidents\/?$/));
@@ -194,7 +194,7 @@ describe("IncidentList", () => {
       "POST /api/incidents/acknowledge": { status: 200, body: { acknowledged: [] } },
     });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<IncidentList filters={{ ...NO_FILTERS, groupId: GROUP }} />);
+    render(<IncidentList filters={{ ...NO_FILTERS, state: "all", groupId: GROUP }} />);
     await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(4));
     expect(screen.getByText(/Acknowledged by bob 13:50: swapping the disk/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Acknowledge web-2" }));
@@ -228,7 +228,7 @@ describe("IncidentList", () => {
     });
     const fetchMock = stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [a, b, c, d], next_cursor: null } },
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [a, b, c, d], next_cursor: null } },
       "POST /api/incidents/acknowledge": [
         { status: 200, body: { acknowledged: [a.id] } },
         { status: 500, body: { error: "internal error", code: "internal" } },
@@ -276,7 +276,7 @@ describe("IncidentList", () => {
     const berlin = incident({ id: "2e6a9a3e-5b7c-4d8e-9f01-23456789abcd", hostname: "db-1", server_id: "7f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a02", site_id: OTHER_SITE, site_name: "berlin" });
     const fetchMock = stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [a, b, relayDown, over, berlin], next_cursor: null } },
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [a, b, relayDown, over, berlin], next_cursor: null } },
       "POST /api/silences": { status: 201, body: {} },
     });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -309,7 +309,7 @@ describe("IncidentList", () => {
   it("silences for a custom period", async () => {
     const fetchMock = stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open], next_cursor: null } },
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open], next_cursor: null } },
       "POST /api/silences": { status: 403, body: { error: "forbidden", code: "forbidden" } },
     });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -336,7 +336,7 @@ describe("IncidentList", () => {
     setUrl(`/incidents/?customer=${ACME}`);
     stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
     });
     render(<IncidentList filters={NO_FILTERS} />);
     await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(2));
@@ -344,7 +344,7 @@ describe("IncidentList", () => {
   });
 
   it("says when there are no incidents at all", async () => {
-    stubFetch({ ...options, [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [], next_cursor: null } } });
+    stubFetch({ ...options, [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [], next_cursor: null } } });
     render(<IncidentList filters={NO_FILTERS} />);
     expect(await screen.findByText(/No incidents\. No threshold has fired/)).toBeInTheDocument();
   });
@@ -352,7 +352,7 @@ describe("IncidentList", () => {
   it("shows errors and keeps the last list when a refresh fails", async () => {
     stubFetch({
       ...options,
-      [`GET /api/incidents?limit=${PAGE_SIZE}`]: [
+      [`GET /api/incidents?state=open&limit=${PAGE_SIZE}`]: [
         { status: 500, body: { error: "internal error" } },
         { status: 200, body: { incidents: [open], next_cursor: null } },
         { status: 502, body: { error: "bad gateway" } },
@@ -377,6 +377,29 @@ describe("IncidentsView", () => {
     });
     render(<IncidentsView />);
     expect(await table()).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "State" })).toHaveValue("resolved");
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("combobox", { name: "Severity" })).toHaveValue("warning");
+  });
+
+  it("shows open incidents by default and past ones under History", async () => {
+    setUrl("/incidents/?severity=warning");
+    stubFetch({
+      ...options,
+      [`GET /api/incidents?state=open&severity=warning&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open], next_cursor: null } },
+      [`GET /api/incidents?state=resolved&severity=warning&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [], next_cursor: null } },
+      [`GET /api/incidents?state=resolved&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [resolved], next_cursor: null } },
+    });
+    const user = userEvent.setup();
+    render(<IncidentsView />);
+    expect(await screen.findByRole("tab", { name: "Open" })).toHaveAttribute("aria-selected", "true");
+    expect(await table()).toBeInTheDocument();
+    screen.getByRole("tab", { name: "Open" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(window.location.search).toBe("?severity=warning&state=resolved");
+    // Clearing the filters keeps the tab.
+    expect(await screen.findByText("No incidents match these filters.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(window.location.search).toBe("?state=resolved");
+    expect(await screen.findByText("Memory used")).toBeInTheDocument();
   });
 });

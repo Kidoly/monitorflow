@@ -28,6 +28,9 @@ describe("incident filters", () => {
   it("leave defaults out of the query string", () => {
     expect(filtersToQuery(NO_FILTERS)).toBe("");
     expect(filtersToQuery({ ...NO_FILTERS, state: "resolved" })).toBe("state=resolved");
+    // A notification's incidents are all of them by default.
+    expect(filtersFromQuery(new URLSearchParams(`group=${GROUP}`)).state).toBe("all");
+    expect(filtersToQuery({ ...NO_FILTERS, state: "all", groupId: GROUP })).toBe(`group=${GROUP}`);
   });
 
   it("ignore unknown and malformed values", () => {
@@ -37,7 +40,9 @@ describe("incident filters", () => {
   });
 
   it("map to the API's parameters", () => {
-    expect(apiQuery(NO_FILTERS)).toEqual({});
+    // Open incidents unless the History tab says otherwise.
+    expect(apiQuery(NO_FILTERS)).toEqual({ state: "open" });
+    expect(apiQuery({ ...NO_FILTERS, state: "all" })).toEqual({});
     expect(apiQuery({ state: "resolved", severity: "warning", siteId: SITE, serverId: SERVER, groupId: GROUP })).toEqual({
       state: "resolved",
       severity: "warning",
@@ -49,7 +54,7 @@ describe("incident filters", () => {
 
   it("build links to the list", () => {
     expect(incidentsHref()).toBe("/incidents/");
-    expect(incidentsHref({ state: "open", serverId: SERVER })).toBe(`/incidents/?state=open&server=${SERVER}`);
+    expect(incidentsHref({ state: "open", serverId: SERVER })).toBe(`/incidents/?server=${SERVER}`);
     expect(incidentsHref({ groupId: GROUP })).toBe(`/incidents/?group=${GROUP}`);
   });
 });
