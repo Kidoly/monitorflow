@@ -43,6 +43,22 @@
   color: var(--muted);
 }
 
+/* A one-line note with its details folded under "Learn more". */
+.learnText {
+  margin: 0;
+}
+
+.learnMore > summary {
+  width: fit-content;
+  margin-top: 4px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.learnMore > .learnText {
+  margin-top: 6px;
+}
+
 /* A note straight in the page column, not in a box, lines up with the column. */
 .page > .sectionNote {
   padding: 0;

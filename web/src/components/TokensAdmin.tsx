@@ -780,10 +780,7 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
           {t("install.source.title")}
         </h2>
       </div>
-      <p className={styles.sectionNote}>
-        {t("install.source.note")}
-        {!editable && t("install.source.readOnly")}
-      </p>
+      {!editable && <p className={styles.sectionNote}>{t("install.source.readOnly")}</p>}
       <div className={styles.sectionBody}>
         {current && (
           <>

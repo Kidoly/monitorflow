@@ -79,7 +79,6 @@ export function CreateInstallKey({
       <h2 id={titleId} className={styles.sectionTitle}>
         {t("install.key.title")}
       </h2>
-      <p className={styles.sectionNote}>{t("install.key.note")}</p>
       <div className={styles.formGrid}>
         <label className={styles.field}>
           {t("install.key.site")}
