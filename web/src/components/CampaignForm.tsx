@@ -60,7 +60,7 @@ const UPDATE_KINDS: [UpdateKind, PlainKey][] = [
   ["agent", "campaigns.form.agent"],
 ];
 
-/** `/campaigns/new/`; `?edit=<id>` edits a campaign, `?from=<id>` starts a copy of one (ADR-0166). */
+/** `/campaigns/new/`; `?edit=<id>` edits a campaign, `?from=<id>` starts a copy of one (ADR-0179). */
 export function NewCampaignPage() {
   const me = useMe();
   const params = useSearchParams();

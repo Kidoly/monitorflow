@@ -289,7 +289,7 @@
   font-weight: 500;
 }
 
-/* The panel form: choices beside a live preview, the rest under Advanced (ADR-0166). */
+/* The panel form: choices beside a live preview, the rest under Advanced (ADR-0178). */
 .editor {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);

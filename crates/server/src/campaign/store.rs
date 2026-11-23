@@ -101,7 +101,7 @@ pub struct CampaignRow {
     /// Whether OS updates are included (ADR-0138).
     pub include_os: bool,
     pub third_party: sqlx::types::Json<Vec<ThirdPartySpec>>,
-    /// The `server_ids` and `waves` asked; `None` before ADR-0166.
+    /// The `server_ids` and `waves` asked; `None` before ADR-0179.
     pub requested_server_ids: Option<Vec<Uuid>>,
     pub requested_waves: Option<sqlx::types::Json<Vec<WaveSpec>>>,
 }
@@ -222,7 +222,7 @@ impl CampaignStore {
     }
 
     /// Edits the campaign `id` to `new`, audited as `campaign.update`
-    /// (ADR-0166, ADR-0173). What changes depends on where it is:
+    /// (ADR-0179, ADR-0173). What changes depends on where it is:
     ///
     /// - before its first batch is queued, everything but its state and
     ///   who made it;
@@ -367,7 +367,7 @@ impl CampaignStore {
     /// Deletes a draft or a finished campaign with its batches, servers
     /// and windows, audited as `campaign.delete`; its commands stay in the
     /// history. Refused while some of them are still in flight or a
-    /// server's package sources are still to be put back (ADR-0166).
+    /// server's package sources are still to be put back (ADR-0179).
     pub async fn delete(&self, id: Uuid, actor: Actor<'_>) -> Result<CampaignRow, CampaignError> {
         let mut tx = self.pool.begin().await?;
         let row = lock(&mut tx, id).await?.ok_or(CampaignError::NotFound)?;
@@ -714,7 +714,7 @@ async fn started(conn: &mut PgConnection, row: &CampaignRow) -> Result<bool, sql
 
 /// Refuses to `verb` a finished campaign while some of its commands are
 /// in flight or a server's package sources are still to be put back, the
-/// condition the runner keeps restoring under (ADR-0166).
+/// condition the runner keeps restoring under (ADR-0179).
 async fn settled(conn: &mut PgConnection, id: Uuid, verb: &str) -> Result<(), CampaignError> {
     let (in_flight, unrestored): (bool, bool) = sqlx::query_as(
         "SELECT
@@ -744,7 +744,7 @@ async fn settled(conn: &mut PgConnection, id: Uuid, verb: &str) -> Result<(), Ca
 }
 
 /// The request the campaign `row` holds now. For a campaign made before
-/// its request was kept (ADR-0166): its site, the other servers of its
+/// its request was kept (ADR-0179): its site, the other servers of its
 /// batches still there, and the size of each batch but the last, as the
 /// web interface reads it.
 async fn request_of(

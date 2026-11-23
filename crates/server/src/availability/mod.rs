@@ -25,7 +25,7 @@ pub use spans::{Span, Spans};
 
 /// The whole report of `customer` (its sites and services), or of
 /// everything when `None`: what a schedule sends, with no user to narrow it.
-/// With `zone`, the uptime at the period's end comes with it (ADR-0172).
+/// With `zone`, the uptime at the period's end comes with it (ADR-0180).
 pub async fn for_customer(
     db: &mut sqlx::PgConnection,
     customer: Option<uuid::Uuid>,
@@ -73,7 +73,7 @@ pub async fn for_customer(
 }
 
 /// The uptime of `reach` at the end of `period` (or now, when it is still
-/// going on), days cut in `zone`: what a report's PDF shows (ADR-0172).
+/// going on), days cut in `zone`: what a report's PDF shows (ADR-0180).
 pub async fn uptime_at_end(
     db: &mut sqlx::PgConnection,
     reach: &data::Reach,

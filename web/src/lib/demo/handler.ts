@@ -253,7 +253,7 @@ const ROUTES: [RegExp, Handler][] = [
       services: [], machines, checks: [], maintenance: [],
     };
   }],
-  // Uptime (ADR-0172): the same servers, up most days, with a few outages.
+  // Uptime (ADR-0180): the same servers, up most days, with a few outages.
   [/^\/api\/availability\/uptime$/, (_, q) => {
     const today = new Date();
     return {

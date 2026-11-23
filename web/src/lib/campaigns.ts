@@ -243,7 +243,7 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
 }
 
 /**
- * How the API edits `campaign` now (ADR-0166, ADR-0173): `full` before its first batch is queued;
+ * How the API edits `campaign` now (ADR-0179, ADR-0173): `full` before its first batch is queued;
  * `running` while a run is under way, when only its name, windows and failure threshold change;
  * `next` once over, when saving prepares its next run; `busy` while commands of a finished run
  * still run, when it waits for them.
@@ -305,7 +305,7 @@ function isoToLocal(iso: string): string {
 
 /**
  * The form's draft for `campaign`, to edit it or to start a copy. Without
- * the request it was made from (before ADR-0166), its servers outside its
+ * the request it was made from (before ADR-0179), its servers outside its
  * site are named and its batches become sizes.
  */
 export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {

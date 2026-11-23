@@ -48,7 +48,7 @@ function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {
   return incident.silenced ? <span className={styles.small}>{t("incidents.wasSilencedShort")}</span> : null;
 }
 
-/** Who said they are on it (ADR-0082); the checkboxes and the bulk bar acknowledge (ADR-0166). */
+/** Who said they are on it (ADR-0082); the checkboxes and the bulk bar acknowledge (ADR-0177). */
 function Acknowledged({ incident, now }: { incident: Incident; now: Date }) {
   if (incident.state !== "open" || !incident.acknowledged_at) return null;
   return (

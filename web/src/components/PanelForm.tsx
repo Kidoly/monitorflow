@@ -126,7 +126,7 @@ function without<K extends keyof Panel>(panel: Panel, key: K): Panel {
 }
 
 /**
- * The form of one panel (ADR-0166): what to show and of which servers,
+ * The form of one panel (ADR-0178): what to show and of which servers,
  * how to draw it as tiles, and a preview with live data. Everything else
  * is under "Advanced", closed, with defaults that make it unnecessary.
  * The title follows the choices until it is typed.

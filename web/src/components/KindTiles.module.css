@@ -1,4 +1,4 @@
-/* Tiles to choose how a panel is drawn (ADR-0166). */
+/* Tiles to choose how a panel is drawn (ADR-0178). */
 .tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));

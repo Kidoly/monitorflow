@@ -1,4 +1,4 @@
-/* A text panel (ADR-0166); sizes in em so a screen scales them. */
+/* A text panel (ADR-0178); sizes in em so a screen scales them. */
 .text {
   overflow-wrap: anywhere;
 }

@@ -1,4 +1,4 @@
-//! The uptime section of the report PDF (ADR-0172): a table of the last
+//! The uptime section of the report PDF (ADR-0180): a table of the last
 //! 24 hours, 7, 30 and 90 days, and under each row the daily bars of the
 //! period's days, with a legend.
 

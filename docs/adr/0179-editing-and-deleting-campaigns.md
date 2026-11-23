@@ -1,7 +1,9 @@
-# ADR-0166: Editing and deleting campaigns
+# ADR-0179: Editing and deleting campaigns
 
 Date: 2026-11-22
 Status: accepted; amends ADR-0033
+
+Numbered ADR-0166 when merged, renumbered because three other ADRs had the same number. The migration `20261203090000_campaign_edit_delete.sql` still names it ADR-0166: a migration already applied cannot change.
 
 ## Context
 

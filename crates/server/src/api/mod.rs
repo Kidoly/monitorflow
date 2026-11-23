@@ -125,7 +125,7 @@
 //! | PUT, DELETE | `/api/report-schedules/{id}` | the same | the same body; [`report_schedules::ScheduleView`], 204; audited |
 //! | POST | `/api/report-schedules/{id}/send` | the same | [`report_schedules::SentView`]: the latest period sent now; audited as `report.sent` |
 //! | GET | `/api/availability/report` | any role | the same and `format` (`csv` or `pdf`), `language`, `time_zone`; the report as a file |
-//! | GET | `/api/availability/uptime` | any role | `customer_id`, `at`, `time_zone`; [`crate::availability::uptime::Uptime`]: 24 h, 7, 30 and 90 days and 90 daily bars (ADR-0172) |
+//! | GET | `/api/availability/uptime` | any role | `customer_id`, `at`, `time_zone`; [`crate::availability::uptime::Uptime`]: 24 h, 7, 30 and 90 days and 90 daily bars (ADR-0180) |
 //! | GET | `/api/dependencies` | any role | `server_id` or `relay_id`; [`dependencies::DependencyList`]: what is behind what (ADR-0152) |
 //! | POST | `/api/dependencies` | modify every end's site | body [`dependencies::DependencyRequest`]: children behind one parent, all or none; 201 [`dependencies::DependencyList`]; 409 on a loop or a duplicate; audited |
 //! | DELETE | `/api/dependencies/{id}` | modify both ends' sites | 204; audited |
@@ -595,7 +595,7 @@
 //! Actions answer 409 `cannot <action> a campaign that is <state>` when
 //! the state does not allow them. A campaign is edited (`PUT`, the whole
 //! request again) until its first batch is queued, and deleted as a draft
-//! or once finished (ADR-0166). Everything is audited (`campaign.*`).
+//! or once finished (ADR-0179). Everything is audited (`campaign.*`).
 //!
 //! # Remediation rules
 //!

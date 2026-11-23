@@ -1,6 +1,6 @@
 //! Update campaigns (ADR-0033): list, create, read with waves and
 //! per-server status, start, pause, resume or stop, edit or delete
-//! (ADR-0166), and run again once over, keeping past runs (ADR-0173).
+//! (ADR-0179), and run again once over, keeping past runs (ADR-0173).
 //!
 //! Campaigns span sites, so reading one needs a role on its customer as a
 //! whole (global or customer grant); creating and acting need an
@@ -134,7 +134,7 @@ pub struct CampaignView {
     /// Set for an agent update campaign (ADR-0053).
     pub agent_version: Option<String>,
     /// The `server_ids` of the request, as last written; `null` for a
-    /// campaign made before they were kept (ADR-0166).
+    /// campaign made before they were kept (ADR-0179).
     pub server_ids: Option<Vec<Uuid>>,
     /// The `waves` of the request, as last written; `null` for a campaign
     /// made before they were kept. `waves` holds the batches they made.
@@ -490,7 +490,7 @@ pub async fn create(
 
 /// `PUT /api/campaigns/{id}`: the whole campaign again. While a run is
 /// under way only its name, windows and threshold may differ; once over,
-/// it is prepared for its next run (ADR-0166, ADR-0173).
+/// it is prepared for its next run (ADR-0179, ADR-0173).
 pub async fn update(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -516,7 +516,7 @@ pub async fn update(
 }
 
 /// `DELETE /api/campaigns/{id}`: a draft or a finished campaign
-/// (ADR-0166).
+/// (ADR-0179).
 pub async fn delete(
     State(state): State<ApiState>,
     user: CurrentUser,

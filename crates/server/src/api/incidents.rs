@@ -436,7 +436,7 @@ pub struct AcknowledgeRequest {
     pub incident_ids: Vec<Uuid>,
     /// What the user is doing about them, up to 500 characters, shown with
     /// the acknowledgement (ADR-0130). Optional, for people and API keys
-    /// alike (ADR-0166).
+    /// alike (ADR-0177).
     #[serde(default)]
     pub note: Option<String>,
 }
@@ -444,7 +444,7 @@ pub struct AcknowledgeRequest {
 /// Longest acknowledgement note, in characters.
 pub const MAX_NOTE: usize = 500;
 
-/// The note trimmed, `None` when blank or missing (ADR-0166), or why it
+/// The note trimmed, `None` when blank or missing (ADR-0177), or why it
 /// is refused: too long.
 pub fn acknowledgement_note(note: Option<&str>) -> Result<Option<String>, String> {
     let note = note.map(str::trim).filter(|n| !n.is_empty());

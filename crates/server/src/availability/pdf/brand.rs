@@ -1,4 +1,4 @@
-//! The header of every page (ADR-0172): the MonitorFlow logo drawn as
+//! The header of every page (ADR-0180): the MonitorFlow logo drawn as
 //! vectors, the product name, and the report's title and period on the
 //! right, over a thin rule. No image is embedded, so the file stays small.
 

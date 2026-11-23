@@ -13,7 +13,7 @@ export const MAX_NOTE = 500;
 
 /**
  * "Acknowledge", then in place, never in a popover: an optional note
- * field ("What are you doing about it?", ADR-0166), Cancel and
+ * field ("What are you doing about it?", ADR-0177), Cancel and
  * Acknowledge. Enter acknowledges at once. Focus goes to the field on
  * open and back to the button on Cancel or Escape. `onAcknowledge`
  * rejecting keeps the form open with its error.

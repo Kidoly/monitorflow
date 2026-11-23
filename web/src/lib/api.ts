@@ -318,7 +318,7 @@ export type PanelServers =
   | { kind: "list"; ids: string[] };
 
 /**
- * How a panel is drawn (ADR-0166). `area`, `columns` and `heatmap` draw
+ * How a panel is drawn (ADR-0178). `area`, `columns` and `heatmap` draw
  * a chart's data, `gauge` a figure's, `bars` a top list's.
  */
 export type PanelKind =
@@ -2986,7 +2986,7 @@ export interface Campaign {
   sources: SourcesPin | null;
   /** Set for an agent update campaign: the version agents update to (ADR-0053). */
   agent_version: string | null;
-  /** The request's `server_ids` and `waves` as last written; null before ADR-0166, absent from older servers. */
+  /** The request's `server_ids` and `waves` as last written; null before ADR-0179, absent from older servers. */
   server_ids?: string[] | null;
   wave_specs?: WaveSpec[] | null;
   wave_count: number;
@@ -4191,7 +4191,7 @@ export interface ReportSent {
   recipients: string[];
 }
 
-/** One day of uptime (ADR-0172). */
+/** One day of uptime (ADR-0180). */
 export interface UptimeDay {
   /** Local date, "2026-11-22". */
   date: string;
@@ -4651,7 +4651,7 @@ export const api = {
   availability: (query: AvailabilityQuery, signal?: AbortSignal) =>
     request<AvailabilityReport>(`/api/availability?${availabilityQuery(query)}`, { signal }),
 
-  /** The last 24 hours, 7, 30 and 90 days and 90 daily bars, days cut in `time_zone` (ADR-0172). */
+  /** The last 24 hours, 7, 30 and 90 days and 90 daily bars, days cut in `time_zone` (ADR-0180). */
   uptime: (query: { customer_id?: string | null; time_zone: string }, signal?: AbortSignal) => {
     const params = new URLSearchParams({ time_zone: query.time_zone });
     if (query.customer_id) params.set("customer_id", query.customer_id);
@@ -5309,13 +5309,13 @@ export const api = {
     request<CampaignDetail>("/api/campaigns", { method: "POST", body }),
 
   /**
-   * Edits a campaign (ADR-0166, ADR-0173): everything before its first batch, only its name, windows and
+   * Edits a campaign (ADR-0179, ADR-0173): everything before its first batch, only its name, windows and
    * threshold while a run is under way, everything once finished, for its next run (it becomes a draft).
    */
   updateCampaign: (id: string, body: CampaignRequest) =>
     request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, { method: "PUT", body }),
 
-  /** Deletes a draft or finished campaign (ADR-0166); 409 while commands are in flight. */
+  /** Deletes a draft or finished campaign (ADR-0179); 409 while commands are in flight. */
   deleteCampaign: (id: string) => request<void>(`/api/campaigns/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Runs a finished campaign again, all its servers or the failed ones (ADR-0173). */

@@ -45,7 +45,7 @@ export function inline(text: string, key = "i"): ReactNode[] {
 }
 
 /**
- * A small part of Markdown for text panels (ADR-0166): headings, lists,
+ * A small part of Markdown for text panels (ADR-0178): headings, lists,
  * paragraphs, bold, italics, code and links. Built from React elements,
  * never from HTML, so a dashboard's text cannot run anything.
  */
