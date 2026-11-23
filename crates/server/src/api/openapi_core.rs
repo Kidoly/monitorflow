@@ -33,6 +33,7 @@ use super::{
         server_packages, server_third_party, server_rollback, server_sources, configure_server_sources,
         revert_server_sources, server_use_mirror, site_sources, site_use_mirror, revert_site_sources,
         site_agent_auto_update, server_ai_commands, site_ai_commands,
+        fleet_ai_commands,
     ),
     components(schemas(logs::Level)),
     tags(
@@ -1350,3 +1351,24 @@ key's areas: `api_key_scope`", body = ErrorBody),
             body = ErrorBody),
     ))]
 fn site_ai_commands() {}
+
+#[utoipa::path(post, path = "/api/v1/remediation/ai-commands", tag = "remediation",
+    summary = "Turn AI commands on or off on every server",
+    description = "Does `POST /api/v1/sites/{id}/ai-commands` for every site the caller administers at \
+once: every server whose AI commands are not as asked is queued or skipped on its own, with why; servers \
+already as asked are in neither list. As for one server, \"on\" only reaches the servers whose machine \
+allowed AI commands to be turned on from the web interface; the others are skipped with what to do there. \
+Each switch is audited and notified as for one server.\n\n\
+**Who**: an administrator of at least one site (or customer, or a global one); only the servers of the \
+sites it administers change. **Area**: `remediation`.",
+    request_body(content = ai_commands::SwitchRequest, example = json!({"on": true})),
+    responses(
+        (status = 200, description = "What was queued and skipped", body = package_sources::SiteChange,
+            example = json!({"queued": [ex::SERVER], "skipped": [
+                {"id": ex::SERVER_2, "hostname": "db-1", "reason": "this server only lets AI commands be \
+turned on on the server itself; to allow it here, run the installer there with MF_AI_COMMANDS_FROM_WEB=1"}
+            ]})),
+        (status = 403, description = "The key administers no site: `forbidden`; or outside the key's \
+areas: `api_key_scope`", body = ErrorBody),
+    ))]
+fn fleet_ai_commands() {}

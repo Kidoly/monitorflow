@@ -2,7 +2,14 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 520px;
+}
+
+/* The sidebar's sections side by side, as many as the width holds. */
+.sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  align-items: start;
+  gap: 8px 24px;
 }
 
 .labels {

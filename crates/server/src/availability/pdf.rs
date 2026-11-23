@@ -387,8 +387,8 @@ pub fn render(report: &Report, uptime: Option<&Uptime>, zone: Tz, language: Lang
     ));
     doc.paragraph(
         doc.t(
-            "Down is any time a critical problem was open: a check failing at its critical level, a server offline, or a server unreachable because what it depends on was down. Warnings never count. Planned maintenance, agreed in advance, is shown apart and left out of the calculation. Availability is the time up divided by the time counted.",
-            "Une panne est tout moment où un problème critique était ouvert\u{a0}: un contrôle en échec à son seuil critique, un serveur hors ligne, ou un serveur injoignable parce que ce dont il dépend était en panne. Les avertissements ne comptent jamais. La maintenance planifiée, convenue à l’avance, est présentée à part et n’entre pas dans le calcul. La disponibilité est le temps de fonctionnement divisé par le temps compté.",
+            "Down is any time a critical problem was open: a check failing at its critical level, a server offline, or a server unreachable because what it depends on was down. Warnings never count. Planned maintenance, agreed in advance, is shown apart and left out of the calculation, like any time the monitoring itself was stopped. Availability is the time up divided by the time counted.",
+            "Une panne est tout moment où un problème critique était ouvert\u{a0}: un contrôle en échec à son seuil critique, un serveur hors ligne, ou un serveur injoignable parce que ce dont il dépend était en panne. Les avertissements ne comptent jamais. La maintenance planifiée, convenue à l’avance, est présentée à part et n’entre pas dans le calcul, pas plus que le temps où la supervision elle-même était arrêtée. La disponibilité est le temps de fonctionnement divisé par le temps compté.",
         ),
         INK,
     );

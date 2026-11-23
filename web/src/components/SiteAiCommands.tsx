@@ -55,7 +55,8 @@ export function SiteAiCommands({ site }: { site: Site }) {
   );
 }
 
-function SwitchResult({ on, change }: { on: boolean; change: SiteSourcesChange }) {
+/** What a switch of many servers did: how many change, and those that cannot, with why. */
+export function SwitchResult({ on, change }: { on: boolean; change: SiteSourcesChange }) {
   const count = change.queued.length;
   return (
     <Banner tone={change.queued.length > 0 ? "ok" : "warn"} role="status">

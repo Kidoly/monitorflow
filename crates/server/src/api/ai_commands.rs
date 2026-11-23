@@ -1,6 +1,7 @@
 //! AI commands turned on and off from the web interface (ADR-0098): the
-//! signed `ai_commands` command for one server or every server of a site,
-//! and the last one asked for, which the server's page shows.
+//! signed `ai_commands` command for one server, every server of a site or
+//! every server the user administers, and the last one asked for, which
+//! the server's page shows.
 //!
 //! The agent decides: it always obeys "off", and "on" only where its host
 //! allowed it with `commands.from_web`, which it reports as `ai_commands`
@@ -22,7 +23,7 @@ use serde_json::json;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use super::access::authorize;
+use super::access::{authorize, Scope};
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::commands::{parameters, CommandDetail};
@@ -178,12 +179,47 @@ pub async fn site(
         .await?;
     let site = authorize_site_admin(&user, site)?;
     let SwitchRequest { on } = body(request)?;
+    let change = switch_sites(&state, &user, (false, vec![site]), on).await?;
+    tracing::info!(user = %user.id, %site, on, queued = change.queued.len(), skipped = change.skipped.len(), "switched the AI commands of a site");
+    Ok(Json(change))
+}
+
+/// `POST /api/remediation/ai-commands`: the same for every server of
+/// every site the user administers, at once.
+pub async fn fleet(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    request: Result<Json<SwitchRequest>, JsonRejection>,
+) -> Result<Json<SiteChange>, ApiError> {
+    if !user.can_read() {
+        return Err(ApiError::Forbidden);
+    }
+    let sites = user.sites_with(Role::Administrator);
+    if sites == Scope::Only(Vec::new()) {
+        return Err(ApiError::Forbidden);
+    }
+    let SwitchRequest { on } = body(request)?;
+    let change = switch_sites(&state, &user, sites.bind(), on).await?;
+    tracing::info!(user = %user.id, on, queued = change.queued.len(), skipped = change.skipped.len(), "switched the AI commands of every administered server");
+    Ok(Json(change))
+}
+
+/// Switches every unrevoked server of `sites`, as `(all, ids)`, whose AI
+/// commands are not as asked; each is queued or skipped alone, with why,
+/// in one transaction.
+async fn switch_sites(
+    state: &ApiState,
+    user: &CurrentUser,
+    (all, sites): (bool, Vec<Uuid>),
+    on: bool,
+) -> Result<SiteChange, ApiError> {
     // SQL-safe: interpolates only the constant HOST_COLUMNS.
     let hosts: Vec<Host> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {HOST_COLUMNS} FROM servers
-         WHERE site_id = $1 AND revoked_at IS NULL ORDER BY hostname, peer_id"
+         WHERE ($1 OR site_id = ANY($2)) AND revoked_at IS NULL ORDER BY hostname, peer_id"
     )))
-    .bind(site)
+    .bind(all)
+    .bind(&sites)
     .fetch_all(&state.pool)
     .await?;
     let mut change = SiteChange {
@@ -199,7 +235,7 @@ pub async fn site(
                 reason,
             }),
             None => {
-                queue(&mut tx, &user, host, on).await?;
+                queue(&mut tx, user, host, on).await?;
                 change.queued.push(host.id);
             }
         }
@@ -210,8 +246,7 @@ pub async fn site(
             commands.dispatch(&host.peer_id);
         }
     }
-    tracing::info!(user = %user.id, %site, on, queued = change.queued.len(), skipped = change.skipped.len(), "switched the AI commands of a site");
-    Ok(Json(change))
+    Ok(change)
 }
 
 /// Queues the switch of `host`, cancelling an older one still queued so

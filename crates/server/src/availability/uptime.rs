@@ -37,8 +37,8 @@ pub struct Windows {
 pub struct Bar {
     /// The local date, in the view's time zone.
     pub date: NaiveDate,
-    /// In percent; `null` when nothing was counted: before it existed, or
-    /// all of it under planned maintenance.
+    /// In percent; `null` when nothing was counted: before it existed, all
+    /// of it under planned maintenance, or the central server not running.
     pub availability: Option<f64>,
     /// Down time that day, seconds.
     pub down_seconds: f64,
@@ -100,12 +100,18 @@ pub fn period(at: DateTime<Utc>) -> Span {
 }
 
 /// Counted, down and maintenance seconds of `timeline` over `window`,
-/// within `life`.
+/// within `life`; the time the central server was not running is not
+/// counted (ADR-0176).
 pub fn slice(life: Span, timeline: &Timeline, window: Span) -> (f64, f64, f64) {
     let alive = Spans::one(life.0.max(window.0), life.1.min(window.1));
     let maintenance = timeline.maintenance.intersect(&alive).seconds();
+    let unobserved = timeline.unobserved.intersect(&alive).seconds();
     let down = timeline.down.intersect(&alive).seconds();
-    (alive.seconds() - maintenance, down, maintenance)
+    (
+        alive.seconds() - maintenance - unobserved,
+        down,
+        maintenance,
+    )
 }
 
 fn percent((counted, down, _): (f64, f64, f64)) -> Option<f64> {

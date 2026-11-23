@@ -1,7 +1,7 @@
 # ADR-0155: Availability reports
 
 Date: 2026-11-18
-Status: accepted
+Status: accepted; the time the central server was stopped is left out of the count (ADR-0176)
 
 ## Context
 

@@ -119,6 +119,8 @@ pub struct Data {
     /// Every check name the central server knows, to tell which check
     /// wrote a metric (ADR-0151).
     pub names: Vec<String>,
+    /// When the central server was not running (ADR-0176).
+    pub gaps: Spans,
 }
 
 /// Which servers and services a report covers.
@@ -284,6 +286,14 @@ pub async fn load(
     names.extend(builtin_defaults(0).into_iter().map(|spec| spec.name));
     names.sort_unstable();
     names.dedup();
+    let gaps: Vec<Span> = sqlx::query_as(
+        "SELECT starts_at, ends_at FROM central_server_gaps
+         WHERE starts_at < $2 AND ends_at > $1",
+    )
+    .bind(from)
+    .bind(end)
+    .fetch_all(&mut *db)
+    .await?;
     Ok(Data {
         machines,
         relays,
@@ -294,6 +304,7 @@ pub async fn load(
         parents,
         pings,
         names,
+        gaps: Spans::from_spans(gaps),
     })
 }
 

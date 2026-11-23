@@ -342,18 +342,20 @@ function Settings({
             </>
           )}
         </span>
-        <Button
-          size="small"
-          disabled={busy}
-          onClick={() =>
-            onChange({ paused: !settings.paused }, settings.paused ? t("autoUpdate.resumingAll") : t("autoUpdate.pausing"))
-          }
-        >
-          {settings.paused ? t("autoUpdate.resumeAll") : t("autoUpdate.pauseAll")}
-        </Button>
-        <ButtonLink size="small" href={SITES_PATH}>
-          {t("autoUpdate.overrides")}
-        </ButtonLink>
+        <span className={styles.pair}>
+          <Button
+            size="small"
+            disabled={busy}
+            onClick={() =>
+              onChange({ paused: !settings.paused }, settings.paused ? t("autoUpdate.resumingAll") : t("autoUpdate.pausing"))
+            }
+          >
+            {settings.paused ? t("autoUpdate.resumeAll") : t("autoUpdate.pauseAll")}
+          </Button>
+          <ButtonLink size="small" href={SITES_PATH}>
+            {t("autoUpdate.overrides")}
+          </ButtonLink>
+        </span>
       </div>
       <form
         className={styles.newSite}

@@ -132,13 +132,32 @@ describe("ApprovalQueue", () => {
     stubFetch({ [LIST]: list() });
     render(<ApprovalQueue />);
     expect(await screen.findByText("Nothing waiting for approval")).toBeInTheDocument();
-    expect(screen.getByText(/Commands that only read run on their own/)).toBeInTheDocument();
+    expect(screen.getByText(/The AI diagnoses every new alert/)).toBeInTheDocument();
     expect(screen.getByText("How a command gets here")).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(4);
     expect(screen.getByRole("link", { name: "See what the AI did" })).toHaveAttribute(
       "href",
       expect.stringMatching(/^\/remediation\/audit\/?$/),
     );
+  });
+
+  it("links a global administrator to turning AI commands on on every server", async () => {
+    stubFetch({ [LIST]: list() });
+    const { unmount } = render(
+      <As user={me({ role: "administrator", customer_id: null, site_id: null })}>
+        <ApprovalQueue />
+      </As>,
+    );
+    const link = await screen.findByRole("link", { name: "Turn them on on every server at once." });
+    expect(link).toHaveAttribute("href", expect.stringMatching(/^\/settings\/ai\/?#ai-commands$/));
+    unmount();
+    render(
+      <As user={me({ role: "administrator", customer_id: CUSTOMER_ID, site_id: null })}>
+        <ApprovalQueue />
+      </As>,
+    );
+    expect(await screen.findByText("How a command gets here")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /every server/ })).not.toBeInTheDocument();
   });
 
   it("explains an empty queue in French", async () => {

@@ -71,6 +71,37 @@ pub struct IncidentView {
     /// `reasoning` (untrusted text), the rules' `tier`, `rule` and
     /// `reason`, and `proposed_at`.
     pub pending_command: Option<serde_json::Value>,
+    /// The AI's latest diagnosis (untrusted text, ADR-0175), from its
+    /// latest `ai_proposal` event; `null` before it answered.
+    pub diagnosis: Option<String>,
+    /// When it gave that diagnosis.
+    pub diagnosed_at: Option<DateTime<Utc>>,
+    /// What the AI said to do next with that diagnosis (untrusted text):
+    /// the `reason` it stopped with, or the `reasoning` of the command it
+    /// proposed.
+    pub ai_advice: Option<String>,
+    /// The command it proposed with that diagnosis; `null` when it
+    /// stopped. Where `diagnosis_only` is set, a suggestion for a person
+    /// that never ran.
+    pub ai_command: Option<String>,
+    /// Why no command could run, so the AI only diagnosed from what the
+    /// server already held (ADR-0175): `commands_off`,
+    /// `commands_off_windows`, `system_unsupported`, `agent_too_old`
+    /// (the server refuses AI commands), `device` (no agent) or `offline`
+    /// (the host stopped reporting). `null` when commands could run, or
+    /// before the context was sent.
+    pub diagnosis_only: Option<String>,
+    /// Once closed, the `code` of the event that closed it, as the audit
+    /// log words it (`sensor_normal`, `ai_escalated`, `ai_failed`,
+    /// `commands_off`, ...); `null` while it runs.
+    pub close_code: Option<String>,
+    /// That event's English sentence.
+    pub close_reason: Option<String>,
+    /// The part of the sentence that varies: an error, a rule's reason,
+    /// the AI's words or a command; `null` when none.
+    pub close_detail: Option<String>,
+    /// The number in the sentence, for the limits; `null` otherwise.
+    pub close_limit: Option<i64>,
 }
 
 /// Body of `GET /api/remediation/incidents`.
@@ -106,11 +137,31 @@ const SELECT: &str = "SELECT i.id, i.customer_id, c.name AS customer_name, s.sit
                                          'tier', p.tier, 'rule', p.rule, 'reason', p.reason,
                                          'proposed_at', p.created_at)
                               FROM remediation_pending_commands p
-                              WHERE p.incident_id = i.id AND p.state = 'pending') AS pending_command
+                              WHERE p.incident_id = i.id AND p.state = 'pending') AS pending_command,
+                             ai.payload->>'diagnosis' AS diagnosis, ai.created_at AS diagnosed_at,
+                             coalesce(ai.payload->>'reason', ai.payload->>'reasoning') AS ai_advice,
+                             ai.payload->>'command' AS ai_command,
+                             ctx.payload->'diagnosis_only'->>'code' AS diagnosis_only,
+                             closing.payload->>'code' AS close_code,
+                             coalesce(closing.payload->>'reason', closing.payload->>'text')
+                                 AS close_reason,
+                             closing.payload->>'detail' AS close_detail,
+                             (closing.payload->>'limit')::bigint AS close_limit
                       FROM remediation_incidents i
                       JOIN servers s ON s.id = i.server_id
                       JOIN sites si ON si.id = s.site_id
-                      JOIN customers c ON c.id = i.customer_id";
+                      JOIN customers c ON c.id = i.customer_id
+                      LEFT JOIN LATERAL (SELECT e.payload, e.created_at
+                                         FROM remediation_incident_events e
+                                         WHERE e.incident_id = i.id AND e.kind = 'ai_proposal'
+                                         ORDER BY e.seq DESC LIMIT 1) ai ON true
+                      LEFT JOIN LATERAL (SELECT e.payload FROM remediation_incident_events e
+                                         WHERE e.incident_id = i.id AND e.kind = 'context_sent'
+                                         ORDER BY e.seq LIMIT 1) ctx ON true
+                      -- The event that closed it is its last (ADR-0144).
+                      LEFT JOIN remediation_incident_events closing
+                             ON i.closed_at IS NOT NULL AND closing.incident_id = i.id
+                            AND closing.seq = i.head_seq";
 
 /// `GET /api/remediation/incidents`: one page of the incidents of the
 /// user's sites, newest first.

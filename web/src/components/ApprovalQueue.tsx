@@ -16,7 +16,7 @@ import { t } from "@/i18n";
 import { acceptance } from "@/lib/commandKinds";
 import { riskWord, rollbackText, ruleReason, tierName, timeLeft } from "@/lib/remediation";
 import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
-import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
+import { AI_COMMANDS_HREF, AI_SETTINGS_PATH, AUDIT_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -188,6 +188,7 @@ export function ApprovalQueue() {
  * is none. Says how one gets here, so an empty page is not read as broken.
  */
 function HowItArrives() {
+  const me = useMe();
   return (
     <>
       <p className={styles.emptyText}>{t("remediation.queue.empty")}</p>
@@ -196,7 +197,16 @@ function HowItArrives() {
       </p>
       <ol className={styles.howList}>
         <li>{t("remediation.queue.howAi")}</li>
-        <li>{t("remediation.queue.howServer")}</li>
+        <li>
+          {t("remediation.queue.howServer")}
+          {/* Settings › AI is for global administrators; others switch per site or server. */}
+          {administersEverything(me) && (
+            <>
+              {" "}
+              <Link href={AI_COMMANDS_HREF}>{t("remediation.queue.howServerAll")}</Link>
+            </>
+          )}
+        </li>
         <li>{t("remediation.queue.howAlert")}</li>
         <li>{t("remediation.queue.howRules")}</li>
       </ol>

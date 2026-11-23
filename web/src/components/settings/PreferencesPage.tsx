@@ -60,47 +60,49 @@ export function PreferencesPage() {
       {signOutError && <Banner tone="bad">{signOutError}</Banner>}
       {save === "error" && <Banner tone="bad">{t("settings.preferences.saveFailed")}</Banner>}
 
-      <section className={styles.group} aria-labelledby="preferences-language">
-        <h2 id="preferences-language" className={styles.groupTitle}>
-          <label htmlFor={languageId}>{t("settings.preferences.language")}</label>
-        </h2>
-        <select
-          id={languageId}
-          className={cx(fieldClass, styles.choiceSelect)}
-          value={locale}
-          onChange={(e) => setLanguage(e.target.value as Locale)}
-        >
-          {LOCALES.map((option) => (
-            <option key={option} value={option} lang={option}>
-              {LOCALE_NAMES[option]}
-            </option>
-          ))}
-        </select>
-      </section>
+      <div className={styles.cardRow}>
+        <section className={cx(styles.group, styles.card)} aria-labelledby="preferences-language">
+          <h2 id="preferences-language" className={styles.groupTitle}>
+            <label htmlFor={languageId}>{t("settings.preferences.language")}</label>
+          </h2>
+          <select
+            id={languageId}
+            className={cx(fieldClass, styles.choiceSelect)}
+            value={locale}
+            onChange={(e) => setLanguage(e.target.value as Locale)}
+          >
+            {LOCALES.map((option) => (
+              <option key={option} value={option} lang={option}>
+                {LOCALE_NAMES[option]}
+              </option>
+            ))}
+          </select>
+        </section>
 
-      <section className={styles.group} aria-labelledby="preferences-appearance">
-        <h2 id="preferences-appearance" className={styles.groupTitle}>
-          {t("settings.preferences.appearance")}
-        </h2>
-        <fieldset className={styles.choices}>
-          <legend className={styles.choiceLegend}>{t("settings.preferences.theme")}</legend>
-          <SegmentedControl
-            label={t("settings.preferences.theme")}
-            options={THEMES.map((option) => ({ value: option, label: t(`shell.theme.${option}`) }))}
-            value={theme}
-            onChange={setTheme}
-          />
-        </fieldset>
-      </section>
+        <section className={cx(styles.group, styles.card)} aria-labelledby="preferences-appearance">
+          <h2 id="preferences-appearance" className={styles.groupTitle}>
+            {t("settings.preferences.appearance")}
+          </h2>
+          <fieldset className={styles.choices}>
+            <legend className={styles.choiceLegend}>{t("settings.preferences.theme")}</legend>
+            <SegmentedControl
+              label={t("settings.preferences.theme")}
+              options={THEMES.map((option) => ({ value: option, label: t(`shell.theme.${option}`) }))}
+              value={theme}
+              onChange={setTheme}
+            />
+          </fieldset>
+        </section>
+      </div>
 
-      <section className={styles.group} aria-labelledby="sidebar">
+      <section className={cx(styles.group, styles.card)} aria-labelledby="sidebar">
         <h2 id="sidebar" className={styles.groupTitle}>
           {t("settings.preferences.sidebar")}
         </h2>
         <SidebarEditor me={me} />
       </section>
 
-      <section className={styles.group} aria-labelledby="preferences-password">
+      <section className={cx(styles.group, styles.card)} aria-labelledby="preferences-password">
         <h2 id="preferences-password" className={styles.groupTitle}>
           {t("settings.preferences.password")}
         </h2>

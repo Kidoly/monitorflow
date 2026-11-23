@@ -27,6 +27,12 @@
   gap: 10px;
 }
 
+/* Change and Send a test wrap together, never one under the other. */
+.contactButtons {
+  display: inline-flex;
+  gap: 8px;
+}
+
 .ok {
   margin: 0;
   color: var(--ok);

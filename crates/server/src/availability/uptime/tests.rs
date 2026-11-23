@@ -86,6 +86,7 @@ fn data() -> Data {
         parents: vec![],
         pings: HashMap::new(),
         names: vec!["disk".into()],
+        gaps: Spans::new(),
     }
 }
 
@@ -169,4 +170,36 @@ fn days_before_something_existed_are_not_measured() {
     assert_eq!(switch.days[86].availability, Some(100.0));
     assert_eq!(switch.windows.day, Some(100.0));
     assert_eq!(switch.windows.quarter, Some(100.0));
+}
+
+#[test]
+fn an_incident_left_critical_while_the_central_server_was_stopped_stops_counting() {
+    // The memory of the web server critical from 21 November 08:00; the
+    // central server stopped at 12:00 and came back at 16:00 the next day,
+    // when the incident was resolved. Only the 4 hours seen count.
+    let mut data = data();
+    data.incidents = vec![incident(
+        WEB,
+        "monitorflow_memory_available_ratio",
+        "2026-11-21T08:00:00Z",
+        "2026-11-22T16:00:00Z",
+    )];
+    data.gaps = Spans::one(at("2026-11-21T12:00:00Z"), at("2026-11-22T16:00:00Z"));
+    let uptime = build(&data, now(), chrono_tz::Europe::Paris, now());
+    let web = &uptime.rows[1];
+    assert_eq!(web.kind, Kind::Server);
+    assert_eq!(web.outages, 1);
+    // The last 24 hours: 1 hour watched since 16:00, up.
+    assert_eq!(web.windows.day, Some(100.0));
+    let week = web.windows.week.unwrap();
+    let counted = 7.0 * 24.0 - 23.0 - 28.0;
+    assert!(
+        (week - (counted - 4.0) / counted * 100.0).abs() < 1e-9,
+        "{week}"
+    );
+    // 21 November in Paris: 13 hours watched, 4 of them down.
+    let saturday = &web.days[88];
+    assert_eq!(saturday.down_seconds, 4.0 * 3600.0);
+    let expected = (13.0 - 4.0) / 13.0 * 100.0;
+    assert!((saturday.availability.unwrap() - expected).abs() < 1e-9);
 }

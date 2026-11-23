@@ -124,6 +124,9 @@ export const WEBHOOKS_PATH = "/settings/integrations/webhooks/";
 export const HALOPSA_PATH = "/settings/integrations/halopsa/";
 /** AI setup, global administrators only (ADR-0064). */
 export const AI_SETTINGS_PATH = "/settings/ai/";
+/** The id of the AI settings' section that turns AI commands on or off on every server (ADR-0173). */
+export const AI_COMMANDS_SECTION = "ai-commands";
+export const AI_COMMANDS_HREF = `${AI_SETTINGS_PATH}#${AI_COMMANDS_SECTION}`;
 
 /** Updating the central server (ADR-0056). */
 export const SERVER_UPDATE_PATH = "/settings/server-update/";

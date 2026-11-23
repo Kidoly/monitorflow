@@ -56,6 +56,9 @@ pub struct Numbers {
     pub down_seconds: f64,
     /// Planned maintenance, left out of the count, seconds.
     pub maintenance_seconds: f64,
+    /// Time the central server was not running, so nothing was watched:
+    /// left out of the count too, seconds (ADR-0176).
+    pub unobserved_seconds: f64,
     pub outages: usize,
     pub longest_seconds: f64,
 }
@@ -67,6 +70,7 @@ impl Numbers {
             counted_seconds: measured.counted,
             down_seconds: measured.down,
             maintenance_seconds: measured.maintenance,
+            unobserved_seconds: measured.unobserved,
             outages: measured.outages.len(),
             longest_seconds: measured.longest(),
         }
@@ -435,6 +439,7 @@ impl<'a> Builder<'a> {
         Some(measure(
             life,
             &maintenance,
+            &self.data.gaps,
             &self.sources(machine, None, |_| true),
         ))
     }
@@ -454,7 +459,7 @@ impl<'a> Builder<'a> {
         let sources = self.sources(machine, Some(check), |i| {
             i.metric == "offline" || check_covers(check, names, &i.metric, &i.instance)
         });
-        Some(measure(life, &maintenance, &sources))
+        Some(measure(life, &maintenance, &self.data.gaps, &sources))
     }
 
     /// The checks of `machine` that had outages of their own over the
@@ -517,7 +522,10 @@ impl<'a> Builder<'a> {
                 check: member.check.clone(),
             });
         }
-        (members, combine(span, service.rule, &timelines))
+        (
+            members,
+            combine(span, service.rule, &timelines, &self.data.gaps),
+        )
     }
 
     fn outages(&self, outages: &[Outage<Cause>]) -> Vec<OutageView> {

@@ -2422,6 +2422,20 @@ export interface RemediationIncident {
   max_commands: number;
   max_duration_s: number;
   event_count: number;
+  /** The AI's latest diagnosis, untrusted text (ADR-0175); absent from older servers. */
+  diagnosis?: string | null;
+  diagnosed_at?: string | null;
+  /** What it said to do next with that diagnosis, untrusted text. */
+  ai_advice?: string | null;
+  /** The command it proposed with it; with `diagnosis_only`, a suggestion that never ran. */
+  ai_command?: string | null;
+  /** Why no command could run, so the AI only diagnosed: a refusal code, `device` or `offline`. */
+  diagnosis_only?: string | null;
+  /** Once closed, the code, English sentence, detail and limit of the event that closed it. */
+  close_code?: string | null;
+  close_reason?: string | null;
+  close_detail?: string | null;
+  close_limit?: number | null;
 }
 
 export interface RemediationIncidentList {
@@ -2449,8 +2463,14 @@ export interface RemediationRunStatus {
   blocked: RemediationRunBlocked | null;
   /** `blocked` in English. */
   reason: string | null;
-  /** With `commands_refused`: `commands_off`, `commands_off_windows`, `system_unsupported` or `agent_too_old`. */
+  /** When the server refuses AI commands: `commands_off`, `commands_off_windows`, `system_unsupported` or `agent_too_old`. */
   refusal: string | null;
+  /** Why an attempt now would only diagnose (ADR-0175): a refusal code, `device` or `offline`. */
+  diagnosis_only?: string | null;
+  diagnosis_only_reason?: string | null;
+  /** On an open alert without any remediation, why: `ai_off`, `too_old` or `soon`. */
+  no_attempt?: "ai_off" | "too_old" | "soon" | null;
+  no_attempt_reason?: string | null;
 }
 
 export interface RemediationRunStarted {
@@ -2973,11 +2993,43 @@ export interface Campaign {
   /** Index from 0; null until the first wave is queued. */
   current_wave: number | null;
   progress: CampaignProgress;
+  /** How many earlier runs `GET /api/campaigns/{id}/runs` lists (ADR-0173); absent from older servers. */
+  previous_runs?: number;
   created_by: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
 }
+
+/** The settings a past run ran with: its request (ADR-0173). */
+export interface CampaignRunSettings {
+  name: string;
+  site_id: string | null;
+  server_ids: string[];
+  wave_specs: WaveSpec[];
+  spec: UpdateSpec;
+  agent_version: string | null;
+  command_ttl_s: number;
+  failure_threshold: FailureThreshold;
+  windows: CampaignWindow[];
+  sources: SourcesPin | null;
+}
+
+/** A past run of a campaign, as it ended (ADR-0173). */
+export interface CampaignRun {
+  /** 1 for the first run. */
+  number: number;
+  state: "stopped" | "completed" | "failed";
+  error: string | null;
+  started_at: string | null;
+  finished_at: string;
+  settings: CampaignRunSettings;
+  progress: CampaignProgress;
+  waves: CampaignWave[];
+}
+
+/** Which servers run again: all of them, or those that failed in the last run. */
+export type CampaignRelaunch = "all" | "failed";
 
 /** `pending` before any command, a command state, or `skipped` with an `error`. */
 export type CampaignServerStatus =
@@ -3996,6 +4048,8 @@ export interface AvailabilityNumbers {
   counted_seconds: number;
   down_seconds: number;
   maintenance_seconds: number;
+  /** Time the central server was not running, left out of the count (ADR-0176). */
+  unobserved_seconds: number;
   outages: number;
   longest_seconds: number;
 }
@@ -5254,12 +5308,26 @@ export const api = {
   createCampaign: (body: CampaignRequest) =>
     request<CampaignDetail>("/api/campaigns", { method: "POST", body }),
 
-  /** Replaces a campaign that queued nothing yet (ADR-0166); 409 once a batch was queued. */
+  /**
+   * Edits a campaign (ADR-0166, ADR-0173): everything before its first batch, only its name, windows and
+   * threshold while a run is under way, everything once finished, for its next run (it becomes a draft).
+   */
   updateCampaign: (id: string, body: CampaignRequest) =>
     request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, { method: "PUT", body }),
 
   /** Deletes a draft or finished campaign (ADR-0166); 409 while commands are in flight. */
   deleteCampaign: (id: string) => request<void>(`/api/campaigns/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Runs a finished campaign again, all its servers or the failed ones (ADR-0173). */
+  relaunchCampaign: (id: string, servers: CampaignRelaunch) =>
+    request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}/relaunch`, {
+      method: "POST",
+      body: { servers },
+    }),
+
+  /** The past runs of a campaign, newest first (ADR-0173). */
+  campaignRuns: (id: string, signal?: AbortSignal) =>
+    request<{ runs: CampaignRun[] }>(`/api/campaigns/${encodeURIComponent(id)}/runs`, { signal }),
 
   /** 409 when the campaign's state does not allow `action`. */
   campaignAction: (id: string, action: CampaignAction) =>
@@ -5534,6 +5602,10 @@ export const api = {
       method: "POST",
       body: { on },
     }),
+
+  /** The same for every server of every site the user administers. */
+  switchAllAiCommands: (on: boolean) =>
+    request<SiteSourcesChange>("/api/remediation/ai-commands", { method: "POST", body: { on } }),
 
   /** The same for every server of a site that can take it. */
   switchSiteAiCommands: (siteId: string, on: boolean) =>

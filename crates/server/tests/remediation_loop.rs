@@ -744,6 +744,14 @@ async fn some_polls() {
     tokio::time::sleep(Duration::from_millis(600)).await;
 }
 
+async fn last_escalation_of(pool: &PgPool, id: Uuid) -> String {
+    let events = audit::events(pool, id).await.unwrap();
+    of_kind(&events, "escalation")
+        .last()
+        .map(|p| p["reason"].as_str().unwrap().to_owned())
+        .unwrap_or_default()
+}
+
 async fn last_escalation(h: &Harness) -> String {
     let events = h.events().await;
     of_kind(&events, "escalation")
@@ -1315,27 +1323,181 @@ db_tests! {
         h.close().await;
     }
 
-    /// ADR-0076: a person is told why, and neither a snapshot nor a command
-    /// is spent on a server that said it would refuse.
+    /// ADR-0175: a server that refuses commands gets a diagnosis. The AI
+    /// is told no command can run; a command it proposes anyway is kept as
+    /// its words, neither classified nor run, nor is a snapshot taken. Once
+    /// the server accepts AI commands, the next attempt may run them
+    /// (ADR-0165).
     #[sqlx::test]
-    async fn a_server_that_refuses_commands_escalates_before_anything_runs(pool: PgPool) {
+    async fn a_server_that_refuses_commands_gets_a_diagnosis_without_any(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let h = Harness::start(&pool, &[("df -h /", Reply::Run { exit_code: 0, stdout: "/dev/sda1 97% /" })]).await;
+        low_impact_auto(&h).await;
+        report_shell(&h, "off").await;
+        let ai = Arc::new(MockProvider::new([
+            Step::run("logs fill /var", "systemctl restart rsyslog", "restart"),
+            Step::run("full", "df -h /", "usage"),
+            Step::stop("full", StopOutcome::Escalate, "grow the volume"),
+        ]));
+        let stub = StubHook::new(HookMode::Fail);
+        let running = h.remediation_with(&ai, settings(), stub.clone());
+        let first = wait_attempt(&h, 1, "escalated").await;
+        let events = audit::events(&pool, first).await.unwrap();
+        assert_eq!(kinds(&events), ["state_change", "context_sent", "ai_proposal", "escalation"]);
+        let context = of_kind(&events, "context_sent")[0];
+        assert_eq!(context["diagnosis_only"]["code"], "commands_off");
+        let escalation = of_kind(&events, "escalation")[0];
+        assert_eq!((escalation["code"].as_str(), &escalation["diagnosis_only"]), (Some("commands_off"), &Value::Bool(true)));
+        assert!(escalation["reason"].as_str().unwrap().starts_with("the AI diagnosed the incident without commands"), "{escalation}");
+        let requests = ai.requests();
+        assert!(requests[0].system_prompt.contains("No command can run there for this incident"), "{}", requests[0].system_prompt);
+        assert!(stub.calls().is_empty());
+        assert!(h.agent.seen().is_empty());
+        assert!(audit::verify(&pool, first).await.unwrap().valid);
+
+        // The server accepts AI commands now: the next attempt runs them.
+        report_shell(&h, "accepted").await;
+        let second = wait_attempt(&h, 2, "escalated").await;
+        running.stop().await;
+        let events = audit::events(&pool, second).await.unwrap();
+        assert_eq!(of_kind(&events, "context_sent")[0]["diagnosis_only"], Value::Null);
+        assert_eq!(h.agent.seen(), ["df -h /"]);
+        assert!(!ai.requests()[1].system_prompt.contains("No command can run"));
+        assert_eq!(last_escalation_of(&pool, second).await, "the AI escalated: grow the volume");
+        h.close().await;
+    }
+
+    /// ADR-0175, end to end: a server installed without consent, a real
+    /// OpenAI-compatible adapter over HTTP, and what the API then shows on
+    /// the alert, as the incident page reads it.
+    #[sqlx::test]
+    async fn a_diagnosis_without_consent_reaches_the_api(pool: PgPool) {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
         monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
-        low_impact_auto(&h).await;
-        sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"off\"}'")
+        // What an agent installed without MF_ALLOW_COMMANDS reports.
+        sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"off\", \"ai_commands\": \"off\"}'")
             .execute(&pool)
             .await
             .unwrap();
-        let ai = Arc::new(MockProvider::new([Step::run("stuck", "systemctl restart rsyslog", "restart")]));
-        let stub = StubHook::new(HookMode::Fail);
-        let running = h.remediation_with(&ai, settings(), stub.clone());
-        h.wait_state("escalated").await;
+        let answer = serde_json::json!({
+            "tool": "stop",
+            "diagnosis": "/ is 97% full; the logs show a backup job writing to /var/backups.",
+            "outcome": "escalate",
+            "reason": "Move old archives out of /var/backups.",
+        });
+        let url = fake_openai(vec![serde_json::json!({"role": "assistant", "content": answer.to_string()})]).await;
+        let ai = real_provider(AiProviderKind::OpenAiCompatible, url, "qwen3:8b");
+        let running = h.remediation_by(ai, "qwen3:8b", settings(), Arc::new(hook::NoSnapshot));
+        let id = h.wait_state("escalated").await;
         running.stop().await;
-        assert!(stub.calls().is_empty());
-        assert!(of_kind(&h.events().await, "command_queued").is_empty());
         assert!(h.agent.seen().is_empty());
-        assert!(last_escalation(&h).await.contains("MF_ALLOW_COMMANDS=1"));
-        assert_eq!(of_kind(&h.events().await, "escalation")[0]["code"], "commands_off");
+        let commands: i64 = sqlx::query_scalar("SELECT count(*) FROM commands")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(commands, 0);
+
+        let password = "correct horse battery";
+        users::create_user(&pool, "root", &Secret::new(password), Role::Administrator, "test")
+            .await
+            .unwrap();
+        let mut settings = monitorflow_server::api::ApiSettings::default();
+        settings.ai.config.enabled = true;
+        let app = monitorflow_server::api::router(monitorflow_server::api::ApiState::new(
+            pool.clone(),
+            Registry::default(),
+            settings,
+        ));
+        let login = Request::post("/api/auth/login")
+            .header("content-type", "application/json")
+            .header(monitorflow_server::api::auth::CSRF_HEADER, "1")
+            .body(Body::from(serde_json::json!({"username": "root", "password": password}).to_string()))
+            .unwrap();
+        let response = app.clone().oneshot(login).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let cookie = response.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+        let get = |path: String| {
+            let app = app.clone();
+            let cookie = cookie.clone();
+            async move {
+                let request = Request::get(path).header("cookie", cookie).body(Body::empty()).unwrap();
+                let response = app.oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+                serde_json::from_slice::<Value>(&bytes).unwrap()
+            }
+        };
+        let list = get(format!("/api/remediation/incidents?alert_incident_id={}", h.alert)).await;
+        let incident = &list["incidents"][0];
+        assert_eq!(incident["id"], id.to_string());
+        assert_eq!(incident["state"], "escalated");
+        assert_eq!(incident["diagnosis"], answer["diagnosis"]);
+        assert_eq!(incident["ai_advice"], answer["reason"]);
+        assert_eq!(incident["ai_command"], Value::Null);
+        assert_eq!(incident["diagnosis_only"], "commands_off");
+        assert_eq!(incident["close_code"], "commands_off");
+        assert!(incident["diagnosed_at"].is_string());
+        // The same through /api/v1, as a script with a key would read it.
+        let detail = get(format!("/api/remediation/incidents/{id}")).await;
+        assert_eq!(detail["diagnosis"], answer["diagnosis"]);
+        let status = get(format!("/api/remediation/alerts/{}", h.alert)).await;
+        assert_eq!((status["can_run"].as_bool(), status["diagnosis_only"].as_str()), (Some(true), Some("commands_off")), "{status}");
+        h.close().await;
+    }
+
+    /// ADR-0175: a device has no agent; its alerts get a diagnosis too.
+    #[sqlx::test]
+    async fn a_device_alert_gets_a_diagnosis(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let h = Harness::start(&pool, &[]).await;
+        h.resolve_alert().await;
+        let site: Uuid = sqlx::query_scalar("SELECT id FROM sites").fetch_one(&pool).await.unwrap();
+        let device: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family, kind, address, package_updates)
+             VALUES ('device-sw1', $1, 'switch-1', 'device', 'device', '192.0.2.1', false) RETURNING id",
+        )
+        .bind(site)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO incidents (server_id, metric, instance, severity, opened_at, last_value,
+                                    last_value_at, peak_value, threshold)
+             VALUES ($1, 'monitorflow_snmp_if_up', 'Gi0/1', 'critical', now(), 0, now(), 0,
+                     '{\"op\": \"<\", \"critical\": 1}')",
+        )
+        .bind(device)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let ai = Arc::new(MockProvider::new([
+            Step::stop("the uplink went down at 03:10", StopOutcome::Escalate, "check the cable"),
+        ]));
+        let running = h.remediation(&ai, settings());
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        let id = loop {
+            let found: Option<(Uuid, String)> = sqlx::query_as(
+                "SELECT id, state FROM remediation_incidents WHERE server_id = $1",
+            )
+            .bind(device)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+            if let Some((id, _)) = found.filter(|(_, state)| state == "escalated") {
+                break id;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "no diagnosis for the device");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        running.stop().await;
+        let events = audit::events(&pool, id).await.unwrap();
+        assert_eq!(of_kind(&events, "context_sent")[0]["diagnosis_only"]["code"], "device");
+        assert_eq!(of_kind(&events, "escalation")[0]["code"], "device");
+        assert!(ai.requests()[0].system_prompt.contains("without a MonitorFlow agent"));
         h.close().await;
     }
 

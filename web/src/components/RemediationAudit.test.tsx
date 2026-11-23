@@ -180,6 +180,6 @@ describe("RemediationAudit", () => {
   it("says when nothing ran yet", async () => {
     stubFetch({ ...SERVERS, [`GET /api/remediation/events?limit=${PAGE_SIZE}`]: events([]) });
     render(<RemediationAuditView />);
-    expect(await screen.findByText("No remediation has run yet.")).toBeInTheDocument();
+    expect(await screen.findByText(/^Nothing yet\. Once AI is on, each new alert gets its entries here/)).toBeInTheDocument();
   });
 });

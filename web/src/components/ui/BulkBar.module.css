@@ -1,4 +1,5 @@
 .bar {
+  container: bulk-bar / inline-size;
   position: sticky;
   top: 0;
   z-index: 5;
@@ -19,17 +20,24 @@
   margin: 0;
 }
 
-/* Top-aligned: a custom period's form makes the actions taller. */
+/* Bottom-aligned: the count and Deselect sit on the line of the buttons
+   and fields, under the labels of an open inline form (Acknowledge,
+   Pause). A custom period's form, a block of its own under the actions,
+   makes them top-aligned again. */
 .line {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: 10px;
   padding: 8px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-panel);
   background: var(--surface);
   box-shadow: var(--shadow-menu);
+}
+
+.line:has(> .actions > div > form) {
+  align-items: flex-start;
 }
 
 .count {
@@ -42,9 +50,54 @@
 .actions {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  /* Bottom-aligned: a button stands on the same line as the fields of an
+     open inline form (Acknowledge, Pause), not level with their labels. */
+  align-items: flex-end;
   gap: 8px;
   flex: 1;
+}
+
+/* An open inline form moves to a line of its own as a whole, rather than
+   breaking between its fields; its error still takes a line under it. */
+.actions > form:not(:has(> [role="alert"])) {
+  flex-wrap: nowrap;
+}
+
+/* A narrow bar (a phone, a half screen) with a form open: the count and
+   Deselect on the first line, the actions under them across the whole
+   width. */
+@container bulk-bar (max-width: 900px) {
+  .line:has(form) {
+    align-items: center;
+  }
+
+  .line:has(form) > button {
+    margin-left: auto;
+  }
+
+  .line:has(form) > .actions {
+    order: 1;
+    flex-basis: 100%;
+  }
+}
+
+/* Too narrow for an inline form on one line: its fields one under the
+   other, Cancel and the submit button side by side under them. */
+@container bulk-bar (max-width: 700px) {
+  .actions > form,
+  .actions > form:not(:has(> [role="alert"])) {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .actions > form > label {
+    flex: 1 1 100%;
+  }
+
+  .actions > form > label > :is(input, select) {
+    width: 100%;
+  }
 }
 
 .summary {

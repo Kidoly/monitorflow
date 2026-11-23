@@ -233,6 +233,7 @@ Campaigns belong to one customer and are created and driven by its administrator
 - Maintenance windows are weekly (weekdays, local start and end, IANA time zone) or one-off ranges, evaluated by PostgreSQL; commands are queued only inside one, with a TTL capped at its end.
 - A runner task advances each campaign under its row lock every 10 s: it queues the current wave's commands, waits for their results, then moves on. A wave whose failures exceed the threshold (a count or a percentage of the wave) fails the campaign; queued commands are cancelled, sent ones finish.
 - States `draft`, `scheduled`, `running`, `paused`, `stopped`, `completed`, `failed`; start, pause, resume and stop are explicit, audited actions. All state is in the database, so a restart resumes where it was.
+- A campaign is edited at any stage (ADR-0166, ADR-0173): fully before its first batch is queued, only its name, windows and failure threshold while a run is under way, and fully once finished, for its next run. A finished campaign runs again, all its servers or only the failed ones; the run that ended moves to `campaign_runs` with its batches and servers, so each run keeps its record.
 - A campaign may pin published mirror snapshots (ADR-0038): each server gets `configure_sources` for them, then its update, then its previous sources back (its last configuration made outside campaigns, or a revert), even when the campaign pauses, stops or fails. The mirror index lists the snapshots of unfinished campaigns as `pinned`, so relays copy and keep them.
 
 ### Windows Update
@@ -251,7 +252,7 @@ When a threshold is crossed, the central server can ask an external AI API to di
 
 1. A sensor crosses a threshold and an incident opens.
 2. The server gathers context: sensor history, recent logs, server inventory, recent changes.
-3. The AI receives the context and proposes a diagnosis and commands, one at a time.
+3. The AI receives the context and proposes a diagnosis and commands, one at a time. Where no command can run (the server refuses AI commands, a device, a host that stopped reporting), it diagnoses from the context alone, nothing runs, and the incident goes to a person with its diagnosis (ADR-0175).
 4. Each command is classified by risk and either runs automatically or waits for approval.
 5. The agent runs the command and returns its output; the AI decides the next step.
 6. The incident closes when the sensor returns to normal, or escalates to a human.

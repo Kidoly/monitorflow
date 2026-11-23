@@ -22,22 +22,23 @@ import {
   MANAGER_NAMES,
   THIRD_PARTY_MANAGERS,
   campaignTargets,
-  canEdit,
   copyName,
   draftFromCampaign,
+  editMode,
   includesApps,
   includesOs,
   managerFits,
   emptyDraft,
   newWindow,
   planWaves,
+  requestFromCampaign,
   toRequest,
   updateSources,
   validateCampaign,
 } from "@/lib/campaigns";
 import { formatDuration } from "@/lib/format";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
-import { CAMPAIGNS_PATH, campaignHref, copyCampaignHref } from "@/lib/routes";
+import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
 import { UUID } from "@/lib/uuid";
 import { Switch } from "@/components/ui/Switch";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -108,19 +109,10 @@ function FromCampaign({ id, edit, me }: { id: string; edit: boolean; me: Me }) {
   if (!campaign) {
     return error ? <Banner tone="bad">{error}</Banner> : <LoadingBlock label={t("campaigns.form.loadingCampaign")} />;
   }
-  if (edit && !canEdit(campaign)) {
+  if (edit && editMode(campaign) === "busy") {
     return (
-      <EmptyState
-        actions={
-          <>
-            <ButtonLink variant="k" href={copyCampaignHref(campaign.id)}>
-              {t("campaigns.action.duplicate")}
-            </ButtonLink>
-            <ButtonLink href={campaignHref(campaign.id)}>{campaign.name}</ButtonLink>
-          </>
-        }
-      >
-        <strong>{t("campaigns.form.notEditableTitle")}</strong> {t("campaigns.form.notEditable", { name: campaign.name })}
+      <EmptyState actions={<ButtonLink href={campaignHref(campaign.id)}>{campaign.name}</ButtonLink>}>
+        <strong>{t("campaigns.form.busyTitle")}</strong> {t("campaigns.form.busy", { name: campaign.name })}
       </EmptyState>
     );
   }
@@ -181,6 +173,9 @@ export function CampaignForm({
   }, [me]);
 
   const set = (patch: Partial<CampaignDraft>) => setDraft((d) => ({ ...d, ...patch }));
+  const mode = edit && source ? editMode(source) : null;
+  // A run under way keeps its servers, batches and update (ADR-0173).
+  const locked = mode === "running";
 
   if (!inventory) {
     return error ? <Banner tone="bad">{error}</Banner> : <LoadingBlock label={t("campaigns.form.loading")} />;
@@ -203,8 +198,18 @@ export function CampaignForm({
   const noPackages = (s: Server) =>
     appsOnly ? !appsOnly.some((m) => managerFits(m, s.os_family)) : !agentUpdate && s.package_updates === false;
   const leftOut = servers.filter((s) => noPackages(s) && (s.site_id === draft.siteId || draft.serverIds.includes(s.id))).length;
-  const request = toRequest(draft);
-  const errors = validateCampaign(request, targets.map((t) => t.id));
+  const request =
+    locked && source
+      ? {
+          ...requestFromCampaign(source, draft),
+          name: draft.name,
+          windows: toRequest(draft).windows,
+          failure_threshold: toRequest(draft).failure_threshold,
+        }
+      : toRequest(draft);
+  // Locked, the batches stay those frozen: check them against the servers they hold.
+  const frozen = source?.waves.flatMap((w) => w.servers.map((s) => s.server_id)) ?? [];
+  const errors = validateCampaign(request, locked ? frozen : targets.map((t) => t.id));
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -223,7 +228,11 @@ export function CampaignForm({
 
   const title = edit && source ? t("campaigns.form.editTitle", { name: source.name }) : t("campaigns.newCampaign");
   const meta = edit
-    ? t("campaigns.form.editMeta")
+    ? mode === "running"
+      ? t("campaigns.form.runningMeta")
+      : mode === "next" && source
+        ? t("campaigns.form.nextMeta", { name: source.name })
+        : t("campaigns.form.editMeta")
     : source
       ? t("campaigns.form.copyMeta", { name: source.name })
       : t("campaigns.form.meta");
@@ -245,6 +254,7 @@ export function CampaignForm({
               <select
                 className={fieldClass}
                 value={draft.customerId}
+                disabled={locked}
                 onChange={(e) => set({ customerId: e.target.value, siteId: "", serverIds: [], waves: [] })}
               >
                 {inventory.customers.map((c) => (
@@ -267,7 +277,7 @@ export function CampaignForm({
           </label>
         </div>
 
-        <Fieldset legend={t("campaigns.form.servers")}>
+        <Fieldset legend={t("campaigns.form.servers")} locked={locked}>
           <label className={own.fld}>
             {t("campaigns.form.site")}
             <select className={fieldClass} value={draft.siteId} onChange={(e) => set({ siteId: e.target.value })}>
@@ -294,7 +304,7 @@ export function CampaignForm({
           </p>
         </Fieldset>
 
-        <Fieldset legend={t("campaigns.form.batches")}>
+        <Fieldset legend={t("campaigns.form.batches")} locked={locked}>
           {draft.waves.map((wave, i) => (
             <WaveRow
               key={i}
@@ -313,7 +323,7 @@ export function CampaignForm({
           <WavePlan draft={draft} targets={targets} />
         </Fieldset>
 
-        <Fieldset legend={t("campaigns.form.update")}>
+        <Fieldset legend={t("campaigns.form.update")} locked={locked}>
           {!agentUpdate && (
             <div className={own.row} role="group" aria-label={t("campaigns.form.sources")}>
               <Switch
@@ -554,11 +564,15 @@ function WavePlan({ draft, targets }: { draft: CampaignDraft; targets: Server[] 
   return <p className={own.note}>{t("campaigns.form.plan", { sizes })}</p>;
 }
 
-function Fieldset({ legend, children }: { legend: string; children: ReactNode }) {
+/** A group of fields; `locked` disables them all and says why. */
+function Fieldset({ legend, locked = false, children }: { legend: string; locked?: boolean; children: ReactNode }) {
   return (
-    <fieldset className={own.fieldset}>
+    <fieldset className={own.fieldset} disabled={locked}>
       <legend>{legend}</legend>
-      <div className={own.fields}>{children}</div>
+      <div className={own.fields}>
+        {locked && <p className={own.note}>{t("campaigns.form.locked")}</p>}
+        {children}
+      </div>
     </fieldset>
   );
 }

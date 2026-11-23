@@ -70,6 +70,34 @@
   color: var(--bad);
 }
 
+/* The AI's diagnosis (ADR-0175): its words, set apart from ours. */
+.diagnosis {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+}
+
+.diagnosis p {
+  margin: 0;
+}
+
+.diagnosisTitle,
+.diagnosisText {
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.diagnosisNote,
+.remediationWhy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .underline {
   text-decoration: underline;
 }

@@ -125,6 +125,9 @@ impl<C> Outage<C> {
 pub struct Timeline {
     pub down: Spans,
     pub maintenance: Spans,
+    /// When the central server was not running (ADR-0176), outside planned
+    /// maintenance: nothing was watched, so it is neither up nor down.
+    pub unobserved: Spans,
 }
 
 /// The availability of one thing over a period.
@@ -136,6 +139,9 @@ pub struct Measured<C> {
     pub down: f64,
     /// Planned maintenance, seconds, left out of `counted`.
     pub maintenance: f64,
+    /// Time the central server was not running, seconds, left out of
+    /// `counted` too (ADR-0176).
+    pub unobserved: f64,
     pub outages: Vec<Outage<C>>,
     pub timeline: Timeline,
 }
@@ -154,17 +160,26 @@ impl<C> Measured<C> {
 }
 
 /// The availability over `period` of a thing whose planned maintenance is
-/// `maintenance` and whose down time comes from `sources`. `period` is
-/// already narrowed to when the thing existed.
-pub fn measure<C: Clone>(period: Span, maintenance: &Spans, sources: &[Source<C>]) -> Measured<C> {
+/// `maintenance` and whose down time comes from `sources`, without the
+/// `gaps` when the central server was not running. `period` is already
+/// narrowed to when the thing existed.
+pub fn measure<C: Clone>(
+    period: Span,
+    maintenance: &Spans,
+    gaps: &Spans,
+    sources: &[Source<C>],
+) -> Measured<C> {
     let maintenance = maintenance.clip(period);
+    let unobserved = gaps.clip(period).minus(&maintenance);
     let counted_spans: Vec<Spans> = sources.iter().map(Source::counted).collect();
     let down = Spans::from_spans(counted_spans.iter().flat_map(|s| s.spans().iter().copied()))
         .clip(period)
-        .minus(&maintenance);
+        .minus(&maintenance)
+        .minus(&unobserved);
     let timeline = Timeline {
         down: down.clone(),
         maintenance: maintenance.clone(),
+        unobserved,
     };
     let outages = outages(&down, |span| {
         let mut causes: Vec<(DateTime<Utc>, C)> = sources
@@ -199,10 +214,12 @@ fn outages<C>(down: &Spans, causes: impl Fn(Span) -> Vec<C>) -> Vec<Outage<C>> {
 fn finish<C>(period: Span, timeline: Timeline, outages: Vec<Outage<C>>) -> Measured<C> {
     let whole = Spans::one(period.0, period.1).seconds();
     let maintenance = timeline.maintenance.seconds();
+    let unobserved = timeline.unobserved.seconds();
     Measured {
-        counted: whole - maintenance,
+        counted: whole - maintenance - unobserved,
         down: timeline.down.seconds(),
         maintenance,
+        unobserved,
         outages,
         timeline,
     }
@@ -220,8 +237,9 @@ pub enum Rule {
 /// The availability of a business service over `period` from its members'
 /// timelines. A member under planned maintenance counts as up; the time
 /// the service would be down only because of such members is its planned
-/// maintenance. Outages name the members down, by index.
-pub fn combine(period: Span, rule: Rule, members: &[Timeline]) -> Measured<usize> {
+/// maintenance. The `gaps` when the central server was not running are
+/// left out. Outages name the members down, by index.
+pub fn combine(period: Span, rule: Rule, members: &[Timeline], gaps: &Spans) -> Measured<usize> {
     let total = members.len();
     let needed = match rule {
         Rule::All => total,
@@ -254,9 +272,12 @@ pub fn combine(period: Span, rule: Rule, members: &[Timeline]) -> Measured<usize
             maintenance.push((start, end));
         }
     }
+    let maintenance = Spans::from_spans(maintenance);
+    let unobserved = gaps.clip(period).minus(&maintenance);
     let timeline = Timeline {
-        down: Spans::from_spans(down),
-        maintenance: Spans::from_spans(maintenance),
+        down: Spans::from_spans(down).minus(&unobserved),
+        maintenance,
+        unobserved,
     };
     let outages = outages(&timeline.down, |span| {
         members

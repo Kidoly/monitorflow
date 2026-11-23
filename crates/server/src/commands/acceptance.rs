@@ -78,15 +78,26 @@ impl Refusal {
         }
     }
 
+    /// The refusal of [`Self::code`] `code`, `None` for another code.
+    pub fn from_code(code: &str) -> Option<Self> {
+        [false, true]
+            .into_iter()
+            .flat_map(|windows| [Self::Off { windows }, Self::Unsupported { windows }])
+            .find(|refusal| refusal.code() == code)
+    }
+
     pub fn message(self) -> &'static str {
         match self {
+            // The Commands tab of the server's page has the switch, or the
+            // one line to run on the server when it cannot be turned on
+            // from there (ADR-0098, ADR-0175).
             Self::Off { windows: false } => {
-                "AI commands are off on this server; run the installer there with \
-                 MF_ALLOW_COMMANDS=1 to allow them"
+                "AI commands are off on this server; the Commands tab of its page turns them \
+                 on, or gives the line to run there (MF_ALLOW_COMMANDS=1)"
             }
             Self::Off { windows: true } => {
-                "AI commands are off on this server; run `monitorflow-agent.exe ai-commands on` \
-                 there as an administrator, then restart the MonitorFlowAgent service"
+                "AI commands are off on this server; the Commands tab of its page turns them \
+                 on, or gives the command to run there (`monitorflow-agent.exe ai-commands on`)"
             }
             Self::Unsupported { windows: false } => {
                 "this server's system does not run AI commands yet"
@@ -122,6 +133,16 @@ mod tests {
             kind: kind.into(),
             acceptance,
         }
+    }
+
+    #[test]
+    fn a_refusal_reads_back_from_its_code() {
+        for windows in [false, true] {
+            for refusal in [Refusal::Off { windows }, Refusal::Unsupported { windows }] {
+                assert_eq!(Refusal::from_code(refusal.code()), Some(refusal));
+            }
+        }
+        assert_eq!(Refusal::from_code("device"), None);
     }
 
     #[test]

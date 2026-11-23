@@ -11,6 +11,7 @@ use monitorflow_ai::{CommandOutcome, Exchange, ProposedCommand, StopOutcome};
 use serde_json::Value;
 use uuid::Uuid;
 
+use super::reach::DiagnosisOnly;
 use crate::remediation::audit::{EventKind, StoredEvent};
 
 /// The end of each output stream sent back to the AI, in bytes. The audit
@@ -56,6 +57,9 @@ pub struct Progress {
     pub history: Vec<Exchange>,
     /// Commands queued so far, the count the command limit applies to.
     pub commands_queued: u32,
+    /// Why no command can run, as the context recorded it: the AI only
+    /// diagnoses (ADR-0175).
+    pub diagnosis_only: Option<DiagnosisOnly>,
     pub next: Next,
 }
 
@@ -70,6 +74,7 @@ pub fn of(events: &[StoredEvent]) -> Progress {
         context: None,
         history: Vec::new(),
         commands_queued: 0,
+        diagnosis_only: None,
         next: Next::Context,
     };
     // The proposal being worked on.
@@ -79,6 +84,7 @@ pub fn of(events: &[StoredEvent]) -> Progress {
         match event.kind {
             EventKind::ContextSent => {
                 progress.context = Some(text(&p["context"], "rendered"));
+                progress.diagnosis_only = DiagnosisOnly::of_payload(p);
                 progress.next = Next::Ask;
             }
             EventKind::AiProposal => match p["command"].as_str() {
@@ -235,6 +241,16 @@ mod tests {
         let progress = of(&stored(vec![context()]));
         assert_eq!(progress.next, Next::Ask);
         assert_eq!(progress.context.as_deref(), Some("BLOCKS"));
+    }
+
+    #[test]
+    fn the_context_says_when_the_ai_only_diagnoses() {
+        assert_eq!(of(&stored(vec![context()])).diagnosis_only, None);
+        let mut event = context();
+        event.payload["diagnosis_only"] = DiagnosisOnly::Device.payload();
+        let progress = of(&stored(vec![event]));
+        assert_eq!(progress.diagnosis_only, Some(DiagnosisOnly::Device));
+        assert_eq!(progress.next, Next::Ask);
     }
 
     #[test]
