@@ -77,6 +77,10 @@ export const en = {
   "close.offline": "The host stopped reporting, so no command can reach it",
   "close.system_unsupported": "This server's system does not run AI commands yet",
   "close.agent_too_old": "This server's agent is too old for AI commands; it updates by itself",
+  "close.root_actions_off":
+    "AI root actions are not allowed on this server. Run sudo monitorflow-agent ai-commands root-actions on there, or the install command with MF_AI_ROOT_ACTIONS=1.",
+  "close.root_actions_sudo_rules": "The sudo rules on this server predate AI root actions; run the install command again",
+  "close.root_actions_windows": "AI root actions run on Linux servers only",
   "close.snapshot_failed": "The snapshot before the change failed: {detail}",
   "close.command_gone": "The queued command is gone",
   "close.timed_out": "No result in time for {detail}",
@@ -292,6 +296,10 @@ export const fr: Translation<typeof en> = {
   "close.offline": "L’hôte ne remonte plus rien : aucune commande ne peut l’atteindre",
   "close.system_unsupported": "Le système de ce serveur n’exécute pas encore de commandes IA",
   "close.agent_too_old": "L’agent de ce serveur est trop ancien pour les commandes IA ; il se met à jour tout seul",
+  "close.root_actions_off":
+    "Les actions root de l’IA ne sont pas autorisées sur ce serveur. Lancez-y sudo monitorflow-agent ai-commands root-actions on, ou la commande d’installation avec MF_AI_ROOT_ACTIONS=1.",
+  "close.root_actions_sudo_rules": "Les règles sudo de ce serveur sont antérieures aux actions root de l’IA ; relancez la commande d’installation",
+  "close.root_actions_windows": "Les actions root de l’IA ne fonctionnent que sur les serveurs Linux",
   "close.snapshot_failed": "L’instantané avant le changement a échoué : {detail}",
   "close.command_gone": "La commande en file n’existe plus",
   "close.timed_out": "Pas de résultat à temps pour {detail}",

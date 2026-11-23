@@ -252,6 +252,28 @@ describe("AiSettingsPage", () => {
     expect(await screen.findByPlaceholderText("sk-ant-…")).toBeInTheDocument();
   });
 
+  it("sets the language of diagnoses, the people's by default, also when the configuration sets AI", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      [`GET ${AI}`]: ok(settings({ enabled: true, from_config: true, has_key: true, language: null, effective_language: "fr" })),
+      [`PUT ${AI}/language`]: [
+        ok(settings({ enabled: true, from_config: true, has_key: true, language: "en", effective_language: "en" })),
+        { status: 500, body: { error: "internal", message: "database down" } },
+      ],
+      "GET /api/servers": { status: 200, body: { servers: [] } },
+    });
+    page();
+    const select = await screen.findByRole("combobox", { name: /^The AI writes its diagnosis and reasons in/ });
+    expect(select).toHaveValue("auto");
+    expect(screen.getByRole("option", { name: "The language most people use (Français)" })).toBeInTheDocument();
+    await user.selectOptions(select, "en");
+    expect(sent(fetchMock, "PUT")).toEqual({ language: "en" });
+    expect(await screen.findByRole("option", { name: "The language most people use" })).toBeInTheDocument();
+    expect(select).toHaveValue("en");
+    await user.selectOptions(select, "auto");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the language");
+  });
+
   it("says the configuration takes precedence and offers only the test", async () => {
     const user = userEvent.setup();
     stubFetch({

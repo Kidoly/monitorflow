@@ -38692,9 +38692,11 @@
                 },
                 "example": {
                   "base_url": "http://llm.example.com:8080/v1",
+                  "effective_language": "fr",
                   "enabled": true,
                   "from_config": false,
                   "has_key": false,
+                  "language": null,
                   "model": "local-model",
                   "models": [
                     {
@@ -38836,9 +38838,11 @@
                 },
                 "example": {
                   "base_url": "http://llm.example.com:8080/v1",
+                  "effective_language": "fr",
                   "enabled": true,
                   "from_config": false,
                   "has_key": false,
+                  "language": null,
                   "model": "local-model",
                   "models": [
                     {
@@ -38984,9 +38988,11 @@
                 },
                 "example": {
                   "base_url": null,
+                  "effective_language": "en",
                   "enabled": false,
                   "from_config": false,
                   "has_key": false,
+                  "language": null,
                   "model": "model-large",
                   "models": [
                     {
@@ -39043,6 +39049,171 @@
           },
           "409": {
             "description": "Set by the configuration: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/ai/language": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the language of AI diagnoses",
+        "description": "The language the AI writes its diagnosis, reasoning and reasons in:\n`en` or `fr`. `null` follows the people: the language most users chose\nfor the web interface, English when none did. Commands, paths and\nquoted output stay as they are. Applies from the AI's next answer.\nAllowed when the configuration sets AI too. Audited as\n`settings.ai_language`. Safe to repeat.",
+        "operationId": "set_ai_language",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiLanguageRequest"
+              },
+              "example": {
+                "language": "fr"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The AI settings as they now stand",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiView"
+                },
+                "example": {
+                  "base_url": "http://llm.example.com:8080/v1",
+                  "effective_language": "fr",
+                  "enabled": true,
+                  "from_config": false,
+                  "has_key": false,
+                  "language": null,
+                  "model": "local-model",
+                  "models": [
+                    {
+                      "fit": "recommended",
+                      "id": "model-large",
+                      "name": "Model Large",
+                      "note": "Recommended: the best diagnoses"
+                    }
+                  ],
+                  "provider": "openai_compatible"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -46821,6 +46992,24 @@
         },
         "additionalProperties": false
       },
+      "AiLanguageRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/settings/ai/language`.",
+        "properties": {
+          "language": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Language",
+                "description": "`en` or `fr`; null follows the language most users chose."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "AiModel": {
         "type": "object",
         "description": "A model of the short list.",
@@ -46992,7 +47181,8 @@
           "provider",
           "has_key",
           "model",
-          "models"
+          "models",
+          "effective_language"
         ],
         "properties": {
           "base_url": {
@@ -47001,6 +47191,10 @@
               "null"
             ],
             "description": "The address of an `openai_compatible` server, often inside the\noperator's network: null for all but global administrators."
+          },
+          "effective_language": {
+            "$ref": "#/components/schemas/Language",
+            "description": "The language of the next diagnosis: `language`, else the one most\nusers chose for the web interface, else `en`."
           },
           "enabled": {
             "type": "boolean",
@@ -47013,6 +47207,17 @@
           "has_key": {
             "type": "boolean",
             "description": "Whether an API key is stored, or configured."
+          },
+          "language": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Language",
+                "description": "The language administrators chose for the AI's diagnoses (ADR-0181);\nnull follows the people."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "model": {
             "type": "string",
@@ -50368,7 +50573,7 @@
             "description": "`apply_updates`, `self_update`, `configure_sources`,\n`revert_sources`, `shell` (AI remediation), `ai_commands`, or\n`take_snapshot` and `delete_snapshot` (local snapshots before AI\nchanges)."
           },
           "parameters": {
-            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\", \"include_os\", \"third_party\"}` for `apply_updates`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`; `null` for a kind this version does not\nknow."
+            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\", \"include_os\", \"third_party\"}` for `apply_updates`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`, `{\"action\", \"command\"}` for\n`root_action` (ADR-0181); `null` for a kind this version does not\nknow."
           },
           "requested_by": {
             "type": [
@@ -54633,6 +54838,14 @@
         "enum": [
           "oidc",
           "ldap"
+        ]
+      },
+      "Language": {
+        "type": "string",
+        "description": "A language the web interface speaks (ADR-0136).",
+        "enum": [
+          "en",
+          "fr"
         ]
       },
       "LatestRelease": {
