@@ -498,7 +498,7 @@ db_tests! {
         assert_eq!(detail["follow_up"]["state"], "waiting");
         assert_eq!(detail["follow_up"]["next"], json!(["boss"]));
         assert_eq!(detail["follow_up"]["policy"], "default");
-        // A note is optional (ADR-0166), but not a long one.
+        // A note is optional (ADR-0177), but not a long one.
         let long = json!({ "incident_ids": [incident], "note": "x".repeat(501) });
         let (status, _) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(long)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);

@@ -32,7 +32,7 @@ const REFRESH_MS = 5 * 60_000;
 /** How a day looks: all of it up, a little less, much less, or not measured. */
 export type Tone = "up" | "minor" | "major" | "none";
 
-/** The color of a day (ADR-0172): any down time leaves "up"; under 99 % is "major". */
+/** The color of a day (ADR-0180): any down time leaves "up"; under 99 % is "major". */
 export function toneOf(day: Pick<UptimeDay, "availability" | "down_seconds">): Tone {
   if (day.availability === null) return "none";
   if (day.down_seconds <= 0) return "up";
@@ -201,7 +201,7 @@ export function useUptime(customerId: string | null) {
 }
 
 /**
- * Uptime over 24 hours, 7, 30 and 90 days and by day (ADR-0172), each row
+ * Uptime over 24 hours, 7, 30 and 90 days and by day (ADR-0180), each row
  * with the numbers of the chosen period's report under it when there is
  * one, so a server is listed once with all its numbers.
  */

@@ -567,7 +567,7 @@ export function readyMade(id: string | null): ReadyMade | undefined {
   return readyMades().find((d) => d.id === id);
 }
 
-/** What a panel shows, the first choice of the panel form (ADR-0166). */
+/** What a panel shows, the first choice of the panel form (ADR-0178). */
 export type PanelSource = "metric" | "states" | "alerts" | "text";
 
 export function sourceOf(panel: Panel): PanelSource {

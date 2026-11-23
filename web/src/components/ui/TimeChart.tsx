@@ -106,7 +106,7 @@ export function TimeChart({
   emptyText?: string;
   /** At the right end of the legend row, like a "Download CSV" link. */
   footer?: ReactNode;
-  /** Lines, areas or columns; areas and columns stack several series (ADR-0166). */
+  /** Lines, areas or columns; areas and columns stack several series (ADR-0178). */
   variant?: ChartVariant;
   /** False draws several areas or columns over each other instead of stacking them. */
   additive?: boolean;

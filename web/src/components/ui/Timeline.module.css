@@ -1,4 +1,4 @@
-/* A timeline of alerts (ADR-0166); sizes in em so a screen scales it. */
+/* A timeline of alerts (ADR-0178); sizes in em so a screen scales it. */
 .timeline {
   display: table;
   width: 100%;

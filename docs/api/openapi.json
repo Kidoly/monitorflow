@@ -46553,7 +46553,7 @@
               "string",
               "null"
             ],
-            "description": "What the user is doing about them, up to 500 characters, shown with\nthe acknowledgement (ADR-0130). Optional, for people and API keys\nalike (ADR-0166)."
+            "description": "What the user is doing about them, up to 500 characters, shown with\nthe acknowledgement (ADR-0130). Optional, for people and API keys\nalike (ADR-0177)."
           }
         },
         "additionalProperties": false
@@ -48833,7 +48833,7 @@
               "type": "string",
               "format": "uuid"
             },
-            "description": "The `server_ids` of the request, as last written; `null` for a\ncampaign made before they were kept (ADR-0166)."
+            "description": "The `server_ids` of the request, as last written; `null` for a\ncampaign made before they were kept (ADR-0179)."
           },
           "site_id": {
             "type": [
@@ -57920,7 +57920,7 @@
       },
       "PanelKind": {
         "type": "string",
-        "description": "What a panel draws (ADR-0095, ADR-0166). Several kinds draw the same\ndata differently, so the data answer names its shape, the\n[`PanelKind::base`] kind: `chart` for `chart`, `area` and `columns`,\n`figure` for `figure` and `gauge`, `top` for `top` and `bars`.",
+        "description": "What a panel draws (ADR-0095, ADR-0178). Several kinds draw the same\ndata differently, so the data answer names its shape, the\n[`PanelKind::base`] kind: `chart` for `chart`, `area` and `columns`,\n`figure` for `figure` and `gauge`, `top` for `top` and `bars`.",
         "enum": [
           "chart",
           "figure",
@@ -58163,7 +58163,7 @@
             }
           }
         ],
-        "description": "What a panel shows. `kind` is the shape of the data, the panel's kind\nor the one it draws differently: `chart` for `chart`, `area` and\n`columns` and `heatmap`; `figure` for `figure` and `gauge`; `top`\nfor `top` and `bars` (ADR-0166)."
+        "description": "What a panel shows. `kind` is the shape of the data, the panel's kind\nor the one it draws differently: `chart` for `chart`, `area` and\n`columns` and `heatmap`; `figure` for `figure` and `gauge`; `top`\nfor `top` and `bars` (ADR-0178)."
       },
       "PanelServers": {
         "oneOf": [

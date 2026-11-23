@@ -194,7 +194,7 @@ export function relayHref(id: string): string {
 export const CAMPAIGNS_PATH = "/campaigns/";
 export const NEW_CAMPAIGN_PATH = "/campaigns/new/";
 
-/** The form editing the campaign `id`, which queued nothing yet (ADR-0166). */
+/** The form editing the campaign `id`, which queued nothing yet (ADR-0179). */
 export function editCampaignHref(id: string): string {
   return `${NEW_CAMPAIGN_PATH}?edit=${encodeURIComponent(id)}`;
 }

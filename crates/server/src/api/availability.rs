@@ -161,7 +161,7 @@ async fn reach(
 }
 
 /// The report `user` may read over `period`, for `customer` or everything,
-/// and with `zone` the uptime at its end, for the PDF (ADR-0172).
+/// and with `zone` the uptime at its end, for the PDF (ADR-0180).
 async fn report(
     state: &ApiState,
     user: &CurrentUser,
@@ -199,7 +199,7 @@ pub async fn get(
 }
 
 /// `GET /api/availability/uptime`: the last 24 hours, 7, 30 and 90 days
-/// and 90 daily bars of what `user` reads (ADR-0172).
+/// and 90 daily bars of what `user` reads (ADR-0180).
 pub async fn uptime(
     State(state): State<ApiState>,
     user: CurrentUser,

@@ -1,7 +1,9 @@
-# ADR-0166: More ways to draw a dashboard panel, and a simpler panel editor
+# ADR-0178: More ways to draw a dashboard panel, and a simpler panel editor
 
 Date: 2026-11-22
 Status: accepted; extends ADR-0095 (dashboards) and ADR-0099 (dashboards on a screen)
+
+Numbered ADR-0166 when merged, renumbered because three other ADRs had the same number.
 
 ## Context
 

@@ -1,7 +1,9 @@
-# ADR-0172: Uptime at a glance
+# ADR-0180: Uptime at a glance
 
 Date: 2026-11-22
 Status: accepted
+
+Numbered ADR-0172 when merged, renumbered because ADR-0172 is the history of the server's updates.
 
 ## Context
 

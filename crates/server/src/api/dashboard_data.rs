@@ -244,7 +244,7 @@ pub struct UnreachableServer {
 /// What a panel shows. `kind` is the shape of the data, the panel's kind
 /// or the one it draws differently: `chart` for `chart`, `area` and
 /// `columns` and `heatmap`; `figure` for `figure` and `gauge`; `top`
-/// for `top` and `bars` (ADR-0166).
+/// for `top` and `bars` (ADR-0178).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum PanelResult {

@@ -459,7 +459,7 @@ fn row_state(
 }
 
 /// The state of each of `ids`, as the fleet's pages show it (ADR-0130),
-/// for dashboard panels (ADR-0166). The caller has checked they may be
+/// for dashboard panels (ADR-0178). The caller has checked they may be
 /// read.
 pub(super) async fn states_of(
     state: &ApiState,

@@ -1,4 +1,4 @@
-/* A ring of shares (ADR-0166); sizes in em so a screen scales it. */
+/* A ring of shares (ADR-0178); sizes in em so a screen scales it. */
 .box {
   display: flex;
   flex-wrap: wrap;

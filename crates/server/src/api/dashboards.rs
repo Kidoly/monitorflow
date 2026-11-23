@@ -110,7 +110,7 @@ pub enum Servers {
     },
 }
 
-/// What a panel draws (ADR-0095, ADR-0166). Several kinds draw the same
+/// What a panel draws (ADR-0095, ADR-0178). Several kinds draw the same
 /// data differently, so the data answer names its shape, the
 /// [`PanelKind::base`] kind: `chart` for `chart`, `area` and `columns`,
 /// `figure` for `figure` and `gauge`, `top` for `top` and `bars`.

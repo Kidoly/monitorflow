@@ -1,4 +1,4 @@
-//! Uptime at a glance (ADR-0172): for each business service, server,
+//! Uptime at a glance (ADR-0180): for each business service, server,
 //! device and check with outages, its availability over the last 24 hours,
 //! 7, 30 and 90 days, and one bar per day for 90 days, from the same
 //! measures as reports (ADR-0155), so the numbers never differ.

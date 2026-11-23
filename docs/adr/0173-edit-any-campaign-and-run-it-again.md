@@ -1,13 +1,13 @@
 # ADR-0173: Editing any campaign, running it again, and AI commands on every server
 
 Date: 2026-11-23
-Status: accepted; amends ADR-0166 and ADR-0098
+Status: accepted; amends ADR-0179 and ADR-0098
 
 ## Context
 
-ADR-0166 let a campaign be edited only until its first batch is queued: after that, it is a record of an update, and changing it means duplicating it. In use, the owner found this a dead end. A campaign that failed on two servers out of sixteen could not have its window moved, its reboot allowed or its failed servers run again without typing a copy, and the page offered only Duplicate and Delete. They asked for Edit on every campaign.
+ADR-0179 let a campaign be edited only until its first batch is queued: after that, it is a record of an update, and changing it means duplicating it. In use, the owner found this a dead end. A campaign that failed on two servers out of sixteen could not have its window moved, its reboot allowed or its failed servers run again without typing a copy, and the page offered only Duplicate and Delete. They asked for Edit on every campaign.
 
-What must still hold, from ADR-0166:
+What must still hold, from ADR-0179:
 
 - What a campaign did stays readable: its batches, servers and results are the record of an update.
 - The runner never sees a half-edited campaign, and a server's package sources are always put back (ADR-0038).
@@ -21,8 +21,8 @@ Separately, AI commands are turned on per server or per site (ADR-0098). An admi
 
 `PUT /api/campaigns/{id}` stays the whole request, and what it may change depends on where the campaign is:
 
-- **Nothing queued yet** (a draft, or scheduled or paused before its first batch): everything, as in ADR-0166.
-- **A run under way** (a batch was queued, not finished): its name, windows and failure threshold. They apply to what is still to be queued: the runner reads them at each step. Every other field must be as the campaign holds it, or the answer is 409 naming what differs ("the servers or batches", "the update", "the pinned snapshots", "how long a command may wait"). The batches in flight are what they are; changing their servers or update half way would leave a record that matches neither version. For a campaign made before its request was kept (ADR-0166), the servers are not compared, since they cannot be read back as written.
+- **Nothing queued yet** (a draft, or scheduled or paused before its first batch): everything, as in ADR-0179.
+- **A run under way** (a batch was queued, not finished): its name, windows and failure threshold. They apply to what is still to be queued: the runner reads them at each step. Every other field must be as the campaign holds it, or the answer is 409 naming what differs ("the servers or batches", "the update", "the pinned snapshots", "how long a command may wait"). The batches in flight are what they are; changing their servers or update half way would leave a record that matches neither version. For a campaign made before its request was kept (ADR-0179), the servers are not compared, since they cannot be read back as written.
 - **Finished** (stopped, completed or failed): everything, for its next run. The run that ended moves to the history (below), the servers are frozen again into new batches, and the campaign becomes a draft, started when the administrator is ready. A change of the name alone renames it and leaves the rest as it is. Refused while some of its commands are in flight or package sources are still to be restored, the conditions of a deletion.
 
 The web interface always shows Edit. While a run is under way the form disables the locked groups and says why ("Fixed while the campaign runs."), and sends the locked fields exactly as the campaign holds them. For a finished campaign it says that saving prepares the next run. While commands of a finished run still run, it says to wait for them.

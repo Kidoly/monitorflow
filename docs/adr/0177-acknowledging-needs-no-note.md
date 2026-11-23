@@ -1,7 +1,9 @@
-# ADR-0166: Acknowledging needs no note
+# ADR-0177: Acknowledging needs no note
 
 Date: 2026-11-22
 Status: accepted; amends ADR-0130
+
+Numbered ADR-0166 when merged, renumbered because three other ADRs had the same number.
 
 ## Context
 

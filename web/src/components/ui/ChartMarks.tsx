@@ -1,6 +1,6 @@
 import { buckets, stackSeries, type StackedSeries } from "./chartScale";
 
-/** How a chart over time draws its series (ADR-0166). */
+/** How a chart over time draws its series (ADR-0178). */
 export type ChartVariant = "line" | "area" | "columns";
 
 /** Most columns drawn across a chart: more would be slivers. */

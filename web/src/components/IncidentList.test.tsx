@@ -197,7 +197,7 @@ describe("IncidentList", () => {
     render(<IncidentList filters={{ ...NO_FILTERS, state: "all", groupId: GROUP }} />);
     await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(4));
     expect(screen.getByText(/Acknowledged by bob 13:50: swapping the disk/)).toBeInTheDocument();
-    // No button per row: the checkbox and the bulk bar acknowledge (ADR-0166).
+    // No button per row: the checkbox and the bulk bar acknowledge (ADR-0177).
     expect(screen.queryByRole("button", { name: "Acknowledge web-2" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Select Disk used /var on web-2" }));
     // The note is optional: Enter acknowledges at once.

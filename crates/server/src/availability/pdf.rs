@@ -354,7 +354,7 @@ fn availability_cell(value: Option<f64>, target: Option<f64>, language: Language
 }
 
 /// The PDF of `report`, times written in `zone`, with the uptime at the
-/// period's end when given (ADR-0172).
+/// period's end when given (ADR-0180).
 pub fn render(report: &Report, uptime: Option<&Uptime>, zone: Tz, language: Language) -> Vec<u8> {
     let mut doc = Doc::new(language);
     let lang = language;

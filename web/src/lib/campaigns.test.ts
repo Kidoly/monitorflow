@@ -293,7 +293,7 @@ describe("in French", () => {
   });
 });
 
-describe("editing and copying (ADR-0166, ADR-0173)", () => {
+describe("editing and copying (ADR-0179, ADR-0173)", () => {
   it("edits every campaign, as far as where it is allows, and deletes drafts and finished ones", () => {
     const idle = { ...detail().progress, in_progress: 0 };
     expect(editMode(campaign({ state: "draft", current_wave: null }))).toBe("full");
@@ -352,7 +352,7 @@ describe("editing and copying (ADR-0166, ADR-0173)", () => {
     expect(kept).toMatchObject({ siteId: "site-1", serverIds: [WEB2], update: "security", sources: "os", pin });
     expect(kept.waves).toEqual([{ kind: "servers", value: "1", servers: [WEB1] }]);
     expect(toRequest(kept)).toMatchObject({ waves: [{ servers: [WEB1] }], security_only: true, sources: pin });
-    // Before ADR-0166: servers outside the site are named, batches become sizes.
+    // Before ADR-0179: servers outside the site are named, batches become sizes.
     const older = draftFromCampaign(detail({ site_id: null }));
     expect(older.serverIds).toEqual([WEB1, WEB2]);
     expect(older.waves).toEqual([{ kind: "size", value: "1", servers: [] }]);
