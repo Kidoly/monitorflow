@@ -1,0 +1,26 @@
+[package]
+name = "monitorflow-apps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Ready-made application checks: PostgreSQL, MySQL and MariaDB, Redis, Docker (ADR-0183)"
+
+# Sensors of `monitorflow-sensors` kept apart, as they speak the
+# applications' own protocols: database clients and HTTP over the Docker
+# socket stay out of `monitorflow-sensors` (ADR-0021).
+
+[dependencies]
+monitorflow-sensors.workspace = true
+async-trait.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# PostgreSQL and MySQL clients, over rustls like the rest of the workspace.
+sqlx = { workspace = true, features = ["mysql"] }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

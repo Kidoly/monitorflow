@@ -1746,6 +1746,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "monitorflow-apps"
+version = "0.11.0"
+dependencies = [
+ "async-trait",
+ "monitorflow-sensors",
+ "regex",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "monitorflow-common"
 version = "0.11.0"
 dependencies = [
