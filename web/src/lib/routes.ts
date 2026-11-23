@@ -194,6 +194,11 @@ export function relayHref(id: string): string {
 export const CAMPAIGNS_PATH = "/campaigns/";
 export const NEW_CAMPAIGN_PATH = "/campaigns/new/";
 
+/** The campaign form for a major upgrade of the server `id` (ADR-0182). */
+export function majorUpgradeHref(id: string): string {
+  return `${NEW_CAMPAIGN_PATH}?major=${encodeURIComponent(id)}`;
+}
+
 /** The form editing the campaign `id`, which queued nothing yet (ADR-0166). */
 export function editCampaignHref(id: string): string {
   return `${NEW_CAMPAIGN_PATH}?edit=${encodeURIComponent(id)}`;

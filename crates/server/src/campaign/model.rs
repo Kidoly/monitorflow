@@ -6,8 +6,11 @@ use std::fmt;
 
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::valid_package_name;
+use monitorflow_common::major_upgrade;
 use monitorflow_common::proto::v1::configure_sources::Mode;
-use monitorflow_common::proto::v1::{ApplyUpdates, PackageManager, ThirdPartySelection};
+use monitorflow_common::proto::v1::{
+    ApplyUpdates, MajorUpgrade, PackageManager, ThirdPartySelection,
+};
 use monitorflow_common::third_party;
 use prost::Message;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -338,6 +341,56 @@ fn check_hours(start: &LocalTime, end: &mut LocalTime, timezone: &str) -> Result
         return Err("a window needs a time zone such as `Europe/Paris`".into());
     }
     Ok(())
+}
+
+/// A major upgrade campaign (ADR-0182): every server moves from `from` to
+/// `to`, the next release, one at a time unless `parallel` says more.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignMajorUpgrade)]
+#[serde(deny_unknown_fields)]
+pub struct MajorUpgradeSpec {
+    /// The release every server runs, like `debian 12`.
+    pub from: String,
+    /// The next release, like `debian 13`; never two releases at once.
+    pub to: String,
+    /// Upgrade servers that cannot get a snapshot first. Without it, a
+    /// server whose rollback is limited fails instead of being upgraded.
+    #[serde(default)]
+    pub accept_limited_rollback: bool,
+    /// How many servers of a batch may be upgrading at once, 1 to 50;
+    /// 1 by default.
+    #[serde(default = "one")]
+    pub parallel: u32,
+}
+
+fn one() -> u32 {
+    1
+}
+
+/// Most servers of a batch upgrading at once.
+pub const MAX_PARALLEL: u32 = 50;
+
+impl MajorUpgradeSpec {
+    pub fn validate(&self) -> Result<&'static major_upgrade::Upgrade, String> {
+        if !(1..=MAX_PARALLEL).contains(&self.parallel) {
+            return Err(format!("parallel must be between 1 and {MAX_PARALLEL}"));
+        }
+        major_upgrade::step(&self.from, &self.to).ok_or_else(|| {
+            format!(
+                "MonitorFlow cannot upgrade from {} to {}: one release at a time, Debian 12 to 13 for now",
+                self.from, self.to
+            )
+        })
+    }
+
+    /// The payload of each server's command.
+    pub fn payload(&self) -> Vec<u8> {
+        MajorUpgrade {
+            from: self.from.clone(),
+            to: self.to.clone(),
+        }
+        .encode_to_vec()
+    }
 }
 
 /// The `ApplyUpdates` of every command of a campaign.
@@ -913,5 +966,42 @@ mod tests {
             "mirrors": [{"name": "debian-12", "snapshot": "s1"}]
         }))
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod major_upgrade_tests {
+    use super::*;
+
+    #[test]
+    fn a_major_upgrade_is_one_known_step() {
+        let spec = MajorUpgradeSpec {
+            from: "debian 12".into(),
+            to: "debian 13".into(),
+            accept_limited_rollback: false,
+            parallel: 1,
+        };
+        assert_eq!(spec.validate().unwrap().to_codename, "trixie");
+        let two = MajorUpgradeSpec {
+            from: "debian 11".into(),
+            ..spec.clone()
+        };
+        assert!(two
+            .validate()
+            .unwrap_err()
+            .contains("one release at a time"));
+        let many = MajorUpgradeSpec {
+            parallel: 51,
+            ..spec.clone()
+        };
+        assert!(many.validate().is_err());
+        let decoded: MajorUpgradeSpec =
+            serde_json::from_value(serde_json::json!({"from": "debian 12", "to": "debian 13"}))
+                .unwrap();
+        assert_eq!(decoded, spec);
+        assert_eq!(
+            MajorUpgrade::decode(spec.payload().as_slice()).unwrap().to,
+            "debian 13"
+        );
     }
 }

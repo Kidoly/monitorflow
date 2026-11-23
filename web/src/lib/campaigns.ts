@@ -12,11 +12,13 @@ import type {
   Campaign,
   CampaignAction,
   CampaignDetail,
+  CampaignServer,
   CampaignServerStatus,
   CampaignRequest,
   CampaignState,
   CampaignWindow,
   FailureThreshold,
+  MajorUpgradeSpec,
   Server,
   SourcesPin,
   ThirdPartyManagerName,
@@ -28,6 +30,8 @@ import { shortTime } from "./mirrors";
 
 /** Limits of `crates/server/src/campaign/model.rs` and the API. */
 export const MAX_NAME_LEN = 64;
+/** Servers of a batch upgrading at once in a major upgrade (ADR-0182). */
+export const MAX_PARALLEL = 50;
 export const MAX_TARGETS = 10_000;
 export const MAX_WAVES = 100;
 export const MAX_WINDOWS = 32;
@@ -90,8 +94,28 @@ export interface WindowDraft {
   endsAt: string;
 }
 
-/** `agent` updates the agents themselves (ADR-0053). */
-export type UpdateKind = "all" | "security" | "packages" | "agent";
+/** `agent` updates the agents themselves (ADR-0053); `major` moves servers to the next release (ADR-0182). */
+export type UpdateKind = "all" | "security" | "packages" | "agent" | "major";
+
+/** The major upgrades this version knows, one release at a time (ADR-0182). */
+const DEBIAN_13 = { from: "debian 12", to: "debian 13", fromLabel: "Debian 12 (bookworm)", toLabel: "Debian 13 (trixie)" };
+export const MAJOR_UPGRADES: (typeof DEBIAN_13)[] = [DEBIAN_13];
+
+/** "Debian 13 (trixie)" for "debian 13", else the release as given. */
+export function releaseLabel(release: string): string {
+  const known = MAJOR_UPGRADES.find((u) => u.from === release || u.to === release);
+  if (!known) return release;
+  return known.from === release ? known.fromLabel : known.toLabel;
+}
+
+/** Whether `osVersion` ("debian 12", "debian 12.8") is the release `release`. */
+export const runsRelease = (osVersion: string | null | undefined, release: string): boolean =>
+  !!osVersion && (osVersion === release || osVersion.startsWith(`${release}.`));
+
+/** The confirmation before starting a major upgrade campaign: releases and number of servers. */
+export function majorConfirmText(spec: MajorUpgradeSpec, servers: number): string {
+  return t("campaigns.major.confirm", { count: servers, from: releaseLabel(spec.from), to: releaseLabel(spec.to) });
+}
 
 /** Which updates a package campaign installs (ADR-0138): the OS's, third-party apps', both, or not yet chosen. */
 export type UpdateSources = "os" | "apps" | "both" | "none";
@@ -131,6 +155,10 @@ export interface CampaignDraft {
   managers: ThirdPartyManagerName[];
   /** For `agent`: the version to update to. */
   agentVersion: string;
+  /** For `major`: the release servers run, the next one, whether servers without a snapshot are upgraded too, and how many at once. */
+  majorFrom: string;
+  acceptLimited: boolean;
+  parallel: string;
   allowReboot: boolean;
   ttl: number;
   thresholdValue: string;
@@ -203,6 +231,9 @@ export function emptyDraft(customerId = ""): CampaignDraft {
     sources: "os",
     managers: [...THIRD_PARTY_MANAGERS],
     agentVersion: "",
+    majorFrom: DEBIAN_13.from,
+    acceptLimited: false,
+    parallel: "1",
     allowReboot: false,
     ttl: 3600,
     thresholdValue: "0",
@@ -220,9 +251,11 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
         : { percent: Number(wave.value) },
   );
   const windows = draft.windows.map(windowRequest);
-  const agent = draft.update === "agent";
+  const major = draft.update === "major";
+  const agent = draft.update === "agent" || major;
   const os = agent || includesOs(draft.sources);
   const apps = !agent && includesApps(draft.sources);
+  const upgrade = MAJOR_UPGRADES.find((u) => u.from === draft.majorFrom) ?? DEBIAN_13;
   return {
     customer_id: draft.customerId,
     name: draft.name,
@@ -231,8 +264,16 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
     waves,
     packages: os && draft.update === "packages" ? draft.packages.split(/[\s,]+/).filter(Boolean) : [],
     security_only: os && draft.update === "security",
-    allow_reboot: draft.update !== "agent" && draft.allowReboot,
+    allow_reboot: !agent && draft.allowReboot,
     ...(draft.update === "agent" && { agent_version: draft.agentVersion }),
+    ...(major && {
+      major_upgrade: {
+        from: upgrade.from,
+        to: upgrade.to,
+        accept_limited_rollback: draft.acceptLimited,
+        parallel: Number(draft.parallel),
+      },
+    }),
     ...(!os && { include_os: false }),
     ...(apps && { third_party: draft.managers.map((manager) => ({ manager, packages: [] })) }),
     command_ttl_s: draft.ttl,
@@ -283,6 +324,7 @@ export function requestFromCampaign(campaign: CampaignDetail, draft: CampaignDra
     security_only: spec.security_only,
     allow_reboot: spec.allow_reboot,
     ...(campaign.agent_version && { agent_version: campaign.agent_version }),
+    ...(campaign.major_upgrade && { major_upgrade: campaign.major_upgrade }),
     ...(spec.include_os === false && { include_os: false }),
     ...(spec.third_party?.length && { third_party: spec.third_party }),
     command_ttl_s: campaign.command_ttl_s,
@@ -328,9 +370,11 @@ export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {
           ? { kind: "size", value: String(w.size), servers: [] }
           : { kind: "percent", value: String(w.percent), servers: [] },
     ),
-    update: campaign.agent_version
-      ? "agent"
-      : spec.packages.length > 0
+    update: campaign.major_upgrade
+      ? "major"
+      : campaign.agent_version
+        ? "agent"
+        : spec.packages.length > 0
         ? "packages"
         : spec.security_only
           ? "security"
@@ -342,6 +386,9 @@ export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {
         ? THIRD_PARTY_MANAGERS.filter((m) => third.some((s) => s.manager === m))
         : [...THIRD_PARTY_MANAGERS],
     agentVersion: campaign.agent_version ?? "",
+    majorFrom: campaign.major_upgrade?.from ?? DEBIAN_13.from,
+    acceptLimited: campaign.major_upgrade?.accept_limited_rollback ?? false,
+    parallel: String(campaign.major_upgrade?.parallel ?? 1),
     allowReboot: spec.allow_reboot,
     ttl: campaign.command_ttl_s,
     thresholdValue: String(campaign.failure_threshold.value),
@@ -465,6 +512,10 @@ export function validateCampaign(request: CampaignRequest, targets: string[]): s
   if (request.agent_version !== undefined && compareVersions(request.agent_version, request.agent_version) === null) {
     errors.push(t("campaigns.check.agentVersion"));
   }
+  const parallel = request.major_upgrade?.parallel;
+  if (parallel !== undefined && !(Number.isInteger(parallel) && parallel >= 1 && parallel <= MAX_PARALLEL)) {
+    errors.push(t("campaigns.check.parallel", { max: String(MAX_PARALLEL) }));
+  }
   if (request.include_os === false && request.third_party === undefined) errors.push(t("campaigns.check.sources"));
   if (request.third_party?.length === 0) errors.push(t("campaigns.check.managers"));
   if (request.packages.length > MAX_PACKAGES) errors.push(t("campaigns.check.packageCount", { max: String(MAX_PACKAGES) }));
@@ -545,7 +596,12 @@ export function describeManagers(spec: UpdateSpec): string {
   return (spec.third_party ?? []).map((s) => MANAGER_NAMES[s.manager] ?? s.manager).join(", ");
 }
 
-export function describeUpdate(spec: UpdateSpec, agentVersion: string | null = null): string {
+export function describeUpdate(
+  spec: UpdateSpec,
+  agentVersion: string | null = null,
+  major: MajorUpgradeSpec | null = null,
+): string {
+  if (major) return t("campaigns.update.major", { from: releaseLabel(major.from), to: releaseLabel(major.to) });
   if (agentVersion) return t("campaigns.update.agent", { version: agentVersion });
   const os =
     spec.packages.length > 0
@@ -633,7 +689,15 @@ export const SERVER_STATUSES: Record<CampaignServerStatus, Tone> = {
   expired: "bad",
   cancelled: "neutral",
   skipped: "bad",
+  upgrading: "info",
 };
+
+/** What a server of a major upgrade is doing, from its agent's phase and its Proxmox snapshot (ADR-0182). */
+export function upgradeStepText(server: Pick<CampaignServer, "status" | "upgrade_phase" | "vm_snapshot">): string | null {
+  if (server.status === "pending" && server.vm_snapshot === "taking") return t("campaigns.major.phase.snapshot");
+  if (server.status !== "upgrading" || !server.upgrade_phase) return null;
+  return t(`campaigns.major.phase.${server.upgrade_phase}`);
+}
 
 export const serverStatusWord = (status: CampaignServerStatus): string => t(`campaigns.server.${status}`);
 
@@ -643,9 +707,15 @@ export function describeSources(pin: SourcesPin): string {
 }
 
 /** The grey line under a campaign's name: "2 batches · snapshot debian-12/s1 · security only · reboot allowed". */
-export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources" | "spec" | "agent_version">): string {
+export function campaignSubline(
+  campaign: Pick<Campaign, "wave_count" | "sources" | "spec" | "agent_version" | "major_upgrade">,
+): string {
   const { spec } = campaign;
   const batches = t("campaigns.batches", { count: campaign.wave_count });
+  if (campaign.major_upgrade) {
+    const { from, to } = campaign.major_upgrade;
+    return `${batches} · ${t("campaigns.subline.major", { from: releaseLabel(from), to: releaseLabel(to) })}`;
+  }
   if (campaign.agent_version) {
     return `${batches} · ${t("campaigns.subline.agent", { version: campaign.agent_version })}`;
   }

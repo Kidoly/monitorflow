@@ -224,6 +224,7 @@ db_tests! {
                 "server_discovery",
                 "server_instance_admissions",
                 "server_instances",
+                "server_major_upgrades",
                 "server_package_managers",
                 "server_packages",
                 "server_proxmox_candidates",

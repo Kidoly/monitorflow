@@ -18129,6 +18129,215 @@
         }
       }
     },
+    "/api/v1/major-upgrades": {
+      "get": {
+        "tags": [
+          "campaigns"
+        ],
+        "summary": "List the servers that can move to the next release",
+        "description": "For each server the caller sees on a release MonitorFlow can upgrade\nfrom (Debian 12 for now), or with a major upgrade recorded: the next\nrelease, every check before upgrading to it, the rollback it would\nget, and the progress of its last upgrade (ADR-0182). The central\nserver's checks come first (`allowed`: the server allows major upgrades\nfrom the web interface; `agent_version`: its agent knows the target;\n`mirror`: the mirrors carry the target when the server uses them), then\nthe agent's (`up_to_date`, `held_packages`, `broken_packages`,\n`free_space`, `reboot_pending`, `sources`, `third_party_sources`). A\n`warning` never blocks; `ready` is false while any check `failed`. The\nagent runs its checks again just before the upgrade. Upgrades\nthemselves are campaigns with `major_upgrade`.\n\nNeeds any role on the servers' sites and the key area \"updates\".",
+        "operationId": "list_major_upgrades",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The servers and their next release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MajorUpgradeList"
+                },
+                "example": {
+                  "servers": [
+                    {
+                      "can_upgrade": true,
+                      "checks": [
+                        {
+                          "detail": "The server allows major upgrades from the web interface.",
+                          "items": [],
+                          "name": "allowed",
+                          "state": "ok"
+                        },
+                        {
+                          "detail": "The agent knows the next release.",
+                          "items": [],
+                          "name": "agent_version",
+                          "state": "ok"
+                        },
+                        {
+                          "detail": "The server takes its packages from its own sources.",
+                          "items": [],
+                          "name": "mirror",
+                          "state": "ok"
+                        },
+                        {
+                          "detail": "every package is up to date",
+                          "items": [],
+                          "name": "up_to_date",
+                          "state": "ok"
+                        },
+                        {
+                          "detail": "no package is held",
+                          "items": [],
+                          "name": "held_packages",
+                          "state": "ok"
+                        },
+                        {
+                          "detail": "no broken package",
+                          "items": [],
+                          "name": "broken_packages",
+                          "state": "ok"
+                        },
+                        {
+                          "detail": "free: / and /var and /boot 18.2 GiB",
+                          "items": [],
+                          "name": "free_space",
+                          "state": "ok"
+                        },
+                        {
+                          "detail": "no reboot pending",
+                          "items": [],
+                          "name": "reboot_pending",
+                          "state": "ok"
+                        },
+                        {
+                          "detail": "3 entries move to the new release",
+                          "items": [],
+                          "name": "sources",
+                          "state": "ok"
+                        },
+                        {
+                          "detail": "1 third-party sources are switched off for the upgrade and left off",
+                          "items": [
+                            "/etc/apt/sources.list.d/docker.list: deb https://download.docker.com/linux/debian bookworm stable"
+                          ],
+                          "name": "third_party_sources",
+                          "state": "warning"
+                        }
+                      ],
+                      "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                      "hostname": "web-1",
+                      "progress": null,
+                      "ready": true,
+                      "release": "debian 12",
+                      "release_label": "Debian 12 (bookworm)",
+                      "reported_at": "2026-11-23T06:00:00Z",
+                      "rollback": {
+                        "available": true,
+                        "detail": "LVM snapshot of / and /var",
+                        "kind": null,
+                        "left_out": null,
+                        "method": "lvm",
+                        "reason": null
+                      },
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "target": "debian 13",
+                      "target_label": "Debian 13 (trixie)"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: an unknown parameter or a bad ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller has no role. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/metrics/query": {
       "get": {
         "tags": [
@@ -48813,6 +49022,17 @@
             "type": "string",
             "format": "uuid"
           },
+          "major_upgrade": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CampaignMajorUpgrade",
+                "description": "Set for a major upgrade campaign (ADR-0182)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -48965,6 +49185,35 @@
           }
         }
       },
+      "CampaignMajorUpgrade": {
+        "type": "object",
+        "description": "A major upgrade campaign (ADR-0182): every server moves from `from` to\n`to`, the next release, one at a time unless `parallel` says more.",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "accept_limited_rollback": {
+            "type": "boolean",
+            "description": "Upgrade servers that cannot get a snapshot first. Without it, a\nserver whose rollback is limited fails instead of being upgraded."
+          },
+          "from": {
+            "type": "string",
+            "description": "The release every server runs, like `debian 12`."
+          },
+          "parallel": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many servers of a batch may be upgrading at once, 1 to 50;\n1 by default.",
+            "minimum": 0
+          },
+          "to": {
+            "type": "string",
+            "description": "The next release, like `debian 13`; never two releases at once."
+          }
+        },
+        "additionalProperties": false
+      },
       "CampaignPinnedMirror": {
         "type": "object",
         "description": "A mirror and the published snapshot a campaign pins it to.",
@@ -49083,6 +49332,17 @@
               "null"
             ],
             "description": "Whether OS updates are included; true by default. Without them,\nonly servers of a platform a selected manager is for are targets\n(ADR-0138)."
+          },
+          "major_upgrade": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CampaignMajorUpgrade",
+                "description": "Move every server to the next release of its distribution instead\n(ADR-0182): `{\"from\": \"debian 12\", \"to\": \"debian 13\"}`, with\n`accept_limited_rollback` to upgrade servers that cannot get a\nsnapshot first and `parallel` servers of a batch at once (1 by\ndefault). Takes no package options, `sources` nor `agent_version`."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "type": "string"
@@ -49231,6 +49491,17 @@
           "failure_threshold": {
             "$ref": "#/components/schemas/CampaignFailureThreshold"
           },
+          "major_upgrade": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CampaignMajorUpgrade",
+                "description": "Set for a major upgrade campaign (ADR-0182)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -49372,6 +49643,19 @@
           "status": {
             "type": "string",
             "description": "`pending` (no command yet), `skipped` (no command, `error` says\nwhy), or the command's state: `queued`, `sent`, `running`,\n`succeeded`, `failed`, `expired`, `cancelled`. A failed restore of\npinned sources makes it `failed`."
+          },
+          "upgrade_phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "In a major upgrade: where the server's upgrade is, as its agent\nsays (`starting`, `sources`, `refreshing`, `upgrading`,\n`full_upgrade`, `rebooting`, `done`, `failed`), and its Proxmox\nsnapshot (`taking`, `taken`, `limited`, `failed`) (ADR-0182). A\nstarted upgrade has `status` `upgrading` until the server is back\non the new release with its checks as before."
+          },
+          "vm_snapshot": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -50365,10 +50649,10 @@
           },
           "kind": {
             "type": "string",
-            "description": "`apply_updates`, `self_update`, `configure_sources`,\n`revert_sources`, `shell` (AI remediation), `ai_commands`, or\n`take_snapshot` and `delete_snapshot` (local snapshots before AI\nchanges)."
+            "description": "`apply_updates`, `self_update`, `configure_sources`,\n`revert_sources`, `shell` (AI remediation), `ai_commands`, or\n`take_snapshot` and `delete_snapshot` (local snapshots before AI\nchanges), or `major_upgrade` (from a major upgrade campaign)."
           },
           "parameters": {
-            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\", \"include_os\", \"third_party\"}` for `apply_updates`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`; `null` for a kind this version does not\nknow."
+            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\", \"include_os\", \"third_party\"}` for `apply_updates`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`, `{\"from\", \"to\", \"impact\"}` for\n`major_upgrade` (ADR-0182); `null` for a kind this version does not\nknow."
           },
           "requested_by": {
             "type": [
@@ -55441,6 +55725,108 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "MajorUpgradeCheck": {
+        "type": "object",
+        "description": "One check before an upgrade.",
+        "required": [
+          "name",
+          "state",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "What was found, in English."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Held packages, third-party entries and the like."
+          },
+          "name": {
+            "type": "string",
+            "description": "`allowed`, `agent_version` and `mirror` from the central server;\n`up_to_date`, `held_packages`, `broken_packages`, `free_space`,\n`reboot_pending`, `sources` and `third_party_sources` from the agent."
+          },
+          "state": {
+            "type": "string",
+            "description": "`ok`, `warning` (never blocks) or `failed`."
+          }
+        }
+      },
+      "MajorUpgradeList": {
+        "type": "object",
+        "required": [
+          "servers"
+        ],
+        "properties": {
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerUpgrade"
+            }
+          }
+        }
+      },
+      "MajorUpgradeProgress": {
+        "type": "object",
+        "description": "The last major upgrade of a server, as its agent tells it.",
+        "required": [
+          "command_id",
+          "from",
+          "to",
+          "phase",
+          "sources_restored",
+          "disabled_sources"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string"
+          },
+          "disabled_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Third-party entries switched off and left off."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string",
+            "description": "`starting`, `sources`, `refreshing`, `upgrading`, `full_upgrade`,\n`rebooting`, `done` or `failed`."
+          },
+          "sources_restored": {
+            "type": "boolean",
+            "description": "A failure before the package step put the sources back."
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -62668,6 +63054,100 @@
           }
         }
       },
+      "ServerUpgrade": {
+        "type": "object",
+        "description": "One server and its next release.",
+        "required": [
+          "server_id",
+          "hostname",
+          "site_id",
+          "customer_id",
+          "release",
+          "ready",
+          "checks",
+          "rollback",
+          "can_upgrade"
+        ],
+        "properties": {
+          "can_upgrade": {
+            "type": "boolean",
+            "description": "The user may start it: an administrator of its customer."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MajorUpgradeCheck"
+            },
+            "description": "The central server's checks first, then the agent's."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MajorUpgradeProgress",
+                "description": "The last major upgrade of the server."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "No check failed: a campaign may upgrade it."
+          },
+          "release": {
+            "type": "string",
+            "description": "What the server runs, like `debian 12`."
+          },
+          "release_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "\"Debian 12 (bookworm)\", when the release is one MonitorFlow can\nupgrade from."
+          },
+          "reported_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the agent last reported its checks."
+          },
+          "rollback": {
+            "$ref": "#/components/schemas/SnapshotSupport",
+            "description": "The snapshot the upgrade gets first, or why none (ADR-0094)."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The next release, like `debian 13`; `null` when none is known."
+          },
+          "target_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ServerView": {
         "type": "object",
         "description": "One server. Field names and types are part of the API contract: add\nfields, never rename or remove them.",
@@ -67083,7 +67563,7 @@
     },
     {
       "name": "campaigns",
-      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. A campaign is edited at any time: fully before its first batch, only its name, windows and failure threshold while a run is under way, and fully once finished, for its next run. A finished campaign runs again, all its servers or only those that failed, and keeps each past run under `/campaigns/{id}/runs`. It is deleted as a draft or once finished. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\"."
+      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. A campaign is edited at any time: fully before its first batch, only its name, windows and failure threshold while a run is under way, and fully once finished, for its next run. A finished campaign runs again, all its servers or only those that failed, and keeps each past run under `/campaigns/{id}/runs`. It is deleted as a draft or once finished. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\".\n\nA major upgrade campaign (`major_upgrade`, ADR-0182) moves servers to the next release of their distribution, Debian 12 to 13 for now: each server gets a Proxmox or local snapshot first (or none, only with `accept_limited_rollback`), then a signed `major_upgrade` command, which its agent runs only where the server allowed major upgrades from the web interface. A server is `upgrading` until it rebooted, its agent reports the new release and its checks are back to what they were. `/major-upgrades` shows the checks of each server beforehand."
     },
     {
       "name": "automatic updates",

@@ -114,9 +114,14 @@ export function linuxInstallCommand(
   origin: string,
   relay = "",
   aiFromWeb = false,
+  majorFromWeb = false,
 ): Command {
-  return installerCommand(target, source, origin, relay, aiFromWeb ? [FROM_WEB] : []);
+  const extras = [...(aiFromWeb ? [FROM_WEB] : []), ...(majorFromWeb ? [MAJOR_FROM_WEB] : [])];
+  return installerCommand(target, source, origin, relay, extras);
 }
+
+/** Allows major upgrades of the distribution from the web interface, Linux only (ADR-0182). */
+const MAJOR_FROM_WEB = "MF_MAJOR_UPGRADES_FROM_WEB=1";
 
 /** Lets the web interface turn the agent's AI commands on and off (ADR-0098). */
 const FROM_WEB = "MF_AI_COMMANDS_FROM_WEB=1";

@@ -327,6 +327,8 @@ const ROUTES: [RegExp, Handler][] = [
   [/^\/api\/mirrors\/([^/]+)$/, ([id]) => mirrorDetail(found(MIRRORS.find((m) => m.id === id)))],
   [/^\/api\/auto-update$/, () => autoUpdate()],
   [/^\/api\/auto-update\/(agent|relay)\/versions\/peers$/, ([kind]) => versionPeers(kind!)],
+  // No server of the demo runs a release with a known next one (ADR-0182).
+  [/^\/api\/major-upgrades$/, () => ({ servers: [] })],
   [/^\/api\/agent-releases$/, () => ({ versions: [AGENT_VERSION, "0.5.2", "0.5.1"], latest: AGENT_VERSION })],
 
   // Alerting

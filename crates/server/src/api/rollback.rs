@@ -55,18 +55,8 @@ pub async fn get(
     .await?;
     authorize(&user, row.as_ref().map(|r| r.0), false)?;
     let (site, customer, os_family) = row.ok_or(ApiError::NotFound)?;
-    let clusters = state.settings.proxmox_clusters_for(customer, site);
-    let mapping = store::mapping(&state.pool, id).await?;
-    let left_out: Option<String> =
-        sqlx::query_scalar("SELECT left_out FROM server_proxmox_vms WHERE server_id = $1")
-            .bind(id)
-            .fetch_optional(&state.pool)
-            .await?
-            .flatten();
-    let storage = local::load(&state.pool, id).await?;
+    let (snapshots, storage) = support(&state, id, site, customer, &os_family).await?;
     let (report, reported_at) = storage.unzip();
-    let snapshots = SnapshotSupport::of(&state.settings, &clusters, mapping, left_out)
-        .with_local(&os_family, report.as_ref());
     let not_covered = match snapshots.method {
         Some("lvm" | "zfs") => local::plan_of(&os_family, report.as_ref())
             .map(|plan| plan.not_covered)
@@ -87,4 +77,27 @@ pub async fn get(
             .unwrap_or_default(),
         reported_at,
     }))
+}
+
+/// The rollback a change on server `id` gets, in the order of ADR-0094,
+/// with its latest storage report.
+pub(crate) async fn support(
+    state: &ApiState,
+    id: Uuid,
+    site: Uuid,
+    customer: Uuid,
+    os_family: &str,
+) -> Result<(SnapshotSupport, Option<(local::Storage, DateTime<Utc>)>), ApiError> {
+    let clusters = state.settings.proxmox_clusters_for(customer, site);
+    let mapping = store::mapping(&state.pool, id).await?;
+    let left_out: Option<String> =
+        sqlx::query_scalar("SELECT left_out FROM server_proxmox_vms WHERE server_id = $1")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await?
+            .flatten();
+    let storage = local::load(&state.pool, id).await?;
+    let snapshots = SnapshotSupport::of(&state.settings, &clusters, mapping, left_out)
+        .with_local(os_family, storage.as_ref().map(|(r, _)| r));
+    Ok((snapshots, storage))
 }

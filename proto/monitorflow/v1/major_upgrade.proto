@@ -1,0 +1,63 @@
+// MonitorFlow major distribution upgrades, version 1. See ADR-0182.
+//
+// Rules: changes are additive only. Never renumber or reuse a field number.
+
+syntax = "proto3";
+
+package monitorflow.v1;
+
+// Payload of a Command of kind "major_upgrade": move the server from one
+// release of its distribution to the next, in the form `Hello` reports
+// (`os_version`), like "debian 12" and "debian 13". The agent's root helper
+// checks that `from` is the release it runs and `to` the next one it
+// knows, that the host agreed (`packages.major_upgrades`) and the checks,
+// then starts the upgrade in a transient systemd unit. The command
+// succeeds once the upgrade started; its progress comes in the package
+// reports.
+message MajorUpgrade {
+  string from = 1;
+  string to = 2;
+}
+
+// The major upgrade part of a package report (ADR-0182). Absent from
+// agents before ADR-0182, and on systems without a known next release.
+message MajorUpgradeReport {
+  // The release the server runs, like "debian 12", and its codename.
+  string release = 1;
+  string codename = 2;
+  // The next release this agent knows, like "debian 13"; empty when none.
+  string target = 3;
+  string target_codename = 4;
+  // The checks before an upgrade, in a fixed order; empty without a target.
+  repeated UpgradeCheck checks = 5;
+  // The last upgrade on this server, if any.
+  MajorUpgradeProgress progress = 6;
+}
+
+message UpgradeCheck {
+  // `up_to_date`, `held_packages`, `broken_packages`, `free_space`,
+  // `reboot_pending`, `sources` or `third_party_sources`.
+  string name = 1;
+  // "ok", "warning" (never blocks) or "failed".
+  string state = 2;
+  // What was found, in one line, like "/var has 1.2 GiB free, needs 4.0 GiB".
+  string detail = 3;
+  // Listed items: held packages, third-party entries.
+  repeated string items = 4;
+}
+
+message MajorUpgradeProgress {
+  string command_id = 1;
+  string from = 2;
+  string to = 3;
+  // `starting`, `sources`, `refreshing`, `upgrading`, `full_upgrade`,
+  // `rebooting`, `done` or `failed`; `done` and `failed` are final.
+  string phase = 4;
+  string error = 5;
+  // A failure before the package step put the sources back as they were.
+  bool sources_restored = 6;
+  // Third-party entries switched off, left off afterwards.
+  repeated string disabled_sources = 7;
+  int64 started_at_unix_ms = 8;
+  int64 updated_at_unix_ms = 9;
+}

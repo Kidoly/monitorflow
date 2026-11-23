@@ -253,6 +253,7 @@ db_tests! {
             storage: None,
             third_party: Vec::new(),
             managers: Vec::new(),
+            major_upgrade: None,
         };
         assert!(store.replace("agent-1", &first).await.unwrap());
         let report = PackageReport {
@@ -269,6 +270,7 @@ db_tests! {
             storage: None,
             third_party: Vec::new(),
             managers: Vec::new(),
+            major_upgrade: None,
         };
         assert!(store.replace("agent-1", &report).await.unwrap());
         // Older or unknown: ignored.
@@ -603,6 +605,7 @@ db_tests! {
             storage: None,
             third_party: Vec::new(),
             managers: Vec::new(),
+            major_upgrade: None,
         };
         // Agents before ADR-0086 say nothing of the update source.
         assert!(PackageStore::new(pool.clone()).replace("agent-2", &report).await.unwrap());

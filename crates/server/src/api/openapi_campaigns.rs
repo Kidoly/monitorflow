@@ -6,24 +6,26 @@
 
 use utoipa::OpenApi;
 
-use super::campaigns;
 use super::openapi::{Common, ErrorBody};
+use super::{campaigns, major_upgrades};
 use crate::campaign::{
-    CampaignState, FailureThreshold, FailureUnit, PinnedMirror, RunSettings, SourcesMode,
-    SourcesPin, UpdateSpec, WaveSpec, Window,
+    CampaignState, FailureThreshold, FailureUnit, MajorUpgradeSpec, PinnedMirror, RunSettings,
+    SourcesMode, SourcesPin, UpdateSpec, WaveSpec, Window,
 };
+use crate::commands::major_upgrade::{Check, Progress};
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
         list_campaigns, create_campaign, campaign, update_campaign, delete_campaign,
         start_campaign, pause_campaign, resume_campaign, stop_campaign, relaunch_campaign,
-        campaign_runs,
+        campaign_runs, list_major_upgrades,
     ),
     components(schemas(
         CampaignState, FailureThreshold, FailureUnit, PinnedMirror, SourcesMode, SourcesPin,
         UpdateSpec, WaveSpec, Window, campaigns::Progress, campaigns::TargetView,
-        campaigns::WaveView, campaigns::RelaunchServers, RunSettings,
+        campaigns::WaveView, campaigns::RelaunchServers, RunSettings, MajorUpgradeSpec, Check,
+        Progress, major_upgrades::ServerUpgrade, major_upgrades::MajorUpgradeList,
     )),
     modifiers(&Common),
     tags(
@@ -38,7 +40,13 @@ agent update campaign), queued behind any other command of that server and check
 which runs package updates only when its administrator allowed them. Campaign commands are made by \
 an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading \
 needs a role on the customer as a whole (everything or the customer); creating and acting need an \
-administrator role on it. Needs the key area \"updates\"."),
+administrator role on it. Needs the key area \"updates\".\n\n\
+A major upgrade campaign (`major_upgrade`, ADR-0182) moves servers to the next release of their \
+distribution, Debian 12 to 13 for now: each server gets a Proxmox or local snapshot first (or none, \
+only with `accept_limited_rollback`), then a signed `major_upgrade` command, which its agent runs \
+only where the server allowed major upgrades from the web interface. A server is `upgrading` until \
+it rebooted, its agent reports the new release and its checks are back to what they were. \
+`/major-upgrades` shows the checks of each server beforehand."),
     )
 )]
 pub struct Doc;
@@ -532,3 +540,59 @@ fn relaunch_campaign() {}
 customer the caller does not read as a whole"),
     ))]
 fn campaign_runs() {}
+
+/// List the servers that can move to the next release
+///
+/// For each server the caller sees on a release MonitorFlow can upgrade
+/// from (Debian 12 for now), or with a major upgrade recorded: the next
+/// release, every check before upgrading to it, the rollback it would
+/// get, and the progress of its last upgrade (ADR-0182). The central
+/// server's checks come first (`allowed`: the server allows major upgrades
+/// from the web interface; `agent_version`: its agent knows the target;
+/// `mirror`: the mirrors carry the target when the server uses them), then
+/// the agent's (`up_to_date`, `held_packages`, `broken_packages`,
+/// `free_space`, `reboot_pending`, `sources`, `third_party_sources`). A
+/// `warning` never blocks; `ready` is false while any check `failed`. The
+/// agent runs its checks again just before the upgrade. Upgrades
+/// themselves are campaigns with `major_upgrade`.
+///
+/// Needs any role on the servers' sites and the key area "updates".
+#[utoipa::path(get, path = "/api/v1/major-upgrades", tag = "campaigns",
+    params(major_upgrades::Filter),
+    responses(
+        (status = 200, description = "The servers and their next release",
+            body = major_upgrades::MajorUpgradeList, example = json!({"servers": [{
+                "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                "hostname": "web-1",
+                "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                "release": "debian 12",
+                "release_label": "Debian 12 (bookworm)",
+                "target": "debian 13",
+                "target_label": "Debian 13 (trixie)",
+                "ready": true,
+                "checks": [
+                    {"name": "allowed", "state": "ok", "detail": "The server allows major upgrades from the web interface.", "items": []},
+                    {"name": "agent_version", "state": "ok", "detail": "The agent knows the next release.", "items": []},
+                    {"name": "mirror", "state": "ok", "detail": "The server takes its packages from its own sources.", "items": []},
+                    {"name": "up_to_date", "state": "ok", "detail": "every package is up to date", "items": []},
+                    {"name": "held_packages", "state": "ok", "detail": "no package is held", "items": []},
+                    {"name": "broken_packages", "state": "ok", "detail": "no broken package", "items": []},
+                    {"name": "free_space", "state": "ok", "detail": "free: / and /var and /boot 18.2 GiB", "items": []},
+                    {"name": "reboot_pending", "state": "ok", "detail": "no reboot pending", "items": []},
+                    {"name": "sources", "state": "ok", "detail": "3 entries move to the new release", "items": []},
+                    {"name": "third_party_sources", "state": "warning",
+                     "detail": "1 third-party sources are switched off for the upgrade and left off",
+                     "items": ["/etc/apt/sources.list.d/docker.list: deb https://download.docker.com/linux/debian bookworm stable"]}
+                ],
+                "rollback": {"available": true, "reason": null, "kind": null,
+                             "detail": "LVM snapshot of / and /var", "left_out": null, "method": "lvm"},
+                "progress": null,
+                "reported_at": "2026-11-23T06:00:00Z",
+                "can_upgrade": true
+            }]})),
+        (status = 400, body = ErrorBody, description = "`invalid`: an unknown parameter or a bad ID"),
+        (status = 403, body = ErrorBody, description = "`forbidden`: the caller has no role. \
+`api_key_scope`: the key lacks the area"),
+    ))]
+fn list_major_upgrades() {}

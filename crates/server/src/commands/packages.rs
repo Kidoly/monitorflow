@@ -4,7 +4,8 @@
 //! with a title, classification, severity and size (ADR-0049), and where
 //! they come from in `servers.windows_update_source` (ADR-0086). Linux
 //! agents report their system volumes too, in `server_storage` (ADR-0094).
-//! Third-party apps go to their own tables (ADR-0138).
+//! Third-party apps go to their own tables (ADR-0138), and the major
+//! upgrade part to `server_major_upgrades` (ADR-0182).
 
 use monitorflow_common::proto::v1::{Package, PackageReport};
 use sqlx::PgPool;
@@ -124,6 +125,7 @@ impl PackageStore {
         .await?;
         third_party::store(&mut tx, server, report).await?;
         local::store(&mut *tx, server, report.storage.as_deref()).await?;
+        super::major_upgrade::store(&mut *tx, server, report.major_upgrade.as_deref()).await?;
         tx.commit().await?;
         Ok(true)
     }

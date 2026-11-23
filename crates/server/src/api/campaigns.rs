@@ -28,8 +28,8 @@ use super::servers::{decode_cursor, encode_cursor, page_limit};
 use super::{ApiError, ApiState};
 use crate::campaign::query::{self, ListFilter, Listed, TargetRow, WaveCounts, WaveRow};
 use crate::campaign::{
-    Action, CampaignError, CampaignState, CampaignStore, FailureThreshold, NewCampaign,
-    RunSettings, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
+    Action, CampaignError, CampaignState, CampaignStore, FailureThreshold, MajorUpgradeSpec,
+    NewCampaign, RunSettings, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
 };
 use crate::commands::sources::{self, KeyLookupError};
 
@@ -83,6 +83,12 @@ pub struct CreateRequest {
     /// Update the agents to this version, like `0.3.1`, instead of
     /// packages (ADR-0053); takes no package options nor `sources`.
     pub agent_version: Option<String>,
+    /// Move every server to the next release of its distribution instead
+    /// (ADR-0182): `{"from": "debian 12", "to": "debian 13"}`, with
+    /// `accept_limited_rollback` to upgrade servers that cannot get a
+    /// snapshot first and `parallel` servers of a batch at once (1 by
+    /// default). Takes no package options, `sources` nor `agent_version`.
+    pub major_upgrade: Option<MajorUpgradeSpec>,
 }
 
 /// Servers by status; `failed` includes expired commands and skipped
@@ -133,6 +139,8 @@ pub struct CampaignView {
     pub sources: Option<SourcesPin>,
     /// Set for an agent update campaign (ADR-0053).
     pub agent_version: Option<String>,
+    /// Set for a major upgrade campaign (ADR-0182).
+    pub major_upgrade: Option<MajorUpgradeSpec>,
     /// The `server_ids` of the request, as last written; `null` for a
     /// campaign made before they were kept (ADR-0166).
     pub server_ids: Option<Vec<Uuid>>,
@@ -192,6 +200,14 @@ pub struct TargetView {
     pub restore_command_id: Option<Uuid>,
     /// The local snapshot taken before the update, if any (ADR-0094).
     pub snapshot_command_id: Option<Uuid>,
+    /// In a major upgrade: where the server's upgrade is, as its agent
+    /// says (`starting`, `sources`, `refreshing`, `upgrading`,
+    /// `full_upgrade`, `rebooting`, `done`, `failed`), and its Proxmox
+    /// snapshot (`taking`, `taken`, `limited`, `failed`) (ADR-0182). A
+    /// started upgrade has `status` `upgrading` until the server is back
+    /// on the new release with its checks as before.
+    pub upgrade_phase: Option<String>,
+    pub vm_snapshot: Option<String>,
 }
 
 /// One batch.
@@ -300,6 +316,7 @@ async fn views(state: &ApiState, rows: Vec<Listed>) -> Result<Vec<CampaignView>,
                         mirrors: pins.remove(&c.id).unwrap_or_default(),
                     }),
                     agent_version: c.agent_version,
+                    major_upgrade: c.major_upgrade.map(|m| m.0),
                     server_ids: c.requested_server_ids,
                     wave_specs: c.requested_waves.map(|w| w.0),
                     wave_count,
@@ -371,6 +388,8 @@ fn wave_views(
                 sources_command_id: t.sources_command_id,
                 restore_command_id: t.restore_command_id,
                 snapshot_command_id: t.snapshot_command_id,
+                upgrade_phase: t.upgrade_phase,
+                vm_snapshot: t.vm_snapshot_state,
             });
         }
         let state = match (wave.started_at, wave.finished_at) {
@@ -468,8 +487,49 @@ async fn new_campaign(
         windows: request.windows,
         sources: request.sources,
         agent_version,
+        major_upgrade: request.major_upgrade,
         created_by: Some(user.id),
     })
+}
+
+/// Refuses a major upgrade of servers that cannot get a snapshot first,
+/// unless the request accepts it, naming them (ADR-0182).
+async fn check_rollback(
+    state: &ApiState,
+    user: &CurrentUser,
+    new: &NewCampaign,
+) -> Result<(), ApiError> {
+    let Some(major) = &new.major_upgrade else {
+        return Ok(());
+    };
+    if major.accept_limited_rollback {
+        return Ok(());
+    }
+    let targets = CampaignStore::new(state.pool.clone())
+        .resolve_targets(new)
+        .await?;
+    let servers = super::major_upgrades::readiness(
+        state,
+        user,
+        &super::major_upgrades::Filter::default(),
+        Some(&targets),
+    )
+    .await?;
+    let limited: Vec<String> = servers
+        .iter()
+        .filter(|s| !s.rollback.available)
+        .map(|s| match &s.rollback.detail {
+            Some(why) => format!("{} ({why})", s.hostname),
+            None => s.hostname.clone(),
+        })
+        .collect();
+    if limited.is_empty() {
+        return Ok(());
+    }
+    Err(ApiError::Invalid(format!(
+        "rollback is limited on {}; set accept_limited_rollback to upgrade them without a snapshot",
+        limited.join(", ")
+    )))
 }
 
 /// `POST /api/campaigns`.
@@ -480,6 +540,7 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<CampaignDetail>), ApiError> {
     let request = body(request)?;
     let new = new_campaign(&state, &user, request).await?;
+    check_rollback(&state, &user, &new).await?;
     let actor = user.id.to_string();
     let row = CampaignStore::new(state.pool.clone())
         .create(&new, ("user", &actor))
@@ -502,6 +563,7 @@ pub async fn update(
     authorize_customer(&user, customer, true)?;
     let request = body(request)?;
     let new = new_campaign(&state, &user, request).await?;
+    check_rollback(&state, &user, &new).await?;
     let actor = user.id.to_string();
     let row = CampaignStore::new(state.pool.clone())
         .update(id, &new, ("user", &actor))

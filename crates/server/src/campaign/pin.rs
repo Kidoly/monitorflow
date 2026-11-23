@@ -79,6 +79,10 @@ pub(super) struct Pending {
     pub storage: Option<sqlx::types::Json<local::Storage>>,
     /// Its latest report has third-party managers (ADR-0138).
     pub reports_third_party: bool,
+    /// Its Proxmox snapshot before a major upgrade (ADR-0182).
+    pub vm_snapshot_state: Option<String>,
+    pub vm_snapshot_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub vm_snapshot_error: Option<String>,
 }
 
 /// What a [`Pending`] server of a pinned campaign needs next.
@@ -91,6 +95,8 @@ pub(super) enum Next {
     Wait,
     /// Restored before its update: configure again.
     Restart,
+    /// A Proxmox snapshot first, taken by a task of the runner (ADR-0182).
+    VmSnapshot,
     /// Gets no update, for this reason.
     Fail(String),
     /// Leave the campaign: the host cannot take it (ADR-0063).
@@ -149,6 +155,68 @@ impl Pending {
                 }
             }
         }
+    }
+}
+
+/// How long a Proxmox snapshot may be `taking` before the runner asks
+/// again: a restart loses the task, and a take of the same name answers
+/// with the snapshot already there (ADR-0182).
+pub(super) const VM_SNAPSHOT_RETRY: chrono::TimeDelta = chrono::TimeDelta::minutes(20);
+
+impl Pending {
+    /// What a server of a major upgrade campaign needs before its upgrade
+    /// (ADR-0182): a Proxmox snapshot of a mapped guest, else a local
+    /// snapshot where possible, else nothing if the campaign accepts a
+    /// limited rollback, and otherwise it fails.
+    pub(super) fn before_major(
+        &self,
+        accept_limited: bool,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Next {
+        let limited = |why: &str| {
+            if accept_limited {
+                Next::Update
+            } else {
+                Next::Fail(format!(
+                    "Rollback limited: {why}; the campaign does not accept upgrading without a snapshot"
+                ))
+            }
+        };
+        if self.proxmox_mapped {
+            let error = self.vm_snapshot_error.as_deref().unwrap_or("unknown error");
+            return match self.vm_snapshot_state.as_deref() {
+                None => Next::VmSnapshot,
+                Some("taking")
+                    if self
+                        .vm_snapshot_at
+                        .is_none_or(|at| now - at > VM_SNAPSHOT_RETRY) =>
+                {
+                    Next::VmSnapshot
+                }
+                Some("taking") => Next::Wait,
+                Some("taken") => Next::Update,
+                Some("limited") => limited(error),
+                Some(_) => Next::Fail(format!(
+                    "the Proxmox snapshot before the upgrade failed: {error}"
+                )),
+            };
+        }
+        match self.before_update() {
+            Next::Update if self.snapshot_command_id.is_none() => {
+                let storage = self.storage.as_ref().map(|s| &s.0);
+                match local::plan_of(&self.os_family, storage) {
+                    Ok(_) => Next::Snapshot,
+                    Err(why) => limited(&why.to_string()),
+                }
+            }
+            next => next,
+        }
+    }
+
+    /// Whether nothing started for this server yet: it takes one of the
+    /// batch's places for servers upgrading at once.
+    pub(super) fn fresh(&self) -> bool {
+        self.snapshot_command_id.is_none() && self.vm_snapshot_state.is_none()
     }
 }
 
@@ -354,7 +422,45 @@ mod tests {
             proxmox_mapped: false,
             storage: None,
             reports_third_party: false,
+            vm_snapshot_state: None,
+            vm_snapshot_at: None,
+            vm_snapshot_error: None,
         }
+    }
+
+    #[test]
+    fn a_major_upgrade_gets_a_snapshot_or_an_accepted_limit() {
+        let now = chrono::Utc::now();
+        let mut guest = pending(None, None);
+        guest.proxmox_mapped = true;
+        assert_eq!(guest.before_major(false, now), Next::VmSnapshot);
+        guest.vm_snapshot_state = Some("taking".into());
+        guest.vm_snapshot_at = Some(now);
+        assert_eq!(guest.before_major(false, now), Next::Wait);
+        guest.vm_snapshot_at = Some(now - chrono::TimeDelta::minutes(21));
+        assert_eq!(
+            guest.before_major(false, now),
+            Next::VmSnapshot,
+            "asked again"
+        );
+        guest.vm_snapshot_state = Some("taken".into());
+        assert_eq!(guest.before_major(false, now), Next::Update);
+        guest.vm_snapshot_state = Some("limited".into());
+        guest.vm_snapshot_error = Some("the container's storage cannot take snapshots".into());
+        assert_eq!(guest.before_major(true, now), Next::Update);
+        assert!(
+            matches!(guest.before_major(false, now), Next::Fail(e) if e.starts_with("Rollback limited: the container's"))
+        );
+        guest.vm_snapshot_state = Some("failed".into());
+        assert!(matches!(guest.before_major(true, now), Next::Fail(_)));
+
+        // Plain ext4: no local snapshot either.
+        let plain = pending(None, None);
+        assert_eq!(plain.before_major(true, now), Next::Update);
+        assert!(
+            matches!(plain.before_major(false, now), Next::Fail(e) if e.starts_with("Rollback limited"))
+        );
+        assert!(plain.fresh());
     }
 
     #[test]

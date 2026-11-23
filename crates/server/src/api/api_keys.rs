@@ -131,7 +131,7 @@ impl Area {
             ) => Self::Alerts,
             (
                 "commands" | "campaigns" | "auto-update" | "agent-releases" | "server-update"
-                | "mirrors",
+                | "mirrors" | "major-upgrades",
                 _,
             ) => Self::Updates,
             ("settings", _) if segments.get(1) == Some(&"auto-update") => Self::Updates,

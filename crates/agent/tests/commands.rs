@@ -327,6 +327,7 @@ db_tests! {
             storage: None,
             third_party: Vec::new(),
             managers: Vec::new(),
+            major_upgrade: None,
         }));
         let deadline = tokio::time::Instant::now() + TIMEOUT;
         loop {

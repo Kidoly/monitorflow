@@ -18,10 +18,11 @@ const UNSUPPORTED: &str = "unsupported";
 
 /// The kinds stored. An agent names only what it runs, but its report
 /// passes through relays, so nothing else reaches the database.
-const KINDS: [&str; 6] = [
+const KINDS: [&str; 7] = [
     command::AI_COMMANDS,
     command::APPLY_UPDATES,
     command::CONFIGURE_SOURCES,
+    command::MAJOR_UPGRADE,
     command::REVERT_SOURCES,
     command::SELF_UPDATE,
     command::SHELL,

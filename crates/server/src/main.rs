@@ -544,6 +544,16 @@ async fn main() -> anyhow::Result<()> {
         .with_sources(api_settings.live.clone(), mirrors.clone())
         .with_agent_releases(api_settings.agent_releases.clone())
         .with_proxmox(config.proxmox.enabled);
+    // Proxmox snapshots before major upgrades (ADR-0182).
+    let campaigns = if config.proxmox.enabled {
+        campaigns.with_snapshotter(Arc::new(
+            ProxmoxSnapshotter::from_config(pool.clone(), &config.proxmox)
+                .await
+                .context("Proxmox snapshots for campaigns")?,
+        ))
+    } else {
+        campaigns
+    };
     // Virtual machines, hosts and datastores from the samples (ADR-0156).
     let virt = monitorflow_server::virt::Sink::spawn(pool.clone());
     let service = AgentStreamService::new(

@@ -275,6 +275,12 @@ check "and keeps the consent" test "$(shell_env)" = MONITORFLOW_COMMANDS_FROM_WE
 installer MF_DOWNLOAD_URL="$base" MF_AI_COMMANDS_FROM_WEB=0
 check "MF_AI_COMMANDS_FROM_WEB=0 takes it back" test -z "$(shell_env)"
 check "agent online after the opt-in" online "$PEER"
+sudo systemctl reset-failed monitorflow-agent
+installer MF_DOWNLOAD_URL="$base" MF_MAJOR_UPGRADES_FROM_WEB=1
+check "MF_MAJOR_UPGRADES_FROM_WEB=1 allows major upgrades" sudo grep -q "major_upgrades = true" /etc/monitorflow/agent.toml
+check "the sudo rules know the helper" sudo -u monitorflow sudo -n -l /usr/bin/monitorflow-agent major-upgrade
+installer MF_DOWNLOAD_URL="$base" MF_MAJOR_UPGRADES_FROM_WEB=0
+check "MF_MAJOR_UPGRADES_FROM_WEB=0 takes it back" sudo grep -q "major_upgrades = false" /etc/monitorflow/agent.toml
 # These runs came quickly: systemd allows 5 starts in 10 seconds.
 sudo systemctl reset-failed monitorflow-agent
 

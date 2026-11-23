@@ -560,12 +560,18 @@ pub struct AgentPackagesConfig {
     /// Seconds between two package reports; one is also sent at start and
     /// after every update.
     pub report_interval: u64,
+    /// "Allow major upgrades from the web interface" (ADR-0182): lets the
+    /// central server start a major upgrade of the distribution. Off unless
+    /// enabled here; the root helper reads it from the file itself, never
+    /// from the environment.
+    pub major_upgrades: bool,
 }
 
 impl Default for AgentPackagesConfig {
     fn default() -> Self {
         Self {
             report_interval: 6 * 60 * 60,
+            major_upgrades: false,
         }
     }
 }
