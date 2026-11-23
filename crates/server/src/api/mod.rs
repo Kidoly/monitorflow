@@ -56,6 +56,8 @@
 //! | GET, PUT, DELETE | `/api/devices/{id}/vmware` | read, modify | [`crate::vmware::View`] without the password; body [`crate::vmware::CredentialsRequest`]; audited |
 //! | GET, POST | `/api/devices/{id}/snmp-checks` | read, modify | [`snmp_checks::CheckList`]; body [`snmp_checks::CheckRequest`], 201 [`snmp_checks::CheckView`]: a custom SNMP check with its channels' limits (ADR-0157); audited |
 //! | PUT, DELETE | `/api/devices/{id}/snmp-checks/{name}` | modify | the same body; [`snmp_checks::CheckView`]; 204; audited |
+//! | GET, PUT, DELETE | `/api/devices/{id}/flow-exporter` | read, modify | [`flows::ExporterView`]; body [`flows::ExporterRequest`]: who receives its traffic flows (ADR-0184); audited |
+//! | GET | `/api/devices/{id}/flows` | read | [`flows::FlowParams`]; [`crate::flows::query::FlowView`]: tops and chart of a period |
 //! | POST | `/api/devices/{id}/snmp/read` | modify | body [`snmp_checks::ReadRequest`]; [`snmp_checks::ReadResult`]: Test and Browse from the device's probe |
 //! | POST | `/api/devices/{id}/snmp/test` | modify | body [`snmp_checks::CheckRequest`]; [`snmp_checks::Tested`]: what each channel would write |
 //! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
@@ -766,6 +768,7 @@ pub mod dependencies;
 pub mod devices;
 pub mod display;
 mod error;
+pub mod flows;
 pub mod follow_up;
 mod health;
 pub mod idempotency;
@@ -793,6 +796,7 @@ pub mod openapi_core;
 mod openapi_dashboards;
 mod openapi_dependencies;
 mod openapi_devices;
+mod openapi_flows;
 mod openapi_imports;
 mod openapi_maintenance;
 mod openapi_network_scans;
@@ -1381,6 +1385,13 @@ pub fn router(state: ApiState) -> Router {
             "/api/devices/{id}/snmp-checks/{name}",
             put(snmp_checks::update).delete(snmp_checks::remove),
         )
+        .route(
+            "/api/devices/{id}/flow-exporter",
+            get(flows::exporter)
+                .put(flows::set_exporter)
+                .delete(flows::delete_exporter),
+        )
+        .route("/api/devices/{id}/flows", get(flows::flows))
         .route("/api/devices/{id}/snmp/read", post(snmp_checks::read))
         .route("/api/devices/{id}/snmp/test", post(snmp_checks::test))
         .route("/api/sites/{id}/probes", get(devices::probes))

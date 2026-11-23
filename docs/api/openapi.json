@@ -9291,6 +9291,587 @@
         }
       }
     },
+    "/api/v1/devices/{id}/flow-exporter": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Read who receives a device's traffic flows",
+        "description": "The probe (the central server or a relay of the device's site) that receives the NetFlow, sFlow or IPFIX the device sends, the address they must come from, and when the newest minute arrived.\n\n**Who**: any role on the device's site. **Area**: `servers`.",
+        "operationId": "device_flow_exporter",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Who receives them",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExporterView"
+                },
+                "example": {
+                  "address": "192.0.2.1",
+                  "created_at": "2026-12-26T09:00:00Z",
+                  "last_flow_at": "2026-12-26T10:41:00Z",
+                  "probe": "0b3f2c4e-1111-2222-3333-444455556666",
+                  "relay_name": "relay-paris",
+                  "source_address": null,
+                  "updated_at": "2026-12-26T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, its flows are not received, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Receive a device's traffic flows",
+        "description": "Its probe opens its flow ports (UDP 2055, 6343 and 4739 by default, each taking NetFlow v5 and v9, IPFIX and sFlow v5) within seconds and takes datagrams from `source_address`, else the device's address. Point the device's exporter at the probe's address. Sums of each minute are kept 48 hours, then hourly sums 31 days.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.flow_exporter_update`.",
+        "operationId": "set_device_flow_exporter",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExporterRequest"
+              },
+              "example": {
+                "probe": "central",
+                "source_address": "192.0.2.254"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Who receives them",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExporterView"
+                },
+                "example": {
+                  "address": "192.0.2.1",
+                  "created_at": "2026-12-26T09:00:00Z",
+                  "last_flow_at": "2026-12-26T10:41:00Z",
+                  "probe": "0b3f2c4e-1111-2222-3333-444455556666",
+                  "relay_name": "relay-paris",
+                  "source_address": null,
+                  "updated_at": "2026-12-26T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A `probe` or `source_address` that is not valid, or a device without an address and no `source_address`: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Stop receiving a device's traffic flows",
+        "description": "Its probe drops its datagrams from the next configuration, and closes its ports when no device is left. Flows already stored stay until they expire.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.flow_exporter_delete`.",
+        "operationId": "delete_device_flow_exporter",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Stopped"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, its flows are not received, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/flows": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Read a device's traffic flows over a period",
+        "description": "The largest source and destination addresses, applications (protocol and service port, named when known), protocols, and input and output interfaces of the exporter (ifIndex, named from its SNMP interfaces check), with the rest of each; and a chart of the largest keys of one dimension over time, in bits per second. With `address`, every view counts only the traffic that address sent or received, from the largest conversations kept.\n\nEach address of the largest also writes the series `monitorflow_flow_address_bits_per_second` (instance: the address), and the device `monitorflow_flow_bits_per_second`: thresholds on them alert on an address above a rate for some minutes.\n\n**Who**: any role on the device's site. **Area**: `servers`.",
+        "operationId": "device_flows",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Start, RFC 3339; default an hour before `to`.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "End, RFC 3339; default now. At most 31 days after `from`.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "address",
+            "in": "query",
+            "description": "Only the traffic this IP address sent or received.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "description": "The dimension of the chart: `src` (default), `dst`, `app`,\n`protocol`, `in` or `out`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Keys per dimension, 1 to 50; default 10.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The views",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowView"
+                },
+                "example": {
+                  "address": null,
+                  "bits_per_second": 10000000.0,
+                  "bytes": 4500000000,
+                  "chart": {
+                    "by": "src",
+                    "keys": [
+                      {
+                        "key": "192.0.2.15",
+                        "label": null
+                      }
+                    ],
+                    "points": [
+                      {
+                        "at": "2026-12-26T09:00:00Z",
+                        "other": 2500000.0,
+                        "values": [
+                          6000000.0
+                        ]
+                      }
+                    ]
+                  },
+                  "dimensions": [
+                    {
+                      "dimension": "app",
+                      "keys": [
+                        {
+                          "bits_per_second": 8888888.9,
+                          "bytes": 4000000000,
+                          "key": "tcp/443",
+                          "label": "HTTPS",
+                          "packets": 2900000
+                        }
+                      ],
+                      "other_bytes": 500000000
+                    }
+                  ],
+                  "from": "2026-12-26T09:00:00Z",
+                  "packets": 3200000,
+                  "step_s": 60,
+                  "to": "2026-12-26T10:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A period, `address`, `by` or `limit` that is not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/devices/{id}/snmp": {
       "get": {
         "tags": [
@@ -49881,6 +50462,51 @@
           }
         }
       },
+      "ChartKey": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ChartPoint": {
+        "type": "object",
+        "required": [
+          "at",
+          "values",
+          "other"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Start of the step."
+          },
+          "other": {
+            "type": "number",
+            "format": "double",
+            "description": "Bits per second of the rest."
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "Bits per second of each key of the chart, in its order."
+          }
+        }
+      },
       "ChartSeries": {
         "type": "object",
         "description": "One line of a chart.",
@@ -49914,6 +50540,32 @@
             ],
             "format": "uuid",
             "description": "The server of a line per server; absent when combined."
+          }
+        }
+      },
+      "ChartView": {
+        "type": "object",
+        "required": [
+          "by",
+          "keys",
+          "points"
+        ],
+        "properties": {
+          "by": {
+            "type": "string",
+            "description": "The dimension drawn."
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChartKey"
+            }
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChartPoint"
+            }
           }
         }
       },
@@ -51462,6 +52114,32 @@
         },
         "additionalProperties": false
       },
+      "DimensionView": {
+        "type": "object",
+        "required": [
+          "dimension",
+          "keys",
+          "other_bytes"
+        ],
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "description": "`src`, `dst`, `app`, `protocol`, `in` or `out`."
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyView"
+            },
+            "description": "Largest first."
+          },
+          "other_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes of the period in no key above."
+          }
+        }
+      },
       "Disk": {
         "type": "object",
         "description": "Space of the file system holding `path`.",
@@ -52025,6 +52703,135 @@
             ],
             "format": "double",
             "description": "The metric's value then; `null` when the event has none."
+          }
+        }
+      },
+      "ExporterRequest": {
+        "type": "object",
+        "description": "Receive a device's flows.",
+        "properties": {
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`central`, or the ID of a relay of the device's site; absent: the\nrelay of the site added first, else the central server."
+          },
+          "source_address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The IP address or DNS name its flows come from, when not its own\naddress (a router exporting from a loopback, for instance)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExporterView": {
+        "type": "object",
+        "description": "Who receives a device's flows.",
+        "required": [
+          "probe",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address flows are taken from: `source_address`, else the\ndevice's."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_flow_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The start of the newest window received; absent before the first."
+          },
+          "probe": {
+            "type": "string",
+            "description": "`central`, or the ID of the relay of its site that receives them."
+          },
+          "relay_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The relay's name; absent for the central server."
+          },
+          "source_address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where its flows come from when not the device's address."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "FlowView": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "step_s",
+          "bytes",
+          "packets",
+          "bits_per_second",
+          "dimensions",
+          "chart"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address the views are filtered on."
+          },
+          "bits_per_second": {
+            "type": "number",
+            "format": "double"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "chart": {
+            "$ref": "#/components/schemas/ChartView"
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DimensionView"
+            }
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "packets": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "step_s": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds of one point of the chart."
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -54624,6 +55431,42 @@
           "serial": {
             "type": "string",
             "description": "Lowercase hexadecimal."
+          }
+        }
+      },
+      "KeyView": {
+        "type": "object",
+        "description": "One key of a dimension over the period.",
+        "required": [
+          "key",
+          "bytes",
+          "packets",
+          "bits_per_second"
+        ],
+        "properties": {
+          "bits_per_second": {
+            "type": "number",
+            "format": "double",
+            "description": "Average over the period."
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "key": {
+            "type": "string",
+            "description": "An address, an application (`tcp/443`), a protocol (`tcp`), or an\nifIndex of the exporter for `in` and `out` (`0`: not said)."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The application's or the interface's name, when known."
+          },
+          "packets": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

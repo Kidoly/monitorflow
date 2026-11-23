@@ -77,6 +77,7 @@ pub fn build() -> Document {
     doc.merge(super::openapi_reports::Doc::openapi());
     doc.merge(super::openapi_dependencies::Doc::openapi());
     doc.merge(super::openapi_devices::Doc::openapi());
+    doc.merge(super::openapi_flows::Doc::openapi());
     doc.merge(super::openapi_network_scans::Doc::openapi());
     doc.merge(super::openapi_virtualization::Doc::openapi());
     doc.merge(super::openapi_snmp::Doc::openapi());

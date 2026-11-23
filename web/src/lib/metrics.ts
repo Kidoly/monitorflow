@@ -37,6 +37,7 @@ export const BUILTIN_METRICS = [
   "snmp_uptime_seconds",
   "snmp_if_oper_up",
   "snmp_if_admin_up",
+  "snmp_if_if_index",
   "snmp_if_in_bytes_per_second",
   "snmp_if_out_bytes_per_second",
   "snmp_if_in_errors_per_second",
@@ -63,6 +64,8 @@ export const BUILTIN_METRICS = [
   "net_transmit_errors_per_second",
   "net_receive_drops_per_second",
   "net_transmit_drops_per_second",
+  "flow_bits_per_second",
+  "flow_address_bits_per_second",
 ] as const;
 
 type BuiltinMetric = (typeof BUILTIN_METRICS)[number];

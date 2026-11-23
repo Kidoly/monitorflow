@@ -26,6 +26,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment tout surveiller avec votre propre script (Bash ou PowerShell)](surveiller-avec-votre-script.md) : Transformez un script shell ou PowerShell en vérification avec alerte : codes de sortie pour OK, avertissement et critique, lignes nom=valeur en métriques.
 - [Comment surveiller switchs, imprimantes, onduleurs et autres équipements réseau](surveiller-equipements-reseau.md) : Surveillez ce qui ne peut pas faire tourner l’agent : ping, ports TCP et UDP, et SNMP v2c ou v3 pour les interfaces, le trafic, la batterie des onduleurs, les températures et les consommables d’imprimante.
 - [Comment trouver ce qui est sur votre réseau](analyser-le-reseau.md) : Analysez une plage d’adresses depuis le serveur central ou un relais, voyez quelles machines peuvent recevoir l’agent et quels équipements surveiller, et ajoutez-les en un clic.
+- [Comment voir quelles adresses et applications utilisent votre bande passante (NetFlow, sFlow, IPFIX)](surveiller-flux-reseau.md) : Recevez NetFlow, sFlow ou IPFIX de vos routeurs, pare-feu et switchs sur un relais ou le serveur central, voyez les plus grosses adresses, applications et interfaces dans le temps, et soyez alerté quand une adresse en utilise trop.
 
 ## Bases de données
 

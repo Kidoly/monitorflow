@@ -562,6 +562,10 @@ pub const NOTES: &[(&str, &str)] = &[
         "MonitorFlow has no check like this PRTG sensor ({type}).",
     ),
     (
+        "flow_sensor",
+        "Traffic flows are not a check: open the device's Flows tab, turn on receiving, and point its NetFlow, sFlow or IPFIX exporter at the central server or the relay it shows.",
+    ),
+    (
         "prtg_no_setting",
         "The sensor's settings do not say what it checks.",
     ),

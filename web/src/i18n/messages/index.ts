@@ -15,6 +15,7 @@ import * as devices from "./devices";
 import * as discovery from "./discovery";
 import * as display from "./display";
 import * as fleet from "./fleet";
+import * as flows from "./flows";
 import * as followUp from "./followUp";
 import * as format from "./format";
 import * as imports from "./imports";
@@ -65,6 +66,7 @@ export const en = {
   discovery: discovery.en,
   display: display.en,
   fleet: fleet.en,
+  flows: flows.en,
   followUp: followUp.en,
   format: format.en,
   imports: imports.en,
@@ -114,6 +116,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   discovery: discovery.fr,
   display: display.fr,
   fleet: fleet.fr,
+  flows: flows.fr,
   followUp: followUp.fr,
   format: format.fr,
   imports: imports.fr,

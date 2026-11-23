@@ -47,6 +47,9 @@ message Envelope {
     ProbeTest probe_test = 24;
     // Relay to server: what that check measured.
     ProbeTestResult probe_test_result = 25;
+    // Relay to server, on its own stream: what the flows its exporters
+    // sent added up to, a window at a time (ADR-0184).
+    FlowReports flow_reports = 26;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -227,6 +230,58 @@ message ProbeConfig {
   // Changes whenever the checks change.
   uint64 revision = 1;
   repeated ProbeCheck checks = 2;
+  // The devices whose NetFlow, IPFIX and sFlow the relay receives
+  // (ADR-0184); none: it opens no flow listener.
+  repeated FlowExporter flow_exporters = 3;
+}
+
+// A device that sends traffic flows to the probe.
+message FlowExporter {
+  // `ProbeCheck.device`: its ID in the inventory.
+  string device = 1;
+  // Addresses its flows come from: IP addresses, or DNS names the relay
+  // resolves. A datagram from another address is dropped.
+  repeated string addresses = 2;
+}
+
+// Flows added up per exporter and window, oldest first.
+message FlowReports {
+  repeated FlowReport reports = 1;
+}
+
+// One exporter's traffic over one window: the totals, the largest keys of
+// each dimension, and the largest conversations. The rest of a dimension
+// is the total minus its keys.
+message FlowReport {
+  // `FlowExporter.device`.
+  string device = 1;
+  // Start of the window, aligned on its length.
+  int64 start_unix_ms = 2;
+  uint32 seconds = 3;
+  // Bytes and packets of the window, sampling already undone.
+  uint64 bytes = 4;
+  uint64 packets = 5;
+  repeated FlowTop tops = 6;
+  repeated FlowConversation conversations = 7;
+}
+
+message FlowTop {
+  // `src`, `dst` (addresses), `app` (`tcp/443`), `protocol` (`tcp`),
+  // `in` or `out` (the exporter's ifIndex).
+  string dimension = 1;
+  string key = 2;
+  uint64 bytes = 3;
+  uint64 packets = 4;
+}
+
+message FlowConversation {
+  string src = 1;
+  string dst = 2;
+  string app = 3;
+  uint32 input = 4;
+  uint32 output = 5;
+  uint64 bytes = 6;
+  uint64 packets = 7;
 }
 
 message ProbeCheck {

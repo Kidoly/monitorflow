@@ -2484,6 +2484,15 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "version": "v2c", "community": "c" }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        // Traffic flows (ADR-0184): B's device does not exist for A.
+        ("GET", "/api/devices/{id}/flow-exporter")
+        | ("PUT", "/api/devices/{id}/flow-exporter")
+        | ("DELETE", "/api/devices/{id}/flow-exporter")
+        | ("GET", "/api/devices/{id}/flows") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({}));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
         // Custom SNMP checks (ADR-0157): B's device does not exist for A.
         ("GET", "/api/devices/{id}/snmp-checks")
         | ("POST", "/api/devices/{id}/snmp-checks")

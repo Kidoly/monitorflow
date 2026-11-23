@@ -1311,6 +1311,63 @@ export interface WebsiteCheckList {
   checks: WebsiteCheck[];
 }
 
+/** Who receives a device's traffic flows (ADR-0184). */
+export interface FlowExporter {
+  /** `central`, or the ID of the relay that receives them. */
+  probe: string;
+  relay_name: string | null;
+  source_address: string | null;
+  /** The address flows are taken from. */
+  address: string | null;
+  created_at: string;
+  updated_at: string;
+  last_flow_at: string | null;
+}
+
+export interface FlowExporterRequest {
+  probe?: string;
+  source_address?: string | null;
+}
+
+export type FlowDimension = "src" | "dst" | "app" | "protocol" | "in" | "out";
+
+export interface FlowKey {
+  key: string;
+  label: string | null;
+  bytes: number;
+  packets: number;
+  bits_per_second: number;
+}
+
+export interface FlowDimensionView {
+  dimension: FlowDimension;
+  keys: FlowKey[];
+  other_bytes: number;
+}
+
+export interface FlowView {
+  from: string;
+  to: string;
+  step_s: number;
+  address: string | null;
+  bytes: number;
+  packets: number;
+  bits_per_second: number;
+  dimensions: FlowDimensionView[];
+  chart: {
+    by: FlowDimension;
+    keys: { key: string; label: string | null }[];
+    points: { at: string; values: number[]; other: number }[];
+  };
+}
+
+export interface FlowQuery {
+  from: string;
+  to: string;
+  by: FlowDimension;
+  address?: string | null;
+}
+
 /** Body of a threshold create or update (ADR-0019); an update replaces every field. */
 export interface ThresholdRequest {
   metric: string;
@@ -5150,6 +5207,21 @@ export const api = {
     request<SnmpCredentials>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "PUT", body }),
 
   deleteDeviceSnmp: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "DELETE" }),
+
+  deviceFlowExporter: (id: string, signal?: AbortSignal) =>
+    request<FlowExporter>(`/api/devices/${encodeURIComponent(id)}/flow-exporter`, { signal }),
+
+  setDeviceFlowExporter: (id: string, body: FlowExporterRequest) =>
+    request<FlowExporter>(`/api/devices/${encodeURIComponent(id)}/flow-exporter`, { method: "PUT", body }),
+
+  deleteDeviceFlowExporter: (id: string) =>
+    request<void>(`/api/devices/${encodeURIComponent(id)}/flow-exporter`, { method: "DELETE" }),
+
+  deviceFlows: (id: string, query: FlowQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ from: query.from, to: query.to, by: query.by });
+    if (query.address) params.set("address", query.address);
+    return request<FlowView>(`/api/devices/${encodeURIComponent(id)}/flows?${params.toString()}`, { signal });
+  },
 
   /** A device's custom SNMP checks, their channels' limits and last values (ADR-0157). */
   snmpChecks: (id: string, signal?: AbortSignal) =>

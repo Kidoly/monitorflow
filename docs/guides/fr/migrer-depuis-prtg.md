@@ -31,7 +31,7 @@ Ressaisir des centaines d'équipements, de capteurs et de limites est la partie 
 | Modèle de notification par e-mail | Canal e-mail | Approchée : il reçoit chaque incident, alors que PRTG ne l'utilisait que là où un déclencheur le nommait. Son serveur de messagerie n'est pas dans l'API de PRTG : ajoutez un canal e-mail avec le vôtre si l'aperçu le demande |
 | Modèle de notification qui appelle une URL | Canal Slack, Teams, Discord ou webhook, selon l'URL | Approchée : MonitorFlow envoie son propre message |
 
-Ce qui ne peut pas être repris est listé aussi, avec la raison : capteurs de trafic SNMP, équipements surveillés seulement en SNMP (commutateurs, imprimantes), capteurs d'un type sans contrôle équivalent dans MonitorFlow, limites de canaux sans seuil équivalent, capteurs mis en pause par un horaire ou une dépendance, un capteur seul en pause (MonitorFlow met en silence des serveurs entiers), et notifications par SMS ou push.
+Ce qui ne peut pas être repris est listé aussi, avec la raison : capteurs de trafic SNMP, équipements surveillés seulement en SNMP (commutateurs, imprimantes), capteurs d'un type sans contrôle équivalent dans MonitorFlow, limites de canaux sans seuil équivalent, capteurs mis en pause par un horaire ou une dépendance, un capteur seul en pause (MonitorFlow met en silence des serveurs entiers), et notifications par SMS ou push. Les capteurs NetFlow, sFlow et IPFIX sont listés avec ce qu’il faut faire à la place : activer l’onglet **Flux** de l’équipement ([flux réseau](surveiller-flux-reseau.md)).
 
 ## Avant de commencer
 

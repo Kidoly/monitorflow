@@ -879,6 +879,14 @@ impl Connection {
                 }
                 _ => tracing::debug!(agent_id = %id, sequence, "ignoring probe results"),
             },
+            // A relay's traffic flows (ADR-0184), believed for its devices.
+            Some(Payload::FlowReports(reports)) => match (&self.probes, self.role) {
+                (Some(probes), PeerRole::Relay) => {
+                    tracing::debug!(relay_id = %id, sequence, reports = reports.reports.len(), "flow reports");
+                    probes.flow_reports(id, reports);
+                }
+                _ => tracing::debug!(agent_id = %id, sequence, "ignoring flow reports"),
+            },
             Some(Payload::ProbeTest(_)) => {
                 tracing::warn!(agent_id = %id, sequence, "ignoring ProbeTest sent upstream")
             }

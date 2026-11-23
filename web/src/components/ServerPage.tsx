@@ -42,6 +42,7 @@ import { RelativeTime } from "@/components/ui/RelativeTime";
 import { RowMenu } from "@/components/ui/RowMenu";
 import { Label, StatusLabel, statusWord } from "@/components/ui/StatusLabel";
 import { TabPanel, Tabs } from "@/components/ui/Tabs";
+import { FlowsTab } from "@/components/FlowsTab";
 import { formatExact } from "@/components/ui/time";
 
 import { AllowCommandsLine } from "./AllowCommands";
@@ -64,7 +65,7 @@ export const COMMANDS_PAGE = 50;
 /** The API's largest page, which caps what a refresh reloads. */
 const MAX_LIMIT = 500;
 
-const TABS = ["sensors", "dependencies", "logs", "updates", "commands"] as const;
+const TABS = ["sensors", "dependencies", "flows", "logs", "updates", "commands"] as const;
 export type ServerTab = (typeof TABS)[number];
 
 /** The server page for the `id` query parameter. */
@@ -193,8 +194,15 @@ export function ServerPage({ id }: { id: string | null }) {
   const device = server.kind === "device";
   const rows = "sensors" in sensors ? sensorRows(sensors.sensors, values, incidents ?? []) : [];
   const checkNames = "sensors" in sensors ? [...new Set(sensors.sensors.map((s) => s.name))].sort() : [];
-  // A device has no agent: only its checks and dependencies (ADR-0148).
-  const shown: ServerTab = device && tab !== "dependencies" ? "sensors" : tab;
+  // A device has no agent: only its checks, dependencies and traffic flows
+  // (ADR-0148, ADR-0184); a server has no flows tab.
+  const shown: ServerTab = device
+    ? tab === "dependencies" || tab === "flows"
+      ? tab
+      : "sensors"
+    : tab === "flows"
+      ? "sensors"
+      : tab;
   const active = "commands" in commands ? commands.commands.filter(isActive).length : 0;
 
   return (
@@ -235,7 +243,17 @@ export function ServerPage({ id }: { id: string | null }) {
         selected={shown}
         // The logs' filters and time belong to that tab.
         onSelect={(next) =>
-          setParams({ tab: next === "sensors" ? null : next, level: null, unit: null, q: null, from: null, to: null })
+          setParams({
+            tab: next === "sensors" ? null : next,
+            level: null,
+            unit: null,
+            q: null,
+            from: null,
+            to: null,
+            period: null,
+            by: null,
+            address: null,
+          })
         }
         tabs={[
           {
@@ -246,7 +264,7 @@ export function ServerPage({ id }: { id: string | null }) {
           { id: "dependencies" as const, label: t("dependencies.tab") },
           // A device has no agent: no logs, updates or commands (ADR-0148).
           ...(device
-            ? []
+            ? [{ id: "flows" as const, label: t("flows.tab") }]
             : [
                 { id: "logs" as const, label: t("server.tab.logs") },
                 { id: "updates" as const, label: t("server.tab.updates") },
@@ -260,6 +278,7 @@ export function ServerPage({ id }: { id: string | null }) {
       />
       <TabPanel idBase="server" id={shown}>
         {shown === "dependencies" && <DependenciesTab server={server} checks={checkNames} />}
+        {shown === "flows" && <FlowsTab server={server} />}
         {shown === "sensors" && (
           <ServerSensorsTab
             server={server}

@@ -219,6 +219,12 @@ services:
       - "${ENROLL_PORT:-7445}:7445"
       # Signed public packages only, plain on purpose (ADR-0030).
       - "${MIRROR_PORT:-7480}:7480"
+      # Traffic flows of devices without a relay (ADR-0184): plain UDP,
+      # read only while some device sends its flows here, and only from
+      # those devices' addresses.
+      - "${NETFLOW_PORT:-2055}:2055/udp"
+      - "${SFLOW_PORT:-6343}:6343/udp"
+      - "${IPFIX_PORT:-4739}:4739/udp"
     depends_on:
       postgres: { condition: service_healthy }
       db-migrate: { condition: service_completed_successfully }

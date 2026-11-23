@@ -182,6 +182,11 @@ fn interfaces_report_state_and_rates_from_64_bit_counters() {
         "down, named by ifDescr without ifName"
     );
     assert_eq!(v[&("speed_bits_per_second".into(), "Gi0/1".into())], 1e9);
+    assert_eq!(
+        v[&("if_index".into(), "Gi0/1".into())],
+        2.0,
+        "for traffic flows"
+    );
     assert!(!v.keys().any(|(_, i)| i == "lo"), "loopbacks are left out");
     assert!(
         !v.contains_key(&("in_bytes_per_second".into(), "Gi0/1".into())),

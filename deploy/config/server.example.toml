@@ -224,6 +224,17 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # customer = "0b3f2c4e-1111-2222-3333-444455556666"
 # site = "0b3f2c4e-1111-2222-3333-444455556666"
 
+[flows]
+# NetFlow, sFlow and IPFIX from devices (ADR-0184). The UDP ports open only
+# while the web interface names devices whose flows the central server receives, and take
+# datagrams only from their addresses. Every port takes every format; 0
+# turns one off. MONITORFLOW_FLOWS_NETFLOW_PORT and the others override them.
+# Address to listen on; unset listens on every address, IPv6 and IPv4.
+# listen = "192.0.2.10"
+# netflow_port = 2055
+# sflow_port = 6343
+# ipfix_port = 4739
+
 [log]
 # trace, debug, info, warn or error.
 # level = "info"
