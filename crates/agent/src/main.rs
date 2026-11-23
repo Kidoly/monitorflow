@@ -57,6 +57,12 @@ enum Command {
     #[cfg(unix)]
     #[command(subcommand)]
     Snapshots(SnapshotsCommand),
+    /// Run one AI root action, as root through sudo by the agent
+    /// (ADR-0181): reads a `root_action` command the central server signed
+    /// on stdin and runs it if `commands.root_actions` is set in the
+    /// configuration file.
+    #[cfg(unix)]
+    RootAction,
     /// Install a signed agent release, run as root through sudo by the
     /// agent (ADR-0053): reads a header line and the binary on stdin,
     /// verifies them, replaces /usr/bin/monitorflow-agent and starts the
@@ -86,7 +92,8 @@ enum Command {
     /// (ADR-0084), or let the web interface turn them on (ADR-0098): sets
     /// `commands.shell` or `commands.from_web` in `--config`, keeping the
     /// rest of the file. Restart the MonitorFlowAgent service afterwards.
-    #[cfg(windows)]
+    /// On Linux, `root-actions on|off` allows or refuses the AI root
+    /// actions of ADR-0181 (`commands.root_actions`); run it as root.
     AiCommands {
         #[command(subcommand)]
         action: AiCommandsAction,
@@ -110,23 +117,33 @@ enum Command {
     },
 }
 
-#[cfg(windows)]
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 enum OnOff {
     On,
     Off,
 }
 
-#[cfg(windows)]
 #[derive(Subcommand, Debug, Clone, Copy)]
 enum AiCommandsAction {
     /// Run AI commands here, whatever the web interface last said.
+    #[cfg(windows)]
     On,
     /// Refuse AI commands here, whatever the web interface last said.
+    #[cfg(windows)]
     Off,
     /// `on` lets the web interface turn AI commands on and off; `off`
     /// lets it only turn them off.
+    #[cfg(windows)]
     FromWeb {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
+    /// `on` lets AI commands ask for the root actions of ADR-0181
+    /// (clearing the package cache, vacuuming the journal, pruning unused
+    /// Docker images, restarting a service); `off` refuses them. The root
+    /// helper applies it at once; restart the agent for its report.
+    #[cfg(unix)]
+    RootActions {
         #[arg(value_enum)]
         state: OnOff,
     },
@@ -243,6 +260,13 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
             return tokio::task::spawn_blocking(move || snapshots(&path, command)).await?;
         }
         #[cfg(unix)]
+        Some(Command::RootAction) => return root_action(cli.config.clone()).await,
+        #[cfg(unix)]
+        Some(Command::AiCommands { action }) => {
+            let AiCommandsAction::RootActions { state } = action;
+            return set_root_actions(&cli.config, state == OnOff::On).await;
+        }
+        #[cfg(unix)]
         Some(Command::PinCa) => {
             let config: AgentConfig = config::load(&cli.config)?;
             let place = monitorflow_agent::helper_trust::Place::agent(&config.tls_paths());
@@ -336,13 +360,14 @@ async fn set_ai_commands(path: &Path, action: AiCommandsAction) -> anyhow::Resul
                     )
                 })?
         }
-        Key::FromWeb => false,
+        Key::FromWeb | Key::RootActions => false,
     };
     let what = match (key, on) {
         (Key::Shell, true) => "AI commands are on",
         (Key::Shell, false) => "AI commands are off",
         (Key::FromWeb, true) => "the web interface may turn AI commands on and off",
         (Key::FromWeb, false) => "the web interface may only turn AI commands off",
+        (Key::RootActions, _) => unreachable!("root actions are Linux only"),
     };
     if outcome == Outcome::Unchanged && !forgot {
         println!("{what} already ({})", path.display());
@@ -351,6 +376,68 @@ async fn set_ai_commands(path: &Path, action: AiCommandsAction) -> anyhow::Resul
             "{what} in {}; restart the agent to apply it: Restart-Service MonitorFlowAgent",
             path.display()
         );
+    }
+    Ok(())
+}
+
+/// `ai-commands root-actions on|off`, as root: sets the consent the root
+/// helper reads at each action (ADR-0181).
+#[cfg(unix)]
+async fn set_root_actions(path: &Path, on: bool) -> anyhow::Result<()> {
+    use monitorflow_agent::ai_commands::{self, Key, Outcome};
+
+    let file = path.to_owned();
+    let (outcome, _) =
+        tokio::task::spawn_blocking(move || ai_commands::set(&file, Key::RootActions, on))
+            .await??;
+    let what = if on {
+        "AI commands may ask for root actions"
+    } else {
+        "AI root actions are refused"
+    };
+    if outcome == Outcome::Unchanged {
+        println!("{what} already ({})", path.display());
+    } else {
+        println!(
+            "{what} in {}; it applies at once, and the web interface shows it once the agent restarts: systemctl restart monitorflow-agent",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// The root actions helper (ADR-0181), as root: checks the consent, the
+/// signed command and the action before anything else, then prints each
+/// run's command line and output, and the error last on stderr.
+#[cfg(unix)]
+async fn root_action(config: PathBuf) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    use monitorflow_agent::helper_trust::Place;
+    use monitorflow_agent::root_actions::helper::{self, Programs};
+
+    let action = tokio::task::spawn_blocking(move || {
+        let now = monitorflow_agent::self_update::unix_ms();
+        helper::authorized(
+            &config,
+            &mut std::io::stdin().lock(),
+            |config| Place::agent(&config.tls_paths()),
+            now,
+        )
+    })
+    .await??;
+    let outcome = helper::execute(&action, &Programs::default()).await;
+    let (mut stdout, mut stderr) = (std::io::stdout().lock(), std::io::stderr().lock());
+    for run in &outcome.runs {
+        writeln!(stdout, "$ {}", run.line)?;
+        stdout.write_all(run.stdout.as_bytes())?;
+        stderr.write_all(run.stderr.as_bytes())?;
+    }
+    stdout.flush()?;
+    if let Some(error) = &outcome.error {
+        writeln!(stderr, "Error: {error}")?;
+        stderr.flush()?;
+        std::process::exit(1);
     }
     Ok(())
 }
@@ -436,6 +523,8 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     let mut handlers = Handlers::default();
     let latest_report = platform_handlers(&config, &host, &mut handlers, &stop);
     let ai_switch = ai_handlers(&config, &mut handlers);
+    #[cfg(unix)]
+    root_action_handler(&config, &ai_switch, &mut handlers).await;
     let reporting = handlers.clone();
     let (commands_stream, commands_end) = commands::link();
     let ca_certs =
@@ -509,6 +598,35 @@ fn ai_handlers(config: &AgentConfig, handlers: &mut Handlers) -> Arc<AiSwitch> {
         Arc::new(AiSwitchHandler::new(switch.clone())),
     );
     switch
+}
+
+/// `root_action` (ADR-0181), on while AI commands are and the host allowed
+/// root actions; sudo is asked once whether its rules know the helper.
+#[cfg(unix)]
+async fn root_action_handler(
+    config: &AgentConfig,
+    switch: &Arc<AiSwitch>,
+    handlers: &mut Handlers,
+) {
+    use monitorflow_agent::packages::Tools;
+    use monitorflow_agent::root_actions::{self, RootActionHandler};
+    use monitorflow_common::command;
+
+    let tools = Tools::default();
+    let allowed = config.commands.root_actions;
+    let sudo_rule = allowed && root_actions::sudo_rule(&tools).await;
+    if allowed && !sudo_rule {
+        tracing::warn!("{}", root_actions::OLD_SUDO_RULES);
+    }
+    handlers.register(
+        command::ROOT_ACTION,
+        Arc::new(RootActionHandler::new(
+            switch.clone(),
+            allowed,
+            sudo_rule,
+            tools,
+        )),
+    );
 }
 
 /// Package reports every `packages.report_interval`, and the handlers of
@@ -622,6 +740,7 @@ fn platform_handlers(
         (command::REVERT_SOURCES, "package sources"),
         (command::TAKE_SNAPSHOT, "snapshots"),
         (command::DELETE_SNAPSHOT, "snapshots"),
+        (command::ROOT_ACTION, "AI root actions"),
     ] {
         handlers.register(kind, Arc::new(Unsupported::new(what, "Windows")));
     }

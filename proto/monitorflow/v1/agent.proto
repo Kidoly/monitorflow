@@ -372,3 +372,37 @@ message ShellCommand {
 message AiCommandsSwitch {
   bool on = 1;
 }
+
+// Payload of "root_action" commands (ADR-0181): one action of a fixed
+// catalog the AI may ask for, run as root by the agent's root helper
+// (`sudo -n /usr/bin/monitorflow-agent root-action`), which checks the
+// signed command, the host's consent (`commands.root_actions`) and the
+// parameters before running anything. Never a command line.
+message RootAction {
+  oneof action {
+    // Empty the package manager's download cache (apt-get clean,
+    // dnf clean packages, zypper clean).
+    CleanPackageCache clean_package_cache = 1;
+    // Shrink the systemd journal to at most `max_megabytes`
+    // (journalctl --vacuum-size).
+    VacuumJournal vacuum_journal = 2;
+    // Remove Docker images no container uses and the build cache.
+    PruneDocker prune_docker = 3;
+    // Restart one systemd service.
+    RestartService restart_service = 4;
+  }
+}
+
+message CleanPackageCache {}
+
+message VacuumJournal {
+  // Between 100 and 65536 (64 GiB).
+  uint32 max_megabytes = 1;
+}
+
+message PruneDocker {}
+
+message RestartService {
+  // A unit name ending in `.service`, never a critical one (ADR-0181).
+  string unit = 1;
+}

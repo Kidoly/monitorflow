@@ -7,7 +7,7 @@ use tempfile::TempDir;
 
 use super::*;
 
-const NOW: i64 = 1_800_000_000_000;
+pub(crate) const NOW: i64 = 1_800_000_000_000;
 
 /// A certificate authority that signs commands, as the central server's.
 pub(crate) struct Ca(CertifiedIssuer<'static, KeyPair>);

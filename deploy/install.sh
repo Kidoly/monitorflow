@@ -43,6 +43,12 @@
 #   MF_AI_COMMANDS_FROM_WEB=1  agent only: let the web interface turn AI
 #                    commands on and off (commands.from_web, ADR-0098); it
 #                    can always turn them off. 0 takes that back.
+#   MF_AI_ROOT_ACTIONS=0  agent only: refuse the AI root actions of ADR-0181
+#                    (clear the package cache, vacuum the journal, prune
+#                    unused Docker images, restart a service), which a new
+#                    install allows (commands.root_actions); 1 allows them,
+#                    also on a host already installed. Unset keeps what is
+#                    there.
 #   MF_UNINSTALL=1   remove the binary, service and sudo rules; keep the
 #                    configuration and identity. With MF_PURGE=1, remove
 #                    those and the service's user too.
@@ -96,6 +102,7 @@ MF_MIRROR_URL=${MF_MIRROR_URL:-}
 MF_MIRROR=${MF_MIRROR:-}
 MF_ALLOW_COMMANDS=${MF_ALLOW_COMMANDS:-}
 MF_AI_COMMANDS_FROM_WEB=${MF_AI_COMMANDS_FROM_WEB:-}
+MF_AI_ROOT_ACTIONS=${MF_AI_ROOT_ACTIONS:-}
 
 # Public keys that sign releases (ADR-0053), filled in from
 # deploy/release-keys.pem by deploy/release-files.sh.
@@ -369,6 +376,11 @@ case $MF_AI_COMMANDS_FROM_WEB in
     *) die "MF_AI_COMMANDS_FROM_WEB must be 1 or 0" ;;
 esac
 [ -z "$MF_AI_COMMANDS_FROM_WEB" ] || [ "$MF_ROLE" = agent ] || die "MF_AI_COMMANDS_FROM_WEB is for agents"
+case $MF_AI_ROOT_ACTIONS in
+    '' | 0 | 1) ;;
+    *) die "MF_AI_ROOT_ACTIONS must be 1 or 0" ;;
+esac
+[ -z "$MF_AI_ROOT_ACTIONS" ] || [ "$MF_ROLE" = agent ] || die "MF_AI_ROOT_ACTIONS is for agents"
 
 if [ -n "$MF_DOWNLOAD_URL" ]; then
     [ -z "$MF_VERSION" ] || die "MF_VERSION selects a GitHub release; with MF_DOWNLOAD_URL, point it at the files of that version instead"
@@ -466,6 +478,20 @@ elif [ -n "$upstream_url" ]; then
     chown root:"$RUN_USER" "$CONF"
     chmod 0640 "$CONF"
     say "wrote $CONF for $upstream_url"
+fi
+# In agent.toml, which the root helper reads itself (ADR-0181). A new
+# install allows root actions unless told otherwise; an existing one
+# keeps its choice unless MF_AI_ROOT_ACTIONS is given.
+if [ "$MF_ROLE" = agent ]; then
+    root_actions=$MF_AI_ROOT_ACTIONS
+    [ -n "$root_actions" ] || [ -z "$upstream_url" ] || root_actions=1
+    if [ "$root_actions" = 1 ]; then
+        "$BIN" --config "$CONF" ai-commands root-actions on >/dev/null
+        say "AI commands may ask for root actions on this agent while AI commands are on; MF_AI_ROOT_ACTIONS=0 takes that back"
+    elif [ "$root_actions" = 0 ]; then
+        "$BIN" --config "$CONF" ai-commands root-actions off >/dev/null
+        say "AI root actions are refused on this agent; MF_AI_ROOT_ACTIONS=1 allows them"
+    fi
 fi
 
 pin_ca

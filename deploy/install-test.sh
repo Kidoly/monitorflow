@@ -242,6 +242,13 @@ unsigned_update() {
     [ "$(sha256sum /usr/bin/monitorflow-agent)" = "$before" ]
 }
 check "root helper refuses an unsigned self-update" unsigned_update
+# AI root actions (ADR-0181): allowed by a new install, and only for a
+# command the server signed.
+check "a new install allows AI root actions" sudo grep -qx 'root_actions = true' /etc/monitorflow/agent.toml
+unsigned_root_action() {
+    ! printf 'clean-package-cache\n' | sudo -u monitorflow sudo -n /usr/bin/monitorflow-agent root-action
+}
+check "root helper refuses an unsigned root action" unsigned_root_action
 check "service runs as monitorflow" test "$(systemctl show -p User --value monitorflow-agent)" = monitorflow
 check "token file deleted after enrollment" absent /etc/monitorflow/agent-enroll.env
 check "token not in agent.toml" bash -c "! sudo grep -qF -- '$token' /etc/monitorflow/agent.toml"
@@ -276,6 +283,11 @@ installer MF_DOWNLOAD_URL="$base" MF_AI_COMMANDS_FROM_WEB=0
 check "MF_AI_COMMANDS_FROM_WEB=0 takes it back" test -z "$(shell_env)"
 check "agent online after the opt-in" online "$PEER"
 # These runs came quickly: systemd allows 5 starts in 10 seconds.
+sudo systemctl reset-failed monitorflow-agent
+installer MF_DOWNLOAD_URL="$base" MF_AI_ROOT_ACTIONS=0
+check "MF_AI_ROOT_ACTIONS=0 refuses root actions" sudo grep -qx 'root_actions = false' /etc/monitorflow/agent.toml
+installer MF_DOWNLOAD_URL="$base"
+check "a later run keeps that choice" sudo grep -qx 'root_actions = false' /etc/monitorflow/agent.toml
 sudo systemctl reset-failed monitorflow-agent
 
 if [ -n "$newer" ]; then

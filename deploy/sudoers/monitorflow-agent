@@ -1,7 +1,7 @@
 # MonitorFlow agent: the privileged commands it runs through `sudo -n`
-# (ADR-0031, ADR-0032, ADR-0035, ADR-0036, ADR-0053, ADR-0094). Install as
-# /etc/sudoers.d/monitorflow-agent, owner root, mode 0440, and check with
-# `visudo -cf`. See docs/deploy-agent.md.
+# (ADR-0031, ADR-0032, ADR-0035, ADR-0036, ADR-0053, ADR-0094, ADR-0181).
+# Install as /etc/sudoers.d/monitorflow-agent, owner root, mode 0440, and
+# check with `visudo -cf`. See docs/deploy-agent.md.
 #
 # Exact command lines, no wildcards: sudo refuses any other argument.
 # Updates of every kind (all, security only, named packages) go through
@@ -25,4 +25,10 @@ Cmnd_Alias MONITORFLOW_SNAPSHOTS = \
     /usr/bin/monitorflow-agent snapshots take, \
     /usr/bin/monitorflow-agent snapshots delete
 
-monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES, MONITORFLOW_SELF_UPDATE, MONITORFLOW_SNAPSHOTS
+# AI root actions: the helper reads a `root_action` command the central
+# server signed on stdin, runs it only if `commands.root_actions` is set in
+# agent.toml, and only one action of its fixed catalog with checked
+# parameters (ADR-0181). Never a command line.
+Cmnd_Alias MONITORFLOW_ROOT_ACTIONS = /usr/bin/monitorflow-agent root-action
+
+monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES, MONITORFLOW_SELF_UPDATE, MONITORFLOW_SNAPSHOTS, MONITORFLOW_ROOT_ACTIONS
