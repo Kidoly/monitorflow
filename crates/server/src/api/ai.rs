@@ -23,6 +23,7 @@ use super::notifications::TestResult;
 use super::sensors::body;
 use super::server_update::require_global_admin;
 use super::{ApiError, ApiState};
+use crate::remediation::language::{self, Language};
 use crate::secrets::Column;
 
 /// Longest accepted API key.
@@ -171,6 +172,12 @@ pub struct AiView {
     /// The short list of `anthropic` models, the default first.
     #[schema(value_type = Vec<super::openapi_settings::AiModel>)]
     pub models: &'static [Model],
+    /// The language administrators chose for the AI's diagnoses (ADR-0181);
+    /// null follows the people.
+    pub language: Option<Language>,
+    /// The language of the next diagnosis: `language`, else the one most
+    /// users chose for the web interface, else `en`.
+    pub effective_language: Language,
 }
 
 impl AiView {
@@ -191,6 +198,8 @@ fn view(config: &AiConfig, stored: &Stored) -> AiView {
             base_url: config.base_url.clone(),
             model: config.model.clone(),
             models: MODELS,
+            language: None,
+            effective_language: Language::En,
         };
     }
     AiView {
@@ -201,6 +210,8 @@ fn view(config: &AiConfig, stored: &Stored) -> AiView {
         base_url: stored.ai_base_url.clone(),
         model: stored.model(),
         models: MODELS,
+        language: None,
+        effective_language: Language::En,
     }
 }
 
@@ -219,7 +230,59 @@ async fn stored(db: impl PgExecutor<'_>, lock: bool) -> Result<Stored, ApiError>
 
 async fn current(state: &ApiState) -> Result<AiView, ApiError> {
     let stored = stored(&state.pool, false).await?;
-    Ok(view(&state.settings.ai.config, &stored))
+    let mut view = view(&state.settings.ai.config, &stored);
+    view.language = language::chosen(&state.pool).await?;
+    view.effective_language = language::effective(&state.pool).await?;
+    Ok(view)
+}
+
+/// Body of `PUT /api/settings/ai/language`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = AiLanguageRequest)]
+#[serde(deny_unknown_fields)]
+pub struct LanguageRequest {
+    /// `en` or `fr`; null follows the language most users chose.
+    pub language: Option<Language>,
+}
+
+/// `PUT /api/settings/ai/language`: global administrators; audited as
+/// `settings.ai_language`. Allowed when the configuration sets AI too:
+/// the language is not part of `[ai]`.
+pub async fn set_language(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    request: Result<Json<LanguageRequest>, JsonRejection>,
+) -> Result<Json<AiView>, ApiError> {
+    require_global_admin(&user)?;
+    let request = body(request)?;
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("INSERT INTO server_settings (singleton) VALUES (true) ON CONFLICT DO NOTHING")
+        .execute(&mut *tx)
+        .await?;
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT ai_language FROM server_settings FOR UPDATE")
+            .fetch_one(&mut *tx)
+            .await?;
+    language::set(&mut *tx, request.language).await?;
+    let actor = user.id.to_string();
+    audit::record(
+        &mut *tx,
+        Event {
+            actor_kind: "user",
+            actor_id: &actor,
+            action: "settings.ai_language",
+            target: Some(("settings", "ai")),
+            details: json!({
+                "old": old,
+                "new": request.language.map(Language::as_str),
+            }),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    tracing::info!(user = %user.id, language = ?request.language, "changed the language of AI diagnoses");
+    let view = current(&state).await?;
+    Ok(Json(view))
 }
 
 /// A pasted key: `None` when empty, which keeps the stored one.

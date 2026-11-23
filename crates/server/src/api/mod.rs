@@ -140,6 +140,7 @@
 //! | GET | `/api/settings/ai` | any session | [`ai::AiView`]: whether AI is on, its provider, whether a key is stored, the address, the model and Anthropic's models; never the key |
 //! | PUT | `/api/settings/ai` | global administrator | body [`ai::SetRequest`]; 200 [`ai::AiView`]; 400 with the reason in plain words when the key or model fails its test; 409 while `[ai] enabled = true` in the configuration; audited, without the key |
 //! | DELETE | `/api/settings/ai` | global administrator | forgets the key and turns AI off; 200 [`ai::AiView`]; 409 as above; audited |
+//! | PUT | `/api/settings/ai/language` | global administrator | body [`ai::LanguageRequest`], `{"language": "fr"}` or `null` to follow the users' languages; 200 [`ai::AiView`]; allowed while the configuration sets AI; audited as `settings.ai_language` (ADR-0181) |
 //! | POST | `/api/settings/ai/test` | global administrator | body [`ai::TestRequest`]; 200 [`notifications::TestResult`]; saves nothing |
 //! | POST | `/api/settings/ai/models` | global administrator | body [`ai::TestRequest`] without `model`; 200 [`ai::ModelList`], the models the provider's server offers, or why it could not say |
 //! | GET | `/api/settings/public-address` | customer administrator | [`public_address::PublicAddress`]: the address in install commands, the default, the certificate's names and whether it covers the address |
@@ -1624,6 +1625,7 @@ pub fn router(state: ApiState) -> Router {
             "/api/settings/ai",
             get(ai::get).put(ai::set).delete(ai::remove_key),
         )
+        .route("/api/settings/ai/language", put(ai::set_language))
         .route("/api/settings/ai/test", post(ai::test))
         .route("/api/settings/ai/models", post(ai::models))
         .route(

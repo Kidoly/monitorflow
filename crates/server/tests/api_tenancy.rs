@@ -1568,6 +1568,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             };
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
+        // The language of AI diagnoses (ADR-0181): global administrators.
+        ("PUT", "/api/settings/ai/language") => {
+            let body = Some(json!({ "language": "fr" }));
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         // Channels (ADR-0078): those of other customers do not exist for
         // this administrator, and nothing it writes reaches outside A.
         ("GET", "/api/notifications/channels") => {

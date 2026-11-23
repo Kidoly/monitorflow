@@ -12,13 +12,14 @@ use std::time::Duration;
 
 use monitorflow_ai::testing::MockProvider;
 use monitorflow_ai::{AiProvider, CommandOutcome, Connection, Step, StopOutcome};
-use monitorflow_common::command::{self, SHELL};
+use monitorflow_common::command::{self, ROOT_ACTION, SHELL};
 use monitorflow_common::config::AiProviderKind;
 use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{CommandResult, CommandStatus, Envelope, Hello, ShellCommand};
 use monitorflow_common::redact::Secret;
+use monitorflow_common::root_action::RootAction;
 use monitorflow_common::tls::{self, Identity};
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::api::{users, Role};
@@ -454,8 +455,16 @@ async fn run_agent(
                 let Ok(Some(envelope)) = message else { return };
                 let Some(Payload::Command(c)) = envelope.payload else { continue };
                 command::verify(&c, std::slice::from_ref(&signer)).expect("command signature");
-                assert_eq!((c.kind.as_str(), c.agent_id.as_str()), (SHELL, PEER));
-                let shell = ShellCommand::decode(c.payload.as_slice()).unwrap();
+                assert_eq!(c.agent_id, PEER);
+                // A root action is seen as its canonical line (ADR-0181).
+                let shell = if c.kind == ROOT_ACTION {
+                    let message = monitorflow_common::proto::v1::RootAction::decode(c.payload.as_slice()).unwrap();
+                    let action = RootAction::from_proto(&message).expect("a valid root action");
+                    ShellCommand { command: action.to_string(), timeout_seconds: 1 }
+                } else {
+                    assert_eq!(c.kind, SHELL);
+                    ShellCommand::decode(c.payload.as_slice()).unwrap()
+                };
                 assert!(shell.timeout_seconds > 0);
                 seen.lock().unwrap().push(shell.command.clone());
                 send(CommandResult {
@@ -739,6 +748,30 @@ async fn report_shell(h: &Harness, word: &str) {
         .unwrap();
 }
 
+/// What the server's agent reports for `shell` and `root_action`.
+async fn report_root_actions(h: &Harness, word: &str) {
+    sqlx::query(
+        "UPDATE servers SET command_kinds = jsonb_build_object('shell', 'accepted', 'root_action', $1::text)",
+    )
+    .bind(word)
+    .execute(&h.pool)
+    .await
+    .unwrap();
+}
+
+/// A user who chose `language` for the web interface (ADR-0137).
+async fn prefers(pool: &PgPool, name: &str, language: &str) {
+    sqlx::query(
+        "WITH u AS (INSERT INTO users (username, password_hash) VALUES ($1, '$argon2id$test') RETURNING id)
+         INSERT INTO user_preferences (user_id, document) SELECT id, jsonb_build_object('language', $2::text) FROM u",
+    )
+    .bind(name)
+    .bind(language)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Several polls of the loop of [`settings`].
 async fn some_polls() {
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -761,6 +794,83 @@ async fn last_escalation(h: &Harness) -> String {
 }
 
 db_tests! {
+    /// ADR-0181: root actions reach the agent as `root_action` commands,
+    /// never as shell lines. Clearing the package cache runs without a
+    /// person or a snapshot; a service restart waits for approval. The AI
+    /// was told the catalog, in the language the people chose.
+    #[sqlx::test]
+    async fn root_actions_go_to_the_helper_and_only_the_harmless_run_alone(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let clean = "monitorflow-root clean-package-cache";
+        let script = [(clean, Reply::Run { exit_code: 0, stdout: "$ /usr/bin/apt-get clean\n" })];
+        let h = Harness::start(&pool, &script).await;
+        report_root_actions(&h, "accepted").await;
+        prefers(&pool, "ana", "fr").await;
+        let ai = Arc::new(MockProvider::new([
+            Step::run("le cache apt occupe 4,6 Go", clean, "vider le cache"),
+            Step::run("nginx garde des fichiers", "monitorflow-root restart-service nginx", "les libérer"),
+        ]));
+        let stub = StubHook::new(HookMode::Snapshot);
+        let running = h.remediation_with(&ai, settings(), stub.clone());
+        let id = h.wait_state("awaiting_approval").await;
+        running.stop().await;
+
+        assert_eq!(h.agent.seen(), [clean]);
+        assert!(stub.calls().is_empty(), "no snapshot before clearing a cache");
+        let events = h.events().await;
+        let classification = of_kind(&events, "classification")[0];
+        assert_eq!(classification["tier"], "low_impact");
+        assert_eq!(classification["rule"]["id"], "root.clean_package_cache");
+        assert_eq!(of_kind(&events, "approval")[0]["command"], clean);
+        assert_eq!(of_kind(&events, "command_queued")[0]["command"], clean);
+        let (kind, payload): (String, Vec<u8>) = sqlx::query_as("SELECT kind, payload FROM commands")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kind, ROOT_ACTION);
+        let message = monitorflow_common::proto::v1::RootAction::decode(payload.as_slice()).unwrap();
+        assert_eq!(RootAction::from_proto(&message), Ok(RootAction::CleanPackageCache));
+
+        let pending: (String, String, Value) = sqlx::query_as(
+            "SELECT command, tier, rule FROM remediation_pending_commands WHERE incident_id = $1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((pending.0.as_str(), pending.1.as_str()), ("monitorflow-root restart-service nginx", "high_impact"));
+        assert_eq!(pending.2["id"], "root.restart_service");
+
+        let prompt = &ai.requests()[0].system_prompt;
+        assert!(prompt.contains("`monitorflow-root vacuum-journal <size>`"), "{prompt}");
+        assert!(prompt.contains("every reason in French"), "{prompt}");
+        h.close().await;
+    }
+
+    #[sqlx::test]
+    async fn a_root_action_the_agent_refuses_escalates_with_the_way_to_allow_it(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let h = Harness::start(&pool, &[]).await;
+        report_root_actions(&h, "off").await;
+        let ai = Arc::new(MockProvider::new([Step::run(
+            "the journal uses 3.2 GB",
+            "monitorflow-root vacuum-journal 500M",
+            "shrink it",
+        )]));
+        let running = h.remediation(&ai, settings());
+        h.wait_state("escalated").await;
+        running.stop().await;
+        assert!(h.agent.seen().is_empty());
+        let events = h.events().await;
+        let escalation = of_kind(&events, "escalation")[0];
+        assert_eq!(escalation["code"], "root_actions_off");
+        assert!(escalation["reason"].as_str().unwrap().contains("ai-commands root-actions on"));
+        let prompt = &ai.requests()[0].system_prompt;
+        assert!(prompt.contains("are not available on this server"), "{prompt}");
+        assert!(prompt.contains("every reason in English"), "{prompt}");
+        h.close().await;
+    }
+
     #[sqlx::test]
     async fn automatic_commands_run_redacted_until_the_sensor_confirms(pool: PgPool) {
         monitorflow_server::secrets::install_for_tests();

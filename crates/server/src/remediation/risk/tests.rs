@@ -744,3 +744,185 @@ fn lenient_fragments_cut_at_every_operator() {
     );
     assert!(lexer::fragments("  ;; ").is_empty());
 }
+
+/// AI root actions (ADR-0181): each action has its tier, anything around
+/// or after it is forbidden, and only a well-formed one becomes an action.
+#[test]
+fn root_actions_are_classified_by_their_action() {
+    check(
+        &[
+            (
+                "monitorflow-root clean-package-cache",
+                L,
+                "root.clean_package_cache",
+            ),
+            (
+                "monitorflow-root vacuum-journal 500M",
+                L,
+                "root.vacuum_journal",
+            ),
+            (
+                "/usr/bin/monitorflow-root vacuum-journal 2G",
+                L,
+                "root.vacuum_journal",
+            ),
+            (
+                "  monitorflow-root vacuum-journal '1G'\n",
+                L,
+                "root.vacuum_journal",
+            ),
+            ("monitorflow-root prune-docker", H, "root.prune_docker"),
+            (
+                "monitorflow-root restart-service nginx",
+                H,
+                "root.restart_service",
+            ),
+            (
+                "monitorflow-root restart-service php8.2-fpm.service",
+                H,
+                "root.restart_service",
+            ),
+            ("monitorflow-root", F, "root.invalid"),
+            ("monitorflow-root rm -rf /", F, "forbidden.rm_root"),
+            ("monitorflow-root run-shell id", F, "root.invalid"),
+            ("monitorflow-root vacuum-journal 10M", F, "root.invalid"),
+            ("monitorflow-root restart-service sshd", F, "root.invalid"),
+            (
+                "monitorflow-root restart-service monitorflow-agent",
+                F,
+                "root.invalid",
+            ),
+            (
+                "monitorflow-root restart-service nginx --now",
+                F,
+                "root.invalid",
+            ),
+            (
+                "monitorflow-root clean-package-cache | head",
+                F,
+                "root.invalid",
+            ),
+            ("monitorflow-root restart-service ngin*", F, "root.invalid"),
+            (
+                "monitorflow-root clean-package-cache; reboot",
+                H,
+                "syntax.command_list",
+            ),
+            (
+                "monitorflow-root restart-service $(id)",
+                H,
+                "syntax.substitution",
+            ),
+            (
+                "X=1 monitorflow-root clean-package-cache",
+                H,
+                "syntax.env_prefix",
+            ),
+            (
+                "sudo monitorflow-root clean-package-cache",
+                H,
+                "high.privilege",
+            ),
+            (
+                "df -h | monitorflow-root prune-docker",
+                H,
+                "syntax.pipe_target",
+            ),
+            (
+                "/tmp/monitorflow-root clean-package-cache",
+                H,
+                "default.unknown",
+            ),
+        ],
+        &rules(),
+    );
+}
+
+#[test]
+fn root_actions_resist_allow_rules_and_obey_deny_rules() {
+    let p = |text| Pattern::parse(text).unwrap();
+    let mut rules = rules();
+    rules.allow.push(AllowRule {
+        id: ALLOW_RO,
+        pattern: p("monitorflow-root **"),
+        tier: R,
+    });
+    let decision = classify("monitorflow-root prune-docker", &rules);
+    assert_eq!(decision.tier, H, "an allow rule never lowers a root action");
+    rules.deny.push(DenyRule {
+        id: DENY,
+        pattern: p("monitorflow-root prune-docker"),
+    });
+    let decision = classify("monitorflow-root prune-docker", &rules);
+    assert_eq!(
+        (decision.tier, decision.rule),
+        (F, Rule::Configured { id: DENY })
+    );
+    assert_eq!(
+        root_action(Shell::Posix, "monitorflow-root prune-docker", &rules),
+        None
+    );
+}
+
+#[test]
+fn only_well_formed_linux_root_actions_become_actions() {
+    use monitorflow_common::root_action::RootAction;
+
+    let rules = RuleSet::default();
+    assert_eq!(
+        root_action(
+            Shell::Posix,
+            " monitorflow-root restart-service nginx ",
+            &rules
+        ),
+        Some(RootAction::RestartService {
+            unit: "nginx.service".into()
+        })
+    );
+    assert_eq!(
+        root_action(Shell::Posix, "monitorflow-root vacuum-journal '1G'", &rules),
+        Some(RootAction::VacuumJournal {
+            max_megabytes: 1024
+        })
+    );
+    for command in [
+        "monitorflow-root restart-service sshd",
+        "monitorflow-root clean-package-cache | head",
+        "apt-get clean",
+        "echo monitorflow-root clean-package-cache",
+    ] {
+        assert_eq!(
+            root_action(Shell::Posix, command, &rules),
+            None,
+            "{command}"
+        );
+    }
+    let windows = classify_for(
+        Shell::PowerShell,
+        "monitorflow-root clean-package-cache",
+        &rules,
+    );
+    assert_eq!(
+        (windows.tier, windows.rule),
+        (
+            F,
+            Rule::Builtin {
+                id: "root.unavailable"
+            }
+        )
+    );
+    assert_eq!(
+        root_action(
+            Shell::PowerShell,
+            "monitorflow-root clean-package-cache",
+            &rules
+        ),
+        None
+    );
+    let automatic = |command| classify(command, &rules).automatic_root_action();
+    assert!(automatic("monitorflow-root clean-package-cache"));
+    assert!(automatic("monitorflow-root vacuum-journal 500M"));
+    assert!(!automatic("monitorflow-root prune-docker"));
+    assert!(!automatic("monitorflow-root restart-service nginx"));
+    assert!(!automatic("apt-get clean"));
+}

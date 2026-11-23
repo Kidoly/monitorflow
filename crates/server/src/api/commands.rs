@@ -93,7 +93,8 @@ pub struct CommandView {
     /// `{"mirror_base_url", "family", "mode", "repositories",
     /// "key_fingerprints"}` for `configure_sources`, `{}` for
     /// `revert_sources`, `{"command", "timeout_seconds"}` for `shell`,
-    /// `{"on"}` for `ai_commands`; `null` for a kind this version does not
+    /// `{"on"}` for `ai_commands`, `{"action", "command"}` for
+    /// `root_action` (ADR-0181); `null` for a kind this version does not
     /// know.
     pub parameters: Value,
     pub state: CommandState,
@@ -205,6 +206,14 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
         command::AI_COMMANDS => match AiCommandsSwitch::decode(payload) {
             Ok(p) => json!({"on": p.on}),
             Err(_) => Value::Null,
+        },
+        // Queued by the remediation loop only (ADR-0181).
+        command::ROOT_ACTION => match monitorflow_common::proto::v1::RootAction::decode(payload)
+            .ok()
+            .and_then(|p| monitorflow_common::root_action::RootAction::from_proto(&p).ok())
+        {
+            Some(action) => json!({"action": action.name(), "command": action.to_string()}),
+            None => Value::Null,
         },
         _ => Value::Null,
     }
@@ -601,6 +610,14 @@ mod tests {
             parameters("shell", &shell.encode_to_vec()),
             json!({"command": "df -h", "timeout_seconds": 120})
         );
+
+        let root =
+            monitorflow_common::root_action::RootAction::VacuumJournal { max_megabytes: 500 };
+        assert_eq!(
+            parameters("root_action", &root.to_proto().encode_to_vec()),
+            json!({"action": "vacuum-journal", "command": "monitorflow-root vacuum-journal 500M"})
+        );
+        assert_eq!(parameters("root_action", b"\xff"), Value::Null);
 
         for bad in [
             json!({"kind": "shell"}),

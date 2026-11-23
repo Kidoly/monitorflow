@@ -31,6 +31,12 @@
 //!    rules classified, so they cannot unlock shells, `sudo`, packages,
 //!    `kill` or reboots.
 //!
+//! AI root actions (ADR-0181), `monitorflow-root <action> [argument]`, are
+//! decided after step 5 by [`root_decision`]: alone (no pipe, no glob)
+//! and well formed, they get the tier of their action, else they are
+//! forbidden. They never run as a shell command: [`root_action`] gives
+//! the action the runner sends as a `root_action` command instead.
+//!
 //! Windows servers run commands with PowerShell, which parses the same
 //! text differently, so [`classify_for`] with [`Shell::PowerShell`] uses
 //! rules of its own ([`powershell`], ADR-0084) after the same length
@@ -46,6 +52,7 @@ mod tests;
 
 use std::fmt;
 
+use monitorflow_common::root_action::{self, RootAction};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -222,7 +229,91 @@ pub fn classify_for(shell: Shell, command: &str, rules: &RuleSet) -> Decision {
     }
     match shell {
         Shell::Posix => posix(command, rules),
+        // After the administrators' deny patterns, which still win.
+        Shell::PowerShell
+            if command.split_whitespace().next() == Some(root_action::PROGRAM)
+                && powershell::classify(command, rules).tier != Tier::Forbidden =>
+        {
+            Decision::builtin(
+                Tier::Forbidden,
+                "root.unavailable",
+                "root actions run on Linux servers only",
+            )
+        }
         Shell::PowerShell => powershell::classify(command, rules),
+    }
+}
+
+/// Rules of the root actions that run without a person, like read-only
+/// commands, whatever the server group's policy (ADR-0181): what they
+/// remove is downloaded again or already rotated out.
+pub const AUTOMATIC_ROOT_ACTIONS: [&str; 2] = ["root.clean_package_cache", "root.vacuum_journal"];
+
+impl Decision {
+    /// Whether this decision lets a root action run without approval.
+    pub fn automatic_root_action(&self) -> bool {
+        matches!(self.rule, Rule::Builtin { id } if AUTOMATIC_ROOT_ACTIONS.contains(&id))
+    }
+}
+
+/// The root action `command` asks for, when it is one that the rules
+/// accept (any tier but forbidden): the runner then sends it as a
+/// `root_action` command, never as a shell command line.
+pub fn root_action(shell: Shell, command: &str, rules: &RuleSet) -> Option<RootAction> {
+    if shell != Shell::Posix || classify_for(shell, command, rules).tier == Tier::Forbidden {
+        return None;
+    }
+    let command = command.trim_matches(|c: char| c.is_ascii_whitespace());
+    let stages = lexer::lex(command).ok()?;
+    let [stage] = stages.as_slice() else {
+        return None;
+    };
+    let (program, args) = stage.split_first()?;
+    if resolve(&program.text) != root_action::PROGRAM {
+        return None;
+    }
+    let words: Vec<&str> = args.iter().map(|w| w.text.as_str()).collect();
+    RootAction::parse(&words).ok()
+}
+
+/// The decision on a `monitorflow-root` command whose words are `stages`.
+fn root_decision(stages: &[Vec<lexer::Word>]) -> Decision {
+    let forbidden = |reason: String| Decision::builtin(Tier::Forbidden, "root.invalid", reason);
+    if stages.len() > 1 {
+        return forbidden("a root action runs alone, without a pipe".into());
+    }
+    let args = &stages[0][1..];
+    if args.iter().any(|w| w.glob) {
+        return forbidden("a root action takes no glob".into());
+    }
+    let words: Vec<&str> = args.iter().map(|w| w.text.as_str()).collect();
+    match RootAction::parse(&words) {
+        Err(reason) => forbidden(reason),
+        Ok(action) => {
+            let (tier, id, reason) = match &action {
+                RootAction::CleanPackageCache => (
+                    Tier::LowImpact,
+                    "root.clean_package_cache",
+                    "clears the package manager's download cache as root; it runs without approval (ADR-0181)".to_owned(),
+                ),
+                RootAction::VacuumJournal { max_megabytes } => (
+                    Tier::LowImpact,
+                    "root.vacuum_journal",
+                    format!("shrinks the systemd journal to {max_megabytes} MB as root, removing its oldest files; it runs without approval (ADR-0181)"),
+                ),
+                RootAction::PruneDocker => (
+                    Tier::HighImpact,
+                    "root.prune_docker",
+                    "removes every Docker image no container uses, and the build cache, as root".to_owned(),
+                ),
+                RootAction::RestartService { unit } => (
+                    Tier::HighImpact,
+                    "root.restart_service",
+                    format!("restarts {unit} as root"),
+                ),
+            };
+            Decision::builtin(tier, id, reason)
+        }
     }
 }
 
@@ -265,6 +356,9 @@ fn posix(command: &str, rules: &RuleSet) -> Decision {
     }
     let (first, filters) = stages.split_first().expect("lex returns a stage");
     let program = resolve(&first[0].text);
+    if program == root_action::PROGRAM {
+        return root_decision(&stages);
+    }
     let args = &first[1..];
     let verdict = builtin::command(&program, args, rules);
     for stage in filters {

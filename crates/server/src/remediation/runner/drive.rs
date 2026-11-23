@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use monitorflow_ai::{Action, StepRequest, StopOutcome};
-use monitorflow_common::command::SHELL;
+use monitorflow_common::command::{ROOT_ACTION, SHELL};
 use monitorflow_common::proto::v1::ShellCommand;
 use prost::Message;
 use serde_json::json;
@@ -24,6 +24,7 @@ use crate::commands::acceptance;
 use crate::commands::{CommandRow, CommandStore, NewCommand, State};
 use crate::remediation::audit::{self, Actor, IncidentState, NewEvent};
 use crate::remediation::context::{self, Trigger};
+use crate::remediation::language;
 use crate::remediation::redact::Redactor;
 use crate::remediation::risk::{self, Decision, RuleSet, Tier};
 
@@ -221,8 +222,9 @@ async fn send_context(shared: &Shared, incident: &Incident) -> Result<Pass, Driv
 
 /// Asks the AI for the next step and records its answer.
 async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result<Pass, DriveError> {
+    let language = language::effective(&shared.pool).await?;
     let system_prompt = match progress.diagnosis_only {
-        Some(why) => prompt::diagnosis_only(why.for_prompt(), incident.shell()),
+        Some(why) => prompt::diagnosis_only(why.for_prompt(), incident.shell(), language),
         None => prompt::system(prompt::Limits {
             max_commands: incident.max_commands(),
             commands_left: incident
@@ -230,6 +232,11 @@ async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result
                 .saturating_sub(progress.commands_queued),
             command_timeout: shared.settings.command_timeout,
             shell: incident.shell(),
+            root_actions: acceptance::reported(&shared.pool, incident.server_id, ROOT_ACTION)
+                .await?
+                .as_deref()
+                == Some("accepted"),
+            language,
         }),
     };
     let request = StepRequest {
@@ -285,6 +292,8 @@ async fn automatic(
 ) -> Result<bool, DriveError> {
     Ok(match decision.tier {
         Tier::ReadOnly => true,
+        // The root actions that lose nothing useful (ADR-0181).
+        Tier::LowImpact if decision.automatic_root_action() => true,
         Tier::LowImpact => {
             risk::store::low_impact_auto(&shared.pool, incident.customer_id, Some(incident.site_id))
                 .await?
@@ -376,7 +385,10 @@ async fn run(
     // The rules again, on exactly what is about to run: an edited command
     // is still refused when forbidden, and a system approval needs a tier
     // that runs without one.
-    let decision = risk::classify_for(incident.shell(), command, &rules(shared, incident).await?);
+    let rules = rules(shared, incident).await?;
+    let decision = risk::classify_for(incident.shell(), command, &rules);
+    // A root action goes to the agent's root helper, never to a shell.
+    let root = risk::root_action(incident.shell(), command, &rules);
     if decision.tier == Tier::Forbidden {
         let reason = CloseReason::ApprovedForbidden(decision.reason);
         return finish(shared, incident, IncidentState::Escalated, reason).await;
@@ -395,7 +407,15 @@ async fn run(
         )
         .await;
     }
-    if decision.tier != Tier::ReadOnly && !snapshot_done {
+    if root.is_some() {
+        if let Some(refusal) = acceptance::root_refusal(&shared.pool, incident.server_id).await? {
+            let reason = CloseReason::RootRefused(refusal);
+            return finish(shared, incident, IncidentState::Escalated, reason).await;
+        }
+    }
+    // Clearing a cache or old journal files is not worth a snapshot.
+    let needs_snapshot = decision.tier != Tier::ReadOnly && !decision.automatic_root_action();
+    if needs_snapshot && !snapshot_done {
         let change = Change {
             incident_id: incident.id,
             server_id: incident.server_id,
@@ -422,11 +442,17 @@ async fn run(
         };
     }
     let timeout = shared.settings.command_timeout;
-    let payload = ShellCommand {
-        command: command.to_owned(),
-        timeout_seconds: u32::try_from(timeout.as_secs()).unwrap_or(u32::MAX),
-    }
-    .encode_to_vec();
+    let (kind, payload) = match &root {
+        Some(action) => (ROOT_ACTION, action.to_proto().encode_to_vec()),
+        None => (
+            SHELL,
+            ShellCommand {
+                command: command.to_owned(),
+                timeout_seconds: u32::try_from(timeout.as_secs()).unwrap_or(u32::MAX),
+            }
+            .encode_to_vec(),
+        ),
+    };
     let Some(mut tx) = leased(shared, incident.id).await? else {
         return Ok(Pass::Done);
     };
@@ -437,7 +463,7 @@ async fn run(
         &mut *tx,
         &NewCommand {
             server_id: incident.server_id,
-            kind: SHELL.into(),
+            kind: kind.into(),
             payload,
             ttl: timeout,
             requested_by: None,

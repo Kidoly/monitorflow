@@ -18,11 +18,12 @@ const UNSUPPORTED: &str = "unsupported";
 
 /// The kinds stored. An agent names only what it runs, but its report
 /// passes through relays, so nothing else reaches the database.
-const KINDS: [&str; 6] = [
+const KINDS: [&str; 7] = [
     command::AI_COMMANDS,
     command::APPLY_UPDATES,
     command::CONFIGURE_SOURCES,
     command::REVERT_SOURCES,
+    command::ROOT_ACTION,
     command::SELF_UPDATE,
     command::SHELL,
 ];
@@ -109,6 +110,83 @@ impl Refusal {
     }
 }
 
+/// Why a server's agent would refuse a `root_action` command (ADR-0181).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootRefusal {
+    /// AI commands are off, or the host did not allow root actions.
+    Off,
+    /// The sudo rules predate root actions.
+    SudoRules,
+    /// A Windows server: root actions are Linux only.
+    Windows,
+}
+
+impl RootRefusal {
+    fn of(word: Option<&str>, os_family: &str) -> Option<Self> {
+        match word {
+            Some(OFF) => Some(Self::Off),
+            Some(UNSUPPORTED) if os_family == "windows" => Some(Self::Windows),
+            Some(UNSUPPORTED) => Some(Self::SudoRules),
+            _ => None,
+        }
+    }
+
+    /// Stable code of [`Self::message`], for clients to word it.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Off => "root_actions_off",
+            Self::SudoRules => "root_actions_sudo_rules",
+            Self::Windows => "root_actions_windows",
+        }
+    }
+
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Off => {
+                "AI root actions are not allowed on this server; run `sudo monitorflow-agent \
+                 ai-commands root-actions on` there, or the installer with MF_AI_ROOT_ACTIONS=1"
+            }
+            Self::SudoRules => {
+                "the sudo rules on this server predate AI root actions; run the install command \
+                 again"
+            }
+            Self::Windows => "AI root actions run on Linux servers only",
+        }
+    }
+}
+
+/// What `server_id`'s agent last reported for `kind`: `accepted`, `off`,
+/// `unsupported`, or `None` when unknown.
+pub async fn reported(
+    executor: impl PgExecutor<'_>,
+    server_id: Uuid,
+    kind: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let word: Option<Option<String>> =
+        sqlx::query_scalar("SELECT command_kinds->>$2 FROM servers WHERE id = $1")
+            .bind(server_id)
+            .bind(kind)
+            .fetch_optional(executor)
+            .await?;
+    Ok(word.flatten())
+}
+
+/// The refusal `server_id` last reported for `root_action` commands, if
+/// any. An agent that does not report the kind is not refused here: it
+/// refuses the command itself.
+pub async fn root_refusal(
+    executor: impl PgExecutor<'_>,
+    server_id: Uuid,
+) -> Result<Option<RootRefusal>, sqlx::Error> {
+    let row: Option<(Option<String>, String)> = sqlx::query_as(
+        "SELECT command_kinds->>'root_action', os_family FROM servers WHERE id = $1",
+    )
+    .bind(server_id)
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.and_then(|(word, os_family)| RootRefusal::of(word.as_deref(), &os_family)))
+}
+
 /// The refusal `server_id` last reported for `shell` commands, if any.
 pub async fn shell_refusal(
     executor: impl PgExecutor<'_>,
@@ -161,6 +239,7 @@ mod tests {
                 state("revert_sources", 99),
                 state("reboot", CommandAcceptance::Accepted.into()),
                 state("ai_commands", CommandAcceptance::Disabled.into()),
+                state("root_action", CommandAcceptance::Unsupported.into()),
             ],
             ..Hello::default()
         };
@@ -171,6 +250,7 @@ mod tests {
                 ("ai_commands", OFF),
                 ("apply_updates", ACCEPTED),
                 ("configure_sources", UNSUPPORTED),
+                ("root_action", UNSUPPORTED),
                 ("shell", OFF),
             ])
         );
@@ -187,6 +267,25 @@ mod tests {
         assert_eq!(Refusal::of(Some(ACCEPTED), "debian"), None);
         assert_eq!(Refusal::of(Some("from a newer server"), "debian"), None);
         assert_eq!(Refusal::of(None, "windows"), None);
+    }
+
+    #[test]
+    fn root_refusals_say_what_to_do_on_the_host() {
+        assert_eq!(RootRefusal::of(Some(OFF), "debian"), Some(RootRefusal::Off));
+        assert_eq!(
+            RootRefusal::of(Some(UNSUPPORTED), "rhel"),
+            Some(RootRefusal::SudoRules)
+        );
+        assert_eq!(
+            RootRefusal::of(Some(UNSUPPORTED), "windows"),
+            Some(RootRefusal::Windows)
+        );
+        assert_eq!(RootRefusal::of(Some(ACCEPTED), "debian"), None);
+        assert_eq!(RootRefusal::of(None, "debian"), None);
+        assert!(RootRefusal::Off.message().contains("root-actions on"));
+        assert!(RootRefusal::SudoRules
+            .message()
+            .contains("run the install command again"));
     }
 
     /// The way to turn AI commands on is the one of the server's system.

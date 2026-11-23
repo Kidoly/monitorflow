@@ -15,7 +15,7 @@ use crate::auto_update::policy;
 #[openapi(
     paths(
         get_agent_install, set_agent_install, get_public_address, set_public_address, get_ai,
-        set_ai, remove_ai_key, test_ai, list_ai_models, get_server_settings,
+        set_ai, remove_ai_key, set_ai_language, test_ai, list_ai_models, get_server_settings,
         set_server_settings, set_retention, get_auto_update, set_auto_update,
     ),
     components(schemas(AiModel, AiTestResult)),
@@ -147,7 +147,9 @@ fn ai_example() -> serde_json::Value {
         "has_key": false,
         "base_url": "http://llm.example.com:8080/v1",
         "model": "local-model",
-        "models": [{ "id": "model-large", "name": "Model Large", "note": "Recommended: the best diagnoses", "fit": "recommended" }]
+        "models": [{ "id": "model-large", "name": "Model Large", "note": "Recommended: the best diagnoses", "fit": "recommended" }],
+        "language": null,
+        "effective_language": "fr"
     })
 }
 
@@ -196,11 +198,25 @@ fn set_ai() {}
         (status = 200, description = "The AI settings as they now stand", body = ai::AiView, example = json!({
             "enabled": false, "from_config": false, "provider": "anthropic", "has_key": false,
             "base_url": null, "model": "model-large",
-            "models": [{ "id": "model-large", "name": "Model Large", "note": "Recommended: the best diagnoses", "fit": "recommended" }]
+            "models": [{ "id": "model-large", "name": "Model Large", "note": "Recommended: the best diagnoses", "fit": "recommended" }],
+            "language": null, "effective_language": "en"
         })),
         (status = 409, body = ErrorBody, description = "Set by the configuration: `conflict`"),
     ))]
 fn remove_ai_key() {}
+
+/// Set the language of AI diagnoses
+///
+/// The language the AI writes its diagnosis, reasoning and reasons in:
+/// `en` or `fr`. `null` follows the people: the language most users chose
+/// for the web interface, English when none did. Commands, paths and
+/// quoted output stay as they are. Applies from the AI's next answer.
+/// Allowed when the configuration sets AI too. Audited as
+/// `settings.ai_language`. Safe to repeat.
+#[utoipa::path(put, path = "/api/v1/settings/ai/language", tag = "settings",
+    request_body(content = ai::LanguageRequest, example = json!({ "language": "fr" })),
+    responses((status = 200, description = "The AI settings as they now stand", body = ai::AiView, example = ai_example)))]
+fn set_ai_language() {}
 
 /// Test AI settings
 ///
