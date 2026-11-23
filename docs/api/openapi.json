@@ -47854,7 +47854,7 @@
           "unobserved_seconds": {
             "type": "number",
             "format": "double",
-            "description": "Time the central server was not running, so nothing was watched:\nleft out of the count too, seconds (ADR-0173)."
+            "description": "Time the central server was not running, so nothing was watched:\nleft out of the count too, seconds (ADR-0176)."
           }
         }
       },

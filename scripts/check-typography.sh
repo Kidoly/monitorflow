@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 dash=$(printf '\xe2\x80\x94')
-if git grep -n -F -e "$dash" -- . ':!web/' ':!docs/guides/'; then
+if git grep -n -I -F -e "$dash" -- . ':!web/' ':!docs/guides/'; then
     echo "error: the lines above contain an em dash (U+2014); rewrite them" \
         "with a comma, colon, parentheses or a period" >&2
     exit 1

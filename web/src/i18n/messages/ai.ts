@@ -146,7 +146,7 @@ export const fr: Translation<typeof en> = {
   allowLabel: "Laisser l’IA lancer des commandes",
   allowTitle: "Laisser l’IA lancer des commandes sur un serveur",
   allowBody:
-    "Là où les commandes IA sont activées, l’IA lance aussi seule des vérifications en lecture et propose des corrections, qui attendent un approbateur. Activez-les pour tous les serveurs d’un coup ci-dessous, pour tout un site depuis la page du site, ou depuis la page de chaque serveur. Un serveur permet de les activer ainsi s’il a été installé avec « Autoriser l’activation des commandes IA depuis l’interface web », cochée par défaut ; sa page donne la ligne à lancer sur les autres.",
+    "Là où les commandes IA sont activées, l’IA lance aussi seule des vérifications en lecture et propose des corrections, qui attendent un approbateur. Activez-les pour tous les serveurs d’un coup ci-dessous, pour tout un site depuis la page du site, ou depuis la page de chaque serveur. Un serveur permet de les activer ainsi s’il a été installé avec « Autoriser l’activation des commandes IA depuis l’interface web », cochée par défaut ; sa page donne la ligne à lancer sur les autres.",
   accepting: {
     one: "{accepted} serveur sur {count} accepte les commandes IA.",
     other: "{accepted} serveurs sur {count} acceptent les commandes IA.",
