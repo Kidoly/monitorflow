@@ -305,7 +305,14 @@ pub async fn approve(
     let command = edited.as_deref().unwrap_or(&target.command);
     let rules =
         risk::store::rule_set(&state.pool, target.customer_id, Some(target.site_id)).await?;
-    let decision = risk::classify_for(target.shell, command, &rules);
+    let (decision, script) = crate::scripts::ai::classify_command(
+        &state.pool,
+        target.customer_id,
+        target.shell,
+        command,
+        &rules,
+    )
+    .await?;
     if decision.tier == Tier::Forbidden {
         let which = if edited.is_some() {
             "edited"
@@ -325,7 +332,12 @@ pub async fn approve(
         return Err(ApiError::Forbidden);
     }
     // It would only come back refused, with the incident gone to a person.
-    if let Some(refusal) = acceptance::shell_refusal(&state.pool, target.server_id).await? {
+    if script.is_some() {
+        // A library script (ADR-0179): the agent's report for scripts.
+        if let Some(why) = acceptance::script_refusal_of(&state.pool, target.server_id).await? {
+            return Err(ApiError::Conflict(why.into()));
+        }
+    } else if let Some(refusal) = acceptance::shell_refusal(&state.pool, target.server_id).await? {
         return Err(ApiError::Conflict(refusal.message().into()));
     }
     decide(

@@ -1,0 +1,126 @@
+/* The script library, its runs and automation rules (ADR-0179). */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px;
+}
+
+/* Fields side by side that wrap on a narrow screen; their controls share one baseline. */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-end;
+}
+
+.row > label {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+/* The script's text: as tall as its lines, so the page scrolls, never the box. */
+.code {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  overflow: hidden;
+  white-space: pre;
+  tab-size: 4;
+}
+
+/* Parameters: one row of controls each, under one header row. */
+.parameters {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(110px, 1.2fr) minmax(110px, 0.9fr) auto minmax(110px, 1fr) auto;
+  gap: 8px 10px;
+  align-items: center;
+}
+
+.parameters > .head {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* A choice parameter's list spans the row under its controls. */
+.parameters > .choices {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 720px) {
+  .parameters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .parameters > .head {
+    display: none;
+  }
+}
+
+/* Text kept as written: a script, a server's output. It wraps rather than scrolls. */
+.pre {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.output {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 8px;
+}
+
+.outputLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.sectionBody {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.serverList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.serverList label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 400;
+}

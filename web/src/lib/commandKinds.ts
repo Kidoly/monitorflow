@@ -6,7 +6,7 @@ import type { Server } from "./api";
 export type Acceptance = "accepted" | "off" | "unsupported" | "unknown";
 
 /** The kinds the summary names; AI commands (`shell`) have their own line and badge. */
-const KINDS = ["apply_updates", "configure_sources", "self_update"] as const;
+const KINDS = ["apply_updates", "configure_sources", "self_update", "run_script"] as const;
 
 /** `word` as the API gave it; anything else, or nothing, is unknown. */
 export function acceptance(word: string | null | undefined): Acceptance {

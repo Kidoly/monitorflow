@@ -34,6 +34,7 @@ import * as remediation from "./remediation";
 import * as reports from "./reports";
 import * as rollback from "./rollback";
 import * as rules from "./rules";
+import * as scripts from "./scripts";
 import * as sensors from "./sensors";
 import * as server from "./server";
 import * as serverUpdate from "./serverUpdate";
@@ -84,6 +85,7 @@ export const en = {
   reports: reports.en,
   rollback: rollback.en,
   rules: rules.en,
+  scripts: scripts.en,
   sensors: sensors.en,
   server: server.en,
   serverUpdate: serverUpdate.en,
@@ -133,6 +135,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   reports: reports.fr,
   rollback: rollback.fr,
   rules: rules.fr,
+  scripts: scripts.fr,
   sensors: sensors.fr,
   server: server.fr,
   serverUpdate: serverUpdate.fr,

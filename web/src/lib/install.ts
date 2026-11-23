@@ -114,12 +114,17 @@ export function linuxInstallCommand(
   origin: string,
   relay = "",
   aiFromWeb = false,
+  scripts = false,
 ): Command {
-  return installerCommand(target, source, origin, relay, aiFromWeb ? [FROM_WEB] : []);
+  const vars = [aiFromWeb && FROM_WEB, scripts && ALLOW_SCRIPTS].filter((v): v is string => Boolean(v));
+  return installerCommand(target, source, origin, relay, vars);
 }
 
 /** Lets the web interface turn the agent's AI commands on and off (ADR-0098). */
 const FROM_WEB = "MF_AI_COMMANDS_FROM_WEB=1";
+
+/** Lets the agent run scripts of the script library (ADR-0179); off by default. */
+const ALLOW_SCRIPTS = "MF_ALLOW_SCRIPTS=1";
 
 /**
  * The relay's command, as in docs/deploy-relay.md: the same installer with
@@ -265,6 +270,7 @@ export function windowsInstallCommand(
   origin: string,
   relay = "",
   aiFromWeb = false,
+  scripts = false,
 ): Command {
   const files = base(target.install, source, origin);
   if ("unavailable" in files) return files;
@@ -274,6 +280,7 @@ export function windowsInstallCommand(
     enroll && `ENROLL_URL=https://${enroll}`,
     `ENROLLMENT_TOKEN=${target.token}`,
     aiFromWeb && "AI_COMMANDS_FROM_WEB=1",
+    scripts && "ALLOW_SCRIPTS=1",
   ].filter(Boolean);
   const msiexec = `msiexec /i monitorflow-agent.msi /qn /l*v install.log \``;
   const central = target.install.central;

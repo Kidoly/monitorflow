@@ -274,6 +274,9 @@ const ROUTES: [RegExp, Handler][] = [
 
   // AI remediation and its audit log
   [/^\/api\/remediation\/approvals$/, () => ({ approvals: [APPROVAL] })],
+  [/^\/api\/remediation\/scripts$/, () => ({ scripts: [] })],
+  [/^\/api\/remediation\/script-runs$/, () => ({ runs: [] })],
+  [/^\/api\/remediation\/automation-rules$/, () => ({ rules: [] })],
   [/^\/api\/remediation\/incidents$/, (_, q) => {
     const alert = q.get("alert_incident_id");
     const list = REMEDIATIONS.filter((r) => !alert || r.alert_incident_id === alert);

@@ -52,6 +52,9 @@ pub enum Key {
     Shell,
     /// `from_web`: whether the web interface may turn them on.
     FromWeb,
+    /// `scripts`: library scripts (ADR-0179), `monitorflow-agent.exe
+    /// scripts on|off`.
+    Scripts,
 }
 
 impl Key {
@@ -59,6 +62,7 @@ impl Key {
         match self {
             Self::Shell => "shell",
             Self::FromWeb => "from_web",
+            Self::Scripts => "scripts",
         }
     }
 
@@ -66,6 +70,7 @@ impl Key {
         match self {
             Self::Shell => config.commands.shell,
             Self::FromWeb => config.commands.from_web,
+            Self::Scripts => config.commands.scripts,
         }
     }
 }
@@ -149,6 +154,22 @@ mod tests {
             !load(&std::fs::read_to_string(&path).unwrap())
                 .commands
                 .from_web
+        );
+    }
+
+    #[test]
+    fn allows_library_scripts_and_takes_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.toml");
+        std::fs::write(&path, WRITTEN).unwrap();
+        let (outcome, config) = set(&path, Key::Scripts, true).unwrap();
+        assert_eq!(outcome, Outcome::Changed);
+        assert!(config.commands.scripts && !config.commands.shell);
+        assert_eq!(set(&path, Key::Scripts, false).unwrap().0, Outcome::Changed);
+        assert!(
+            !load(&std::fs::read_to_string(&path).unwrap())
+                .commands
+                .scripts
         );
     }
 

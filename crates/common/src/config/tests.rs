@@ -1050,6 +1050,17 @@ fn agent_switch_from_web_is_off_unless_allowed() {
 }
 
 #[test]
+fn agent_library_scripts_are_off_unless_enabled() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert!(!agent.commands.scripts);
+    let text = format!("{AGENT_MIN}\n[commands]\nscripts = true\n");
+    assert!(parse::<AgentConfig>(&text).unwrap().commands.scripts);
+    let vars = [("MONITORFLOW_COMMANDS_SCRIPTS", "true")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert!(agent.commands.scripts);
+}
+
+#[test]
 fn remediation_limits_default_and_validate() {
     let server: ServerConfig = parse(SERVER_MIN).unwrap();
     assert_eq!(server.remediation, RemediationConfig::default());

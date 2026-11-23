@@ -16,6 +16,8 @@ pub const REVERT_SOURCES: &str = "revert_sources";
 pub const SHELL: &str = "shell";
 /// Kind of [`crate::proto::v1::AiCommandsSwitch`] commands (ADR-0098).
 pub const AI_COMMANDS: &str = "ai_commands";
+/// Kind of [`crate::proto::v1::RunScript`] commands (ADR-0179).
+pub const RUN_SCRIPT: &str = "run_script";
 /// Kind of [`crate::proto::v1::SelfUpdate`] commands (ADR-0053).
 pub const SELF_UPDATE: &str = "self_update";
 /// Kind of [`crate::proto::v1::TakeSnapshot`] commands (ADR-0094).

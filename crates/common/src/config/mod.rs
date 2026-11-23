@@ -551,6 +551,10 @@ pub struct AgentCommandsConfig {
     /// Lets the central server turn `shell` on and off (ADR-0098). It
     /// can always turn it off; without this, never on.
     pub from_web: bool,
+    /// Runs `run_script` commands, scripts of the central server's
+    /// library, as the agent's user (ADR-0179). Off unless enabled here:
+    /// the server cannot turn it on.
+    pub scripts: bool,
 }
 
 /// Package reports and updates (ADR-0031).
@@ -721,6 +725,7 @@ impl LoadConfig for AgentConfig {
         )?;
         env.set("commands.shell", &mut self.commands.shell)?;
         env.set("commands.from_web", &mut self.commands.from_web)?;
+        env.set("commands.scripts", &mut self.commands.scripts)?;
         if let Some(dirs) = env.list("sensors.log_dirs") {
             self.sensors.log_dirs = dirs.into_iter().map(PathBuf::from).collect();
         }

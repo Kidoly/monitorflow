@@ -103,6 +103,11 @@ upstream_url = "https://relay.example.com:7443"
 # the web interface (ADR-0098). Without it the web interface can only turn
 # it off. The installer's MF_AI_COMMANDS_FROM_WEB sets it.
 # from_web = false
+# Run scripts of the central server's script library (ADR-0179), with
+# /bin/sh -c as the agent's user, never as root. Off unless enabled here;
+# the web interface cannot turn it on. The installer's MF_ALLOW_SCRIPTS
+# sets it.
+# scripts = false
 
 [plugins]
 # Run the check plugins the central server gives this machine (ADR-0103):

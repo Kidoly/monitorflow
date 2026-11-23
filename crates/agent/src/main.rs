@@ -91,6 +91,15 @@ enum Command {
         #[command(subcommand)]
         action: AiCommandsAction,
     },
+    /// Let this agent run scripts of the central server's script library,
+    /// or stop it (ADR-0179): sets `commands.scripts` in `--config`,
+    /// keeping the rest of the file. The web interface cannot turn it on.
+    /// Restart the MonitorFlowAgent service afterwards.
+    #[cfg(windows)]
+    Scripts {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
     /// Check that only administrators and the agent's service own the
     /// folder of `--config` and what it holds, and may write there; the MSI
     /// package runs this before it writes the configuration (ADR-0050).
@@ -263,6 +272,10 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
             return set_ai_commands(&cli.config, action).await;
         }
         #[cfg(windows)]
+        Some(Command::Scripts { state }) => {
+            return set_scripts(&cli.config, state == OnOff::On).await;
+        }
+        #[cfg(windows)]
         Some(Command::CheckDataFolder) => {
             use monitorflow_agent::packages::windows_update::{service_sid, AGENT_SERVICE};
 
@@ -336,15 +349,40 @@ async fn set_ai_commands(path: &Path, action: AiCommandsAction) -> anyhow::Resul
                     )
                 })?
         }
-        Key::FromWeb => false,
+        Key::FromWeb | Key::Scripts => false,
     };
     let what = match (key, on) {
         (Key::Shell, true) => "AI commands are on",
         (Key::Shell, false) => "AI commands are off",
         (Key::FromWeb, true) => "the web interface may turn AI commands on and off",
         (Key::FromWeb, false) => "the web interface may only turn AI commands off",
+        (Key::Scripts, _) => unreachable!("set by `scripts`"),
     };
     if outcome == Outcome::Unchanged && !forgot {
+        println!("{what} already ({})", path.display());
+    } else {
+        println!(
+            "{what} in {}; restart the agent to apply it: Restart-Service MonitorFlowAgent",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// `scripts on|off`: sets `commands.scripts` in the configuration file.
+#[cfg(windows)]
+async fn set_scripts(path: &Path, on: bool) -> anyhow::Result<()> {
+    use monitorflow_agent::ai_commands::{self, Key, Outcome};
+
+    let file = path.to_owned();
+    let (outcome, _) =
+        tokio::task::spawn_blocking(move || ai_commands::set(&file, Key::Scripts, on)).await??;
+    let what = if on {
+        "library scripts are allowed"
+    } else {
+        "library scripts are refused"
+    };
+    if outcome == Outcome::Unchanged {
         println!("{what} already ({})", path.display());
     } else {
         println!(
@@ -436,6 +474,12 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     let mut handlers = Handlers::default();
     let latest_report = platform_handlers(&config, &host, &mut handlers, &stop);
     let ai_switch = ai_handlers(&config, &mut handlers);
+    handlers.register(
+        monitorflow_common::command::RUN_SCRIPT,
+        Arc::new(monitorflow_agent::commands::script::ScriptHandler::new(
+            config.commands.scripts,
+        )),
+    );
     let reporting = handlers.clone();
     let (commands_stream, commands_end) = commands::link();
     let ca_certs =

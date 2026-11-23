@@ -22,8 +22,9 @@ pub struct Limits {
     pub shell: Shell,
 }
 
-/// The server's instructions for one step.
-pub fn system(limits: Limits) -> String {
+/// The server's instructions for one step. `scripts` describes the
+/// library scripts the AI may propose (ADR-0179), empty without any.
+pub fn system(limits: Limits, scripts: &str) -> String {
     let timeout = limits.command_timeout.as_secs();
     let commands = match limits.shell {
         Shell::Posix => posix(timeout),
@@ -38,7 +39,7 @@ that.
 fixed; the incident closes when the sensor confirms it. Stop with \
 \"escalate\" when a human must act: the fix needs privileges, judgment or \
 access you do not have, or you are unsure.
-
+{scripts}
 {DATA_RULES}",
         max = limits.max_commands,
         left = limits.commands_left,
@@ -170,7 +171,7 @@ mod tests {
     #[test]
     fn the_prompt_states_the_limits() {
         for shell in [Shell::Posix, Shell::PowerShell] {
-            let prompt = system(limits(shell));
+            let prompt = system(limits(shell), "");
             assert!(prompt.contains("killed"), "{prompt}");
             assert!(prompt.contains("after 120 seconds"), "{prompt}");
             assert!(prompt.contains("At most 10 commands run for this incident; 4 remain"));
@@ -181,10 +182,10 @@ mod tests {
 
     #[test]
     fn the_prompt_follows_the_server_shell() {
-        let linux = system(limits(Shell::Posix));
+        let linux = system(limits(Shell::Posix), "");
         assert!(linux.contains("one Linux server") && linux.contains("/bin/sh -c"));
         assert!(!linux.contains("PowerShell"));
-        let windows = system(limits(Shell::PowerShell));
+        let windows = system(limits(Shell::PowerShell), "");
         assert!(windows.contains("one Windows server"), "{windows}");
         assert!(windows.contains("Windows PowerShell 5.1"));
         assert!(windows.contains(r"NT SERVICE\MonitorFlowAgent"));
@@ -206,7 +207,18 @@ mod tests {
         let windows = diagnosis_only("x", Shell::PowerShell);
         assert!(windows.contains("Windows PowerShell 5.1"));
         // The same rules as the other prompt.
-        assert!(system(limits(Shell::Posix)).ends_with(DATA_RULES));
+        assert!(system(limits(Shell::Posix), "").ends_with(DATA_RULES));
+    }
+
+    #[test]
+    fn library_scripts_come_before_the_data_rules() {
+        let prompt = system(
+            limits(Shell::Posix),
+            "\nLibrary scripts:\n- clear-cache: x\n",
+        );
+        let scripts = prompt.find("Library scripts:").unwrap();
+        assert!(scripts < prompt.find("Data rules:").unwrap(), "{prompt}");
+        assert!(prompt.ends_with(DATA_RULES));
     }
 
     /// The examples the Windows prompt gives pass its own rules.

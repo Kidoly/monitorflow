@@ -213,6 +213,20 @@ export function campaignHref(id: string): string {
 export const APPROVALS_PATH = "/remediation/approvals/";
 export const AUDIT_PATH = "/remediation/audit/";
 
+/** The script library and automation rules (ADR-0179). */
+export const SCRIPTS_PATH = "/remediation/scripts/";
+export const AUTOMATION_PATH = "/remediation/automation/";
+
+/** Link to the page of the library script `id`. */
+export function scriptHref(id: string): string {
+  return `/remediation/scripts/view/?id=${encodeURIComponent(id)}`;
+}
+
+/** Link to the page of the script run `id`, with each server's output. */
+export function scriptRunHref(id: string): string {
+  return `/remediation/runs/view/?id=${encodeURIComponent(id)}`;
+}
+
 /** Link to the remediation audit log, filtered to one incident when given. */
 export function auditHref(filters: { incident?: string } = {}): string {
   return filters.incident ? `${AUDIT_PATH}?incident=${encodeURIComponent(filters.incident)}` : AUDIT_PATH;

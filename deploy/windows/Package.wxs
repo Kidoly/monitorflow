@@ -15,6 +15,9 @@
     AI_COMMANDS_FROM_WEB=1  let the web interface turn AI commands on and
                       off (commands.from_web in agent.toml, ADR-0098), on a
                       new install or an upgrade
+    ALLOW_SCRIPTS=1   let the agent run scripts of the script library
+                      (commands.scripts in agent.toml, ADR-0179), on a new
+                      install or an upgrade
     REMOVE_DATA=1     on uninstall, also delete %ProgramData%\MonitorFlow
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
@@ -42,6 +45,7 @@
     <Property Id="ENROLLMENT_TOKEN" Secure="yes" Hidden="yes" />
     <Property Id="REMOVE_DATA" Secure="yes" />
     <Property Id="AI_COMMANDS_FROM_WEB" Secure="yes" />
+    <Property Id="ALLOW_SCRIPTS" Secure="yes" />
 
     <Feature Id="Agent" Title="MonitorFlow agent">
       <ComponentGroupRef Id="AgentProgram" />
@@ -175,11 +179,18 @@
     <CustomAction Id="AllowAiCommandsFromWeb" FileRef="AgentExe" Execute="deferred" Impersonate="no"
                   Return="check"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; ai-commands from-web on" />
+    <!-- ALLOW_SCRIPTS=1: lets the agent run scripts of the script library
+         (commands.scripts, ADR-0179), as `scripts on` does. -->
+    <CustomAction Id="AllowScripts" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; scripts on" />
     <InstallExecuteSequence>
       <Custom Action="CheckDataFolder" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="WriteAgentConfig" After="CheckDataFolder" Condition="UPSTREAM_URL AND NOT REMOVE" />
       <Custom Action="AllowAiCommandsFromWeb" After="WriteAgentConfig"
               Condition="AI_COMMANDS_FROM_WEB = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
+      <Custom Action="AllowScripts" After="AllowAiCommandsFromWeb"
+              Condition="ALLOW_SCRIPTS = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

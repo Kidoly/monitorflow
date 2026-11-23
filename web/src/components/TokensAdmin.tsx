@@ -626,6 +626,9 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   // Ticked by default (ADR-0175): the server's page can then turn AI
   // commands on; nothing runs until someone does.
   const [aiFromWeb, setAiFromWeb] = useState(true);
+  // Off by default (ADR-0179): scripts run code of the central server's
+  // people on the host, which its administrator must choose.
+  const [scripts, setScripts] = useState(false);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
   const origin = pageOrigin();
@@ -633,12 +636,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
     {
       name: "Linux",
       note: t("install.linux.note"),
-      command: linuxInstallCommand(token, source, origin, through, aiFromWeb),
+      command: linuxInstallCommand(token, source, origin, through, aiFromWeb, scripts),
     },
     {
       name: "Windows",
       note: t("install.windows.note"),
-      command: windowsInstallCommand(token, source, origin, through, aiFromWeb),
+      command: windowsInstallCommand(token, source, origin, through, aiFromWeb, scripts),
     },
   ];
   // One note when both commands are missing for the same reason.
@@ -679,6 +682,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
         </p>
       )}
       <Switch checked={aiFromWeb} onChange={setAiFromWeb} label={t("install.agent.aiFromWeb")} note={t("install.agent.aiFromWebNote")} />
+      <Switch checked={scripts} onChange={setScripts} label={t("install.agent.scripts")} note={t("install.agent.scriptsNote")} />
       {shared ? (
         <Banner tone="warn">{shared}</Banner>
       ) : (

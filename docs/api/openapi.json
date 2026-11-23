@@ -29551,6 +29551,743 @@
         }
       }
     },
+    "/api/v1/remediation/automation-rules": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "List automation rules",
+        "description": "Rules whose place (everything, a customer or a site) the caller reads, by name. A rule runs its script on a server when an incident opens there (`incident_opened`, of any metric but `offline`, or of `metric`), when its check `metric` fails (`check_failed`), or when it joins (`server_joined`, a first enrollment). Each run is classified as an AI command: read-only runs at once, low impact when the site lets AI changes run on their own, the rest waits for approval. At most one run per server per `cooldown_minutes`, and 50 per rule per hour.\n\n**Who**: any role. **Area**: `remediation`.",
+        "operationId": "list_rules",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Rules of this customer: of the customer as a whole and of its\nsites.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "script_id",
+            "in": "query",
+            "description": "Rules running this script.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationRuleList"
+                },
+                "example": {
+                  "rules": [
+                    {
+                      "can_manage": true,
+                      "cooldown_minutes": 60,
+                      "created_at": "2026-12-04T09:00:00Z",
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "enabled": true,
+                      "event": "incident_opened",
+                      "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "metric": "monitorflow_disk_used_ratio",
+                      "name": "Clear the cache when /var fills",
+                      "parameters": {
+                        "days": "3"
+                      },
+                      "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                      "script_name": "clear-app-cache",
+                      "site_id": null,
+                      "updated_at": "2026-12-04T09:00:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A customer the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Add an automation rule",
+        "description": "Adds a rule. It takes only events after it was made. Its script must be one of every customer, or the customer's own for a rule of that customer or one of its sites; the values given must suit its parameters.\n\n**Who**: administrator of the place: of everything, of the customer as a whole, or of the site. **Area**: `remediation`. Audited as `automation_rule.create`.",
+        "operationId": "create_rule",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutomationRuleRequest"
+              },
+              "example": {
+                "cooldown_minutes": 60,
+                "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                "enabled": true,
+                "event": "incident_opened",
+                "metric": "monitorflow_disk_used_ratio",
+                "name": "Clear the cache when /var fills",
+                "parameters": {
+                  "days": "3"
+                },
+                "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationRuleDetail"
+                },
+                "example": {
+                  "firings": [],
+                  "rule": {
+                    "can_manage": true,
+                    "cooldown_minutes": 60,
+                    "created_at": "2026-12-04T09:00:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "enabled": true,
+                    "event": "incident_opened",
+                    "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                    "metric": "monitorflow_disk_used_ratio",
+                    "name": "Clear the cache when /var fills",
+                    "parameters": {
+                      "days": "3"
+                    },
+                    "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "script_name": "clear-app-cache",
+                    "site_id": null,
+                    "updated_at": "2026-12-04T09:00:00Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No name, both a customer and a site, a missing or stray metric, a cooldown out of range, another customer's script or bad parameters: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the place: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A place or script the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/automation-rules/{id}": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Get an automation rule and its last firings",
+        "description": "The rule and the last 50 events it took, with the run each made or why it made none (cooldown, hourly limit, a script deleted or for another system).\n\n**Who**: any role reading its place. **Area**: `remediation`.",
+        "operationId": "rule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The rule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationRuleDetail"
+                },
+                "example": {
+                  "firings": [
+                    {
+                      "created_at": "2026-12-04T13:40:05Z",
+                      "event_id": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                      "hostname": "web-1",
+                      "run_id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "skipped": null
+                    }
+                  ],
+                  "rule": {
+                    "can_manage": true,
+                    "cooldown_minutes": 60,
+                    "created_at": "2026-12-04T09:00:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "enabled": true,
+                    "event": "incident_opened",
+                    "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                    "metric": "monitorflow_disk_used_ratio",
+                    "name": "Clear the cache when /var fills",
+                    "parameters": {
+                      "days": "3"
+                    },
+                    "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "script_name": "clear-app-cache",
+                    "site_id": null,
+                    "updated_at": "2026-12-04T09:00:00Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such rule, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Change an automation rule",
+        "description": "Replaces every field, as for adding; `enabled: false` pauses it.\n\n**Who**: administrator of the place it has and of the one it gets. **Area**: `remediation`. Audited as `automation_rule.update`.",
+        "operationId": "update_rule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The rule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutomationRuleRequest"
+              },
+              "example": {
+                "cooldown_minutes": 60,
+                "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                "enabled": true,
+                "event": "incident_opened",
+                "metric": "monitorflow_disk_used_ratio",
+                "name": "Clear the cache when /var fills",
+                "parameters": {
+                  "days": "3"
+                },
+                "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationRuleDetail"
+                },
+                "example": {
+                  "firings": [
+                    {
+                      "created_at": "2026-12-04T13:40:05Z",
+                      "event_id": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                      "hostname": "web-1",
+                      "run_id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "skipped": null
+                    }
+                  ],
+                  "rule": {
+                    "can_manage": true,
+                    "cooldown_minutes": 60,
+                    "created_at": "2026-12-04T09:00:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "enabled": true,
+                    "event": "incident_opened",
+                    "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                    "metric": "monitorflow_disk_used_ratio",
+                    "name": "Clear the cache when /var fills",
+                    "parameters": {
+                      "days": "3"
+                    },
+                    "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "script_name": "clear-app-cache",
+                    "site_id": null,
+                    "updated_at": "2026-12-04T09:00:00Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As for adding: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the place: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such rule: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Delete an automation rule",
+        "description": "The rule stops; the runs it made are kept.\n\n**Who**: administrator of the place. **Area**: `remediation`. Audited as `automation_rule.delete`.",
+        "operationId": "delete_rule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The rule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the place: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such rule: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/remediation/classify": {
       "post": {
         "tags": [
@@ -30963,6 +31700,2099 @@
           },
           "409": {
             "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/script-runs": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "List script runs",
+        "description": "Runs the caller reads every server of, newest first, with how their servers are doing. `state=awaiting_approval` is the approval queue of scripts.\n\n**Who**: any role. **Area**: `remediation`.",
+        "operationId": "list_runs",
+        "parameters": [
+          {
+            "name": "script_id",
+            "in": "query",
+            "description": "Runs of this script.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Runs on this server.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "rule_id",
+            "in": "query",
+            "description": "Runs of this automation rule.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "`awaiting_approval`, `scheduled`, `dispatched`, `rejected`,\n`expired`, `cancelled` or `refused`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most 200, the default.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRunList"
+                },
+                "example": {
+                  "runs": [
+                    {
+                      "can_approve": true,
+                      "can_cancel": true,
+                      "can_reject": true,
+                      "counts": {
+                        "failed": 0,
+                        "pending": 2,
+                        "servers": 2,
+                        "succeeded": 0
+                      },
+                      "created_at": "2026-12-04T10:15:00Z",
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "decided_at": null,
+                      "decided_by": null,
+                      "decided_by_name": null,
+                      "decision_reason": null,
+                      "dispatched_at": null,
+                      "expires_at": "2026-12-05T10:15:00Z",
+                      "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                      "interpreter": "sh",
+                      "parameters": {
+                        "days": "14"
+                      },
+                      "reason": "line 2: `find` with -delete outside a cache directory is not known",
+                      "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                      "requested_by_name": "bob",
+                      "rule": {
+                        "id": "default.unknown",
+                        "source": "builtin"
+                      },
+                      "rule_id": null,
+                      "rule_name": null,
+                      "scheduled_at": "2026-12-04T22:00:00Z",
+                      "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                      "script_name": "clear-app-cache",
+                      "state": "awaiting_approval",
+                      "target": {
+                        "kind": "site",
+                        "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                      },
+                      "tier": "high_impact",
+                      "trigger": null,
+                      "version": 2
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter or state: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A server the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/script-runs/{id}": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Get a script run and its output",
+        "description": "The run, the exact text it runs, and each server's state and output (the last 64 KiB of stdout and stderr, the exit code, or why it was skipped).\n\n**Who**: any role reading every server of the run. **Area**: `remediation`.",
+        "operationId": "script_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The run",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRunDetail"
+                },
+                "example": {
+                  "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                  "run": {
+                    "can_approve": false,
+                    "can_cancel": false,
+                    "can_reject": false,
+                    "counts": {
+                      "failed": 1,
+                      "pending": 0,
+                      "servers": 2,
+                      "succeeded": 1
+                    },
+                    "created_at": "2026-12-04T10:15:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "decided_at": "2026-12-04T11:02:00Z",
+                    "decided_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                    "decided_by_name": "alice",
+                    "decision_reason": null,
+                    "dispatched_at": "2026-12-04T22:00:02Z",
+                    "expires_at": null,
+                    "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                    "interpreter": "sh",
+                    "parameters": {
+                      "days": "14"
+                    },
+                    "reason": "line 2: `find` with -delete outside a cache directory is not known",
+                    "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                    "requested_by_name": "bob",
+                    "rule": {
+                      "id": "default.unknown",
+                      "source": "builtin"
+                    },
+                    "rule_id": null,
+                    "rule_name": null,
+                    "scheduled_at": "2026-12-04T22:00:00Z",
+                    "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "script_name": "clear-app-cache",
+                    "state": "dispatched",
+                    "target": {
+                      "kind": "site",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    },
+                    "tier": "high_impact",
+                    "trigger": null,
+                    "version": 2
+                  },
+                  "servers": [
+                    {
+                      "command_id": "c0ffee00-1234-4abc-8def-0123456789ab",
+                      "error": null,
+                      "exit_code": 0,
+                      "finished_at": "2026-12-04T22:00:05Z",
+                      "hostname": "web-1",
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": "2026-12-04T22:00:03Z",
+                      "status": "succeeded",
+                      "stderr": "",
+                      "stdout": "Filesystem  Size  Used Avail Use% Mounted on\n/dev/sda3    40G   21G   17G  56% /var\n"
+                    },
+                    {
+                      "command_id": null,
+                      "error": "library scripts are off on this server; run the installer there with MF_ALLOW_SCRIPTS=1",
+                      "exit_code": null,
+                      "finished_at": null,
+                      "hostname": "web-2",
+                      "server_id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": null,
+                      "status": "skipped",
+                      "stderr": null,
+                      "stdout": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/script-runs/{id}/approve": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Approve a script run",
+        "description": "Lets a run waiting for approval go: it is sent at once, or at its time. It is classified again first: a run the rules now forbid is 409, and the role needed is that of the higher of its two tiers.\n\n**Who**: approver (`read_only`, `low_impact`) or administrator (`high_impact`) on every server's site. **Area**: `remediation`. Audited as `script_run.approve`.",
+        "operationId": "approve_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The run",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRunDetail"
+                },
+                "example": {
+                  "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                  "run": {
+                    "can_approve": false,
+                    "can_cancel": false,
+                    "can_reject": false,
+                    "counts": {
+                      "failed": 1,
+                      "pending": 0,
+                      "servers": 2,
+                      "succeeded": 1
+                    },
+                    "created_at": "2026-12-04T10:15:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "decided_at": "2026-12-04T11:02:00Z",
+                    "decided_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                    "decided_by_name": "alice",
+                    "decision_reason": null,
+                    "dispatched_at": "2026-12-04T22:00:02Z",
+                    "expires_at": null,
+                    "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                    "interpreter": "sh",
+                    "parameters": {
+                      "days": "14"
+                    },
+                    "reason": "line 2: `find` with -delete outside a cache directory is not known",
+                    "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                    "requested_by_name": "bob",
+                    "rule": {
+                      "id": "default.unknown",
+                      "source": "builtin"
+                    },
+                    "rule_id": null,
+                    "rule_name": null,
+                    "scheduled_at": "2026-12-04T22:00:00Z",
+                    "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "script_name": "clear-app-cache",
+                    "state": "dispatched",
+                    "target": {
+                      "kind": "site",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    },
+                    "tier": "high_impact",
+                    "trigger": null,
+                    "version": 2
+                  },
+                  "servers": [
+                    {
+                      "command_id": "c0ffee00-1234-4abc-8def-0123456789ab",
+                      "error": null,
+                      "exit_code": 0,
+                      "finished_at": "2026-12-04T22:00:05Z",
+                      "hostname": "web-1",
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": "2026-12-04T22:00:03Z",
+                      "status": "succeeded",
+                      "stderr": "",
+                      "stdout": "Filesystem  Size  Used Avail Use% Mounted on\n/dev/sda3    40G   21G   17G  56% /var\n"
+                    },
+                    {
+                      "command_id": null,
+                      "error": "library scripts are off on this server; run the installer there with MF_ALLOW_SCRIPTS=1",
+                      "exit_code": null,
+                      "finished_at": null,
+                      "hostname": "web-2",
+                      "server_id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": null,
+                      "status": "skipped",
+                      "stderr": null,
+                      "stdout": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Access too low for its tier: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not waiting for approval, or now forbidden: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/script-runs/{id}/cancel": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Cancel a script run",
+        "description": "Cancels a run that waits for approval or for its time. Commands already sent are not recalled.\n\n**Who**: the person who asked for it, or an approver or above on every server's site. **Area**: `remediation`. Audited as `script_run.cancel`.",
+        "operationId": "cancel_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The run",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRunDetail"
+                },
+                "example": {
+                  "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                  "run": {
+                    "can_approve": false,
+                    "can_cancel": false,
+                    "can_reject": false,
+                    "counts": {
+                      "failed": 0,
+                      "pending": 2,
+                      "servers": 2,
+                      "succeeded": 0
+                    },
+                    "created_at": "2026-12-04T10:15:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "decided_at": null,
+                    "decided_by": null,
+                    "decided_by_name": null,
+                    "decision_reason": null,
+                    "dispatched_at": null,
+                    "expires_at": null,
+                    "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                    "interpreter": "sh",
+                    "parameters": {
+                      "days": "14"
+                    },
+                    "reason": "line 2: `find` with -delete outside a cache directory is not known",
+                    "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                    "requested_by_name": "bob",
+                    "rule": {
+                      "id": "default.unknown",
+                      "source": "builtin"
+                    },
+                    "rule_id": null,
+                    "rule_name": null,
+                    "scheduled_at": "2026-12-04T22:00:00Z",
+                    "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "script_name": "clear-app-cache",
+                    "state": "cancelled",
+                    "target": {
+                      "kind": "site",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    },
+                    "tier": "high_impact",
+                    "trigger": null,
+                    "version": 2
+                  },
+                  "servers": [
+                    {
+                      "command_id": null,
+                      "error": null,
+                      "exit_code": null,
+                      "finished_at": null,
+                      "hostname": "web-1",
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": null,
+                      "status": "waiting",
+                      "stderr": null,
+                      "stdout": null
+                    },
+                    {
+                      "command_id": null,
+                      "error": null,
+                      "exit_code": null,
+                      "finished_at": null,
+                      "hostname": "web-2",
+                      "server_id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": null,
+                      "status": "waiting",
+                      "stderr": null,
+                      "stdout": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Neither its requester nor an approver: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Sent, or ended already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/script-runs/{id}/reject": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Reject a script run",
+        "description": "Drops a run waiting for approval, saying why.\n\n**Who**: approver or above on every server's site. **Area**: `remediation`. Audited as `script_run.reject`.",
+        "operationId": "reject_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The run",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptRunRejectRequest"
+              },
+              "example": {
+                "reason": "Not during the sale; schedule it for Sunday night."
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRunDetail"
+                },
+                "example": {
+                  "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                  "run": {
+                    "can_approve": false,
+                    "can_cancel": false,
+                    "can_reject": false,
+                    "counts": {
+                      "failed": 0,
+                      "pending": 2,
+                      "servers": 2,
+                      "succeeded": 0
+                    },
+                    "created_at": "2026-12-04T10:15:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "decided_at": null,
+                    "decided_by": null,
+                    "decided_by_name": null,
+                    "decision_reason": null,
+                    "dispatched_at": null,
+                    "expires_at": null,
+                    "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                    "interpreter": "sh",
+                    "parameters": {
+                      "days": "14"
+                    },
+                    "reason": "line 2: `find` with -delete outside a cache directory is not known",
+                    "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                    "requested_by_name": "bob",
+                    "rule": {
+                      "id": "default.unknown",
+                      "source": "builtin"
+                    },
+                    "rule_id": null,
+                    "rule_name": null,
+                    "scheduled_at": "2026-12-04T22:00:00Z",
+                    "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "script_name": "clear-app-cache",
+                    "state": "rejected",
+                    "target": {
+                      "kind": "site",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    },
+                    "tier": "high_impact",
+                    "trigger": null,
+                    "version": 2
+                  },
+                  "servers": [
+                    {
+                      "command_id": null,
+                      "error": null,
+                      "exit_code": null,
+                      "finished_at": null,
+                      "hostname": "web-1",
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": null,
+                      "status": "waiting",
+                      "stderr": null,
+                      "stdout": null
+                    },
+                    {
+                      "command_id": null,
+                      "error": null,
+                      "exit_code": null,
+                      "finished_at": null,
+                      "hostname": "web-2",
+                      "server_id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": null,
+                      "status": "waiting",
+                      "stderr": null,
+                      "stdout": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No reason, or one over 1000 characters: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an approver there: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not waiting for approval: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/scripts": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "List library scripts",
+        "description": "The live scripts the caller can use: those of every customer and those of the customers the caller reads, by name. With `customer_id`, those that customer's servers can run.\n\n**Who**: any role. **Area**: `remediation`.",
+        "operationId": "list_scripts",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only the scripts this customer can use: its own and those of\nevery customer.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The scripts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptList"
+                },
+                "example": {
+                  "scripts": [
+                    {
+                      "ai_allowed": true,
+                      "can_manage": true,
+                      "created_at": "2026-12-01T09:00:00Z",
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "deleted_at": null,
+                      "description": "Deletes cached files older than the given number of days.",
+                      "id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                      "interpreter": "sh",
+                      "name": "clear-app-cache",
+                      "parameters": [
+                        {
+                          "choices": [],
+                          "default": "7",
+                          "label": "Older than (days)",
+                          "name": "days",
+                          "required": true,
+                          "type": "integer"
+                        }
+                      ],
+                      "run_role": "operator",
+                      "timeout_s": 600,
+                      "updated_at": "2026-12-03T14:12:00Z",
+                      "version": 2
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A customer the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Add a script",
+        "description": "Adds a script and its first version. A script of every customer (`customer_id` null) is for administrators of everything; a customer's own is for administrators of that customer as a whole. `run_role` is the least role that may run it; `ai_allowed` lets the AI propose it as a fix during remediation, classified and approved like its other commands.\n\n**Who**: administrator, as above. **Area**: `remediation`. Audited as `script.create`.",
+        "operationId": "create_script",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptRequest"
+              },
+              "example": {
+                "ai_allowed": true,
+                "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                "description": "Deletes cached files older than the given number of days.",
+                "interpreter": "sh",
+                "name": "clear-app-cache",
+                "note": "Show the free space after",
+                "parameters": [
+                  {
+                    "choices": [],
+                    "default": "7",
+                    "label": "Older than (days)",
+                    "name": "days",
+                    "required": true,
+                    "type": "integer"
+                  }
+                ],
+                "run_role": "operator",
+                "timeout_s": 600
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptDetail"
+                },
+                "example": {
+                  "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                  "script": {
+                    "ai_allowed": true,
+                    "can_manage": true,
+                    "created_at": "2026-12-01T09:00:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "deleted_at": null,
+                    "description": "Deletes cached files older than the given number of days.",
+                    "id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "interpreter": "sh",
+                    "name": "clear-app-cache",
+                    "parameters": [
+                      {
+                        "choices": [],
+                        "default": "7",
+                        "label": "Older than (days)",
+                        "name": "days",
+                        "required": true,
+                        "type": "integer"
+                      }
+                    ],
+                    "run_role": "operator",
+                    "timeout_s": 600,
+                    "updated_at": "2026-12-03T14:12:00Z",
+                    "version": 2
+                  },
+                  "versions": [
+                    {
+                      "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                      "created_at": "2026-12-03T14:12:00Z",
+                      "created_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                      "created_by_name": "alice",
+                      "note": "Show the free space after",
+                      "parameters": [
+                        {
+                          "choices": [],
+                          "default": "7",
+                          "label": "Older than (days)",
+                          "name": "days",
+                          "required": true,
+                          "type": "integer"
+                        }
+                      ],
+                      "version": 2
+                    },
+                    {
+                      "body": "find /var/cache/app -mindepth 1 -mtime +7 -delete\n",
+                      "created_at": "2026-12-01T09:00:00Z",
+                      "created_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                      "created_by_name": "alice",
+                      "note": "",
+                      "parameters": [],
+                      "version": 1
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A bad name, an empty or too long text, bad parameters, a viewer `run_role` or a timeout out of range: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator there: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A customer the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A live script of that name exists already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/scripts/{id}": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Get a script and its versions",
+        "description": "The script, its current text and every version, newest first. A deleted script is still shown, with `deleted_at`, for its runs.\n\n**Who**: any role reading its customer. **Area**: `remediation`.",
+        "operationId": "script",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The script",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptDetail"
+                },
+                "example": {
+                  "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                  "script": {
+                    "ai_allowed": true,
+                    "can_manage": true,
+                    "created_at": "2026-12-01T09:00:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "deleted_at": null,
+                    "description": "Deletes cached files older than the given number of days.",
+                    "id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "interpreter": "sh",
+                    "name": "clear-app-cache",
+                    "parameters": [
+                      {
+                        "choices": [],
+                        "default": "7",
+                        "label": "Older than (days)",
+                        "name": "days",
+                        "required": true,
+                        "type": "integer"
+                      }
+                    ],
+                    "run_role": "operator",
+                    "timeout_s": 600,
+                    "updated_at": "2026-12-03T14:12:00Z",
+                    "version": 2
+                  },
+                  "versions": [
+                    {
+                      "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                      "created_at": "2026-12-03T14:12:00Z",
+                      "created_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                      "created_by_name": "alice",
+                      "note": "Show the free space after",
+                      "parameters": [
+                        {
+                          "choices": [],
+                          "default": "7",
+                          "label": "Older than (days)",
+                          "name": "days",
+                          "required": true,
+                          "type": "integer"
+                        }
+                      ],
+                      "version": 2
+                    },
+                    {
+                      "body": "find /var/cache/app -mindepth 1 -mtime +7 -delete\n",
+                      "created_at": "2026-12-01T09:00:00Z",
+                      "created_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                      "created_by_name": "alice",
+                      "note": "",
+                      "parameters": [],
+                      "version": 1
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such script, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Change a script",
+        "description": "Replaces every field. A new text or new parameters make a new version, the earlier ones are kept; other fields change in place. `customer_id` must stay what it is. Runs already made keep the version they named.\n\n**Who**: administrator, as for adding. **Area**: `remediation`. Audited as `script.update`.",
+        "operationId": "update_script",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The script",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptRequest"
+              },
+              "example": {
+                "ai_allowed": true,
+                "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                "description": "Deletes cached files older than the given number of days.",
+                "interpreter": "sh",
+                "name": "clear-app-cache",
+                "note": "Show the free space after",
+                "parameters": [
+                  {
+                    "choices": [],
+                    "default": "7",
+                    "label": "Older than (days)",
+                    "name": "days",
+                    "required": true,
+                    "type": "integer"
+                  }
+                ],
+                "run_role": "operator",
+                "timeout_s": 600
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptDetail"
+                },
+                "example": {
+                  "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                  "script": {
+                    "ai_allowed": true,
+                    "can_manage": true,
+                    "created_at": "2026-12-01T09:00:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "deleted_at": null,
+                    "description": "Deletes cached files older than the given number of days.",
+                    "id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "interpreter": "sh",
+                    "name": "clear-app-cache",
+                    "parameters": [
+                      {
+                        "choices": [],
+                        "default": "7",
+                        "label": "Older than (days)",
+                        "name": "days",
+                        "required": true,
+                        "type": "integer"
+                      }
+                    ],
+                    "run_role": "operator",
+                    "timeout_s": 600,
+                    "updated_at": "2026-12-03T14:12:00Z",
+                    "version": 2
+                  },
+                  "versions": [
+                    {
+                      "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                      "created_at": "2026-12-03T14:12:00Z",
+                      "created_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                      "created_by_name": "alice",
+                      "note": "Show the free space after",
+                      "parameters": [
+                        {
+                          "choices": [],
+                          "default": "7",
+                          "label": "Older than (days)",
+                          "name": "days",
+                          "required": true,
+                          "type": "integer"
+                        }
+                      ],
+                      "version": 2
+                    },
+                    {
+                      "body": "find /var/cache/app -mindepth 1 -mtime +7 -delete\n",
+                      "created_at": "2026-12-01T09:00:00Z",
+                      "created_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                      "created_by_name": "alice",
+                      "note": "",
+                      "parameters": [],
+                      "version": 1
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As for adding, or another `customer_id`: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator there: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such script: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Deleted, or the name is taken: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Delete a script",
+        "description": "The script leaves the library and the AI's list; its versions and runs are kept, and runs scheduled but not sent yet skip their servers. Refused while automation rules run it.\n\n**Who**: administrator, as for adding. **Area**: `remediation`. Audited as `script.delete`.",
+        "operationId": "delete_script",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The script",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator there: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such script: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Automation rules run it: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/scripts/{id}/runs": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Run a script",
+        "description": "Runs the script on one server or a group of servers (`servers`), every server of a site (`site`) or of a business service (`business_service`), all of one customer, now or at `scheduled_at`. The risk rules classify it for each server's site: forbidden is 400; otherwise it is `scheduled` when the caller may approve its tier on every site (approver for `read_only` and `low_impact`, administrator for `high_impact`), else `awaiting_approval` until an approver decides, for 24 hours at most. When its time comes, each server gets a signed `run_script` command; a server that removed, runs another system, has scripts turned off, or that a rule now forbids is `skipped` with the reason. A command waits an hour for an offline server.\n\n**Who**: the script's `run_role` on every server's site. **Area**: `remediation`. Audited as `script.run`.",
+        "operationId": "run_script",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The script",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptRunRequest"
+              },
+              "examples": {
+                "servers": {
+                  "summary": "Two servers, now",
+                  "value": {
+                    "parameters": {
+                      "days": "14"
+                    },
+                    "target": {
+                      "kind": "servers",
+                      "server_ids": [
+                        "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a"
+                      ]
+                    }
+                  }
+                },
+                "site": {
+                  "summary": "Every server of a site, tonight",
+                  "value": {
+                    "parameters": {
+                      "days": "14"
+                    },
+                    "scheduled_at": "2026-12-04T22:00:00Z",
+                    "target": {
+                      "kind": "site",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Made",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRunDetail"
+                },
+                "example": {
+                  "body": "#!/bin/sh\nfind /var/cache/app -mindepth 1 -mtime +\"$MF_PARAM_DAYS\" -delete\ndf -h /var\n",
+                  "run": {
+                    "can_approve": true,
+                    "can_cancel": true,
+                    "can_reject": true,
+                    "counts": {
+                      "failed": 0,
+                      "pending": 2,
+                      "servers": 2,
+                      "succeeded": 0
+                    },
+                    "created_at": "2026-12-04T10:15:00Z",
+                    "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                    "decided_at": null,
+                    "decided_by": null,
+                    "decided_by_name": null,
+                    "decision_reason": null,
+                    "dispatched_at": null,
+                    "expires_at": "2026-12-05T10:15:00Z",
+                    "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                    "interpreter": "sh",
+                    "parameters": {
+                      "days": "14"
+                    },
+                    "reason": "line 2: `find` with -delete outside a cache directory is not known",
+                    "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                    "requested_by_name": "bob",
+                    "rule": {
+                      "id": "default.unknown",
+                      "source": "builtin"
+                    },
+                    "rule_id": null,
+                    "rule_name": null,
+                    "scheduled_at": "2026-12-04T22:00:00Z",
+                    "script_id": "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+                    "script_name": "clear-app-cache",
+                    "state": "awaiting_approval",
+                    "target": {
+                      "kind": "site",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                    },
+                    "tier": "high_impact",
+                    "trigger": null,
+                    "version": 2
+                  },
+                  "servers": [
+                    {
+                      "command_id": null,
+                      "error": null,
+                      "exit_code": null,
+                      "finished_at": null,
+                      "hostname": "web-1",
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": null,
+                      "status": "waiting",
+                      "stderr": null,
+                      "stdout": null
+                    },
+                    {
+                      "command_id": null,
+                      "error": null,
+                      "exit_code": null,
+                      "finished_at": null,
+                      "hostname": "web-2",
+                      "server_id": "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "started_at": null,
+                      "status": "waiting",
+                      "stderr": null,
+                      "stdout": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No server, servers of several customers, another customer's script, a missing or bad parameter, an unknown version, a time over a year ahead, or forbidden by the risk rules: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Below the script's `run_role` on a server's site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such script, or a server, site or business service the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The script was deleted: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -47614,6 +50444,246 @@
           }
         }
       },
+      "AutomationEvent": {
+        "type": "string",
+        "description": "What starts a rule.",
+        "enum": [
+          "incident_opened",
+          "check_failed",
+          "server_joined"
+        ]
+      },
+      "AutomationFiring": {
+        "type": "object",
+        "description": "A rule's last firings, for its page: what it ran or why it did not.",
+        "required": [
+          "event_id",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "hostname": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The run it made, if any."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "skipped": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it made none."
+          }
+        }
+      },
+      "AutomationRuleDetail": {
+        "type": "object",
+        "description": "A rule with the events it took lately, newest first.",
+        "required": [
+          "rule",
+          "firings"
+        ],
+        "properties": {
+          "firings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutomationFiring"
+            }
+          },
+          "rule": {
+            "$ref": "#/components/schemas/AutomationRuleView"
+          }
+        }
+      },
+      "AutomationRuleList": {
+        "type": "object",
+        "required": [
+          "rules"
+        ],
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutomationRuleView"
+            }
+          }
+        }
+      },
+      "AutomationRuleRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/remediation/automation-rules` and `PUT\n/api/remediation/automation-rules/{id}`; a change replaces every\nfield.",
+        "required": [
+          "name",
+          "event",
+          "script_id"
+        ],
+        "properties": {
+          "cooldown_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "At most one run per server in this many minutes, 1 to 10080; 60\nwhen absent."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it covers; with neither this nor `site_id`, it covers\neverything."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "On when absent."
+          },
+          "event": {
+            "$ref": "#/components/schemas/AutomationEvent"
+          },
+          "metric": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The incident's metric: required for `check_failed`, optional for\n`incident_opened` (any but `offline` when absent), none for\n`server_joined`."
+          },
+          "name": {
+            "type": "string",
+            "description": "At most 80 characters."
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Values by parameter name; defaults fill the rest.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "script_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The one site it covers."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AutomationRuleView": {
+        "type": "object",
+        "description": "A rule. Field names and types are part of the API contract.",
+        "required": [
+          "id",
+          "name",
+          "event",
+          "script_id",
+          "script_name",
+          "parameters",
+          "enabled",
+          "cooldown_minutes",
+          "created_at",
+          "updated_at",
+          "can_manage"
+        ],
+        "properties": {
+          "can_manage": {
+            "type": "boolean",
+            "description": "Whether the caller may change and delete it. A UX hint."
+          },
+          "cooldown_minutes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "event": {
+            "$ref": "#/components/schemas/AutomationEvent"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "metric": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "script_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "script_name": {
+            "type": "string"
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "AvailabilityCause": {
         "type": "object",
         "description": "What made something down for a while.",
@@ -54596,6 +57666,14 @@
           }
         }
       },
+      "Interpreter": {
+        "type": "string",
+        "description": "The program that runs a script, which decides the risk rules.",
+        "enum": [
+          "sh",
+          "powershell"
+        ]
+      },
       "IntervalOrigin": {
         "type": "string",
         "description": "Whether the built-in checks run at the built-in interval or the site's.",
@@ -58279,6 +61357,16 @@
           "seconds",
           "celsius",
           "number"
+        ]
+      },
+      "ParameterType": {
+        "type": "string",
+        "description": "The type of a parameter's value.",
+        "enum": [
+          "string",
+          "integer",
+          "boolean",
+          "choice"
         ]
       },
       "PendingHost": {
@@ -61975,6 +65063,717 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "ScriptDetail": {
+        "type": "object",
+        "description": "A script with its text and every version, newest first.",
+        "required": [
+          "script",
+          "body",
+          "versions"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The current version's text."
+          },
+          "script": {
+            "$ref": "#/components/schemas/ScriptView"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptVersionView"
+            }
+          }
+        }
+      },
+      "ScriptList": {
+        "type": "object",
+        "required": [
+          "scripts"
+        ],
+        "properties": {
+          "scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptView"
+            }
+          }
+        }
+      },
+      "ScriptParameter": {
+        "type": "object",
+        "description": "A parameter of a script version. Its value reaches the script as the\nenvironment variable `MF_PARAM_<NAME>`.",
+        "required": [
+          "name",
+          "type"
+        ],
+        "properties": {
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The values of a `choice` parameter."
+          },
+          "default": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Used when a run gives none."
+          },
+          "label": {
+            "type": "string",
+            "description": "What the run form shows; the name when empty."
+          },
+          "name": {
+            "type": "string",
+            "description": "`[a-z][a-z0-9_]{0,31}`."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "A run must give a value unless there is a default."
+          },
+          "type": {
+            "$ref": "#/components/schemas/ParameterType"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScriptRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/remediation/scripts` and `PUT\n/api/remediation/scripts/{id}`. A change to `body` or `parameters`\nmakes a new version; the other fields change in place.",
+        "required": [
+          "name",
+          "interpreter",
+          "run_role",
+          "body"
+        ],
+        "properties": {
+          "ai_allowed": {
+            "type": "boolean"
+          },
+          "body": {
+            "type": "string",
+            "description": "At most 64 KiB."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it belongs to, `null` or absent for every customer.\nFixed once made."
+          },
+          "description": {
+            "type": "string"
+          },
+          "interpreter": {
+            "$ref": "#/components/schemas/Interpreter",
+            "description": "`sh` (Linux) or `powershell` (Windows)."
+          },
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9_.-]{0,62}`, unique among the customer's live\nscripts."
+          },
+          "note": {
+            "type": "string",
+            "description": "What this version changes, at most 500 characters."
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptParameter"
+            }
+          },
+          "run_role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "`operator`, `approver` or `administrator`."
+          },
+          "timeout_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "10 to 3600 seconds; 600 when absent."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScriptRunCounts": {
+        "type": "object",
+        "description": "How a run's servers are doing.",
+        "required": [
+          "servers",
+          "pending",
+          "succeeded",
+          "failed"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failed, expired, cancelled, or skipped with an error."
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Not finished yet: waiting, queued, sent or running."
+          },
+          "servers": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "succeeded": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ScriptRunDetail": {
+        "type": "object",
+        "description": "A run with the text it runs and each server's output.",
+        "required": [
+          "run",
+          "body",
+          "servers"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "run": {
+            "$ref": "#/components/schemas/ScriptRunView"
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptRunServer"
+            }
+          }
+        }
+      },
+      "ScriptRunList": {
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptRunView"
+            }
+          }
+        }
+      },
+      "ScriptRunRejectRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/remediation/script-runs/{id}/reject`.",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Why, at most 1000 characters."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScriptRunRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/remediation/scripts/{id}/runs`.",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "parameters": {
+            "type": "object",
+            "description": "Values by parameter name; defaults fill the rest.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "scheduled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When to run it, at most a year ahead; now when absent or past."
+          },
+          "target": {
+            "$ref": "#/components/schemas/ScriptTarget",
+            "description": "The servers: `{\"kind\": \"servers\", \"server_ids\": [...]}`, `{\"kind\":\n\"site\", \"site_id\"}` or `{\"kind\": \"business_service\",\n\"business_service_id\"}`, all of one customer."
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "An earlier version to run; the current one when absent."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScriptRunServer": {
+        "type": "object",
+        "description": "One server of a run, with its output.",
+        "required": [
+          "server_id",
+          "hostname",
+          "site_id",
+          "status"
+        ],
+        "properties": {
+          "command_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "description": "`waiting` (not dispatched), `skipped` (`error` says why), or the\ncommand's state: `queued`, `sent`, `running`, `succeeded`,\n`failed`, `expired`, `cancelled`."
+          },
+          "stderr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stdout": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The last 64 KiB of each."
+          }
+        }
+      },
+      "ScriptRunState": {
+        "type": "string",
+        "description": "The state of a run.",
+        "enum": [
+          "awaiting_approval",
+          "scheduled",
+          "dispatched",
+          "rejected",
+          "expired",
+          "cancelled",
+          "refused"
+        ]
+      },
+      "ScriptRunView": {
+        "type": "object",
+        "description": "A run as listed. Field names and types are part of the API contract.",
+        "required": [
+          "id",
+          "script_id",
+          "script_name",
+          "version",
+          "interpreter",
+          "customer_id",
+          "parameters",
+          "target",
+          "state",
+          "tier",
+          "rule",
+          "reason",
+          "scheduled_at",
+          "created_at",
+          "counts",
+          "can_approve",
+          "can_reject",
+          "can_cancel"
+        ],
+        "properties": {
+          "can_approve": {
+            "type": "boolean",
+            "description": "UX hints; the routes check again."
+          },
+          "can_cancel": {
+            "type": "boolean"
+          },
+          "can_reject": {
+            "type": "boolean"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ScriptRunCounts"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decided_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "decided_by_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dispatched_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set while it waits for approval."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "interpreter": {
+            "$ref": "#/components/schemas/Interpreter"
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The person who asked; `null` for a rule's run."
+          },
+          "requested_by_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rule": {
+            "description": "The rule that gave the tier: `{\"source\": \"builtin\" | \"configured\", \"id\"}`."
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The automation rule that started it, and the event."
+          },
+          "rule_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "script_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "script_name": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ScriptRunState"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ScriptTarget"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/Tier",
+            "description": "From the risk rules, the highest of its servers."
+          },
+          "trigger": {},
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "ScriptTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "One server or a chosen group of servers of one customer.",
+            "required": [
+              "server_ids",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "servers"
+                ]
+              },
+              "server_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Every server of a site, as it is when the run is made.",
+            "required": [
+              "site_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "site"
+                ]
+              },
+              "site_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The servers of a business service (ADR-0155).",
+            "required": [
+              "business_service_id",
+              "kind"
+            ],
+            "properties": {
+              "business_service_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "business_service"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The servers a run is for, as asked."
+      },
+      "ScriptVersionView": {
+        "type": "object",
+        "description": "A version of a script.",
+        "required": [
+          "version",
+          "body",
+          "parameters",
+          "note",
+          "created_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_by_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "description": "What changed, in the author's words."
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptParameter"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "ScriptView": {
+        "type": "object",
+        "description": "A script as listed. Field names and types are part of the API\ncontract: add fields, never rename or remove them.",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "interpreter",
+          "run_role",
+          "ai_allowed",
+          "timeout_s",
+          "version",
+          "parameters",
+          "created_at",
+          "updated_at",
+          "can_manage"
+        ],
+        "properties": {
+          "ai_allowed": {
+            "type": "boolean",
+            "description": "Whether the AI may propose it as a fix."
+          },
+          "can_manage": {
+            "type": "boolean",
+            "description": "Whether the caller may change and delete it. A UX hint: the\nroutes check again."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for every customer."
+          },
+          "deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set once deleted; its runs stay."
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "interpreter": {
+            "$ref": "#/components/schemas/Interpreter"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptParameter"
+            }
+          },
+          "run_role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "The least role that may run it, on every target's site."
+          },
+          "timeout_s": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The agent kills it after this many seconds."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The current version."
           }
         }
       },
@@ -67112,6 +70911,10 @@
     {
       "name": "psa",
       "description": "The PSA connection: MonitorFlow calls a PSA's API with credentials it keeps, HaloPSA first. One per installation, managed by global administrators (a key with every reach), since one PSA serves every customer. In HaloPSA, create an API application (Configuration, Integrations, HaloPSA API, View Applications) with the authentication method Client ID and Secret (Client Credentials), acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never answered. Each MonitorFlow site is then matched to a PSA client, and optionally one of its sites, chosen from the PSA's lists read through the connection; incidents of a site without a match open no ticket. An incident at the chosen severity then opens one ticket for its site's client, with the chosen ticket type and category, and its resolution adds a private note and moves the ticket to the chosen status. When the PSA refuses or does not answer, the answer is 502 `psa_unavailable` with its own words. Every change is in the audit log, with the key's ID. API keys need the `administration` area."
+    },
+    {
+      "name": "scripts",
+      "description": "The script library (ADR-0179): shell (`sh`, Linux) and PowerShell (Windows) scripts kept in MonitorFlow, with typed parameters, every version kept, and the least role that may run them. A run sends one version to one server, a chosen group of servers, a site or a business service, now or at a set time, as a signed `run_script` command each agent checks. Agents run scripts as their own unprivileged user, never as root, and only where the host's administrator allowed it at install (`MF_ALLOW_SCRIPTS=1` on Linux, `ALLOW_SCRIPTS=1` or `monitorflow-agent.exe scripts on` on Windows): the central server cannot turn it on. Parameters reach the script as environment variables `MF_PARAM_<NAME>`, never in its text. Every run is classified by the risk rules of AI commands, line by line: a forbidden line refuses it; it runs at once when the person who asked may approve its tier on every server's site, and otherwise waits in the approval queue for 24 hours. Each server's output (the last 64 KiB of stdout and stderr) is kept with its command. Automation rules run a script when an incident opens, a check fails or a server joins, approved as AI commands are. Needs the key area \"remediation\"."
     }
   ]
 }

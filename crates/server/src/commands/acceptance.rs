@@ -18,11 +18,12 @@ const UNSUPPORTED: &str = "unsupported";
 
 /// The kinds stored. An agent names only what it runs, but its report
 /// passes through relays, so nothing else reaches the database.
-const KINDS: [&str; 6] = [
+const KINDS: [&str; 7] = [
     command::AI_COMMANDS,
     command::APPLY_UPDATES,
     command::CONFIGURE_SOURCES,
     command::REVERT_SOURCES,
+    command::RUN_SCRIPT,
     command::SELF_UPDATE,
     command::SHELL,
 ];
@@ -109,6 +110,38 @@ impl Refusal {
     }
 }
 
+/// Why a server's agent would refuse library scripts (ADR-0179), as it
+/// last reported, with the way to allow them on its system; `None` when
+/// it accepts them or never said.
+pub fn script_refusal(word: Option<&str>, os_family: &str) -> Option<&'static str> {
+    let windows = os_family == "windows";
+    match word {
+        Some(OFF) if windows => Some(
+            "library scripts are off on this server; run `monitorflow-agent.exe scripts on` \
+             there as an administrator, or the MSI with ALLOW_SCRIPTS=1",
+        ),
+        Some(OFF) => Some(
+            "library scripts are off on this server; run the installer there with \
+             MF_ALLOW_SCRIPTS=1",
+        ),
+        Some(UNSUPPORTED) => Some("this server's agent cannot run library scripts"),
+        _ => None,
+    }
+}
+
+/// [`script_refusal`] of what `server_id` last reported.
+pub async fn script_refusal_of(
+    executor: impl PgExecutor<'_>,
+    server_id: Uuid,
+) -> Result<Option<&'static str>, sqlx::Error> {
+    let row: Option<(Option<String>, String)> =
+        sqlx::query_as("SELECT command_kinds->>'run_script', os_family FROM servers WHERE id = $1")
+            .bind(server_id)
+            .fetch_optional(executor)
+            .await?;
+    Ok(row.and_then(|(word, os_family)| script_refusal(word.as_deref(), &os_family)))
+}
+
 /// The refusal `server_id` last reported for `shell` commands, if any.
 pub async fn shell_refusal(
     executor: impl PgExecutor<'_>,
@@ -187,6 +220,18 @@ mod tests {
         assert_eq!(Refusal::of(Some(ACCEPTED), "debian"), None);
         assert_eq!(Refusal::of(Some("from a newer server"), "debian"), None);
         assert_eq!(Refusal::of(None, "windows"), None);
+    }
+
+    #[test]
+    fn script_refusals_name_the_way_to_allow_them() {
+        assert!(script_refusal(Some(OFF), "debian")
+            .unwrap()
+            .contains("MF_ALLOW_SCRIPTS=1"));
+        assert!(script_refusal(Some(OFF), "windows")
+            .unwrap()
+            .contains("scripts on"));
+        assert_eq!(script_refusal(Some(ACCEPTED), "debian"), None);
+        assert_eq!(script_refusal(None, "debian"), None);
     }
 
     /// The way to turn AI commands on is the one of the server's system.

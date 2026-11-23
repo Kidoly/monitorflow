@@ -46,7 +46,7 @@ describe("arrangedNavigation", () => {
   });
 
   it("hides the items the person does not use, and sections left empty", () => {
-    const sections = ids(as(null), { hidden: ["silences", "approvals", "audit"] });
+    const sections = ids(as(null), { hidden: ["silences", "approvals", "audit", "scripts", "automation"] });
     expect(sections).toEqual([
       ["fleet", "dashboards", "incidents", "onCall", "reports"],
       ["mirrors", "automaticUpdates", "campaigns"],
@@ -56,7 +56,7 @@ describe("arrangedNavigation", () => {
   it("orders items within their section", () => {
     const sections = ids(as(null), { order: ["incidents", "fleet", "audit", "approvals"] });
     expect(sections[0]).toEqual(["incidents", "dashboards", "fleet", "onCall", "reports"]);
-    expect(sections[2]).toEqual(["audit", "approvals"]);
+    expect(sections[2]).toEqual(["audit", "approvals", "scripts", "automation"]);
   });
 
   it("never shows an item the roles hide, whatever the preferences say", () => {

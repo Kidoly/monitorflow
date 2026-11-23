@@ -43,6 +43,10 @@
 #   MF_AI_COMMANDS_FROM_WEB=1  agent only: let the web interface turn AI
 #                    commands on and off (commands.from_web, ADR-0098); it
 #                    can always turn them off. 0 takes that back.
+#   MF_ALLOW_SCRIPTS=1  agent only: let it run scripts of the central
+#                    server's script library as its own user
+#                    (commands.scripts, ADR-0179), also on a host already
+#                    installed; 0 takes that back. Unset keeps what is there.
 #   MF_UNINSTALL=1   remove the binary, service and sudo rules; keep the
 #                    configuration and identity. With MF_PURGE=1, remove
 #                    those and the service's user too.
@@ -80,6 +84,7 @@ UNIT=/etc/systemd/system/monitorflow-$MF_ROLE.service
 SERVICE=monitorflow-$MF_ROLE
 ALLOW_COMMANDS=$UNIT.d/allow-commands.conf
 FROM_WEB=$UNIT.d/ai-commands-from-web.conf
+ALLOW_SCRIPTS=$UNIT.d/allow-scripts.conf
 
 MF_SERVER=${MF_SERVER:-}
 MF_TOKEN=${MF_TOKEN:-}
@@ -96,6 +101,7 @@ MF_MIRROR_URL=${MF_MIRROR_URL:-}
 MF_MIRROR=${MF_MIRROR:-}
 MF_ALLOW_COMMANDS=${MF_ALLOW_COMMANDS:-}
 MF_AI_COMMANDS_FROM_WEB=${MF_AI_COMMANDS_FROM_WEB:-}
+MF_ALLOW_SCRIPTS=${MF_ALLOW_SCRIPTS:-}
 
 # Public keys that sign releases (ADR-0053), filled in from
 # deploy/release-keys.pem by deploy/release-files.sh.
@@ -203,7 +209,7 @@ verify() {
 uninstall() {
     if [ -f "$UNIT" ]; then
         systemctl disable --now "$SERVICE" >/dev/null 2>&1 || true
-        rm -f "$UNIT" "$ALLOW_COMMANDS" "$FROM_WEB"
+        rm -f "$UNIT" "$ALLOW_COMMANDS" "$FROM_WEB" "$ALLOW_SCRIPTS"
         rmdir "$UNIT.d" 2>/dev/null || true
         systemctl daemon-reload
     fi
@@ -369,6 +375,11 @@ case $MF_AI_COMMANDS_FROM_WEB in
     *) die "MF_AI_COMMANDS_FROM_WEB must be 1 or 0" ;;
 esac
 [ -z "$MF_AI_COMMANDS_FROM_WEB" ] || [ "$MF_ROLE" = agent ] || die "MF_AI_COMMANDS_FROM_WEB is for agents"
+case $MF_ALLOW_SCRIPTS in
+    '' | 0 | 1) ;;
+    *) die "MF_ALLOW_SCRIPTS must be 1 or 0" ;;
+esac
+[ -z "$MF_ALLOW_SCRIPTS" ] || [ "$MF_ROLE" = agent ] || die "MF_ALLOW_SCRIPTS is for agents"
 
 if [ -n "$MF_DOWNLOAD_URL" ]; then
     [ -z "$MF_VERSION" ] || die "MF_VERSION selects a GitHub release; with MF_DOWNLOAD_URL, point it at the files of that version instead"
@@ -454,6 +465,14 @@ if [ "$MF_AI_COMMANDS_FROM_WEB" = 1 ]; then
 elif [ "$MF_AI_COMMANDS_FROM_WEB" = 0 ]; then
     rm -f "$FROM_WEB"
     say "the web interface can now only turn AI commands off on this agent"
+fi
+if [ "$MF_ALLOW_SCRIPTS" = 1 ]; then
+    install -d -m 0755 "$UNIT.d"
+    printf '[Service]\nEnvironment=MONITORFLOW_COMMANDS_SCRIPTS=true\n' >"$ALLOW_SCRIPTS"
+    say "this agent will run scripts of the script library as its own user; MF_ALLOW_SCRIPTS=0 takes that back"
+elif [ "$MF_ALLOW_SCRIPTS" = 0 ]; then
+    rm -f "$ALLOW_SCRIPTS"
+    say "this agent will refuse library scripts"
 fi
 rmdir "$UNIT.d" 2>/dev/null || true
 systemctl daemon-reload

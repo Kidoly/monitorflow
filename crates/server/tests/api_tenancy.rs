@@ -191,6 +191,11 @@ struct Tenant {
     mib: Uuid,
     object: &'static str,
     object_oid: &'static str,
+    /// A library script of the customer, a run of it on the server waiting
+    /// for approval, and a rule running it (ADR-0179).
+    script: Uuid,
+    script_run: Uuid,
+    automation_rule: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -517,7 +522,48 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .execute(pool)
     .await
     .unwrap();
+    let script = one(
+        "INSERT INTO scripts (customer_id, name, interpreter, run_role)
+         VALUES ($1, 'disk', 'sh', 'operator') RETURNING id",
+    )
+    .bind(customer)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO script_versions (script_id, version, body) VALUES ($1, 1, 'df -h')")
+        .bind(script)
+        .execute(pool)
+        .await
+        .unwrap();
+    let script_run = one(
+        "INSERT INTO script_runs (script_id, version, customer_id, target, state, tier, rule, reason)
+         VALUES ($1, 1, $2, '{\"kind\": \"site\"}', 'awaiting_approval', 'read_only', '{}', 'x')
+         RETURNING id",
+    )
+    .bind(script)
+    .bind(customer)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO script_run_targets (run_id, server_id) VALUES ($1, $2)")
+        .bind(script_run)
+        .bind(server)
+        .execute(pool)
+        .await
+        .unwrap();
+    let automation_rule = one(
+        "INSERT INTO automation_rules (name, customer_id, event, script_id)
+         VALUES ('r', $1, 'server_joined', $2) RETURNING id",
+    )
+    .bind(customer)
+    .bind(script)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     Tenant {
+        script,
+        script_run,
+        automation_rule,
         lookup,
         mib,
         object,
@@ -1840,6 +1886,117 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .await
                     .unwrap();
             assert_eq!(state, "pending");
+        }
+        // The script library (ADR-0179): B's scripts, runs and rules do
+        // not exist for A, and nothing of A's runs on B's servers.
+        ("GET", "/api/remediation/scripts")
+        | ("GET", "/api/remediation/script-runs")
+        | ("GET", "/api/remediation/automation-rules") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            for id in [b.script, b.script_run, b.automation_rule] {
+                assert!(!Ctx::mentions(&body, id), "{body}");
+            }
+            let query = if path.ends_with("script-runs") {
+                format!("?server_id={}", b.server)
+            } else {
+                format!("?customer_id={}", b.customer)
+            };
+            let uri = format!("{path}{query}");
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+        }
+        ("POST", "/api/remediation/scripts") => {
+            let body = json!({ "customer_id": b.customer, "name": "x", "interpreter": "sh",
+                               "run_role": "operator", "body": "df -h" });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("GET", "/api/remediation/scripts/{id}")
+        | ("PUT", "/api/remediation/scripts/{id}")
+        | ("DELETE", "/api/remediation/scripts/{id}")
+        | ("POST", "/api/remediation/scripts/{id}/runs") => {
+            let body = json!({ "customer_id": b.customer, "name": "disk", "interpreter": "sh",
+                               "run_role": "operator", "body": "df -h",
+                               "target": { "kind": "site", "site_id": b.site } });
+            let body = if path.ends_with("runs") {
+                json!({ "target": { "kind": "site", "site_id": b.site } })
+            } else {
+                body
+            };
+            let uri = path.replace("{id}", &b.script.to_string());
+            let send = (method != "GET" && method != "DELETE").then_some(body);
+            assert_eq!(ctx.status(method, &uri, send).await, not_found, "{uri}");
+            // A's script on B's servers: B's site, or B's server.
+            if path.ends_with("runs") {
+                let uri = path.replace("{id}", &a.script.to_string());
+                for target in [
+                    json!({ "kind": "site", "site_id": b.site }),
+                    json!({ "kind": "servers", "server_ids": [b.server] }),
+                    json!({ "kind": "business_service", "business_service_id": b.business_service }),
+                ] {
+                    let body = json!({ "target": target });
+                    assert_eq!(
+                        ctx.status(method, &uri, Some(body)).await,
+                        not_found,
+                        "{target}"
+                    );
+                }
+            }
+            let deleted: Option<chrono::DateTime<chrono::Utc>> =
+                sqlx::query_scalar("SELECT deleted_at FROM scripts WHERE id = $1")
+                    .bind(b.script)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert!(deleted.is_none());
+        }
+        ("GET", "/api/remediation/script-runs/{id}")
+        | ("POST", "/api/remediation/script-runs/{id}/approve")
+        | ("POST", "/api/remediation/script-runs/{id}/reject")
+        | ("POST", "/api/remediation/script-runs/{id}/cancel") => {
+            let uri = path.replace("{id}", &b.script_run.to_string());
+            let body = path.ends_with("reject").then(|| json!({ "reason": "no" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+            let state: String = sqlx::query_scalar("SELECT state FROM script_runs WHERE id = $1")
+                .bind(b.script_run)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            assert_eq!(state, "awaiting_approval");
+        }
+        ("POST", "/api/remediation/automation-rules") => {
+            for (place, script) in [
+                (json!({ "customer_id": b.customer }), b.script),
+                (json!({ "site_id": b.site }), a.script),
+                (json!({ "customer_id": a.customer }), b.script),
+            ] {
+                let mut body =
+                    json!({ "name": "x", "event": "server_joined", "script_id": script });
+                body.as_object_mut()
+                    .unwrap()
+                    .extend(place.as_object().unwrap().clone());
+                assert_eq!(
+                    ctx.status(method, path, Some(body)).await,
+                    not_found,
+                    "{place}"
+                );
+            }
+        }
+        ("GET", "/api/remediation/automation-rules/{id}")
+        | ("PUT", "/api/remediation/automation-rules/{id}")
+        | ("DELETE", "/api/remediation/automation-rules/{id}") => {
+            let uri = path.replace("{id}", &b.automation_rule.to_string());
+            let body = (method == "PUT").then(|| {
+                json!({ "name": "x", "customer_id": a.customer, "event": "server_joined",
+                        "script_id": a.script })
+            });
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+            // A's rule cannot move to B.
+            if method == "PUT" {
+                let uri = path.replace("{id}", &a.automation_rule.to_string());
+                let body = json!({ "name": "x", "customer_id": b.customer, "event": "server_joined",
+                                   "script_id": a.script });
+                assert_eq!(ctx.status(method, &uri, Some(body)).await, not_found);
+            }
         }
         ("GET", "/api/remediation/events") => {
             for query in [

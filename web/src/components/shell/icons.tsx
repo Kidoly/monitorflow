@@ -28,6 +28,10 @@ const PATHS = {
   autoUpdate: <path d="M13.5 6A5.7 5.7 0 0 0 3 4.5M2.5 2v3h3M2.5 10a5.7 5.7 0 0 0 10.5 1.5M13.5 14v-3h-3" />,
   approvals: <path d="M3 8l3 3 7-7" />,
   audit: <path d="M4 3h8v10H4zM6 6h4M6 9h4" />,
+  // A prompt and a line: a script of the library.
+  scripts: <path d="M2 3h12v10H2zM4.5 6l2 2-2 2M8 10h3.5" />,
+  // A lightning bolt: something happens, a script runs.
+  automation: <path d="M9 2L4 9h4l-1 5 5-7H8z" />,
   relays: (
     <>
       <circle cx="4" cy="8" r="2" />

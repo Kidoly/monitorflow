@@ -173,6 +173,14 @@
 //! | GET | `/api/remediation/approvals` | any role | [`approvals::PendingList`], see below |
 //! | POST | `/api/remediation/approvals/{id}/approve` | approver, see below | body `{"command"?}`; 200 [`approvals::DecisionView`]; 409 once decided, past the deadline, or when the server refuses these commands (ADR-0076) |
 //! | POST | `/api/remediation/approvals/{id}/reject` | approver | body `{"reason"}`; 200 [`approvals::DecisionView`]; 409 as for approve |
+//! | GET | `/api/remediation/scripts` | any role | [`scripts::ScriptList`]: the script library (ADR-0179) |
+//! | POST | `/api/remediation/scripts` | administrator of the customer, or of everything | body [`scripts::ScriptRequest`]; 201 [`scripts::ScriptDetail`] |
+//! | GET, PUT, DELETE | `/api/remediation/scripts/{id}` | read; administrator to change | [`scripts::ScriptDetail`]; a new text makes a new version; 409 on delete while rules run it |
+//! | POST | `/api/remediation/scripts/{id}/runs` | the script's `run_role` on every server's site | body [`scripts::RunRequest`]; 201 [`scripts::RunDetail`], waiting for approval unless the caller may approve its tier |
+//! | GET | `/api/remediation/script-runs`, `/{id}` | reads every server of the run | [`scripts::RunList`], [`scripts::RunDetail`] with each server's output |
+//! | POST | `/api/remediation/script-runs/{id}/approve`, `/reject`, `/cancel` | approver role of its tier; any approver; requester or approver | 200 [`scripts::RunDetail`]; 409 once decided |
+//! | GET, POST | `/api/remediation/automation-rules` | read; administrator of the place | [`automation_rules::RuleList`]; body [`automation_rules::RuleRequest`], 201 |
+//! | GET, PUT, DELETE | `/api/remediation/automation-rules/{id}` | read; administrator of the place | [`automation_rules::RuleDetail`] with its last firings |
 //! | GET | `/api/remediation/events` | any role | [`remediation_events::EventList`], see below |
 //! | GET | `/api/remediation/alerts/{id}` | read | [`remediation_runs::RunStatus`]: the alert's attempts and whether the user may start one now (ADR-0165) |
 //! | POST | `/api/remediation/alerts/{id}/run` | approver | 201 [`remediation_runs::RunStarted`]: a new remediation of the open alert; 409 when the alert is resolved or has no agent, one is in progress, AI is off, or the server refuses AI commands |
@@ -750,6 +758,7 @@ pub(crate) mod audit;
 pub mod auth;
 pub mod auto_update;
 pub mod auto_update_versions;
+pub mod automation_rules;
 pub mod availability;
 pub mod backups;
 pub mod business_services;
@@ -800,6 +809,7 @@ mod openapi_plugins;
 mod openapi_psa;
 pub mod openapi_remediation;
 mod openapi_reports;
+mod openapi_scripts;
 mod openapi_settings;
 mod openapi_snmp;
 mod openapi_sso;
@@ -826,6 +836,7 @@ pub mod report_schedules;
 pub mod revoke;
 pub mod roles;
 pub mod rollback;
+pub mod scripts;
 pub mod sensor_values;
 pub mod sensors;
 pub mod server_settings;
@@ -1353,6 +1364,41 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/remediation/approvals/{id}/reject",
             post(approvals::reject),
+        )
+        .route(
+            "/api/remediation/scripts",
+            get(scripts::list).post(scripts::create),
+        )
+        .route(
+            "/api/remediation/scripts/{id}",
+            get(scripts::get)
+                .put(scripts::update)
+                .delete(scripts::delete),
+        )
+        .route("/api/remediation/scripts/{id}/runs", post(scripts::start))
+        .route("/api/remediation/script-runs", get(scripts::runs))
+        .route("/api/remediation/script-runs/{id}", get(scripts::run))
+        .route(
+            "/api/remediation/script-runs/{id}/approve",
+            post(scripts::approve),
+        )
+        .route(
+            "/api/remediation/script-runs/{id}/reject",
+            post(scripts::reject),
+        )
+        .route(
+            "/api/remediation/script-runs/{id}/cancel",
+            post(scripts::cancel),
+        )
+        .route(
+            "/api/remediation/automation-rules",
+            get(automation_rules::list).post(automation_rules::create),
+        )
+        .route(
+            "/api/remediation/automation-rules/{id}",
+            get(automation_rules::get)
+                .put(automation_rules::update)
+                .delete(automation_rules::delete),
         )
         .route("/api/remediation/events", get(remediation_events::list))
         .route(

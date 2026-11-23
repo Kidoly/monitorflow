@@ -31,6 +31,7 @@ import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatExact } from "@/components/ui/time";
 
 import styles from "./Remediation.module.css";
+import { ScriptApprovals } from "./ScriptApprovals";
 
 /** A clock that moves every second, for deadlines counting down between refreshes. */
 function useNow(): Date {
@@ -175,6 +176,7 @@ export function ApprovalQueue() {
           />
         </div>
       )}
+      <ScriptApprovals />
       <p className={styles.note}>
         {t("remediation.queue.note")}
       </p>
