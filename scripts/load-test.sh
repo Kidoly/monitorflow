@@ -41,7 +41,9 @@ if [[ -n $limited ]]; then
     export LOADTEST_STORE_MEMORY=${LOADTEST_SERVER_MEMORY:-0}
     compose+=(-f deploy/docker-compose.loadtest-limited.yml)
     export LOADTEST_CGROUP=/sys/fs/cgroup/$LOADTEST_SLICE
-    export LOADTEST_SERVER_WRAPPER="${sudo[*]} systemd-run --scope --quiet --slice=$LOADTEST_SLICE --unit=mfloadtest-server --uid=$(id -u) --gid=$(id -g) -- env NO_COLOR=1"
+    uid=$(id -u)
+    gid=$(id -g)
+    export LOADTEST_SERVER_WRAPPER="${sudo[*]} systemd-run --scope --quiet --slice=$LOADTEST_SLICE --unit=mfloadtest-server --uid=$uid --gid=$gid -- env NO_COLOR=1"
     if [[ -n ${LOADTEST_SERVER_CPUS:-} ]]; then
         # The generator on every other CPU.
         others=$(python3 -c '
