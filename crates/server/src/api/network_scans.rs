@@ -841,15 +841,15 @@ type HostRow = (
 
 /// A stored host, and whether it is new and where its SNMP credentials
 /// came from.
-struct Stored {
-    host: Host,
+pub(super) struct Stored {
+    pub(super) host: Host,
     snmp: bool,
     new: bool,
     from_scan: bool,
     device: Option<Uuid>,
 }
 
-async fn hosts(db: &mut PgConnection, run: Uuid) -> Result<Vec<Stored>, sqlx::Error> {
+pub(super) async fn hosts(db: &mut PgConnection, run: Uuid) -> Result<Vec<Stored>, sqlx::Error> {
     let rows: Vec<HostRow> = sqlx::query_as(
         "SELECT host(address), ping, rtt_seconds, ports, name, mac, snmp, snmp_descr, snmp_name,
                 snmp_object_id, snmp_groups, template, is_new, snmp_from_scan, snmp_device_id
@@ -887,7 +887,7 @@ async fn hosts(db: &mut PgConnection, run: Uuid) -> Result<Vec<Stored>, sqlx::Er
         .collect())
 }
 
-async fn known(db: &mut PgConnection, site: Uuid) -> Result<Vec<Known>, sqlx::Error> {
+pub(super) async fn known(db: &mut PgConnection, site: Uuid) -> Result<Vec<Known>, sqlx::Error> {
     type Row = (Uuid, String, String, Option<String>, Vec<String>);
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, hostname, kind, address, mac_addresses FROM servers
@@ -908,7 +908,10 @@ async fn known(db: &mut PgConnection, site: Uuid) -> Result<Vec<Known>, sqlx::Er
         .collect())
 }
 
-async fn dismissed(db: &mut PgConnection, scan: Uuid) -> Result<BTreeSet<IpAddr>, sqlx::Error> {
+pub(super) async fn dismissed(
+    db: &mut PgConnection,
+    scan: Uuid,
+) -> Result<BTreeSet<IpAddr>, sqlx::Error> {
     let rows: Vec<String> =
         sqlx::query_scalar("SELECT host(address) FROM network_scan_dismissals WHERE scan_id = $1")
             .bind(scan)
