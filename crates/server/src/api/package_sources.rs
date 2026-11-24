@@ -336,6 +336,32 @@ async fn ready(pool: &PgPool, distribution: &Distribution) -> Result<Ready, sqlx
     })
 }
 
+/// The servers among `servers` whose packages come from the mirrors now
+/// (ADR-0074), for the mirror check of a major upgrade (ADR-0182).
+pub(crate) async fn using_mirror(
+    pool: &PgPool,
+    servers: &[Uuid],
+) -> Result<HashSet<Uuid>, sqlx::Error> {
+    Ok(histories(pool, servers)
+        .await?
+        .into_iter()
+        .filter(|(_, history)| stand(history).0 == Using::Mirror)
+        .map(|(id, _)| id)
+        .collect())
+}
+
+/// Why the mirrors of this install do not serve the catalog's
+/// distribution `id` yet; `None` when they do.
+pub(crate) async fn mirror_problem(pool: &PgPool, id: &str) -> Result<Option<String>, sqlx::Error> {
+    let Some(distribution) = catalog::find(id) else {
+        return Ok(Some(format!("MonitorFlow has no mirror for {id}.")));
+    };
+    Ok(match ready(pool, distribution).await? {
+        Ready::Yes(_) => None,
+        Ready::No { problem, .. } => Some(problem),
+    })
+}
+
 /// Sorts out servers and caches what each distribution holds.
 struct Fit<'a> {
     state: &'a ApiState,

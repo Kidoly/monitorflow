@@ -955,6 +955,12 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 .await;
             assert_eq!(status, StatusCode::OK);
             assert_eq!(body["servers"], json!([]), "{body}");
+            // As they were: the test compares everything before and after.
+            sqlx::query("UPDATE servers SET os_version = NULL WHERE id = ANY($1)")
+                .bind(vec![a.server, b.server])
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
         }
         ("GET", "/api/servers/summary") => {
             // Counts A's servers only, whatever place it asks for.
@@ -1016,6 +1022,25 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let (status, body) = ctx.call(method, &uri, None).await;
             assert_eq!(status, StatusCode::OK, "{uri}");
             assert!(!Ctx::mentions(&body, b.command), "{body}");
+        }
+        // Major upgrades (ADR-0182): both servers run Debian 12, and A sees
+        // only its own, even when it names B's.
+        ("GET", "/api/major-upgrades") => {
+            sqlx::query("UPDATE servers SET os_version = 'debian 12' WHERE id = ANY($1)")
+                .bind(vec![a.server, b.server])
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert!(
+                Ctx::mentions(&body, a.server) && !Ctx::mentions(&body, b.server),
+                "{body}"
+            );
+            let uri = format!("{path}?server_id={}", b.server);
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["servers"], json!([]), "{body}");
         }
         // Recommendations: B's server does not exist for A.
         ("GET", "/api/servers/{id}/recommendations") => {

@@ -15,7 +15,7 @@ use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command;
 use monitorflow_common::proto::v1::{
-    AiCommandsSwitch, ApplyUpdates, ConfigureSources, SelfUpdate, ShellCommand,
+    AiCommandsSwitch, ApplyUpdates, ConfigureSources, MajorUpgrade, SelfUpdate, ShellCommand,
 };
 use monitorflow_common::release::Version;
 use monitorflow_common::third_party;
@@ -85,7 +85,7 @@ pub struct CommandView {
     /// `apply_updates`, `self_update`, `configure_sources`,
     /// `revert_sources`, `shell` (AI remediation), `ai_commands`, or
     /// `take_snapshot` and `delete_snapshot` (local snapshots before AI
-    /// changes).
+    /// changes), or `major_upgrade` (from a major upgrade campaign).
     pub kind: String,
     /// What it asks, as JSON, by kind: `{"packages", "security_only",
     /// "allow_reboot", "include_os", "third_party"}` for `apply_updates`, `{"version", "base_urls",
@@ -94,7 +94,8 @@ pub struct CommandView {
     /// "key_fingerprints"}` for `configure_sources`, `{}` for
     /// `revert_sources`, `{"command", "timeout_seconds"}` for `shell`,
     /// `{"on"}` for `ai_commands`, `{"action", "command"}` for
-    /// `root_action` (ADR-0181); `null` for a kind this version does not
+    /// `root_action` (ADR-0181), `{"from", "to", "impact"}` for
+    /// `major_upgrade` (ADR-0182); `null` for a kind this version does not
     /// know.
     pub parameters: Value,
     pub state: CommandState,
@@ -214,6 +215,11 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
         {
             Some(action) => json!({"action": action.name(), "command": action.to_string()}),
             None => Value::Null,
+        },
+        // Only campaigns send it; high impact, like a reboot (ADR-0182).
+        command::MAJOR_UPGRADE => match MajorUpgrade::decode(payload) {
+            Ok(p) => json!({"from": p.from, "to": p.to, "impact": "high_impact"}),
+            Err(_) => Value::Null,
         },
         _ => Value::Null,
     }

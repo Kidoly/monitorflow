@@ -14,9 +14,9 @@ use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use super::model::{
-    plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, PinnedMirror,
-    SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_TARGETS,
-    MAX_WINDOWS,
+    plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, MajorUpgradeSpec,
+    PinnedMirror, SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
+    MAX_TARGETS, MAX_WINDOWS,
 };
 use crate::api::audit::{self, Event};
 use crate::api::commands::unfit_message;
@@ -28,7 +28,7 @@ pub(super) const COLUMNS: &str =
     "id, customer_id, name, site_id, packages, security_only, allow_reboot,
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
      created_by, created_at, started_at, finished_at, sources_mode, agent_version, include_os,
-     third_party, requested_server_ids, requested_waves";
+     third_party, requested_server_ids, requested_waves, major_upgrade";
 
 /// Who acts, as `(actor_kind, actor_id)` of the audit log.
 pub type Actor<'a> = (&'a str, &'a str);
@@ -51,6 +51,8 @@ pub struct NewCampaign {
     pub sources: Option<SourcesPin>,
     /// Update the agents to this version instead of packages (ADR-0053).
     pub agent_version: Option<Version>,
+    /// Move the servers to the next release instead (ADR-0182).
+    pub major_upgrade: Option<MajorUpgradeSpec>,
     pub created_by: Option<Uuid>,
 }
 
@@ -104,6 +106,8 @@ pub struct CampaignRow {
     /// The `server_ids` and `waves` asked; `None` before ADR-0179.
     pub requested_server_ids: Option<Vec<Uuid>>,
     pub requested_waves: Option<sqlx::types::Json<Vec<WaveSpec>>>,
+    /// Set for a major upgrade campaign (ADR-0182).
+    pub major_upgrade: Option<sqlx::types::Json<MajorUpgradeSpec>>,
 }
 
 impl CampaignRow {
@@ -180,6 +184,13 @@ impl CampaignStore {
         Self { pool }
     }
 
+    /// The servers `new` would target now, as creating it would freeze
+    /// them.
+    pub async fn resolve_targets(&self, new: &NewCampaign) -> Result<Vec<Uuid>, CampaignError> {
+        let mut conn = self.pool.acquire().await?;
+        targets(&mut conn, new).await
+    }
+
     /// Validates `new`, freezes its targets into waves and stores it as a
     /// draft, audited as `campaign.create`.
     pub async fn create(
@@ -196,8 +207,9 @@ impl CampaignStore {
                 "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
                      allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit,
                      sources_mode, agent_version, include_os, third_party, requested_server_ids,
-                     requested_waves, created_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                     requested_waves, major_upgrade, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                     $17)
                  RETURNING {COLUMNS}"
             ))),
             new,
@@ -527,6 +539,16 @@ fn check(new: &NewCampaign) -> Result<Vec<Window>, CampaignError> {
         || !spec.include_os
         || spec.has_third_party()
         || new.sources.is_some();
+    if let Some(major) = &new.major_upgrade {
+        major.validate().map_err(CampaignError::Invalid)?;
+        if package_options || new.agent_version.is_some() {
+            return Err(CampaignError::Invalid(
+                "a major upgrade campaign takes no packages, security_only, allow_reboot, \
+                 include_os, third_party, sources or agent_version"
+                    .into(),
+            ));
+        }
+    }
     if new.agent_version.is_some() && package_options {
         return Err(CampaignError::Invalid(
             "an agent update campaign takes no packages, security_only, allow_reboot, \
@@ -570,7 +592,7 @@ async fn plan(
 type RowQuery<'q> =
     sqlx::query::QueryAs<'q, sqlx::Postgres, CampaignRow, sqlx::postgres::PgArguments>;
 
-/// Binds `$1` to `$15` of an insert or update of `campaigns` from `new`.
+/// Binds `$1` to `$16` of an insert or update of `campaigns` from `new`.
 fn bind_fields<'q>(query: RowQuery<'q>, new: &'q NewCampaign) -> RowQuery<'q> {
     query
         .bind(new.customer_id)
@@ -588,6 +610,7 @@ fn bind_fields<'q>(query: RowQuery<'q>, new: &'q NewCampaign) -> RowQuery<'q> {
         .bind(sqlx::types::Json(&new.spec.third_party))
         .bind(&new.server_ids)
         .bind(sqlx::types::Json(&new.waves))
+        .bind(new.major_upgrade.as_ref().map(sqlx::types::Json))
 }
 
 /// Stores the pins, waves, targets and windows of the campaign `id`.
@@ -658,6 +681,8 @@ fn details(row: &CampaignRow, new: &NewCampaign, plan: &Plan) -> serde_json::Val
         "failure_threshold": new.failure_threshold,
         "windows": plan.windows,
         "sources": new.sources,
+        "major_upgrade": new.major_upgrade,
+        "impact": if new.major_upgrade.is_some() { Some("high_impact") } else { None },
     })
 }
 
@@ -673,6 +698,9 @@ pub struct RunSettings {
     pub spec: UpdateSpec,
     /// Set for an agent update campaign (ADR-0053).
     pub agent_version: Option<String>,
+    /// Set for a major upgrade campaign (ADR-0182).
+    #[serde(default)]
+    pub major_upgrade: Option<MajorUpgradeSpec>,
     pub command_ttl_s: u64,
     pub failure_threshold: FailureThreshold,
     pub windows: Vec<Window>,
@@ -688,6 +716,7 @@ impl From<&NewCampaign> for RunSettings {
             wave_specs: new.waves.clone(),
             spec: new.spec.clone(),
             agent_version: new.agent_version.as_ref().map(ToString::to_string),
+            major_upgrade: new.major_upgrade.clone(),
             command_ttl_s: new.command_ttl.as_secs(),
             failure_threshold: new.failure_threshold,
             windows: new.windows.clone(),
@@ -805,6 +834,7 @@ async fn request_of(
                 .collect(),
         }),
         agent_version: row.agent_version.as_deref().and_then(|v| v.parse().ok()),
+        major_upgrade: row.major_upgrade.as_ref().map(|m| m.0.clone()),
         created_by: row.created_by,
     })
 }
@@ -823,7 +853,10 @@ fn locked_changes(current: &NewCampaign, new: &NewCampaign, targets: bool) -> Ve
     {
         changed.push("the servers or batches");
     }
-    if new.spec != current.spec || new.agent_version != current.agent_version {
+    if new.spec != current.spec
+        || new.agent_version != current.agent_version
+        || new.major_upgrade != current.major_upgrade
+    {
         changed.push("the update");
     }
     if new.sources != current.sources {
@@ -955,8 +988,8 @@ async fn replace(
                  security_only = $5, allow_reboot = $6, command_ttl_s = $7,
                  failure_threshold = $8, failure_threshold_unit = $9, sources_mode = $10,
                  agent_version = $11, include_os = $12, third_party = $13,
-                 requested_server_ids = $14, requested_waves = $15
-             WHERE id = $16
+                 requested_server_ids = $14, requested_waves = $15, major_upgrade = $16
+             WHERE id = $17
              RETURNING {COLUMNS}"
         ))),
         new,
@@ -1018,9 +1051,11 @@ async fn archive(
     .await?;
     sqlx::query(
         "INSERT INTO campaign_run_targets (campaign_id, run, server_id, wave, command_id, error,
-             sources_command_id, restore_command_id, snapshot_command_id)
+             sources_command_id, restore_command_id, snapshot_command_id, vm_snapshot_state,
+             upgraded_at)
          SELECT campaign_id, $2, server_id, wave, command_id, error,
-             sources_command_id, restore_command_id, snapshot_command_id
+             sources_command_id, restore_command_id, snapshot_command_id, vm_snapshot_state,
+             upgraded_at
          FROM campaign_targets WHERE campaign_id = $1",
     )
     .bind(row.id)
@@ -1313,12 +1348,43 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
             "server {revoked} is revoked"
         )));
     }
+    // A major upgrade names only servers of its release; a site's others
+    // are left out (ADR-0182).
+    let from = new.major_upgrade.as_ref().map(|m| m.from.as_str());
+    if let Some(from) = from {
+        let other: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT hostname, os_version FROM servers
+             WHERE id = ANY($1) AND os_version IS DISTINCT FROM $2
+               AND os_version NOT LIKE $2 || '.%'
+             ORDER BY hostname",
+        )
+        .bind(&new.server_ids)
+        .bind(from)
+        .fetch_all(&mut *conn)
+        .await?;
+        if !other.is_empty() {
+            let names: Vec<String> = other
+                .iter()
+                .map(|(host, version)| {
+                    format!(
+                        "{host} runs {}",
+                        version.as_deref().unwrap_or("an unknown release")
+                    )
+                })
+                .collect();
+            return Err(CampaignError::Invalid(format!(
+                "every server of the upgrade must run {from}: {}",
+                names.join(", ")
+            )));
+        }
+    }
     let targets: Vec<Uuid> = sqlx::query_scalar(
         "SELECT s.id FROM servers s JOIN sites t ON t.id = s.site_id
          WHERE t.customer_id = $1 AND s.revoked_at IS NULL
            AND (s.id = ANY($2) OR s.site_id = $3)
            AND (s.package_updates OR $4 OR NOT $5)
            AND ($5 OR (s.os_family = 'windows') = ANY($6))
+           AND ($7::text IS NULL OR s.os_version = $7 OR s.os_version LIKE $7 || '.%')
          ORDER BY s.hostname, s.peer_id",
     )
     .bind(new.customer_id)
@@ -1327,6 +1393,7 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
     .bind(new.agent_version.is_some())
     .bind(new.spec.include_os)
     .bind(platforms(&new.spec))
+    .bind(from)
     .fetch_all(&mut *conn)
     .await?;
     if targets.is_empty() {
@@ -1434,6 +1501,7 @@ mod tests {
             windows: Vec::new(),
             sources: None,
             agent_version: None,
+            major_upgrade: None,
             created_by: None,
         }
     }

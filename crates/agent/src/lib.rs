@@ -21,6 +21,8 @@ pub mod identity;
 pub mod init_config;
 #[cfg(unix)]
 pub mod journald;
+#[cfg(unix)]
+pub mod major_upgrade;
 pub mod os;
 pub mod packages;
 pub mod plugins;

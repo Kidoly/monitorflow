@@ -166,6 +166,20 @@ pub fn apply(
 }
 
 /// Restores the sources `apply` changed. Nothing to revert is a success.
+/// Rewrites the saved originals of the active backup with `rewrite`, so
+/// that a later revert restores sources of the release a major upgrade
+/// moved the host to (ADR-0182). Nothing when no backup is active.
+pub fn rewrite_originals(
+    root: &Path,
+    rewrite: impl Fn(&Path, &str) -> Option<String>,
+) -> Result<Vec<PathBuf>, Error> {
+    let _lock = backup::lock(root)?;
+    match Backup::active(root)? {
+        Some(mut active) => active.rewrite_copies(rewrite),
+        None => Ok(Vec::new()),
+    }
+}
+
 pub fn revert(root: &Path) -> Result<Outcome, Error> {
     let _lock = backup::lock(root)?;
     let Some(active) = Backup::active(root)? else {

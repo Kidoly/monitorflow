@@ -9,6 +9,9 @@
 //!
 //! A campaign may pin mirror snapshots (ADR-0038): each server is pointed
 //! at them before its update and gets its previous sources back after.
+//!
+//! A major upgrade campaign (ADR-0182) moves its servers to the next
+//! release of their distribution instead, with a snapshot first.
 
 mod model;
 mod pin;
@@ -17,9 +20,9 @@ mod runner;
 mod store;
 
 pub use model::{
-    plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, PinnedMirror,
-    PlanError, SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_PACKAGES,
-    MAX_TARGETS, MAX_WAVES, MAX_WINDOWS, NO_THIRD_PARTY,
+    plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, MajorUpgradeSpec,
+    PinnedMirror, PlanError, SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
+    MAX_PACKAGES, MAX_TARGETS, MAX_WAVES, MAX_WINDOWS, NO_THIRD_PARTY,
 };
 pub use pin::write_pins;
 pub use runner::{Runner, Step, MIN_WINDOW_LEFT, POLL};

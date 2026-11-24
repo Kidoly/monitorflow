@@ -9,6 +9,7 @@
 
 pub mod acceptance;
 mod dispatcher;
+pub mod major_upgrade;
 mod packages;
 pub mod sources;
 mod store;

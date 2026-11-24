@@ -208,9 +208,11 @@ What established monitoring tools still do better once Phase 17 is done: alerts 
 
 Updates within a release are done (Phase 4). Moving a server to the next release of its distribution is the job people put off for years, because it is long, risky and done by hand on each server.
 
-- [ ] Major distribution upgrades: move servers to the next release of their distribution, Debian 12 (bookworm) to Debian 13 (trixie) first, then Ubuntu LTS to the next LTS and RHEL 8 to 9 or 9 to 10 with its derivatives (Rocky, AlmaLinux), in waves like a campaign. An explicit action with warnings, a snapshot recommended before, and nothing done on a server that did not agree to it.
+- [x] Major distribution upgrades, Debian 12 (bookworm) to Debian 13 (trixie): move servers to the next release of their distribution in waves like a campaign. An explicit action with warnings, a snapshot recommended before, and nothing done on a server that did not agree to it (ADR-0182).
+- [ ] Major distribution upgrades, Ubuntu LTS to the next LTS, on the same command, unit, checks and campaigns (ADR-0182).
+- [ ] Major distribution upgrades, RHEL 8 to 9 and 9 to 10 with its derivatives (Rocky, AlmaLinux) through leapp and ELevate (ADR-0182).
 
-  Design note, to turn into an ADR when the task starts:
+  Design note, now ADR-0182:
 
   - **Per distribution.** Debian: point every source at the new codename (both the classic `sources.list` lines and the deb822 `.sources` files, adding `non-free-firmware` where `non-free` was used), then `apt-get update`, `apt-get upgrade --without-new-pkgs`, `apt-get full-upgrade`, non-interactive with the configuration files kept as they are, then a reboot. Ubuntu: its own `do-release-upgrade` in non-interactive mode, LTS to the next LTS only, once that LTS offers the upgrade (after its first point release). RHEL and derivatives: `leapp preupgrade`, whose report blocks the upgrade on any inhibitor and is shown as it is, then `leapp upgrade` and the reboot into its upgrade environment; Rocky and AlmaLinux through the ELevate data for leapp. One release at a time: bookworm to trixie, never bullseye to trixie in one step. Other distributions, and Windows feature updates, stay out until asked for.
   - **Explicit.** Global or customer administrators only, never from a rule or the AI. The server must have been installed with "Allow major upgrades from the web interface" (an agent setting, like AI commands, so a compromised central server cannot start one), and the confirmation names the source and target releases and the number of servers. Audited like campaigns, and the commands are signed and classified high impact.

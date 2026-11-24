@@ -629,6 +629,9 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   // Off by default (ADR-0179): scripts run code of the central server's
   // people on the host, which its administrator must choose.
   const [scripts, setScripts] = useState(false);
+  // Off by default (ADR-0182): a major upgrade is the change most likely
+  // to leave a server that does not boot.
+  const [majorFromWeb, setMajorFromWeb] = useState(false);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
   const origin = pageOrigin();
@@ -636,7 +639,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
     {
       name: "Linux",
       note: t("install.linux.note"),
-      command: linuxInstallCommand(token, source, origin, through, aiFromWeb, scripts),
+      command: linuxInstallCommand(token, source, origin, through, aiFromWeb, scripts, majorFromWeb),
     },
     {
       name: "Windows",
@@ -683,6 +686,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
       )}
       <Switch checked={aiFromWeb} onChange={setAiFromWeb} label={t("install.agent.aiFromWeb")} note={t("install.agent.aiFromWebNote")} />
       <Switch checked={scripts} onChange={setScripts} label={t("install.agent.scripts")} note={t("install.agent.scriptsNote")} />
+      <Switch
+        checked={majorFromWeb}
+        onChange={setMajorFromWeb}
+        label={t("install.agent.majorFromWeb")}
+        note={t("install.agent.majorFromWebNote")}
+      />
       {shared ? (
         <Banner tone="warn">{shared}</Banner>
       ) : (

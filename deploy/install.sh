@@ -53,6 +53,11 @@
 #                    server's script library as its own user
 #                    (commands.scripts, ADR-0179), also on a host already
 #                    installed; 0 takes that back. Unset keeps what is there.
+#   MF_MAJOR_UPGRADES_FROM_WEB=1  agent only: allow major upgrades of the
+#                    distribution from the web interface
+#                    (packages.major_upgrades, ADR-0182), also on a host
+#                    already installed; 0 takes that back. Unset keeps what
+#                    is there.
 #   MF_UNINSTALL=1   remove the binary, service and sudo rules; keep the
 #                    configuration and identity. With MF_PURGE=1, remove
 #                    those and the service's user too.
@@ -109,6 +114,7 @@ MF_ALLOW_COMMANDS=${MF_ALLOW_COMMANDS:-}
 MF_AI_COMMANDS_FROM_WEB=${MF_AI_COMMANDS_FROM_WEB:-}
 MF_AI_ROOT_ACTIONS=${MF_AI_ROOT_ACTIONS:-}
 MF_ALLOW_SCRIPTS=${MF_ALLOW_SCRIPTS:-}
+MF_MAJOR_UPGRADES_FROM_WEB=${MF_MAJOR_UPGRADES_FROM_WEB:-}
 
 # Public keys that sign releases (ADR-0053), filled in from
 # deploy/release-keys.pem by deploy/release-files.sh.
@@ -392,6 +398,11 @@ case $MF_ALLOW_SCRIPTS in
     *) die "MF_ALLOW_SCRIPTS must be 1 or 0" ;;
 esac
 [ -z "$MF_ALLOW_SCRIPTS" ] || [ "$MF_ROLE" = agent ] || die "MF_ALLOW_SCRIPTS is for agents"
+case $MF_MAJOR_UPGRADES_FROM_WEB in
+    '' | 0 | 1) ;;
+    *) die "MF_MAJOR_UPGRADES_FROM_WEB must be 1 or 0" ;;
+esac
+[ -z "$MF_MAJOR_UPGRADES_FROM_WEB" ] || [ "$MF_ROLE" = agent ] || die "MF_MAJOR_UPGRADES_FROM_WEB is for agents"
 
 if [ -n "$MF_DOWNLOAD_URL" ]; then
     [ -z "$MF_VERSION" ] || die "MF_VERSION selects a GitHub release; with MF_DOWNLOAD_URL, point it at the files of that version instead"
@@ -511,6 +522,14 @@ if [ "$MF_ROLE" = agent ]; then
         "$BIN" --config "$CONF" ai-commands root-actions off >/dev/null
         say "AI root actions are refused on this agent; MF_AI_ROOT_ACTIONS=1 allows them"
     fi
+fi
+# In agent.toml, which the root helper reads itself (ADR-0182).
+if [ "$MF_MAJOR_UPGRADES_FROM_WEB" = 1 ]; then
+    "$BIN" --config "$CONF" major-upgrades on >/dev/null
+    say "major upgrades of the distribution can be started from the web interface on this agent; MF_MAJOR_UPGRADES_FROM_WEB=0 takes that back"
+elif [ "$MF_MAJOR_UPGRADES_FROM_WEB" = 0 ]; then
+    "$BIN" --config "$CONF" major-upgrades off >/dev/null
+    say "major upgrades from the web interface are refused on this agent"
 fi
 
 pin_ca

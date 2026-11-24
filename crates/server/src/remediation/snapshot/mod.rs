@@ -172,13 +172,32 @@ pub struct SnapshotRequest {
     pub step: u32,
 }
 
+/// The step of a snapshot taken before a major upgrade campaign's server
+/// (ADR-0182), never a remediation step: `incident` is then the campaign.
+pub const CAMPAIGN_STEP: u32 = u32::MAX;
+
 impl SnapshotRequest {
+    /// The snapshot before a server of the major upgrade campaign
+    /// `campaign` (ADR-0182).
+    pub fn for_campaign(campaign: Uuid) -> Self {
+        Self {
+            incident: campaign,
+            step: CAMPAIGN_STEP,
+        }
+    }
+
     pub fn name(&self) -> SnapshotName {
         SnapshotName::for_step(self.incident, self.step)
     }
 
     /// Stored with the snapshot on the platform, for its operators.
     pub fn description(&self) -> String {
+        if self.step == CAMPAIGN_STEP {
+            return format!(
+                "MonitorFlow, before the major upgrade of campaign {}",
+                self.incident
+            );
+        }
         format!(
             "MonitorFlow, before step {} of remediation incident {}",
             self.step, self.incident

@@ -471,6 +471,7 @@ fn package_report(index: usize) -> PackageReport {
         storage: None,
         third_party: Vec::new(),
         managers: Vec::new(),
+        major_upgrade: None,
     }
 }
 

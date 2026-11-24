@@ -2986,6 +2986,8 @@ export interface Campaign {
   sources: SourcesPin | null;
   /** Set for an agent update campaign: the version agents update to (ADR-0053). */
   agent_version: string | null;
+  /** Set for a major upgrade campaign (ADR-0182); absent from older servers. */
+  major_upgrade?: MajorUpgradeSpec | null;
   /** The request's `server_ids` and `waves` as last written; null before ADR-0179, absent from older servers. */
   server_ids?: string[] | null;
   wave_specs?: WaveSpec[] | null;
@@ -3009,10 +3011,62 @@ export interface CampaignRunSettings {
   wave_specs: WaveSpec[];
   spec: UpdateSpec;
   agent_version: string | null;
+  major_upgrade?: MajorUpgradeSpec | null;
   command_ttl_s: number;
   failure_threshold: FailureThreshold;
   windows: CampaignWindow[];
   sources: SourcesPin | null;
+}
+
+/** A major upgrade campaign (ADR-0182): every server moves from `from` to the next release, `to`. */
+export interface MajorUpgradeSpec {
+  from: string;
+  to: string;
+  /** Upgrade servers that cannot get a snapshot first. */
+  accept_limited_rollback: boolean;
+  /** Servers of a batch upgrading at once, 1 to 50. */
+  parallel: number;
+}
+
+/** One check before a major upgrade: the central server's (`allowed`, `agent_version`, `mirror`), then the agent's. */
+export interface MajorUpgradeCheck {
+  name: string;
+  /** `warning` never blocks. */
+  state: "ok" | "warning" | "failed";
+  /** What was found, in English. */
+  detail: string;
+  items: string[];
+}
+
+/** The last major upgrade of a server, as its agent tells it. */
+export interface MajorUpgradeProgress {
+  command_id: string;
+  from: string;
+  to: string;
+  phase: "starting" | "sources" | "refreshing" | "upgrading" | "full_upgrade" | "rebooting" | "done" | "failed";
+  error: string | null;
+  sources_restored: boolean;
+  disabled_sources: string[];
+  started_at: string | null;
+  updated_at: string | null;
+}
+
+/** A server of `GET /api/major-upgrades` and its next release (ADR-0182). */
+export interface ServerUpgrade {
+  server_id: string;
+  hostname: string;
+  site_id: string;
+  customer_id: string;
+  release: string;
+  release_label: string | null;
+  target: string | null;
+  target_label: string | null;
+  ready: boolean;
+  checks: MajorUpgradeCheck[];
+  rollback: SnapshotSupport;
+  progress: MajorUpgradeProgress | null;
+  reported_at: string | null;
+  can_upgrade: boolean;
 }
 
 /** A past run of a campaign, as it ended (ADR-0173). */
@@ -3041,7 +3095,9 @@ export type CampaignServerStatus =
   | "failed"
   | "expired"
   | "cancelled"
-  | "skipped";
+  | "skipped"
+  /** A major upgrade started and not judged yet (ADR-0182). */
+  | "upgrading";
 
 export interface CampaignServer {
   server_id: string;
@@ -3058,6 +3114,9 @@ export interface CampaignServer {
   restore_command_id: string | null;
   /** The local snapshot taken before the update, if any (ADR-0094). */
   snapshot_command_id?: string | null;
+  /** In a major upgrade: the agent's phase and the Proxmox snapshot's state (ADR-0182). */
+  upgrade_phase?: MajorUpgradeProgress["phase"] | null;
+  vm_snapshot?: "taking" | "taken" | "limited" | "failed" | null;
 }
 
 export interface CampaignWave {
@@ -3096,6 +3155,8 @@ export interface CampaignRequest {
   windows: CampaignWindow[];
   /** An agent update campaign instead of packages (ADR-0053). */
   agent_version?: string;
+  /** A major upgrade campaign instead (ADR-0182). */
+  major_upgrade?: MajorUpgradeSpec;
   /** False: third-party apps only (ADR-0138). */
   include_os?: boolean;
   third_party?: ThirdPartySelection[];
@@ -5492,6 +5553,12 @@ export const api = {
   /** The newest 500 campaigns of the customers the user reads as a whole. */
   campaigns: (signal?: AbortSignal) =>
     request<CampaignList>("/api/campaigns?limit=500", { signal }),
+
+  /** Servers that can move to the next release, with their checks (ADR-0182). */
+  majorUpgrades: (filter: { customer_id?: string; site_id?: string; server_id?: string }, signal?: AbortSignal) => {
+    const query = new URLSearchParams(Object.entries(filter).filter(([, v]) => v) as [string, string][]);
+    return request<{ servers: ServerUpgrade[] }>(`/api/major-upgrades?${query}`, { signal });
+  },
 
   campaign: (id: string, signal?: AbortSignal) =>
     request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, {

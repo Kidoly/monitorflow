@@ -39,6 +39,7 @@ One command serves every server of a site, for 30 days by default[^0073]. Each s
 | `MF_AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page (`commands.from_web`), through a systemd drop-in. Without it, the web interface can only turn them off. Works on an installed agent too; `MF_AI_COMMANDS_FROM_WEB=0` takes it back. "Allow AI commands to be turned on from the web interface" on the Add servers page, ticked by default, adds it to the command; AI commands stay off until an administrator turns them on there[^0098][^0175] |
 | `MF_AI_ROOT_ACTIONS=0` | Refuse the AI root actions (clearing the package cache, vacuuming the journal, pruning unused Docker images, restarting a service), which a new install allows (`commands.root_actions` in `agent.toml`). `MF_AI_ROOT_ACTIONS=1` allows them, also on an installed agent; without the variable an installed agent keeps its choice. They run only while AI commands are on ([AI root actions](#ai-root-actions))[^0181] |
 | `MF_ALLOW_SCRIPTS=1` | Let this agent run scripts of the script library (`commands.scripts`) as its own user, never as root, through a systemd drop-in. Off by default, and the web interface cannot turn it on: whoever runs the central server could otherwise run code on this host. Works on an installed agent too; `MF_ALLOW_SCRIPTS=0` takes it back. "Allow scripts from the script library" on the Add servers page, unticked by default, adds it to the command[^0179] |
+| `MF_MAJOR_UPGRADES_FROM_WEB=1` | Allow major upgrades of the distribution from the web interface (`packages.major_upgrades` in `agent.toml`), Debian 12 to 13 for now ([below](#major-upgrades)). Works on an installed agent too; `MF_MAJOR_UPGRADES_FROM_WEB=0` takes it back. "Allow major upgrades from the web interface" on the Add servers page, off by default, adds it to the command[^0182] |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
@@ -144,6 +145,7 @@ What the rules allow:
 | `monitorflow-agent self-update` | `self_update`: installs a signed agent release (below) |
 | `monitorflow-agent snapshots inspect`, `… snapshots take`, `… snapshots delete` | The storage part of each package report, `take_snapshot` and `delete_snapshot`: local snapshots before a change (below) |
 | `monitorflow-agent root-action` | `root_action`: one AI root action of a fixed catalog ([below](#ai-root-actions)) |
+| `monitorflow-agent major-upgrade` | `major_upgrade`: a major upgrade of the distribution, only where the server allowed it (below) |
 
 There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself[^0036]. Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite. Flatpak and Snap apps go through the same helper, which runs `flatpak update --system` or `snap refresh` with the app IDs it checked and found installed[^0140]; the agent reads their inventory as its own user, so they need no sudo line of their own.
 
@@ -221,6 +223,29 @@ docker compose exec server monitorflow-server agent-release list
 The server's image is read-only and its `/tmp` is a tmpfs, which `docker compose cp` cannot write to, hence `tar`[^0126]. The import checks the signature first. The web interface offers the newest version the server holds.
 
 **Servers installed before self-update** lack the sudo line above: run the installer once more, which installs the new rules with the new binary. Until then `self_update` fails with "a password is required" and nothing changes. A self-update replaces the binary only; when a release changes the unit or the sudo rules, its notes say to run the installer.
+
+## Major upgrades
+
+A major upgrade moves a server to the next release of its distribution: Debian 12 (bookworm) to Debian 13 (trixie) for now, one release at a time[^0182]. It is a campaign of its own kind, "Major upgrade" in the new campaign form (`major_upgrade` in `POST /api/campaigns`), which only global administrators and administrators of the customer can create and start; neither a rule nor the AI ever starts one.
+
+**The server must allow it.** `packages.major_upgrades = true` in `agent.toml`, which only root can write: `MF_MAJOR_UPGRADES_FROM_WEB=1` with the installer, or `sudo monitorflow-agent major-upgrades on` (`off` takes it back), then `systemctl restart monitorflow-agent` for the web interface to see it. The root helper reads the file itself before every upgrade, so a central server that is taken over cannot upgrade a server that did not agree.
+
+**Checks.** The server's Updates tab, and the campaign form for every server picked, show what the agent checked with its last package report: every package of the current release up to date, no held or broken package, enough free space (2 GiB on `/`, 4 GiB on `/var`, 300 MiB on `/boot`, added up when they share a filesystem), no reboot pending, and the sources. Third-party sources are listed: they are switched off for the upgrade and left off, with a comment saying so, since their packages were built for the old release. The central server adds whether the server allows major upgrades, whether its agent knows the next release, and, for a server on the mirrors, whether the mirrors carry Debian 13. The helper runs the checks again, after `apt-get update`, just before it starts, and refuses on any failed one. `GET /api/major-upgrades` returns the same.
+
+**Snapshot.** Each server gets a Proxmox snapshot when it is a mapped guest, else a local LVM or ZFS snapshot, before its upgrade. Where neither is possible, the campaign form says so per server and the campaign needs "I accept that these servers cannot be rolled back by a snapshot" (`accept_limited_rollback`).
+
+**On the server**, `sudo -n /usr/bin/monitorflow-agent major-upgrade` checks the signed command, the consent, the releases and the checks, then starts the transient unit `monitorflow-major-upgrade`, which survives a restart of the agent:
+
+1. every source of the release moves to `trixie` (`sources.list`, `*.list` and deb822 `*.sources`, `non-free-firmware` added where `non-free` was used), after a copy of each file in `/var/lib/monitorflow/major-upgrade/backup/`;
+2. `apt-get update`; on a failure the sources are put back as they were and nothing else changes;
+3. `apt-get upgrade --without-new-pkgs`, then `apt-get full-upgrade`, non-interactive, keeping every changed configuration file;
+4. `systemctl reboot`.
+
+After step 3 starts, only the snapshot goes back. The phase is in `/var/lib/monitorflow/major-upgrade/state.json`, the full output in `/var/lib/monitorflow/major-upgrade/log` (root only) and `journalctl -u monitorflow-major-upgrade`.
+
+**Waves.** One server of a batch at a time by default (`parallel`), the first batch as the pilot, inside the campaign's maintenance windows, stopping at the first failure by default. A server is done once it rebooted, its agent reports Debian 13, and no check fails on it that did not fail before; it fails when a step fails, when its checks are not back 30 minutes after it returned, or 6 hours after its upgrade started.
+
+Hosts installed before major upgrades lack the sudo line and the setting: run the install command again with `MF_MAJOR_UPGRADES_FROM_WEB=1`. Ubuntu and RHEL with its derivatives are planned (ADR-0182).
 
 ## Pointing a server at the mirrors
 
@@ -413,6 +438,7 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0091]: [ADR-0091: System logs](adr/0091-system-logs.md)
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
+[^0182]: [ADR-0182: Major distribution upgrades](adr/0182-major-distribution-upgrades.md)
 [^0175]: [ADR-0175: A diagnosis for every alert, commands where allowed](adr/0175-diagnosis-for-every-alert.md)
 [^0181]: [ADR-0181: AI root actions, and the diagnosis in the reader's language](adr/0181-ai-root-actions.md)
 [^0179]: [ADR-0179: Script library and automation rules](adr/0179-script-library-and-automation-rules.md)

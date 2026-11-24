@@ -73,6 +73,25 @@ enum Command {
         #[command(subcommand)]
         step: Option<SelfUpdateStep>,
     },
+    /// Start a major upgrade of the distribution, run as root through sudo
+    /// by the agent (ADR-0182): reads a `major_upgrade` command the central
+    /// server signed on stdin, checks `packages.major_upgrades` in the
+    /// configuration file and the server, then starts the upgrade in the
+    /// transient unit monitorflow-major-upgrade.
+    #[cfg(unix)]
+    MajorUpgrade {
+        #[command(subcommand)]
+        step: Option<MajorUpgradeStep>,
+    },
+    /// `on` allows major upgrades of the distribution from the web
+    /// interface (ADR-0182), `off` refuses them: sets
+    /// `packages.major_upgrades` in `--config`. Run it as root, then
+    /// restart the agent for the web interface to see it.
+    #[cfg(unix)]
+    MajorUpgrades {
+        #[command(subcommand)]
+        state: Toggle,
+    },
     /// Records the certificate authority of the install command as the one
     /// the root helpers trust (ADR-0108). Run as root by the installer,
     /// with the token in MONITORFLOW_ENROLLMENT_TOKEN.
@@ -203,6 +222,22 @@ enum SelfUpdateStep {
 
 #[cfg(unix)]
 #[derive(Subcommand, Debug, Clone, Copy)]
+enum MajorUpgradeStep {
+    /// The upgrade's steps, started by `major-upgrade` in a transient
+    /// systemd unit.
+    #[command(hide = true)]
+    Run,
+}
+
+#[cfg(unix)]
+#[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
+enum Toggle {
+    On,
+    Off,
+}
+
+#[cfg(unix)]
+#[derive(Subcommand, Debug, Clone, Copy)]
 enum SourcesCommand {
     /// Read a `configure_sources` command the central server signed on
     /// stdin, point the package manager at the mirror it names and check
@@ -274,6 +309,33 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         Some(Command::AiCommands { action }) => {
             let AiCommandsAction::RootActions { state } = action;
             return set_root_actions(&cli.config, state == OnOff::On).await;
+        }
+        #[cfg(unix)]
+        Some(Command::MajorUpgrade { step }) => {
+            return major_upgrade(cli.config.clone(), step).await
+        }
+        #[cfg(unix)]
+        Some(Command::MajorUpgrades { state }) => {
+            use monitorflow_agent::major_upgrade::helper;
+            let on = state == Toggle::On;
+            let path = cli.config.clone();
+            let changed = tokio::task::spawn_blocking(move || helper::set_consent(&path, on))
+                .await?
+                .map_err(anyhow::Error::msg)?;
+            let what = if on {
+                "major upgrades from the web interface are allowed"
+            } else {
+                "major upgrades from the web interface are refused"
+            };
+            if changed {
+                println!(
+                    "{what} in {}; the web interface shows it once the agent restarts: systemctl restart monitorflow-agent",
+                    cli.config.display()
+                );
+            } else {
+                println!("{what} already ({})", cli.config.display());
+            }
+            return Ok(());
         }
         #[cfg(unix)]
         Some(Command::PinCa) => {
@@ -720,10 +782,12 @@ fn platform_handlers(
             let handler = SnapshotHandler::new(action, tools.clone(), reports.clone());
             handlers.register(kind, Arc::new(handler));
         }
+        major_upgrade_handler(config, host, &tools, &reports, handlers, stop);
         latest_report
     });
     if latest_report.is_none() {
         for (kind, what) in [
+            (command::MAJOR_UPGRADE, "major upgrades"),
             (command::APPLY_UPDATES, "package updates"),
             (command::CONFIGURE_SOURCES, "package sources"),
             (command::REVERT_SOURCES, "package sources"),
@@ -743,6 +807,60 @@ fn platform_handlers(
         )),
     );
     latest_report
+}
+
+/// `major_upgrade` (ADR-0182) on Debian, accepted where the host allowed
+/// it and sudo knows the helper, and the watch that reports each phase of
+/// an upgrade; refused as unsupported on other families.
+#[cfg(unix)]
+fn major_upgrade_handler(
+    config: &AgentConfig,
+    host: &HostInfo,
+    tools: &monitorflow_agent::packages::Tools,
+    reports: &monitorflow_agent::packages::Reports,
+    handlers: &mut Handlers,
+    stop: &Shutdown,
+) {
+    use monitorflow_agent::commands::unsupported::Unsupported;
+    use monitorflow_agent::major_upgrade::handler::{self, MajorUpgradeHandler};
+    use monitorflow_agent::major_upgrade::state::STATE_DIR;
+    use monitorflow_common::command;
+
+    if host.os_family != os::OsFamily::Debian {
+        handlers.register(
+            command::MAJOR_UPGRADE,
+            Arc::new(Unsupported::new("major upgrades", "this distribution yet")),
+        );
+        return;
+    }
+    tokio::spawn(handler::watch(
+        reports.clone(),
+        STATE_DIR.into(),
+        stop.clone(),
+    ));
+    let allowed = config.packages.major_upgrades;
+    let (tools, reports) = (tools.clone(), reports.clone());
+    let slot = Arc::new(MajorUpgradeHandler::new(
+        tools.clone(),
+        reports.clone(),
+        false,
+    ));
+    handlers.register(command::MAJOR_UPGRADE, slot);
+    if allowed {
+        // Asked once, like the root actions' rule: an old sudoers file
+        // keeps the kind refused, with the reason in the log.
+        let rule = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(handler::sudo_rule(&tools))
+        });
+        if rule {
+            handlers.register(
+                command::MAJOR_UPGRADE,
+                Arc::new(MajorUpgradeHandler::new(tools, reports, true)),
+            );
+        } else {
+            tracing::warn!("{}", handler::OLD_SUDO_RULES);
+        }
+    }
 }
 
 /// Windows Update reports and `apply_updates` through the update service
@@ -807,6 +925,89 @@ fn signed_command(
     let place = Place::agent(&config.tls_paths());
     let now = monitorflow_agent::self_update::unix_ms();
     Ok(authorize(&place, &request, kind, now)?)
+}
+
+/// The major upgrade helper (ADR-0182), as root. Without a step: checks
+/// the signed command, the consent, the releases and the server, then
+/// starts the unit, printing each check and the error last on stderr.
+/// `run`: the unit's steps.
+#[cfg(unix)]
+async fn major_upgrade(config: PathBuf, step: Option<MajorUpgradeStep>) -> anyhow::Result<()> {
+    use monitorflow_agent::major_upgrade::checks::Host;
+    use monitorflow_agent::major_upgrade::helper::{self, Paths, System};
+    use monitorflow_agent::major_upgrade::state::STATE_DIR;
+    use monitorflow_agent::packages::apt::parse_simulation;
+    use monitorflow_common::command::MAJOR_UPGRADE;
+
+    if !rustix::process::geteuid().is_root() {
+        anyhow::bail!("run as root, as the agent does through sudo");
+    }
+    let dir = Path::new(STATE_DIR);
+    if let Some(MajorUpgradeStep::Run) = step {
+        return tokio::task::spawn_blocking(move || {
+            monitorflow_agent::major_upgrade::state::check_owned(dir)?;
+            let mut system = System::new(dir)?;
+            let paths = Paths {
+                root: "/".into(),
+                state_dir: dir.into(),
+            };
+            let state = helper::run(&paths, &mut system, monitorflow_agent::self_update::unix_ms)
+                .map_err(anyhow::Error::msg)?;
+            if !state.error.is_empty() {
+                anyhow::bail!("{}", state.error);
+            }
+            Ok(())
+        })
+        .await?;
+    }
+    let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<helper::Started> {
+        let command = signed_command(&config, MAJOR_UPGRADE)?;
+        if !helper::consent(&config).map_err(anyhow::Error::msg)? {
+            anyhow::bail!(
+                "major upgrades are not allowed on this server: {}",
+                helper::ALLOW_LINE
+            );
+        }
+        let running = os::detect_from(None).os_version;
+        let upgrade = helper::requested(&command.payload, &running).map_err(anyhow::Error::msg)?;
+        // The checks read fresh lists of the current release.
+        let refresh = std::process::Command::new("/usr/bin/apt-get")
+            .args(["-q", "update"])
+            .env("LC_ALL", "C")
+            .output()
+            .context("cannot run apt-get update")?;
+        if !refresh.status.success() {
+            anyhow::bail!(
+                "`apt-get update` failed: {}",
+                String::from_utf8_lossy(&refresh.stderr).trim()
+            );
+        }
+        let simulation = std::process::Command::new("/usr/bin/apt-get")
+            .args(["-s", "-q", "dist-upgrade"])
+            .env("LC_ALL", "C")
+            .output()
+            .context("cannot run apt-get -s dist-upgrade")?;
+        let upgradable = parse_simulation(&String::from_utf8_lossy(&simulation.stdout))
+            .iter()
+            .filter(|c| c.installed.is_some())
+            .count();
+        let now = monitorflow_agent::self_update::unix_ms();
+        helper::start(&command.command_id, upgrade, &Host, upgradable, dir, now)
+            .map_err(anyhow::Error::msg)
+    })
+    .await?;
+    match outcome {
+        Ok(started) => {
+            for line in started.lines {
+                println!("{line}");
+            }
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!("Error: {error}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Prints the changed paths and the backup directory, one per line.
