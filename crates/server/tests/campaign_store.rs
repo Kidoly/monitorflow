@@ -87,6 +87,7 @@ fn campaign(t: &Tenant) -> NewCampaign {
         windows: Vec::new(),
         sources: None,
         agent_version: None,
+        software: None,
         created_by: None,
     }
 }

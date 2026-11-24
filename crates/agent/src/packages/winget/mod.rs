@@ -6,7 +6,8 @@
 //! This module is what builds everywhere, so Linux tests cover it: the
 //! scripts and the paths they run from, the App Installer policy, the
 //! parsing of the scripts' JSON, which apps an update selects and how a
-//! scan becomes the report's `ThirdPartyPackage`s and status.
+//! scan becomes the report's `ThirdPartyPackage`s and status. Installs
+//! and removals from the catalogue, and held apps, follow ADR-0188.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -37,7 +38,7 @@ pub const ENV_SOURCE: &str = "MONITORFLOW_WINGET_SOURCE";
 pub const ENV_EXCLUDE: &str = "MONITORFLOW_WINGET_EXCLUDE";
 /// A scan: the first one downloads the community source's index.
 pub const SCAN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-/// One app's update.
+/// One app's update, install or removal.
 pub const UPGRADE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// Most apps one command updates.
 pub const MAX_UPGRADES: usize = 100;
@@ -96,6 +97,46 @@ pub const UPGRADE_SCRIPT: &str = "try {
   try { $message = [string]$r.ErrorMessage() } catch { }
   [ordered]@{ status = [string]$r.Status; reboot_required = [bool]$r.RebootRequired;
     installer_error = [int64]$r.InstallerErrorCode; extended_error = [int64]$extended;
+    message = $message } | ConvertTo-Json -Compress
+} catch {
+  @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+";
+
+/// Installs the one package named by the environment from its source,
+/// silently and machine-wide when the package says, as one JSON object:
+/// the module's result or `{"error"}` (ADR-0188).
+pub const INSTALL_SCRIPT: &str = "try {
+  if (-not $module) { throw 'the Microsoft.WinGet.Client module is not installed' }
+  Import-Module $module
+  $r = Install-WinGetPackage -Id $env:MONITORFLOW_WINGET_ID -Source $env:MONITORFLOW_WINGET_SOURCE `
+    -MatchOption Equals -Mode Silent -Scope SystemOrUnknown
+  $extended = 0
+  if ($r.ExtendedErrorCode) { $extended = $r.ExtendedErrorCode.HResult }
+  $message = ''
+  try { $message = [string]$r.ErrorMessage() } catch { }
+  [ordered]@{ status = [string]$r.Status; reboot_required = [bool]$r.RebootRequired;
+    installer_error = [int64]$r.InstallerErrorCode; extended_error = [int64]$extended;
+    message = $message } | ConvertTo-Json -Compress
+} catch {
+  @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+";
+
+/// Removes the one app named by the environment, as installed from its
+/// source, silently, as one JSON object: the module's result or
+/// `{"error"}` (ADR-0188).
+pub const REMOVE_SCRIPT: &str = "try {
+  if (-not $module) { throw 'the Microsoft.WinGet.Client module is not installed' }
+  Import-Module $module
+  $r = Uninstall-WinGetPackage -Id $env:MONITORFLOW_WINGET_ID -Source $env:MONITORFLOW_WINGET_SOURCE `
+    -MatchOption Equals -Mode Silent
+  $extended = 0
+  if ($r.ExtendedErrorCode) { $extended = $r.ExtendedErrorCode.HResult }
+  $message = ''
+  try { $message = [string]$r.ErrorMessage() } catch { }
+  [ordered]@{ status = [string]$r.Status; reboot_required = [bool]$r.RebootRequired;
+    installer_error = [int64]$r.UninstallerErrorCode; extended_error = [int64]$extended;
     message = $message } | ConvertTo-Json -Compress
 } catch {
   @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
@@ -169,7 +210,7 @@ impl Policy {
         excluded
     }
 
-    fn allows(&self, source: &str) -> bool {
+    pub fn allows(&self, source: &str) -> bool {
         !self
             .excluded()
             .iter()
@@ -381,12 +422,23 @@ fn find<'a>(apps: &'a [App], id: &str) -> Option<&'a App> {
     apps.iter().find(|app| app.id.eq_ignore_ascii_case(id))
 }
 
+/// What an update of winget apps leaves out.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct LeftOut<'a> {
+    /// IDs that are not installed or have no update.
+    pub not_pending: Vec<String>,
+    /// Pending apps held (ADR-0188).
+    pub held: Vec<String>,
+    /// Apps over [`MAX_UPGRADES`].
+    pub over: Vec<&'a App>,
+}
+
 /// Which `apps` a selection of `ids` updates (every pending one when
-/// empty), at most [`MAX_UPGRADES`]; the IDs that are not pending; and the
-/// apps left out over the limit.
-pub fn select<'a>(ids: &[String], apps: &'a [App]) -> (Vec<&'a App>, Vec<String>, Vec<&'a App>) {
+/// empty) but those `hold` names, at most [`MAX_UPGRADES`], and what it
+/// leaves out.
+pub fn select<'a>(ids: &[String], hold: &[String], apps: &'a [App]) -> (Vec<&'a App>, LeftOut<'a>) {
     let mut not_pending = Vec::new();
-    let mut picked: Vec<&App> = if ids.is_empty() {
+    let picked: Vec<&App> = if ids.is_empty() {
         apps.iter().filter(|app| app.pending()).collect()
     } else {
         let mut picked: Vec<&App> = Vec::new();
@@ -399,8 +451,61 @@ pub fn select<'a>(ids: &[String], apps: &'a [App]) -> (Vec<&'a App>, Vec<String>
         }
         picked
     };
+    let (mut picked, held): (Vec<&App>, Vec<&App>) = picked
+        .into_iter()
+        .partition(|app| !hold.iter().any(|h| h.eq_ignore_ascii_case(&app.id)));
     let over = picked.split_off(picked.len().min(MAX_UPGRADES));
-    (picked, not_pending, over)
+    let held = held.into_iter().map(|app| app.id.clone()).collect();
+    (
+        picked,
+        LeftOut {
+            not_pending,
+            held,
+            over,
+        },
+    )
+}
+
+/// What an install or a removal does with one package of the catalogue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Planned {
+    /// Run the script for this app, from this source.
+    Run(App),
+    /// Already as asked: installed for an install, absent for a removal.
+    Unchanged(String),
+}
+
+/// What installing `packages` (`(id, source)`) does, given the installed
+/// `apps`: an app winget lists as installed, from any source, is left as
+/// it is. At most [`MAX_UPGRADES`] packages are planned; a signed
+/// command never holds more (ADR-0188).
+pub fn plan_install(packages: &[(String, String)], apps: &[App]) -> Vec<Planned> {
+    packages
+        .iter()
+        .take(MAX_UPGRADES)
+        .map(|(id, source)| match find(apps, id) {
+            Some(app) => Planned::Unchanged(app.id.clone()),
+            None => Planned::Run(App {
+                id: id.clone(),
+                name: id.clone(),
+                source: source.clone(),
+                ..App::default()
+            }),
+        })
+        .collect()
+}
+
+/// What removing the apps `ids` does: an app that is not installed is
+/// left as it is; one that is is removed as installed, from the source
+/// winget matched it to.
+pub fn plan_remove(ids: &[String], apps: &[App]) -> Vec<Planned> {
+    ids.iter()
+        .take(MAX_UPGRADES)
+        .map(|id| match find(apps, id) {
+            Some(app) => Planned::Run(app.clone()),
+            None => Planned::Unchanged(id.clone()),
+        })
+        .collect()
 }
 
 /// The result of an app [`select`] left out over the limit: not started,
@@ -409,6 +514,17 @@ pub fn not_attempted(app: &App) -> InstallResult {
     InstallResult {
         name: app.id.clone(),
         title: format!("{}: not attempted, over {MAX_UPGRADES} apps", app.name),
+        result: Outcome::NotStarted,
+        hresult: 0,
+    }
+}
+
+/// The result of an install from a source Group Policy turns off, or
+/// the store's, which MonitorFlow never uses (ADR-0138, ADR-0188).
+pub fn source_turned_off(app: &App) -> InstallResult {
+    InstallResult {
+        name: app.id.clone(),
+        title: format!("{}: the source {} is not used", app.name, app.source),
         result: Outcome::NotStarted,
         hresult: 0,
     }

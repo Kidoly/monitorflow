@@ -264,6 +264,9 @@
 //! | POST | `/api/campaigns/{id}/start`, `/pause`, `/resume`, `/stop` | customer administrator | 200 [`campaigns::CampaignDetail`]; 409 when the state does not allow it |
 //! | POST | `/api/campaigns/{id}/relaunch` | customer administrator | body [`campaigns::RelaunchRequest`]; 200 [`campaigns::CampaignDetail`]: a finished campaign runs again, all its servers or the failed ones; 409 otherwise (ADR-0173) |
 //! | GET | `/api/campaigns/{id}/runs` | customer role | [`campaigns::RunList`]: the campaign's past runs, newest first (ADR-0173) |
+//! | GET | `/api/software` | any role | [`software::Catalog`]: the software catalogue, shared entries and those of visible customers; `?customer_id=` narrows (ADR-0188) |
+//! | POST | `/api/software` | customer administrator, global for a shared entry | body [`software::EntryRequest`]; 201 [`software::Entry`]; 409 when the package is listed already |
+//! | PUT, DELETE | `/api/software/{id}` | as POST | body [`software::EntryRequest`]; 200 [`software::Entry`], or 204 |
 //! | GET | `/api/remediation/rules` | customer role | [`remediation::RuleList`], see below |
 //! | POST | `/api/remediation/rules` | customer administrator | body [`remediation::RuleRequest`]; 201 the stored rule |
 //! | DELETE | `/api/remediation/rules/{id}` | customer administrator | 204 |
@@ -810,6 +813,7 @@ pub mod openapi_remediation;
 mod openapi_reports;
 mod openapi_settings;
 mod openapi_snmp;
+mod openapi_software;
 mod openapi_sso;
 mod openapi_system;
 mod openapi_users;
@@ -846,6 +850,7 @@ pub mod silences;
 pub mod sites;
 pub mod snmp_checks;
 pub mod snmp_library;
+pub mod software;
 pub mod sources;
 pub mod sso_login;
 pub mod third_party;
@@ -1625,6 +1630,11 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/campaigns/{id}/stop", post(campaigns::stop))
         .route("/api/campaigns/{id}/relaunch", post(campaigns::relaunch))
         .route("/api/campaigns/{id}/runs", get(campaigns::runs))
+        .route("/api/software", get(software::list).post(software::create))
+        .route(
+            "/api/software/{id}",
+            put(software::update).delete(software::delete),
+        )
         .route(
             "/api/remediation/rules",
             get(remediation::list).post(remediation::create),

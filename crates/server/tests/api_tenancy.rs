@@ -1183,6 +1183,54 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 .unwrap();
             assert_eq!(state, "draft");
         }
+        // The software catalogue (ADR-0188): another customer's entries
+        // are neither listed, changed nor removed, nor added for it.
+        ("GET", "/api/software")
+        | ("POST", "/api/software")
+        | ("PUT", "/api/software/{id}")
+        | ("DELETE", "/api/software/{id}") => {
+            let theirs: Uuid = sqlx::query_scalar(
+                "INSERT INTO software_catalog (customer_id, name, manager, package_id, source)
+                 VALUES ($1, 'Theirs', 'winget', $2, 'winget') RETURNING id",
+            )
+            .bind(b.customer)
+            .bind(format!("Globex.{}", Uuid::new_v4().simple()))
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            let body =
+                json!({ "customer_id": b.customer, "name": "x", "package_id": "Globex.Mine" });
+            match method {
+                "GET" => {
+                    let (status, list) = ctx.call(method, path, None).await;
+                    assert_eq!(status, StatusCode::OK);
+                    assert!(!Ctx::mentions(&list, theirs) && !Ctx::mentions(&list, b.customer));
+                    let uri = format!("{path}?customer_id={}", b.customer);
+                    let (_, list) = ctx.call(method, &uri, None).await;
+                    assert!(!Ctx::mentions(&list, theirs), "{list}");
+                }
+                "POST" => assert_eq!(ctx.status(method, path, Some(body)).await, not_found),
+                _ => {
+                    let uri = path.replace("{id}", &theirs.to_string());
+                    let body = (method == "PUT").then_some(body);
+                    assert_eq!(ctx.status(method, &uri, body).await, not_found);
+                }
+            }
+            let name: String =
+                sqlx::query_scalar("SELECT name FROM software_catalog WHERE id = $1")
+                    .bind(theirs)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(name, "Theirs");
+            let added: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM software_catalog WHERE package_id = 'Globex.Mine'",
+            )
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            assert_eq!(added, 0);
+        }
         ("GET", "/api/remediation/rules") => {
             let (status, body) = ctx.call(method, path, None).await;
             assert_eq!(status, StatusCode::OK);

@@ -79,6 +79,10 @@ pub(super) struct Pending {
     pub storage: Option<sqlx::types::Json<local::Storage>>,
     /// Its latest report has third-party managers (ADR-0138).
     pub reports_third_party: bool,
+    /// What its agent does with `software` commands, as `Hello` said;
+    /// `None` from an agent that predates them (ADR-0188), which also
+    /// does not know approvals and holds.
+    pub software_state: Option<String>,
 }
 
 /// What a [`Pending`] server of a pinned campaign needs next.
@@ -354,6 +358,7 @@ mod tests {
             proxmox_mapped: false,
             storage: None,
             reports_third_party: false,
+            software_state: None,
         }
     }
 

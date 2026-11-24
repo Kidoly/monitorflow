@@ -439,3 +439,101 @@ describe("monthly and yearly windows (ADR-0167)", () => {
     );
   });
 });
+
+describe("software and update approvals (ADR-0188)", () => {
+  const SEVEN = "1b7c5d6e-1f2a-4b3c-8d4e-5f6a7b8c9d01";
+  const software = {
+    action: "install" as const,
+    packages: [{ catalog_id: SEVEN, name: "7-Zip", manager: "winget" as const, id: "7zip.7zip", source: "winget" }],
+  };
+
+  it("sends a software campaign without packages, apps, approvals nor snapshots", () => {
+    const request = toRequest({
+      ...emptyDraft("c1"),
+      update: "software",
+      softwareAction: "remove",
+      softwareIds: [SEVEN],
+      sources: "both",
+      classifications: ["Updates"],
+      hold: "KB1",
+      allowReboot: true,
+    });
+    expect(request).toMatchObject({ packages: [], security_only: false, allow_reboot: true, software: { action: "remove", catalog_ids: [SEVEN] } });
+    for (const key of ["third_party", "include_os", "classifications", "hold", "sources", "agent_version"]) {
+      expect(key in request, key).toBe(false);
+    }
+  });
+
+  it("sends classifications in Windows order, held updates and held winget apps", () => {
+    const request = toRequest({
+      ...emptyDraft("c1"),
+      sources: "both",
+      managers: ["winget", "flatpak"],
+      classifications: ["Updates", "Security Updates"],
+      hold: "KB5034441, kb5035853",
+      appHold: "Mozilla.Firefox",
+    });
+    expect(request.classifications).toEqual(["Security Updates", "Updates"]);
+    expect(request.hold).toEqual(["KB5034441", "kb5035853"]);
+    expect(request.third_party).toEqual([
+      { manager: "winget", packages: [], hold: ["Mozilla.Firefox"] },
+      { manager: "flatpak", packages: [] },
+    ]);
+    // Named packages take no classifications.
+    expect("classifications" in toRequest({ ...emptyDraft("c1"), update: "packages", packages: "KB1", classifications: ["Updates"] })).toBe(false);
+    expect("classifications" in toRequest(emptyDraft("c1")) || "hold" in toRequest(emptyDraft("c1"))).toBe(false);
+  });
+
+  it("checks holds, held apps and the software chosen", () => {
+    expect(validateCampaign(valid({ hold: ["KB5034441", "6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a01"] }), ["s1"])).toEqual([]);
+    expect(validateCampaign(valid({ hold: ["5034441"] }), ["s1"])).toEqual(['"5034441" is not a KB number or update ID.']);
+    expect(validateCampaign(valid({ packages: ["KB1"], hold: ["kb1"] }), ["s1"])).toEqual(['"kb1" is both named and held.']);
+    const apps = (hold: string[]) => valid({ third_party: [{ manager: "winget", packages: [], hold }] });
+    expect(validateCampaign(apps(["7zip.7zip", "Microsoft.VisualStudio.2022.Community"]), ["s1"])).toEqual([]);
+    for (const bad of ["7zip", ".7zip.7zip", "a.b.c.d.e.f.g.h.i", "Mozilla.Fire fox", `a.${"b".repeat(33)}`]) {
+      expect(validateCampaign(apps([bad]), ["s1"]), bad).toEqual([`Invalid winget ID "${bad}".`]);
+    }
+    expect(validateCampaign(valid({ software: { action: "install", catalog_ids: [] } }), ["s1"])).toEqual([
+      "Choose at least one software of the catalogue.",
+    ]);
+    expect(validateCampaign(valid({ software: { action: "install", catalog_ids: ids(101) } }), ["s1"])).toEqual([
+      "At most 100 software at once.",
+    ]);
+  });
+
+  it("targets the customer's Windows servers, package updates or not", () => {
+    const servers = [
+      server({ id: "w", hostname: "win-1", os_family: "windows", package_updates: false }),
+      server({ id: "l", hostname: "web-1" }),
+    ];
+    expect(campaignTargets(servers, "c1", "site-1", [], false, null, true).map((s) => s.id)).toEqual(["w"]);
+  });
+
+  it("round-trips a software campaign and approvals through the draft", () => {
+    const saved = detail({ software, spec: { packages: [], security_only: false, allow_reboot: false } });
+    const draft = draftFromCampaign(saved);
+    expect(draft).toMatchObject({ update: "software", softwareAction: "install", softwareIds: [SEVEN] });
+    expect(requestFromCampaign(saved, draft).software).toEqual({ action: "install", catalog_ids: [SEVEN] });
+    expect(describeUpdate(saved.spec, null, software)).toBe("Install software: 7-Zip");
+    expect(campaignSubline(saved)).toBe("2 batches · installs 1 software");
+
+    const approved = detail({
+      spec: {
+        packages: [],
+        security_only: true,
+        allow_reboot: false,
+        classifications: ["Critical Updates"],
+        hold: ["KB1"],
+        third_party: [{ manager: "winget", packages: [], hold: ["7zip.7zip"] }],
+      },
+    });
+    const back = draftFromCampaign(approved);
+    expect(back).toMatchObject({ classifications: ["Critical Updates"], hold: "KB1", appHold: "7zip.7zip" });
+    expect(toRequest(back)).toMatchObject({
+      classifications: ["Critical Updates"],
+      hold: ["KB1"],
+      third_party: [{ manager: "winget", packages: [], hold: ["7zip.7zip"] }],
+    });
+    expect(requestFromCampaign(approved, back)).toMatchObject({ classifications: ["Critical Updates"], hold: ["KB1"] });
+  });
+});

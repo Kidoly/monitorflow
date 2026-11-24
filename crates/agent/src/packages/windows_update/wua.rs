@@ -23,7 +23,9 @@ use windows::Win32::System::UpdateAgent::{
     UpdateSession,
 };
 
-use super::{select, Found, InstallResult, Installed, Kind, Outcome, Reply, Request, Scan, Status};
+use super::{
+    select, Found, InstallResult, Installed, Outcome, Reply, Request, Scan, Selection, Status,
+};
 
 /// Pending software updates that are not hidden, and installed ones.
 const SCAN: &str =
@@ -81,12 +83,18 @@ pub fn handle(request: &Request) -> Reply {
         Request::Status => {
             status().map(|reboot_required| Reply::Status(Status { reboot_required }))
         }
-        Request::Install { kind, updates } => install(*kind, updates).map(Reply::Installed),
+        Request::Install { .. } => match Selection::of(request) {
+            Some(selection) => install(selection).map(Reply::Installed),
+            None => Err("not an install".into()),
+        },
         Request::Reboot => reboot().map(Reply::Rebooting),
         // The service answers it before calling this (ADR-0053).
         Request::SelfUpdate(_) => Err("self-updates are not Windows Update calls".into()),
         // The service answers them before calling this (ADR-0139).
-        Request::WingetScan | Request::WingetUpgrade { .. } => {
+        Request::WingetScan
+        | Request::WingetUpgrade { .. }
+        | Request::WingetInstall { .. }
+        | Request::WingetRemove { .. } => {
             Err("winget requests are not Windows Update calls".into())
         }
         Request::Signed { .. } => Err("the signed command was not checked".into()),
@@ -239,21 +247,23 @@ fn collection() -> Result<IUpdateCollection> {
     }
 }
 
-/// Downloads and installs what `kind` and `names` select among the
-/// pending updates.
-fn install(kind: Kind, names: &[String]) -> Result<Installed> {
+/// Downloads and installs what `selection` takes among the pending
+/// updates.
+fn install(selection: Selection<'_>) -> Result<Installed> {
     let _com = Com::init()?;
     let session = session()?;
     let pending = search(&session, PENDING)?;
     let found: Vec<Found> = pending.iter().map(|(_, f)| f.clone()).collect();
-    let (picked, not_pending) = select(kind, names, &found);
+    let (picked, not_pending, held) = select(selection, &found);
     tracing::info!(
-        kind = kind.as_str(),
+        kind = selection.kind.as_str(),
         selected = picked.len(),
+        held = held.len(),
         "installing updates"
     );
     let mut installed = Installed {
         not_pending,
+        held,
         ..Installed::default()
     };
     if picked.is_empty() {

@@ -10,7 +10,8 @@
 //! [`Package`]s, the pipe's DACL and the service SID it names. [`client`]
 //! holds the agent's side; the COM calls and the pipe itself are in
 //! `wua` and `pipe`, Windows only. [`source`] reads where updates come
-//! from (ADR-0086).
+//! from (ADR-0086). Approvals, holds and software from the catalogue
+//! follow ADR-0188.
 
 pub mod client;
 #[cfg(windows)]
@@ -20,8 +21,14 @@ pub mod source;
 pub mod wua;
 
 use base64::Engine;
-use monitorflow_common::command::{valid_windows_update_name, APPLY_UPDATES, SELF_UPDATE};
-use monitorflow_common::proto::v1::{ApplyUpdates, Command, Package, PackageManager, SelfUpdate};
+use monitorflow_common::command::{
+    valid_windows_update_name, APPLY_UPDATES, SELF_UPDATE, SOFTWARE,
+};
+use monitorflow_common::proto::v1::software_change::Action;
+use monitorflow_common::proto::v1::{
+    ApplyUpdates, Command, Package, PackageManager, SelfUpdate, SoftwareChange,
+};
+use monitorflow_common::software;
 use monitorflow_common::third_party;
 use prost::Message;
 use serde::de::DeserializeOwned;
@@ -95,6 +102,14 @@ pub enum Step {
     SelfUpdate,
     /// Update the winget apps of an `apply_updates` (ADR-0139).
     Winget,
+    /// [`Self::Install`] for a command with approvals or holds
+    /// (ADR-0188). A service that predates them refuses the step, rather
+    /// than install what the command holds.
+    InstallApproved,
+    /// [`Self::Winget`] for a command that holds apps (ADR-0188).
+    WingetApproved,
+    /// Install or remove the software of a `software` command (ADR-0188).
+    Software,
 }
 
 impl Step {
@@ -104,8 +119,39 @@ impl Step {
             Self::Reboot => "reboot",
             Self::SelfUpdate => "self_update",
             Self::Winget => "winget",
+            Self::InstallApproved => "install_approved",
+            Self::WingetApproved => "winget_approved",
+            Self::Software => "software",
         }
     }
+
+    /// The step that runs the OS part of `apply`.
+    pub fn install_for(apply: &ApplyUpdates) -> Self {
+        if apply.classifications.is_empty() && apply.hold.is_empty() {
+            Self::Install
+        } else {
+            Self::InstallApproved
+        }
+    }
+
+    /// The step that runs the winget part of `apply`.
+    pub fn winget_for(apply: &ApplyUpdates) -> Self {
+        if apply.third_party.iter().any(|s| !s.hold.is_empty()) {
+            Self::WingetApproved
+        } else {
+            Self::Winget
+        }
+    }
+}
+
+/// A package of a software install or removal, on the pipe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WingetPackage {
+    pub id: String,
+    /// The source to install from; empty for a removal.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 /// A request on the pipe: `{"op": "scan"}`, or `{"op": "signed", "command":
@@ -125,6 +171,13 @@ pub enum Request {
         /// KB numbers or update IDs.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         updates: Vec<String>,
+        /// The classifications approved, by English name; empty for
+        /// every one but `Upgrades` (ADR-0188).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        classifications: Vec<String>,
+        /// Updates never installed, as KB numbers or update IDs.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hold: Vec<String>,
     },
     /// Restart in one minute.
     Reboot,
@@ -138,7 +191,15 @@ pub enum Request {
     WingetUpgrade {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         ids: Vec<String>,
+        /// Apps never updated (ADR-0188).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hold: Vec<String>,
     },
+    /// Install these winget packages (ADR-0188). Built by [`authorized`]
+    /// from a signed `software` command, refused from the pipe.
+    WingetInstall { packages: Vec<WingetPackage> },
+    /// Remove these winget apps (ADR-0188), as [`Self::WingetInstall`].
+    WingetRemove { packages: Vec<WingetPackage> },
     /// One step of a command the central server signed.
     Signed {
         /// The [`HelperRequest`] holding the command, in base64.
@@ -168,6 +229,10 @@ pub enum RequestError {
     #[error("`{0}` is not a winget package ID")]
     InvalidWingetId(String),
     #[error("{0}")]
+    Approval(String),
+    #[error("{0}")]
+    Software(String),
+    #[error("{0}")]
     SelfUpdate(String),
 }
 
@@ -195,7 +260,47 @@ impl Request {
         Self::Install {
             kind,
             updates: request.packages.clone(),
+            classifications: request.classifications.clone(),
+            hold: request.hold.clone(),
         }
+    }
+
+    /// What a `software` command asks; check it with [`Self::validate`].
+    pub fn software(change: &SoftwareChange) -> Self {
+        let packages = change
+            .packages
+            .iter()
+            .map(|p| WingetPackage {
+                id: p.id.clone(),
+                source: p.source.clone(),
+            })
+            .collect();
+        if change.action == i32::from(Action::Remove) {
+            Self::WingetRemove { packages }
+        } else {
+            Self::WingetInstall { packages }
+        }
+    }
+
+    /// The `SoftwareChange` a software request stands for, for its check.
+    fn change(&self) -> Option<SoftwareChange> {
+        let (action, packages) = match self {
+            Self::WingetInstall { packages } => (Action::Install, packages),
+            Self::WingetRemove { packages } => (Action::Remove, packages),
+            _ => return None,
+        };
+        Some(SoftwareChange {
+            action: action.into(),
+            manager: PackageManager::Winget.into(),
+            packages: packages
+                .iter()
+                .map(|p| monitorflow_common::proto::v1::SoftwarePackage {
+                    id: p.id.clone(),
+                    source: p.source.clone(),
+                })
+                .collect(),
+            allow_reboot: false,
+        })
     }
 
     /// Names are KB numbers or update IDs, and only `named` and
@@ -204,12 +309,17 @@ impl Request {
         if let Self::SelfUpdate(request) = self {
             return request.validate().map_err(RequestError::SelfUpdate);
         }
-        if let Self::WingetUpgrade { ids } = self {
-            if ids.len() > MAX_NAMES {
+        if let Some(change) = self.change() {
+            return software::check_change(&change, Some("windows"))
+                .map_err(|e| RequestError::Software(e.to_string()));
+        }
+        if let Self::WingetUpgrade { ids, hold } = self {
+            if ids.len() + hold.len() > MAX_NAMES {
                 return Err(RequestError::TooManyNames);
             }
             return match ids
                 .iter()
+                .chain(hold)
                 .find(|id| !third_party::valid_id(PackageManager::Winget, id))
             {
                 Some(bad) => Err(RequestError::InvalidWingetId(
@@ -218,9 +328,23 @@ impl Request {
                 None => Ok(()),
             };
         }
-        let Self::Install { kind, updates } = self else {
+        let Self::Install {
+            kind,
+            updates,
+            classifications,
+            hold,
+        } = self
+        else {
             return Ok(());
         };
+        let apply = ApplyUpdates {
+            packages: updates.clone(),
+            security_only: *kind == Kind::Security,
+            classifications: classifications.clone(),
+            hold: hold.clone(),
+            ..ApplyUpdates::default()
+        };
+        software::check_approvals(&apply).map_err(|e| RequestError::Approval(e.to_string()))?;
         match kind {
             Kind::All if !updates.is_empty() => {
                 return Err(RequestError::UnexpectedNames(kind.as_str()))
@@ -257,7 +381,9 @@ pub fn authorized(
         Request::Install { .. }
         | Request::Reboot
         | Request::SelfUpdate(_)
-        | Request::WingetUpgrade { .. } => {
+        | Request::WingetUpgrade { .. }
+        | Request::WingetInstall { .. }
+        | Request::WingetRemove { .. } => {
             return Err("this needs the command the central server signed for it".into())
         }
     };
@@ -267,14 +393,34 @@ pub fn authorized(
         .and_then(|bytes| HelperRequest::decode(bytes.as_slice()).ok())
         .ok_or("the signed command does not decode")?;
     let kind = match step {
-        Step::Install | Step::Reboot | Step::Winget => APPLY_UPDATES,
+        // A restart may follow an update or a software change.
+        Step::Reboot if signed.command.as_ref().is_some_and(|c| c.kind == SOFTWARE) => SOFTWARE,
+        Step::Install
+        | Step::InstallApproved
+        | Step::Reboot
+        | Step::Winget
+        | Step::WingetApproved => APPLY_UPDATES,
+        Step::Software => SOFTWARE,
         Step::SelfUpdate => SELF_UPDATE,
     };
     let command = helper_trust::authorize_step(place, &signed, kind, step.as_str(), now_unix_ms)
         .map_err(|e| e.to_string())?;
     let payload = command.payload.as_slice();
     let run = match step {
-        Step::Winget => {
+        Step::Software => {
+            let change =
+                SoftwareChange::decode(payload).map_err(|_| "invalid SoftwareChange payload")?;
+            Request::software(&change)
+        }
+        Step::Reboot if kind == SOFTWARE => {
+            let change =
+                SoftwareChange::decode(payload).map_err(|_| "invalid SoftwareChange payload")?;
+            if !change.allow_reboot {
+                return Err("the command does not allow a restart".into());
+            }
+            Request::Reboot
+        }
+        Step::Winget | Step::WingetApproved => {
             let apply =
                 ApplyUpdates::decode(payload).map_err(|_| "invalid ApplyUpdates payload")?;
             third_party::check(&apply, Some("windows")).map_err(|e| e.to_string())?;
@@ -285,9 +431,10 @@ pub fn authorized(
                 .ok_or("the command selects no winget apps")?;
             Request::WingetUpgrade {
                 ids: selection.packages.clone(),
+                hold: selection.hold.clone(),
             }
         }
-        Step::Install | Step::Reboot => {
+        Step::Install | Step::InstallApproved | Step::Reboot => {
             let apply =
                 ApplyUpdates::decode(payload).map_err(|_| "invalid ApplyUpdates payload")?;
             match step {
@@ -402,6 +549,13 @@ pub struct Installed {
     /// Names of the request that matched no pending update.
     pub not_pending: Vec<String>,
     pub reboot_required: bool,
+    /// Updates or apps the request selected and held (ADR-0188).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held: Vec<String>,
+    /// Software already as asked: installed already for an install, not
+    /// installed for a removal (ADR-0188).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unchanged: Vec<String>,
 }
 
 /// A reply on the pipe: `{"updates": {…}}`, `{"error": "…"}`.
@@ -534,20 +688,71 @@ impl Found {
     }
 }
 
-/// Which of `found` an install of `kind` and `names` takes, by index, and
-/// the names that match no pending update.
-pub fn select(kind: Kind, names: &[String], found: &[Found]) -> (Vec<usize>, Vec<String>) {
+/// What an install takes from the pending updates.
+#[derive(Debug, Clone, Copy)]
+pub struct Selection<'a> {
+    pub kind: Kind,
+    pub names: &'a [String],
+    /// Approved classifications, by English name; empty for every one but
+    /// `Upgrades` (ADR-0188).
+    pub classifications: &'a [String],
+    /// Updates never installed.
+    pub hold: &'a [String],
+}
+
+impl<'a> Selection<'a> {
+    /// The selection of an `Install` request; `None` for another request.
+    pub fn of(request: &'a Request) -> Option<Self> {
+        match request {
+            Request::Install {
+                kind,
+                updates,
+                classifications,
+                hold,
+            } => Some(Self {
+                kind: *kind,
+                names: updates,
+                classifications,
+                hold,
+            }),
+            _ => None,
+        }
+    }
+
+    fn approves(&self, found: &Found) -> bool {
+        if self.classifications.is_empty() {
+            return !found.classification_is(UPGRADES);
+        }
+        let name = found.classification();
+        self.classifications.contains(&name)
+    }
+}
+
+/// Which of `found` an install takes, by index; the names that match no
+/// pending update; and the pending updates it would take but holds.
+pub fn select(selection: Selection<'_>, found: &[Found]) -> (Vec<usize>, Vec<String>, Vec<String>) {
+    let names = selection.names;
     let named = |f: &Found| names.iter().any(|n| f.matches(n));
+    let mut held = Vec::new();
     let picked = found
         .iter()
         .enumerate()
         .filter(|(_, f)| !f.installed)
-        .filter(|(_, f)| match kind {
-            Kind::All => !f.classification_is(UPGRADES),
+        .filter(|(_, f)| match selection.kind {
+            Kind::All => selection.approves(f),
             Kind::Security => {
-                f.classification_is(SECURITY_UPDATES) && (names.is_empty() || named(f))
+                f.classification_is(SECURITY_UPDATES)
+                    && (names.is_empty() || named(f))
+                    && (selection.classifications.is_empty() || selection.approves(f))
             }
             Kind::Named => named(f),
+        })
+        .filter(|(_, f)| {
+            let hold = selection.hold.iter().any(|h| f.matches(h));
+            if hold && !held.contains(&f.name()) {
+                held.push(f.name());
+            }
+            !hold
         })
         .map(|(i, _)| i)
         .collect();
@@ -556,8 +761,25 @@ pub fn select(kind: Kind, names: &[String], found: &[Found]) -> (Vec<usize>, Vec
         .filter(|n| !found.iter().any(|f| !f.installed && f.matches(n)))
         .cloned()
         .collect();
-    (picked, not_pending)
+    (picked, not_pending, held)
 }
+
+/// Whether the host's administrator allowed `request`: software
+/// installs and removals need `commands.software` in `agent.toml`, which
+/// the update service reads itself (ADR-0188); everything else passes.
+pub fn consented(request: &Request, software_allowed: bool) -> Result<(), String> {
+    match request {
+        Request::WingetInstall { .. } | Request::WingetRemove { .. } if !software_allowed => {
+            Err(SOFTWARE_NOT_ALLOWED.into())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Why a software install or removal is refused on a host that did not
+/// allow it.
+pub const SOFTWARE_NOT_ALLOWED: &str = "software installs are not allowed on this server; an \
+     administrator allows them with `monitorflow-agent.exe software on`";
 
 /// The report's packages for `updates`, one per name: updates sharing a KB
 /// number are one entry, pending when any of them is, with their sizes
@@ -620,6 +842,9 @@ pub fn describe(installed: &Installed) -> (String, Option<String>) {
     for name in &installed.not_pending {
         out.push_str(&format!("{name} is not pending\n"));
     }
+    for name in &installed.held {
+        out.push_str(&format!("{name} is held\n"));
+    }
     if installed.results.is_empty() {
         out.push_str("nothing to install\n");
     }
@@ -635,6 +860,53 @@ pub fn describe(installed: &Installed) -> (String, Option<String>) {
     let error = (!failed.is_empty()).then(|| {
         format!(
             "{} of {} updates did not install: {}",
+            failed.len(),
+            installed.results.len(),
+            failed.join(", ")
+        )
+    });
+    (out, error)
+}
+
+/// The command's output for a software install (`install`) or removal:
+/// one line per package, then those already as asked, and the error when
+/// any package did not succeed (ADR-0188).
+pub fn describe_change(installed: &Installed, install: bool) -> (String, Option<String>) {
+    let mut out = String::new();
+    for r in &installed.results {
+        if r.result.succeeded() {
+            out.push_str(&format!("{} {}: {}\n", r.name, r.result.as_str(), r.title));
+        } else {
+            out.push_str(&format!(
+                "{} {} ({:#010x}): {}\n",
+                r.name,
+                r.result.as_str(),
+                r.hresult,
+                r.title
+            ));
+        }
+    }
+    let state = if install {
+        "is installed already"
+    } else {
+        "is not installed"
+    };
+    for name in installed.unchanged.iter().chain(&installed.not_pending) {
+        out.push_str(&format!("{name} {state}\n"));
+    }
+    if installed.reboot_required {
+        out.push_str("a restart is required\n");
+    }
+    let failed: Vec<String> = installed
+        .results
+        .iter()
+        .filter(|r| !r.result.succeeded())
+        .map(|r| format!("{} ({:#010x})", r.name, r.hresult))
+        .collect();
+    let verb = if install { "install" } else { "remove" };
+    let error = (!failed.is_empty()).then(|| {
+        format!(
+            "{} of {} packages did not {verb}: {}",
             failed.len(),
             installed.results.len(),
             failed.join(", ")

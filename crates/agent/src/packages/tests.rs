@@ -285,6 +285,7 @@ fn spec(kind: UpdateKind, packages: &[&str]) -> UpdateSpec {
         packages: packages.iter().map(|p| p.to_string()).collect(),
         skip_os: false,
         third_party: Vec::new(),
+        approvals: false,
     }
 }
 

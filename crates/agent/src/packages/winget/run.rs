@@ -9,12 +9,13 @@ use monitorflow_sensors::powershell::{self, Job};
 use tokio::io::AsyncReadExt;
 
 use super::{
-    encoded, not_attempted, parse_scan, parse_upgrade, script, select, timed_out, Apps,
-    Availability, Paths, Policy, Upgraded, ENV_EXCLUDE, ENV_ID, ENV_SOURCE, NO_MODULE,
-    NO_POWERSHELL, SCAN_SCRIPT, SCAN_TIMEOUT, TURNED_OFF, UPGRADE_SCRIPT, UPGRADE_TIMEOUT,
+    encoded, not_attempted, parse_scan, parse_upgrade, plan_install, plan_remove, script, select,
+    source_turned_off, timed_out, App, Apps, Availability, Paths, Planned, Policy, Upgraded,
+    ENV_EXCLUDE, ENV_ID, ENV_SOURCE, INSTALL_SCRIPT, NO_MODULE, NO_POWERSHELL, REMOVE_SCRIPT,
+    SCAN_SCRIPT, SCAN_TIMEOUT, TURNED_OFF, UPGRADE_SCRIPT, UPGRADE_TIMEOUT,
 };
 use crate::packages::windows_update::source::open;
-use crate::packages::windows_update::{Installed, Reply, Request};
+use crate::packages::windows_update::{Installed, Reply, Request, WingetPackage};
 
 const POLICY_KEY: &str = r"SOFTWARE\Policies\Microsoft\Windows\AppInstaller";
 /// Most output read from a script: a scan of 5,000 apps is about 1 MiB.
@@ -26,9 +27,19 @@ pub fn handle(request: &Request) -> Option<Reply> {
     let runtime = tokio::runtime::Handle::current();
     match request {
         Request::WingetScan => Some(Reply::Apps(runtime.block_on(scan()))),
-        Request::WingetUpgrade { ids } => Some(
+        Request::WingetUpgrade { ids, hold } => Some(
             runtime
-                .block_on(upgrade(ids))
+                .block_on(upgrade(ids, hold))
+                .map_or_else(Reply::Error, Reply::Installed),
+        ),
+        Request::WingetInstall { packages } => Some(
+            runtime
+                .block_on(change(packages, true))
+                .map_or_else(Reply::Error, Reply::Installed),
+        ),
+        Request::WingetRemove { packages } => Some(
+            runtime
+                .block_on(change(packages, false))
                 .map_or_else(Reply::Error, Reply::Installed),
         ),
         _ => None,
@@ -101,34 +112,89 @@ async fn scan_with(paths: &Paths, policy: &Policy) -> Apps {
     }
 }
 
-/// Updates the pending apps among `ids`, every one when empty, one at a
-/// time, from a fresh scan.
-pub async fn upgrade(ids: &[String]) -> Result<Installed, String> {
+/// Installs (`install`) or removes `packages`, one at a time, from a
+/// fresh scan: what is already as asked is left alone (ADR-0188).
+pub async fn change(packages: &[WingetPackage], install: bool) -> Result<Installed, String> {
     let (paths, policy) = ready().map_err(|apps| apps.error)?;
     let apps = scan_with(&paths, &policy).await;
     if apps.state != Availability::Available {
         return Err(apps.error);
     }
-    let (picked, not_pending, over) = select(ids, &apps.apps);
+    let planned = if install {
+        let packages: Vec<(String, String)> = packages
+            .iter()
+            .map(|p| (p.id.clone(), p.source.clone()))
+            .collect();
+        plan_install(&packages, &apps.apps)
+    } else {
+        let ids: Vec<String> = packages.iter().map(|p| p.id.clone()).collect();
+        plan_remove(&ids, &apps.apps)
+    };
+    let (body, verb) = if install {
+        (INSTALL_SCRIPT, "installing")
+    } else {
+        (REMOVE_SCRIPT, "removing")
+    };
+    let mut installed = Installed::default();
+    for planned in planned {
+        let app = match planned {
+            Planned::Unchanged(id) => {
+                installed.unchanged.push(id);
+                continue;
+            }
+            Planned::Run(app) => app,
+        };
+        if install && !policy.allows(&app.source) {
+            installed.results.push(source_turned_off(&app));
+            continue;
+        }
+        tracing::info!(id = %app.id, source = %app.source, "{verb} a winget package");
+        run_one(&paths, body, &app, &mut installed).await?;
+    }
+    Ok(installed)
+}
+
+/// Runs `body` for `app` and adds its result to `installed`.
+async fn run_one(
+    paths: &Paths,
+    body: &str,
+    app: &App,
+    installed: &mut Installed,
+) -> Result<(), String> {
+    let env = [(ENV_ID, app.id.as_str()), (ENV_SOURCE, app.source.as_str())];
+    let result = match run(paths, body, &env, UPGRADE_TIMEOUT).await {
+        Ok(Some(stdout)) => parse_upgrade(app, &stdout),
+        Ok(None) => Upgraded::Done(timed_out(app, UPGRADE_TIMEOUT), false),
+        Err(error) => return Err(error),
+    };
+    match result {
+        Upgraded::Done(result, reboot) => {
+            installed.reboot_required |= reboot;
+            installed.results.push(result);
+        }
+        Upgraded::NotPending => installed.not_pending.push(app.id.clone()),
+    }
+    Ok(())
+}
+
+/// Updates the pending apps among `ids`, every one when empty, but those
+/// `hold` names, one at a time, from a fresh scan.
+pub async fn upgrade(ids: &[String], hold: &[String]) -> Result<Installed, String> {
+    let (paths, policy) = ready().map_err(|apps| apps.error)?;
+    let apps = scan_with(&paths, &policy).await;
+    if apps.state != Availability::Available {
+        return Err(apps.error);
+    }
+    let (picked, left) = select(ids, hold, &apps.apps);
+    let over = left.over;
     let mut installed = Installed {
-        not_pending,
+        not_pending: left.not_pending,
+        held: left.held,
         ..Installed::default()
     };
     for app in picked {
         tracing::info!(id = %app.id, source = %app.source, version = %app.available, "updating a winget app");
-        let env = [(ENV_ID, app.id.as_str()), (ENV_SOURCE, app.source.as_str())];
-        let result = match run(&paths, UPGRADE_SCRIPT, &env, UPGRADE_TIMEOUT).await {
-            Ok(Some(stdout)) => parse_upgrade(app, &stdout),
-            Ok(None) => Upgraded::Done(timed_out(app, UPGRADE_TIMEOUT), false),
-            Err(error) => return Err(error),
-        };
-        match result {
-            Upgraded::Done(result, reboot) => {
-                installed.reboot_required |= reboot;
-                installed.results.push(result);
-            }
-            Upgraded::NotPending => installed.not_pending.push(app.id.clone()),
-        }
+        run_one(&paths, UPGRADE_SCRIPT, app, &mut installed).await?;
     }
     installed
         .results

@@ -1,8 +1,9 @@
 //! Commands for agents (ADR-0031): queue one for a server, list a server's
 //! commands, read one with its output.
 //!
-//! Only `apply_updates` and `self_update` (ADR-0053) can be queued here, by administrators of the
-//! server's customer, the rule of ADR-0029 for decisions that change a
+//! Only `apply_updates`, `self_update` (ADR-0053) and `software`
+//! (ADR-0188) can be queued here, by administrators of the server's
+//! customer, the rule of ADR-0029 for decisions that change a
 //! host; source configuration has its own routes in [`super::sources`]
 //! under the same rule. Every role that reads the site reads its commands.
 
@@ -15,10 +16,10 @@ use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command;
 use monitorflow_common::proto::v1::{
-    AiCommandsSwitch, ApplyUpdates, ConfigureSources, SelfUpdate, ShellCommand,
+    AiCommandsSwitch, ApplyUpdates, ConfigureSources, SelfUpdate, ShellCommand, SoftwareChange,
 };
 use monitorflow_common::release::Version;
-use monitorflow_common::third_party;
+use monitorflow_common::{software, third_party};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -29,8 +30,9 @@ use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::sensors::{body, parse_id};
 use super::servers::{decode_cursor, encode_cursor, page_limit};
+use super::software::{resolve, SoftwareRequest};
 use super::{ApiError, ApiState};
-use crate::campaign::{ThirdPartySpec, UpdateSpec};
+use crate::campaign::{software_refusal, ThirdPartySpec, UpdateSpec};
 use crate::commands::{CommandRow, CommandStore, NewCommand, State as CommandState};
 
 pub const DEFAULT_TTL_S: u64 = 3600;
@@ -46,7 +48,7 @@ pub const MAX_LIMIT: u32 = 500;
 #[schema(as = CommandRequest)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
-    /// `apply_updates` or `self_update`.
+    /// `apply_updates`, `self_update` or `software`.
     pub kind: String,
     /// `self_update`: the agent version to install.
     pub version: Option<String>,
@@ -72,6 +74,17 @@ pub struct CreateRequest {
     /// once (ADR-0138). Needs an agent that reports third-party apps.
     #[serde(default)]
     pub third_party: Vec<ThirdPartySpec>,
+    /// `apply_updates`: Windows Update classifications approved, by
+    /// English name; empty approves every one but `Upgrades` (ADR-0188).
+    #[serde(default)]
+    pub classifications: Vec<String>,
+    /// `apply_updates`: Windows updates never installed, as KB numbers or
+    /// update IDs (ADR-0188).
+    #[serde(default)]
+    pub hold: Vec<String>,
+    /// `software`: what to install or remove, from the catalogue
+    /// (ADR-0188). `allow_reboot` applies to it too.
+    pub software: Option<SoftwareRequest>,
     /// Seconds the agent may still start it; [`MIN_TTL_S`] to
     /// [`MAX_TTL_S`], default [`DEFAULT_TTL_S`].
     pub ttl_s: Option<u64>,
@@ -88,7 +101,9 @@ pub struct CommandView {
     /// changes).
     pub kind: String,
     /// What it asks, as JSON, by kind: `{"packages", "security_only",
-    /// "allow_reboot", "include_os", "third_party"}` for `apply_updates`, `{"version", "base_urls",
+    /// "allow_reboot", "include_os", "third_party", "classifications",
+    /// "hold"}` for `apply_updates`, `{"action", "manager", "packages":
+    /// [{"id", "source"}], "allow_reboot"}` for `software`, `{"version", "base_urls",
     /// "allow_downgrade", "health_timeout_seconds"}` for `self_update`,
     /// `{"mirror_base_url", "family", "mode", "repositories",
     /// "key_fingerprints"}` for `configure_sources`, `{}` for
@@ -160,7 +175,20 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
                 "third_party": p.third_party.iter().map(|s| json!({
                     "manager": third_party::key(s.manager()),
                     "packages": s.packages,
+                    "hold": s.hold,
                 })).collect::<Vec<_>>(),
+                "classifications": p.classifications,
+                "hold": p.hold,
+            }),
+            Err(_) => Value::Null,
+        },
+        command::SOFTWARE => match SoftwareChange::decode(payload) {
+            Ok(p) => json!({
+                "action": software::action_key(p.action()),
+                "manager": third_party::key(p.manager()),
+                "packages": p.packages.iter().map(|p| json!({"id": p.id, "source": p.source}))
+                    .collect::<Vec<_>>(),
+                "allow_reboot": p.allow_reboot,
             }),
             Err(_) => Value::Null,
         },
@@ -241,14 +269,20 @@ impl From<CommandRow> for CommandDetail {
 fn check(request: &CreateRequest) -> Result<(UpdateSpec, Duration), ApiError> {
     if request.kind != command::APPLY_UPDATES {
         return Err(ApiError::Invalid(format!(
-            "kind must be `{}` or `{}`",
+            "kind must be `{}`, `{}` or `{}`",
             command::APPLY_UPDATES,
-            command::SELF_UPDATE
+            command::SELF_UPDATE,
+            command::SOFTWARE
         )));
     }
     if request.version.is_some() || request.allow_downgrade || request.health_timeout_s.is_some() {
         return Err(ApiError::Invalid(
             "version, allow_downgrade and health_timeout_s are for self_update".into(),
+        ));
+    }
+    if request.software.is_some() {
+        return Err(ApiError::Invalid(
+            "software is for the software kind".into(),
         ));
     }
     let spec = UpdateSpec {
@@ -257,6 +291,8 @@ fn check(request: &CreateRequest) -> Result<(UpdateSpec, Duration), ApiError> {
         allow_reboot: request.allow_reboot,
         include_os: request.include_os.unwrap_or(true),
         third_party: request.third_party.clone(),
+        classifications: request.classifications.clone(),
+        hold: request.hold.clone(),
     };
     spec.validate().map_err(ApiError::Invalid)?;
     Ok((spec, ttl(request.ttl_s)?))
@@ -301,6 +337,7 @@ pub async fn create(
             let (payload, ttl) = check_self_update(&state, &request, relay.as_deref())?;
             return queue(&state, &user, &target, &request.kind, payload, ttl).await;
         }
+        command::SOFTWARE => return create_software(&state, &user, &target, &request).await,
         _ => {}
     }
     let (spec, ttl) = check(&request)?;
@@ -312,8 +349,10 @@ pub async fn create(
     }
     third_party::check(&spec.apply(), Some(&target.os_family))
         .map_err(|e| ApiError::Invalid(e.to_string()))?;
-    let reports: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM server_package_managers WHERE server_id = $1)",
+    let (reports, approvals): (bool, bool) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM server_package_managers WHERE server_id = $1),
+             coalesce(command_kinds ? 'software', false)
+         FROM servers WHERE id = $1",
     )
     .bind(target.id)
     .fetch_one(&state.pool)
@@ -325,10 +364,59 @@ pub async fn create(
         ));
     }
     let payload = spec
-        .for_server(&target.os_family, reports)
+        .for_server(&target.os_family, reports, approvals)
         .map_err(ApiError::Invalid)?
         .encode_to_vec();
     queue(&state, &user, &target, &request.kind, payload, ttl).await
+}
+
+/// A `software` command (ADR-0188): software from the catalogue of the
+/// server's customer, for a Windows server whose administrator allowed
+/// it.
+async fn create_software(
+    state: &ApiState,
+    user: &CurrentUser,
+    target: &Target,
+    request: &CreateRequest,
+) -> Result<(StatusCode, Json<CommandDetail>), ApiError> {
+    let update_options = !request.packages.is_empty()
+        || request.security_only
+        || request.include_os.is_some()
+        || !request.third_party.is_empty()
+        || !request.classifications.is_empty()
+        || !request.hold.is_empty()
+        || request.version.is_some()
+        || request.allow_downgrade
+        || request.health_timeout_s.is_some();
+    if update_options {
+        return Err(ApiError::Invalid(
+            "software takes only software, allow_reboot and ttl_s".into(),
+        ));
+    }
+    let software = request
+        .software
+        .as_ref()
+        .ok_or_else(|| ApiError::Invalid("software is required".into()))?;
+    let ttl = ttl(request.ttl_s)?;
+    if target.os_family != "windows" {
+        return Err(ApiError::Invalid(format!(
+            "software deployment is not available on {} servers yet",
+            target.os_family
+        )));
+    }
+    let (customer, state_word): (Uuid, Option<String>) = sqlx::query_as(
+        "SELECT t.customer_id, s.command_kinds->>'software'
+         FROM servers s JOIN sites t ON t.id = s.site_id WHERE s.id = $1",
+    )
+    .bind(target.id)
+    .fetch_one(&state.pool)
+    .await?;
+    if let Some(refusal) = software_refusal(state_word.as_deref()) {
+        return Err(ApiError::Conflict(refusal.into()));
+    }
+    let spec = resolve(&state.pool, customer, software).await?;
+    let payload = spec.change(request.allow_reboot).encode_to_vec();
+    queue(state, user, target, &request.kind, payload, ttl).await
 }
 
 /// The payload of a valid `self_update` request (ADR-0053): the version
@@ -344,10 +432,13 @@ fn check_self_update(
         || request.allow_reboot
         || request.include_os.is_some()
         || !request.third_party.is_empty()
+        || !request.classifications.is_empty()
+        || !request.hold.is_empty()
+        || request.software.is_some()
     {
         return Err(ApiError::Invalid(
-            "packages, security_only, allow_reboot, include_os and third_party are for \
-             apply_updates"
+            "packages, security_only, allow_reboot, include_os, third_party, classifications, \
+             hold and software are not for self_update"
                 .into(),
         ));
     }
@@ -590,7 +681,22 @@ mod tests {
         assert!(decoded.security_only && !decoded.allow_reboot);
         assert_eq!(
             parameters("apply_updates", &payload),
-            json!({"packages": ["libc6", "g++"], "security_only": true, "allow_reboot": false, "include_os": true, "third_party": []})
+            json!({"packages": ["libc6", "g++"], "security_only": true, "allow_reboot": false,
+                   "include_os": true, "third_party": [], "classifications": [], "hold": []})
+        );
+        let change = SoftwareChange {
+            action: monitorflow_common::proto::v1::software_change::Action::Remove.into(),
+            manager: monitorflow_common::proto::v1::PackageManager::Winget.into(),
+            packages: vec![monitorflow_common::proto::v1::SoftwarePackage {
+                id: "7zip.7zip".into(),
+                source: "winget".into(),
+            }],
+            allow_reboot: true,
+        };
+        assert_eq!(
+            parameters("software", &change.encode_to_vec()),
+            json!({"action": "remove", "manager": "winget",
+                   "packages": [{"id": "7zip.7zip", "source": "winget"}], "allow_reboot": true})
         );
         assert_eq!(parameters("reboot", &payload), Value::Null);
         let shell = ShellCommand {
@@ -607,6 +713,8 @@ mod tests {
             json!({"kind": "apply_updates", "packages": ["-o"]}),
             json!({"kind": "apply_updates", "ttl_s": 10}),
             json!({"kind": "apply_updates", "ttl_s": MAX_TTL_S + 1}),
+            json!({"kind": "apply_updates", "classifications": ["Drivers"]}),
+            json!({"kind": "apply_updates", "software": {"action": "install", "catalog_ids": []}}),
         ] {
             assert!(matches!(check(&request(bad)), Err(ApiError::Invalid(_))));
         }

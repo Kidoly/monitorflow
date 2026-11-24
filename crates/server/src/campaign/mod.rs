@@ -1,5 +1,6 @@
-//! Update campaigns (ADR-0033): `apply_updates` commands (ADR-0031) for a
-//! customer's servers, frozen at creation into ordered waves, queued only
+//! Update campaigns (ADR-0033): `apply_updates` commands (ADR-0031), or
+//! `software` ones from the catalogue (ADR-0188), for a customer's
+//! servers, frozen at creation into ordered waves, queued only
 //! inside maintenance windows, and stopped when a wave fails beyond its
 //! threshold.
 //!
@@ -17,9 +18,10 @@ mod runner;
 mod store;
 
 pub use model::{
-    plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, PinnedMirror,
-    PlanError, SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_PACKAGES,
-    MAX_TARGETS, MAX_WAVES, MAX_WINDOWS, NO_THIRD_PARTY,
+    plan_waves, software_refusal, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime,
+    PinnedMirror, PlanError, SoftwareItem, SoftwareSpec, SourcesMode, SourcesPin, ThirdPartySpec,
+    UpdateSpec, WaveSpec, Window, MAX_PACKAGES, MAX_TARGETS, MAX_WAVES, MAX_WINDOWS, NO_APPROVALS,
+    NO_THIRD_PARTY,
 };
 pub use pin::write_pins;
 pub use runner::{Runner, Step, MIN_WINDOW_LEFT, POLL};

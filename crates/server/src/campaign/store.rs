@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use super::model::{
     plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, PinnedMirror,
-    SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_TARGETS,
-    MAX_WINDOWS,
+    SoftwareSpec, SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
+    MAX_TARGETS, MAX_WINDOWS,
 };
 use crate::api::audit::{self, Event};
 use crate::api::commands::unfit_message;
@@ -28,7 +28,7 @@ pub(super) const COLUMNS: &str =
     "id, customer_id, name, site_id, packages, security_only, allow_reboot,
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
      created_by, created_at, started_at, finished_at, sources_mode, agent_version, include_os,
-     third_party, requested_server_ids, requested_waves";
+     third_party, requested_server_ids, requested_waves, classifications, hold, software";
 
 /// Who acts, as `(actor_kind, actor_id)` of the audit log.
 pub type Actor<'a> = (&'a str, &'a str);
@@ -51,6 +51,8 @@ pub struct NewCampaign {
     pub sources: Option<SourcesPin>,
     /// Update the agents to this version instead of packages (ADR-0053).
     pub agent_version: Option<Version>,
+    /// Install or remove this software instead of updating (ADR-0188).
+    pub software: Option<SoftwareSpec>,
     pub created_by: Option<Uuid>,
 }
 
@@ -104,6 +106,12 @@ pub struct CampaignRow {
     /// The `server_ids` and `waves` asked; `None` before ADR-0179.
     pub requested_server_ids: Option<Vec<Uuid>>,
     pub requested_waves: Option<sqlx::types::Json<Vec<WaveSpec>>>,
+    /// Approved Windows Update classifications and held updates
+    /// (ADR-0188).
+    pub classifications: Vec<String>,
+    pub hold: Vec<String>,
+    /// Set for a software campaign (ADR-0188).
+    pub software: Option<sqlx::types::Json<SoftwareSpec>>,
 }
 
 impl CampaignRow {
@@ -114,7 +122,14 @@ impl CampaignRow {
             allow_reboot: self.allow_reboot,
             include_os: self.include_os,
             third_party: self.third_party.0.clone(),
+            classifications: self.classifications.clone(),
+            hold: self.hold.clone(),
         }
+    }
+
+    /// What a software campaign installs or removes.
+    pub fn software(&self) -> Option<&SoftwareSpec> {
+        self.software.as_ref().map(|s| &s.0)
     }
 
     pub fn threshold(&self) -> FailureThreshold {
@@ -196,8 +211,9 @@ impl CampaignStore {
                 "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
                      allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit,
                      sources_mode, agent_version, include_os, third_party, requested_server_ids,
-                     requested_waves, created_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                     requested_waves, classifications, hold, software, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                         $17, $18, $19)
                  RETURNING {COLUMNS}"
             ))),
             new,
@@ -527,12 +543,28 @@ fn check(new: &NewCampaign) -> Result<Vec<Window>, CampaignError> {
         || !spec.include_os
         || spec.has_third_party()
         || new.sources.is_some();
-    if new.agent_version.is_some() && package_options {
+    let approvals = !spec.classifications.is_empty() || !spec.hold.is_empty();
+    if new.agent_version.is_some() && (package_options || approvals || new.software.is_some()) {
         return Err(CampaignError::Invalid(
             "an agent update campaign takes no packages, security_only, allow_reboot, \
-             include_os, third_party or sources"
+             include_os, third_party, classifications, hold, software or sources"
                 .into(),
         ));
+    }
+    if let Some(software) = &new.software {
+        software.validate().map_err(CampaignError::Invalid)?;
+        let update_options = !spec.packages.is_empty()
+            || spec.security_only
+            || spec.has_third_party()
+            || approvals
+            || new.sources.is_some();
+        if update_options {
+            return Err(CampaignError::Invalid(
+                "a software campaign takes no packages, security_only, third_party, \
+                 classifications, hold or sources"
+                    .into(),
+            ));
+        }
     }
     if !spec.include_os && new.sources.is_some() {
         return Err(CampaignError::Invalid(
@@ -570,7 +602,7 @@ async fn plan(
 type RowQuery<'q> =
     sqlx::query::QueryAs<'q, sqlx::Postgres, CampaignRow, sqlx::postgres::PgArguments>;
 
-/// Binds `$1` to `$15` of an insert or update of `campaigns` from `new`.
+/// Binds `$1` to `$18` of an insert or update of `campaigns` from `new`.
 fn bind_fields<'q>(query: RowQuery<'q>, new: &'q NewCampaign) -> RowQuery<'q> {
     query
         .bind(new.customer_id)
@@ -588,6 +620,9 @@ fn bind_fields<'q>(query: RowQuery<'q>, new: &'q NewCampaign) -> RowQuery<'q> {
         .bind(sqlx::types::Json(&new.spec.third_party))
         .bind(&new.server_ids)
         .bind(sqlx::types::Json(&new.waves))
+        .bind(&new.spec.classifications)
+        .bind(&new.spec.hold)
+        .bind(new.software.as_ref().map(sqlx::types::Json))
 }
 
 /// Stores the pins, waves, targets and windows of the campaign `id`.
@@ -658,6 +693,7 @@ fn details(row: &CampaignRow, new: &NewCampaign, plan: &Plan) -> serde_json::Val
         "failure_threshold": new.failure_threshold,
         "windows": plan.windows,
         "sources": new.sources,
+        "software": new.software,
     })
 }
 
@@ -677,6 +713,9 @@ pub struct RunSettings {
     pub failure_threshold: FailureThreshold,
     pub windows: Vec<Window>,
     pub sources: Option<SourcesPin>,
+    /// Set for a software campaign (ADR-0188).
+    #[serde(default)]
+    pub software: Option<SoftwareSpec>,
 }
 
 impl From<&NewCampaign> for RunSettings {
@@ -692,6 +731,7 @@ impl From<&NewCampaign> for RunSettings {
             failure_threshold: new.failure_threshold,
             windows: new.windows.clone(),
             sources: new.sources.clone(),
+            software: new.software.clone(),
         }
     }
 }
@@ -805,6 +845,7 @@ async fn request_of(
                 .collect(),
         }),
         agent_version: row.agent_version.as_deref().and_then(|v| v.parse().ok()),
+        software: row.software().cloned(),
         created_by: row.created_by,
     })
 }
@@ -823,7 +864,10 @@ fn locked_changes(current: &NewCampaign, new: &NewCampaign, targets: bool) -> Ve
     {
         changed.push("the servers or batches");
     }
-    if new.spec != current.spec || new.agent_version != current.agent_version {
+    if new.spec != current.spec
+        || new.agent_version != current.agent_version
+        || new.software != current.software
+    {
         changed.push("the update");
     }
     if new.sources != current.sources {
@@ -955,8 +999,9 @@ async fn replace(
                  security_only = $5, allow_reboot = $6, command_ttl_s = $7,
                  failure_threshold = $8, failure_threshold_unit = $9, sources_mode = $10,
                  agent_version = $11, include_os = $12, third_party = $13,
-                 requested_server_ids = $14, requested_waves = $15
-             WHERE id = $16
+                 requested_server_ids = $14, requested_waves = $15, classifications = $16,
+                 hold = $17, software = $18
+             WHERE id = $19
              RETURNING {COLUMNS}"
         ))),
         new,
@@ -1313,6 +1358,7 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
             "server {revoked} is revoked"
         )));
     }
+    let software = new.software.is_some();
     let targets: Vec<Uuid> = sqlx::query_scalar(
         "SELECT s.id FROM servers s JOIN sites t ON t.id = s.site_id
          WHERE t.customer_id = $1 AND s.revoked_at IS NULL
@@ -1324,9 +1370,14 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
     .bind(new.customer_id)
     .bind(&new.server_ids)
     .bind(new.site_id)
-    .bind(new.agent_version.is_some())
-    .bind(new.spec.include_os)
-    .bind(platforms(&new.spec))
+    .bind(new.agent_version.is_some() || software)
+    .bind(new.spec.include_os && !software)
+    .bind(if software {
+        // winget, on Windows servers only (ADR-0188).
+        vec![true]
+    } else {
+        platforms(&new.spec)
+    })
     .fetch_all(&mut *conn)
     .await?;
     if targets.is_empty() {
@@ -1434,6 +1485,7 @@ mod tests {
             windows: Vec::new(),
             sources: None,
             agent_version: None,
+            software: None,
             created_by: None,
         }
     }

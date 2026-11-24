@@ -15,6 +15,9 @@
     AI_COMMANDS_FROM_WEB=1  let the web interface turn AI commands on and
                       off (commands.from_web in agent.toml, ADR-0098), on a
                       new install or an upgrade
+    SOFTWARE_FROM_WEB=1  let the central server install and remove
+                      software from its catalogue (commands.software in
+                      agent.toml, ADR-0188), on a new install or an upgrade
     REMOVE_DATA=1     on uninstall, also delete %ProgramData%\MonitorFlow
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
@@ -42,6 +45,7 @@
     <Property Id="ENROLLMENT_TOKEN" Secure="yes" Hidden="yes" />
     <Property Id="REMOVE_DATA" Secure="yes" />
     <Property Id="AI_COMMANDS_FROM_WEB" Secure="yes" />
+    <Property Id="SOFTWARE_FROM_WEB" Secure="yes" />
 
     <Feature Id="Agent" Title="MonitorFlow agent">
       <ComponentGroupRef Id="AgentProgram" />
@@ -175,11 +179,17 @@
     <CustomAction Id="AllowAiCommandsFromWeb" FileRef="AgentExe" Execute="deferred" Impersonate="no"
                   Return="check"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; ai-commands from-web on" />
+    <!-- SOFTWARE_FROM_WEB=1: as above, `software on` (ADR-0188). -->
+    <CustomAction Id="AllowSoftwareFromWeb" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; software on" />
     <InstallExecuteSequence>
       <Custom Action="CheckDataFolder" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="WriteAgentConfig" After="CheckDataFolder" Condition="UPSTREAM_URL AND NOT REMOVE" />
       <Custom Action="AllowAiCommandsFromWeb" After="WriteAgentConfig"
               Condition="AI_COMMANDS_FROM_WEB = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
+      <Custom Action="AllowSoftwareFromWeb" After="AllowAiCommandsFromWeb"
+              Condition="SOFTWARE_FROM_WEB = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

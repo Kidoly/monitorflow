@@ -187,23 +187,90 @@ fn selections_take_pending_apps() {
         app("Example.Editor", ""),
         app("Example.Viewer", "3.1"),
     ];
-    let (picked, not_pending, over) = select(&[], &apps);
+    let (picked, left) = select(&[], &[], &apps);
     assert_eq!(ids(&picked), ["Example.Archiver", "Example.Viewer"]);
-    assert!(not_pending.is_empty());
-    assert!(over.is_empty());
+    assert_eq!(left, LeftOut::default());
     // Case does not matter; current, unknown and repeated IDs are not
     // updated.
-    let (picked, not_pending, _) = select(
+    let (picked, left) = select(
         &strings(&[
             "example.viewer",
             "Example.Editor",
             "Example.Missing",
             "Example.Viewer",
         ]),
+        &[],
         &apps,
     );
     assert_eq!(ids(&picked), ["Example.Viewer"]);
-    assert_eq!(not_pending, ["Example.Editor", "Example.Missing"]);
+    assert_eq!(left.not_pending, ["Example.Editor", "Example.Missing"]);
+}
+
+#[test]
+fn held_apps_are_left_out() {
+    let apps = [
+        app("Example.Archiver", "2.0"),
+        app("Example.Editor", ""),
+        app("Example.Viewer", "3.1"),
+    ];
+    // Held by any case, whether every app or named ones are selected; a
+    // held app that is not pending is simply not pending.
+    let hold = strings(&["example.viewer", "Example.Editor"]);
+    let (picked, left) = select(&[], &hold, &apps);
+    assert_eq!(ids(&picked), ["Example.Archiver"]);
+    assert_eq!(left.held, ["Example.Viewer"]);
+    let (picked, left) = select(&strings(&["Example.Viewer"]), &hold, &apps);
+    assert!(picked.is_empty());
+    assert_eq!(left.held, ["Example.Viewer"]);
+}
+
+#[test]
+fn installs_and_removals_are_planned_from_the_scan() {
+    let apps = [app("Example.Archiver", "2.0"), app("Example.Editor", "")];
+    let packages = vec![
+        ("example.archiver".to_owned(), "winget".to_owned()),
+        ("Example.New".to_owned(), "contoso".to_owned()),
+    ];
+    let planned = plan_install(&packages, &apps);
+    assert_eq!(planned[0], Planned::Unchanged("Example.Archiver".into()));
+    let Planned::Run(new) = &planned[1] else {
+        panic!("{planned:?}")
+    };
+    assert_eq!(
+        (new.id.as_str(), new.source.as_str()),
+        ("Example.New", "contoso")
+    );
+    let turned_off = Policy {
+        enable_default_source: Some(0),
+        ..Policy::default()
+    };
+    assert!(!turned_off.allows("winget") && turned_off.allows("contoso"));
+    let off = source_turned_off(new);
+    assert_eq!(off.result, Outcome::NotStarted);
+    assert_eq!(off.title, "Example.New: the source contoso is not used");
+    let planned = plan_remove(&strings(&["EXAMPLE.EDITOR", "Example.Gone"]), &apps);
+    assert_eq!(planned[0], Planned::Run(apps[1].clone()));
+    assert_eq!(planned[1], Planned::Unchanged("Example.Gone".into()));
+}
+
+#[test]
+fn install_and_remove_scripts_take_values_from_the_environment() {
+    for body in [INSTALL_SCRIPT, REMOVE_SCRIPT] {
+        assert!(body.contains("-Id $env:MONITORFLOW_WINGET_ID"));
+        assert!(body.contains("-Source $env:MONITORFLOW_WINGET_SOURCE"));
+        assert!(body.contains("-MatchOption Equals -Mode Silent"));
+        for never in [
+            "-Force",
+            "-Override",
+            "-Custom",
+            "-Location",
+            "-AllowHashMismatch",
+        ] {
+            assert!(!body.contains(never), "{never}");
+        }
+    }
+    assert!(INSTALL_SCRIPT.contains("-Scope SystemOrUnknown"));
+    assert!(REMOVE_SCRIPT.contains("UninstallerErrorCode"));
 }
 
 #[test]
@@ -211,7 +278,8 @@ fn selections_stop_at_the_limit() {
     let apps: Vec<App> = (0..MAX_UPGRADES + 3)
         .map(|i| app(&format!("Example.App{i}"), "2.0"))
         .collect();
-    let (picked, _, over) = select(&[], &apps);
+    let (picked, left) = select(&[], &[], &apps);
+    let over = left.over;
     assert_eq!(picked.len(), MAX_UPGRADES);
     assert_eq!(
         ids(&over),

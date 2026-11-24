@@ -68,6 +68,11 @@ pub struct UpdateSpec {
     /// Third-party managers to update after the OS, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub third_party: Vec<AppSelection>,
+    /// The command approves classifications or holds updates or apps,
+    /// which Linux does not do yet (ADR-0188): refused rather than
+    /// ignored, so nothing held is installed. Never on the helper's stdin.
+    #[serde(skip)]
+    pub approvals: bool,
 }
 
 /// One third-party manager of an [`UpdateSpec`]: its IDs, or every
@@ -98,6 +103,8 @@ pub enum SpecError {
     InvalidName(String),
     #[error("{0}")]
     ThirdParty(SelectionError),
+    #[error("approved classifications and held updates are not supported on Linux yet")]
+    Approvals,
 }
 
 impl UpdateSpec {
@@ -128,6 +135,7 @@ impl UpdateSpec {
             packages: request.packages.clone(),
             skip_os: request.skip_os,
             third_party,
+            approvals: monitorflow_common::software::has_approvals(request),
         }
     }
 
@@ -147,8 +155,10 @@ impl UpdateSpec {
                         .unwrap_or(PackageManager::Unspecified)
                         .into(),
                     packages: selection.packages.clone(),
+                    hold: Vec::new(),
                 })
                 .collect(),
+            ..ApplyUpdates::default()
         }
     }
 
@@ -168,6 +178,9 @@ impl UpdateSpec {
     /// `security` take them. The third-party part names Linux managers
     /// only, each once, with IDs in its grammar (ADR-0138).
     pub fn validate(&self) -> Result<(), SpecError> {
+        if self.approvals {
+            return Err(SpecError::Approvals);
+        }
         third_party::check(&self.to_request(), Some("linux")).map_err(SpecError::ThirdParty)?;
         if self.skip_os {
             return Ok(());
@@ -338,6 +351,7 @@ mod tests {
             packages: packages.iter().map(|p| p.to_string()).collect(),
             skip_os: false,
             third_party: Vec::new(),
+            approvals: false,
         }
     }
 
@@ -433,6 +447,7 @@ mod tests {
             packages: many,
             skip_os: false,
             third_party: Vec::new(),
+            approvals: false,
         };
         assert_eq!(too_many.validate(), Err(SpecError::TooManyPackages));
     }
@@ -479,6 +494,7 @@ mod tests {
         let selection = |manager: PackageManager, packages: &[&str]| ThirdPartySelection {
             manager: manager.into(),
             packages: packages.iter().map(|p| p.to_string()).collect(),
+            ..ThirdPartySelection::default()
         };
         let request = ApplyUpdates {
             skip_os: true,
@@ -504,6 +520,29 @@ mod tests {
             ..ApplyUpdates::default()
         };
         assert_eq!(UpdateSpec::from_request(&both).validate(), Ok(()));
+    }
+
+    #[test]
+    fn approvals_are_refused_on_linux() {
+        for apply in [
+            ApplyUpdates {
+                hold: vec!["KB1".into()],
+                ..ApplyUpdates::default()
+            },
+            ApplyUpdates {
+                third_party: vec![ThirdPartySelection {
+                    manager: PackageManager::Snap.into(),
+                    hold: vec!["firefox".into()],
+                    ..ThirdPartySelection::default()
+                }],
+                ..ApplyUpdates::default()
+            },
+        ] {
+            assert_eq!(
+                UpdateSpec::from_request(&apply).validate(),
+                Err(SpecError::Approvals)
+            );
+        }
     }
 
     #[test]

@@ -376,4 +376,45 @@ describe("CampaignForm", () => {
       { kind: "monthly", month_day: 31, months: [12], start: "22:00", end: "04:00", timezone: zone },
     ]);
   });
+
+  it("installs software of the catalogue on the Windows servers (ADR-0188)", async () => {
+    const user = userEvent.setup();
+    const SEVEN = "1b7c5d6e-1f2a-4b3c-8d4e-5f6a7b8c9d01";
+    const fetchMock = stubFetch({
+      ...inventory,
+      "GET /api/servers": {
+        status: 200,
+        body: { servers: [server(), server({ id: WEB2, peer_id: "win-1", hostname: "win-1", os_family: "windows" })], next_cursor: null },
+      },
+      "GET /api/software?customer_id=c1": {
+        status: 200,
+        body: {
+          software: [
+            { id: SEVEN, customer_id: null, name: "7-Zip", manager: "winget", package_id: "7zip.7zip", source: "winget", description: "", created_by: null, created_at: "", updated_at: "" },
+          ],
+        },
+      },
+      "POST /api/campaigns": { status: 201, body: detail() },
+    });
+    render(<CampaignForm me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "New campaign" });
+    await user.type(within(form).getByLabelText("Name"), "Tools");
+    await user.selectOptions(within(form).getByLabelText("Every server of the site"), "site-1");
+    // Windows Update approvals show for OS updates.
+    expect(within(form).getByRole("group", { name: "Windows Update" })).toBeInTheDocument();
+    expect(within(form).getByText("None ticked: every classification but Upgrades.")).toBeInTheDocument();
+    await user.click(within(form).getByRole("radio", { name: "Install or remove software" }));
+    expect(within(form).queryByRole("group", { name: "Windows Update" })).not.toBeInTheDocument();
+    expect(within(form).queryByRole("group", { name: "Updates from" })).not.toBeInTheDocument();
+    expect(screen.getByText("1 server targeted. 1 left out: software goes to Windows servers only.")).toBeInTheDocument();
+    await user.click(await within(form).findByRole("checkbox", { name: /7-Zip/ }));
+    await user.click(within(form).getByRole("radio", { name: "Remove" }));
+    await user.click(screen.getByRole("button", { name: "Create campaign" }));
+    const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(call?.[1]?.body as string)).toMatchObject({
+      server_ids: [],
+      packages: [],
+      software: { action: "remove", catalog_ids: [SEVEN] },
+    });
+  });
 });

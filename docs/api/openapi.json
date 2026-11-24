@@ -2722,9 +2722,12 @@
                       },
                       "server_ids": [],
                       "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "software": null,
                       "sources": null,
                       "spec": {
                         "allow_reboot": false,
+                        "classifications": [],
+                        "hold": [],
                         "include_os": true,
                         "packages": [],
                         "security_only": true,
@@ -2913,9 +2916,12 @@
                   },
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "software": null,
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "classifications": [],
+                    "hold": [],
                     "include_os": true,
                     "packages": [],
                     "security_only": true,
@@ -3007,7 +3013,7 @@
             }
           },
           "400": {
-            "description": "`invalid`, with `error` saying why: not the expected JSON, no `site_id` nor `server_ids`, `unknown site <id>` or `unknown server <id>` (not of the customer), `server <id> is revoked`, a bad name, `command_ttl_s` outside 60 to 604800, a bad package name, batch, window, time zone, failure threshold or pinned snapshot, `agent_version` not like `0.2.0`, or package options with `agent_version`",
+            "description": "`invalid`, with `error` saying why: not the expected JSON, no `site_id` nor `server_ids`, `unknown site <id>` or `unknown server <id>` (not of the customer), `server <id> is revoked`, a bad name, `command_ttl_s` outside 60 to 604800, a bad package name, batch, window, time zone, failure threshold or pinned snapshot, `agent_version` not like `0.2.0`, package options with `agent_version` or `software`, an unknown classification, a bad held update, or `unknown catalogue entry <id>`",
             "content": {
               "application/json": {
                 "schema": {
@@ -3152,9 +3158,12 @@
                   },
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "software": null,
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "classifications": [],
+                    "hold": [],
                     "include_os": true,
                     "packages": [],
                     "security_only": true,
@@ -3412,9 +3421,12 @@
                   },
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "software": null,
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "classifications": [],
+                    "hold": [],
                     "include_os": true,
                     "packages": [],
                     "security_only": true,
@@ -3786,9 +3798,12 @@
                   },
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "software": null,
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "classifications": [],
+                    "hold": [],
                     "include_os": true,
                     "packages": [],
                     "security_only": true,
@@ -4049,9 +4064,12 @@
                   },
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "software": null,
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "classifications": [],
+                    "hold": [],
                     "include_os": true,
                     "packages": [],
                     "security_only": true,
@@ -4299,9 +4317,12 @@
                   },
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "software": null,
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "classifications": [],
+                    "hold": [],
                     "include_os": true,
                     "packages": [],
                     "security_only": true,
@@ -4538,6 +4559,8 @@
                         "sources": null,
                         "spec": {
                           "allow_reboot": false,
+                          "classifications": [],
+                          "hold": [],
                           "include_os": true,
                           "packages": [],
                           "security_only": true,
@@ -4767,9 +4790,12 @@
                   },
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "software": null,
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "classifications": [],
+                    "hold": [],
                     "include_os": true,
                     "packages": [],
                     "security_only": true,
@@ -5017,9 +5043,12 @@
                   },
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "software": null,
                   "sources": null,
                   "spec": {
                     "allow_reboot": false,
+                    "classifications": [],
+                    "hold": [],
                     "include_os": true,
                     "packages": [],
                     "security_only": true,
@@ -35095,7 +35124,7 @@
           "updates"
         ],
         "summary": "Queue a command",
-        "description": "Queues a command for the server's agent. It is sent as soon as the agent is connected and has no other command running, and the agent may start it until `ttl_s` seconds have passed (60 to 604800, one hour by default); after that it is `expired`. Poll `GET /api/v1/commands/{id}` for its end.\n\n- `apply_updates` installs package updates: `packages` (up to 1000 names; empty or absent for every update), `security_only` and `allow_reboot`. Package names are letters, digits and `.+_:-`, not starting with `-`; on Windows servers, KB numbers (`KB5034441`) or update IDs.\n- `self_update` installs another agent version: `version` (like `0.9.3`, required), `allow_downgrade`, and `health_timeout_s` (30 to 3600, 300 by default), how long the new agent has to connect before the old one comes back.\n\nFields of the other kind are 400. The agent refuses kinds it does not accept (`command_kinds` of the server); the command then ends `failed`.\n\n**Who**: an administrator of the server's customer as a whole: a global administrator or one of that customer. A site administrator may not, and neither may a key that reaches one site. **Area**: `updates`.\n\nAudited as `command.create`. **Not safe to repeat**: each request queues a command; send `Idempotency-Key` to retry.",
+        "description": "Queues a command for the server's agent. It is sent as soon as the agent is connected and has no other command running, and the agent may start it until `ttl_s` seconds have passed (60 to 604800, one hour by default); after that it is `expired`. Poll `GET /api/v1/commands/{id}` for its end.\n\n- `apply_updates` installs package updates: `packages` (up to 1000 names; empty or absent for every update), `security_only` and `allow_reboot`. Package names are letters, digits and `.+_:-`, not starting with `-`; on Windows servers, KB numbers (`KB5034441`) or update IDs. On Windows servers, `classifications` approves Windows Update classifications by English name (`Security Updates`, `Critical Updates`, `Definition Updates`, `Update Rollups`, `Updates`, `Feature Packs`, `Service Packs`, `Tools`, `Upgrades`; empty: every one but `Upgrades`), `hold` lists updates never installed, and each `third_party` entry may `hold` apps. An agent too old for them gets a 400 rather than an update that ignores them.\n- `software` installs or removes software from the catalogue (`/software`) on a Windows server whose administrator allowed it (`monitorflow-agent.exe software on`): `software` is `{\"action\": \"install\" | \"remove\", \"catalog_ids\": [id]}`, with `allow_reboot`.\n- `self_update` installs another agent version: `version` (like `0.9.3`, required), `allow_downgrade`, and `health_timeout_s` (30 to 3600, 300 by default), how long the new agent has to connect before the old one comes back.\n\nFields of the other kind are 400. The agent refuses kinds it does not accept (`command_kinds` of the server); the command then ends `failed`.\n\n**Who**: an administrator of the server's customer as a whole: a global administrator or one of that customer. A site administrator may not, and neither may a key that reaches one site. **Area**: `updates`.\n\nAudited as `command.create`. **Not safe to repeat**: each request queues a command; send `Idempotency-Key` to retry.",
         "operationId": "create_command",
         "parameters": [
           {
@@ -35138,11 +35167,37 @@
                     "ttl_s": 3600
                   }
                 },
+                "hold": {
+                  "summary": "Install approved Windows updates, holding one",
+                  "value": {
+                    "allow_reboot": true,
+                    "classifications": [
+                      "Security Updates",
+                      "Critical Updates"
+                    ],
+                    "hold": [
+                      "KB5034441"
+                    ],
+                    "kind": "apply_updates"
+                  }
+                },
                 "self_update": {
                   "summary": "Update the agent",
                   "value": {
                     "kind": "self_update",
                     "version": "0.9.3"
+                  }
+                },
+                "software": {
+                  "summary": "Install software from the catalogue",
+                  "value": {
+                    "kind": "software",
+                    "software": {
+                      "action": "install",
+                      "catalog_ids": [
+                        "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e"
+                      ]
+                    }
                   }
                 }
               }
@@ -35229,7 +35284,7 @@
             }
           },
           "409": {
-            "description": "The server is removed, or has no package manager MonitorFlow can drive (`apply_updates`): `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "description": "The server is removed, has no package manager MonitorFlow can drive (`apply_updates`), or does not take software from the catalogue (`software`: its administrator did not allow it, or its agent is too old): `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -46322,6 +46377,558 @@
         }
       }
     },
+    "/api/v1/software": {
+      "get": {
+        "tags": [
+          "software"
+        ],
+        "summary": "List the software catalogue",
+        "description": "The entries shared by every customer and those of the customers the\ncaller sees, sorted by name. `customer_id` keeps the shared entries\nand that customer's.\n\nNeeds any role and the key area \"updates\".",
+        "operationId": "list_software",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only the shared entries and this customer's.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The catalogue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoftwareCatalog"
+                },
+                "example": {
+                  "software": [
+                    {
+                      "created_at": "2026-11-20T09:00:00Z",
+                      "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
+                      "customer_id": null,
+                      "description": "File archiver",
+                      "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                      "manager": "winget",
+                      "name": "7-Zip",
+                      "package_id": "7zip.7zip",
+                      "source": "winget",
+                      "updated_at": "2026-11-20T09:00:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: a bad `customer_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller has no role. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "software"
+        ],
+        "summary": "Add software to the catalogue",
+        "description": "A winget package by its ID, and the source it installs from (`winget`,\nthe community source, by default; never the store's, `msstore`). A\npackage is listed once per customer, and once among shared entries.\n\nNeeds an administrator role on `customer_id` as a whole, or a global\none for a shared entry, and the key area \"updates\". Audited as\n`software.create`.",
+        "operationId": "create_software",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SoftwareEntryRequest"
+              },
+              "example": {
+                "description": "File archiver",
+                "name": "7-Zip",
+                "package_id": "7zip.7zip",
+                "source": "winget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoftwareEntry"
+                },
+                "example": {
+                  "created_at": "2026-11-20T09:00:00Z",
+                  "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
+                  "customer_id": null,
+                  "description": "File archiver",
+                  "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                  "manager": "winget",
+                  "name": "7-Zip",
+                  "package_id": "7zip.7zip",
+                  "source": "winget",
+                  "updated_at": "2026-11-20T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: a bad name, manager, package ID, source or description",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller does not administer the customer, or is not a global administrator for a shared entry. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: a customer the caller does not see",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: the package is in the catalogue already for that customer; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/software/{id}": {
+      "put": {
+        "tags": [
+          "software"
+        ],
+        "summary": "Edit software of the catalogue",
+        "description": "The whole entry again. Its customer cannot change. Campaigns and\ncommands made from it keep what they resolved when they were saved.\n\nNeeds what adding it needs. Audited as `software.update`.",
+        "operationId": "update_software",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The entry",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SoftwareEntryRequest"
+              },
+              "example": {
+                "description": "File archiver, machine-wide",
+                "name": "7-Zip",
+                "package_id": "7zip.7zip",
+                "source": "winget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoftwareEntry"
+                },
+                "example": {
+                  "created_at": "2026-11-20T09:00:00Z",
+                  "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
+                  "customer_id": null,
+                  "description": "File archiver",
+                  "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+                  "manager": "winget",
+                  "name": "7-Zip",
+                  "package_id": "7zip.7zip",
+                  "source": "winget",
+                  "updated_at": "2026-11-20T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: as when adding it, or a different `customer_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: as when adding it. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such entry, or one the caller does not see",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: another entry has that package for that customer; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "software"
+        ],
+        "summary": "Remove software from the catalogue",
+        "description": "Campaigns and commands made from it keep what they resolved.\n\nNeeds what adding it needs. Audited as `software.delete`.",
+        "operationId": "delete_software",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The entry",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: as when adding it. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such entry, or one the caller does not see",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/thresholds/{id}": {
       "put": {
         "tags": [
@@ -50558,6 +51165,17 @@
             "format": "uuid",
             "description": "The site named at creation; `null` when only `server_ids` were."
           },
+          "software": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SoftwareDeployment",
+                "description": "Set for a software campaign: what it installs or removes, as the\ncatalogue held it when the campaign was saved (ADR-0188)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "sources": {
             "oneOf": [
               {
@@ -50776,6 +51394,13 @@
             "type": "boolean",
             "description": "Whether the agent may reboot the server when an update needs it."
           },
+          "classifications": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Windows Update classifications approved, by English name: `Security\nUpdates`, `Critical Updates`, `Definition Updates`, `Update\nRollups`, `Updates`, `Feature Packs`, `Service Packs`, `Tools`,\n`Upgrades`. Empty approves every one but `Upgrades`. Windows\nservers only (ADR-0188)."
+          },
           "command_ttl_s": {
             "type": [
               "integer",
@@ -50791,6 +51416,13 @@
           },
           "failure_threshold": {
             "$ref": "#/components/schemas/CampaignFailureThreshold"
+          },
+          "hold": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Windows updates never installed, as KB numbers or update IDs.\nWindows servers only (ADR-0188). Held apps go in `third_party` as\n`hold`."
           },
           "include_os": {
             "type": [
@@ -50828,6 +51460,17 @@
             ],
             "format": "uuid",
             "description": "Every unrevoked server of this site of the customer."
+          },
+          "software": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SoftwareRequest",
+                "description": "Install or remove software from the catalogue instead of updating\n(ADR-0188): Windows servers whose administrator allowed it, with\n`allow_reboot`; takes no other package option nor `sources`."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sources": {
             "oneOf": [
@@ -50962,6 +51605,17 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "software": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SoftwareDeployment",
+                "description": "Set for a software campaign (ADR-0188)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sources": {
             "oneOf": [
@@ -51139,6 +51793,20 @@
           "allow_reboot": {
             "type": "boolean",
             "description": "Whether the agent may reboot the server when an update needs it."
+          },
+          "classifications": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Windows Update classifications approved, by English name (`Security\nUpdates`, `Critical Updates`, `Definition Updates`, `Update\nRollups`, `Updates`, `Feature Packs`, `Service Packs`, `Tools`,\n`Upgrades`); empty approves every one but `Upgrades` (ADR-0188).\nWindows servers only; Linux servers of the campaign ignore it."
+          },
+          "hold": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Windows updates never installed, as KB numbers or update IDs\n(ADR-0188). Windows servers only, like `classifications`."
           },
           "include_os": {
             "type": "boolean",
@@ -51951,6 +52619,13 @@
             "type": "boolean",
             "description": "`apply_updates`: reboot when an update needs it."
           },
+          "classifications": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`apply_updates`: Windows Update classifications approved, by\nEnglish name; empty approves every one but `Upgrades` (ADR-0188)."
+          },
           "health_timeout_s": {
             "type": [
               "integer",
@@ -51959,6 +52634,13 @@
             "format": "int32",
             "description": "`self_update`: seconds the new agent has to connect before the\nold one comes back; 30 to 3600, 300 by default.",
             "minimum": 0
+          },
+          "hold": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`apply_updates`: Windows updates never installed, as KB numbers or\nupdate IDs (ADR-0188)."
           },
           "include_os": {
             "type": [
@@ -51969,7 +52651,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`apply_updates` or `self_update`."
+            "description": "`apply_updates`, `self_update` or `software`."
           },
           "packages": {
             "type": "array",
@@ -51981,6 +52663,17 @@
           "security_only": {
             "type": "boolean",
             "description": "`apply_updates`: security updates only."
+          },
+          "software": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SoftwareRequest",
+                "description": "`software`: what to install or remove, from the catalogue\n(ADR-0188). `allow_reboot` applies to it too."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "third_party": {
             "type": "array",
@@ -52083,7 +52776,7 @@
             "description": "`apply_updates`, `self_update`, `configure_sources`,\n`revert_sources`, `shell` (AI remediation), `ai_commands`, or\n`take_snapshot` and `delete_snapshot` (local snapshots before AI\nchanges)."
           },
           "parameters": {
-            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\", \"include_os\", \"third_party\"}` for `apply_updates`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`; `null` for a kind this version does not\nknow."
+            "description": "What it asks, as JSON, by kind: `{\"packages\", \"security_only\",\n\"allow_reboot\", \"include_os\", \"third_party\", \"classifications\",\n\"hold\"}` for `apply_updates`, `{\"action\", \"manager\", \"packages\":\n[{\"id\", \"source\"}], \"allow_reboot\"}` for `software`, `{\"version\", \"base_urls\",\n\"allow_downgrade\", \"health_timeout_seconds\"}` for `self_update`,\n`{\"mirror_base_url\", \"family\", \"mode\", \"repositories\",\n\"key_fingerprints\"}` for `configure_sources`, `{}` for\n`revert_sources`, `{\"command\", \"timeout_seconds\"}` for `shell`,\n`{\"on\"}` for `ai_commands`; `null` for a kind this version does not\nknow."
           },
           "requested_by": {
             "type": [
@@ -67476,6 +68169,203 @@
           }
         }
       },
+      "SoftwareCatalog": {
+        "type": "object",
+        "description": "Body of `GET /api/software`.",
+        "required": [
+          "software"
+        ],
+        "properties": {
+          "software": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SoftwareEntry"
+            },
+            "description": "Sorted by name."
+          }
+        }
+      },
+      "SoftwareDeployment": {
+        "type": "object",
+        "description": "What a software campaign or command installs or removes (ADR-0188),\nresolved from the catalogue when it is made: later changes to the\ncatalogue do not change it.",
+        "required": [
+          "action",
+          "packages"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`install` or `remove`."
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SoftwareDeploymentPackage"
+            },
+            "description": "At least one, at most 100."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SoftwareDeploymentPackage": {
+        "type": "object",
+        "description": "One package of a [`SoftwareSpec`], as the catalogue held it.",
+        "required": [
+          "catalog_id",
+          "name",
+          "manager",
+          "id",
+          "source"
+        ],
+        "properties": {
+          "catalog_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The catalogue entry it came from; it may have been deleted since."
+          },
+          "id": {
+            "type": "string",
+            "description": "The package ID, like `7zip.7zip`."
+          },
+          "manager": {
+            "type": "string",
+            "description": "`winget`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "The winget source it installs from, like `winget`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SoftwareEntry": {
+        "type": "object",
+        "description": "One entry of the catalogue.",
+        "required": [
+          "id",
+          "name",
+          "manager",
+          "package_id",
+          "source",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The user who added it; `null` once that user is deleted."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it belongs to; `null` when every customer shares it."
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "manager": {
+            "type": "string",
+            "description": "`winget`, the only manager for now."
+          },
+          "name": {
+            "type": "string",
+            "description": "What people call it, like `7-Zip`."
+          },
+          "package_id": {
+            "type": "string",
+            "description": "The manager's package ID, like `7zip.7zip`."
+          },
+          "source": {
+            "type": "string",
+            "description": "The winget source it installs from, like `winget`."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SoftwareEntryRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/software` and `PUT /api/software/{id}`.",
+        "required": [
+          "name",
+          "package_id"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it belongs to; absent or `null` to share it with\nevery customer, which takes a global administrator. Fixed once\nmade."
+          },
+          "description": {
+            "type": "string",
+            "description": "Up to 500 characters."
+          },
+          "manager": {
+            "type": "string",
+            "description": "`winget`, the default."
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 128 characters."
+          },
+          "package_id": {
+            "type": "string",
+            "description": "A winget package ID: 2 to 8 segments joined by `.`, like\n`7zip.7zip`."
+          },
+          "source": {
+            "type": "string",
+            "description": "The winget source, `winget` by default; never `msstore`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SoftwareRequest": {
+        "type": "object",
+        "description": "What a campaign or a command installs or removes, by catalogue entry.",
+        "required": [
+          "action",
+          "catalog_ids"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`install` or `remove`."
+          },
+          "catalog_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Entries of the catalogue shared or of the customer, 1 to 100."
+          }
+        },
+        "additionalProperties": false
+      },
       "SourceView": {
         "type": "object",
         "description": "Whether a source was read at its last collection.",
@@ -68018,6 +68908,13 @@
           "manager"
         ],
         "properties": {
+          "hold": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Package IDs never updated, whatever else selects them (ADR-0188).\nWindows (winget) only for now."
+          },
           "manager": {
             "type": "string",
             "description": "`winget`, `flatpak` or `snap`."
@@ -69732,7 +70629,11 @@
     },
     {
       "name": "campaigns",
-      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. A campaign is edited at any time: fully before its first batch, only its name, windows and failure threshold while a run is under way, and fully once finished, for its next run. A finished campaign runs again, all its servers or only those that failed, and keeps each past run under `/campaigns/{id}/runs`. It is deleted as a draft or once finished. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\"."
+      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. A campaign is edited at any time: fully before its first batch, only its name, windows and failure threshold while a run is under way, and fully once finished, for its next run. A finished campaign runs again, all its servers or only those that failed, and keeps each past run under `/campaigns/{id}/runs`. It is deleted as a draft or once finished. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign, or `software` for a software campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. On Windows servers an update approves Windows Update classifications (`classifications`) and holds updates (`hold`) and apps (`third_party[].hold`). A software campaign (`software`) installs or removes software of the catalogue (`/software`) on Windows servers whose administrator allowed it (`monitorflow-agent.exe software on`); the others are skipped with why. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\"."
+    },
+    {
+      "name": "software",
+      "description": "The software catalogue: what campaigns and commands install on servers or remove from them (`software` of `POST /campaigns` and of `POST /servers/{id}/commands`). An entry names a winget package and the source it installs from; Windows servers only for now. An entry is shared by every customer (`customer_id` null), which only global administrators change, or belongs to one customer, whose administrators change it. A server takes software only where its administrator allowed it at install (`SOFTWARE_FROM_WEB=1` or `monitorflow-agent.exe software on`): the central server cannot grant itself that right. Needs the key area \"updates\"."
     },
     {
       "name": "automatic updates",
