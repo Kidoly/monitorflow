@@ -4347,6 +4347,192 @@ export function describeError(error: unknown): string {
   }
 }
 
+/** A library script's interpreter (ADR-0179): `sh` on Linux, `powershell` on Windows. */
+export type ScriptInterpreter = "sh" | "powershell";
+export type ScriptParameterType = "string" | "integer" | "boolean" | "choice";
+
+/** A typed parameter; its value reaches the script as `MF_PARAM_<NAME>`. */
+export interface ScriptParameter {
+  name: string;
+  label: string;
+  type: ScriptParameterType;
+  required: boolean;
+  default: string | null;
+  choices: string[];
+}
+
+export interface LibraryScript {
+  id: string;
+  customer_id: string | null;
+  name: string;
+  description: string;
+  interpreter: ScriptInterpreter;
+  run_role: Role;
+  ai_allowed: boolean;
+  timeout_s: number;
+  version: number;
+  parameters: ScriptParameter[];
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  can_manage: boolean;
+}
+
+export interface ScriptVersion {
+  version: number;
+  body: string;
+  parameters: ScriptParameter[];
+  note: string;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+}
+
+export interface ScriptDetail {
+  script: LibraryScript;
+  body: string;
+  versions: ScriptVersion[];
+}
+
+export interface ScriptRequest {
+  customer_id: string | null;
+  name: string;
+  description: string;
+  interpreter: ScriptInterpreter;
+  run_role: Role;
+  ai_allowed: boolean;
+  timeout_s: number;
+  body: string;
+  parameters: ScriptParameter[];
+  note: string;
+}
+
+export type ScriptTarget =
+  | { kind: "servers"; server_ids: string[] }
+  | { kind: "site"; site_id: string }
+  | { kind: "business_service"; business_service_id: string };
+
+export interface ScriptRunRequest {
+  target: ScriptTarget;
+  parameters: Record<string, string>;
+  version?: number;
+  scheduled_at?: string;
+}
+
+export type ScriptRunState =
+  | "awaiting_approval"
+  | "scheduled"
+  | "dispatched"
+  | "rejected"
+  | "expired"
+  | "cancelled"
+  | "refused";
+
+export interface ScriptRun {
+  id: string;
+  script_id: string;
+  script_name: string;
+  version: number;
+  interpreter: ScriptInterpreter;
+  customer_id: string;
+  parameters: Record<string, string>;
+  target: ScriptTarget;
+  requested_by: string | null;
+  requested_by_name: string | null;
+  rule_id: string | null;
+  rule_name: string | null;
+  trigger: { event?: string; metric?: string | null; incident_id?: string | null } | null;
+  state: ScriptRunState;
+  tier: RiskTier;
+  rule: { source: string; id: string };
+  reason: string;
+  scheduled_at: string;
+  created_at: string;
+  expires_at: string | null;
+  decided_by: string | null;
+  decided_by_name: string | null;
+  decided_at: string | null;
+  decision_reason: string | null;
+  dispatched_at: string | null;
+  counts: { servers: number; pending: number; succeeded: number; failed: number };
+  can_approve: boolean;
+  can_reject: boolean;
+  can_cancel: boolean;
+}
+
+export interface ScriptRunServer {
+  server_id: string;
+  hostname: string;
+  site_id: string;
+  status: string;
+  command_id: string | null;
+  exit_code: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ScriptRunDetail {
+  run: ScriptRun;
+  body: string;
+  servers: ScriptRunServer[];
+}
+
+export interface ScriptRunQuery {
+  script_id?: string;
+  server_id?: string;
+  rule_id?: string;
+  state?: ScriptRunState;
+  limit?: number;
+}
+
+export type AutomationEvent = "incident_opened" | "check_failed" | "server_joined";
+
+export interface AutomationRule {
+  id: string;
+  name: string;
+  customer_id: string | null;
+  site_id: string | null;
+  event: AutomationEvent;
+  metric: string | null;
+  script_id: string;
+  script_name: string;
+  parameters: Record<string, string>;
+  enabled: boolean;
+  cooldown_minutes: number;
+  created_at: string;
+  updated_at: string;
+  can_manage: boolean;
+}
+
+export interface AutomationFiring {
+  event_id: string;
+  server_id: string | null;
+  hostname: string | null;
+  run_id: string | null;
+  skipped: string | null;
+  created_at: string;
+}
+
+export interface AutomationRuleDetail {
+  rule: AutomationRule;
+  firings: AutomationFiring[];
+}
+
+export interface AutomationRuleRequest {
+  name: string;
+  customer_id: string | null;
+  site_id: string | null;
+  event: AutomationEvent;
+  metric: string | null;
+  script_id: string;
+  parameters: Record<string, string>;
+  enabled: boolean;
+  cooldown_minutes: number;
+}
+
 export const api = {
   health: (signal?: AbortSignal) => request<Health>("/api/health", { signal }),
 
@@ -5652,6 +5838,62 @@ export const api = {
     request<RemediationRunStarted>(`/api/remediation/alerts/${encodeURIComponent(alertIncidentId)}/run`, {
       method: "POST",
     }),
+
+  /** The script library (ADR-0179): scripts of every customer and of the customers the user reads. */
+  scripts: (signal?: AbortSignal) => request<{ scripts: LibraryScript[] }>("/api/remediation/scripts", { signal }),
+
+  script: (id: string, signal?: AbortSignal) =>
+    request<ScriptDetail>(`/api/remediation/scripts/${encodeURIComponent(id)}`, { signal }),
+
+  createScript: (body: ScriptRequest) => request<ScriptDetail>("/api/remediation/scripts", { method: "POST", body }),
+
+  /** A new text or new parameters make a new version. */
+  updateScript: (id: string, body: ScriptRequest) =>
+    request<ScriptDetail>(`/api/remediation/scripts/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteScript: (id: string) =>
+    request<void>(`/api/remediation/scripts/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Runs a script now or later; it may wait for approval. */
+  runScript: (id: string, body: ScriptRunRequest) =>
+    request<ScriptRunDetail>(`/api/remediation/scripts/${encodeURIComponent(id)}/runs`, { method: "POST", body }),
+
+  scriptRuns: (query: ScriptRunQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
+    const qs = params.toString();
+    return request<{ runs: ScriptRun[] }>(`/api/remediation/script-runs${qs ? `?${qs}` : ""}`, { signal });
+  },
+
+  scriptRun: (id: string, signal?: AbortSignal) =>
+    request<ScriptRunDetail>(`/api/remediation/script-runs/${encodeURIComponent(id)}`, { signal }),
+
+  approveScriptRun: (id: string) =>
+    request<ScriptRunDetail>(`/api/remediation/script-runs/${encodeURIComponent(id)}/approve`, { method: "POST" }),
+
+  rejectScriptRun: (id: string, reason: string) =>
+    request<ScriptRunDetail>(`/api/remediation/script-runs/${encodeURIComponent(id)}/reject`, {
+      method: "POST",
+      body: { reason },
+    }),
+
+  cancelScriptRun: (id: string) =>
+    request<ScriptRunDetail>(`/api/remediation/script-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+
+  automationRules: (signal?: AbortSignal) =>
+    request<{ rules: AutomationRule[] }>("/api/remediation/automation-rules", { signal }),
+
+  automationRule: (id: string, signal?: AbortSignal) =>
+    request<AutomationRuleDetail>(`/api/remediation/automation-rules/${encodeURIComponent(id)}`, { signal }),
+
+  createAutomationRule: (body: AutomationRuleRequest) =>
+    request<AutomationRuleDetail>("/api/remediation/automation-rules", { method: "POST", body }),
+
+  updateAutomationRule: (id: string, body: AutomationRuleRequest) =>
+    request<AutomationRuleDetail>(`/api/remediation/automation-rules/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteAutomationRule: (id: string) =>
+    request<void>(`/api/remediation/automation-rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Every command waiting for approval in the user's sites, nearest deadline first. */
   approvals: (signal?: AbortSignal) =>

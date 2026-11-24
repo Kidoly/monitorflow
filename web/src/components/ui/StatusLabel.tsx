@@ -39,6 +39,28 @@ export const STATUS_TONES = {
   },
   approval: { waiting: "warn", approved: "ok", rejected: "neutral" },
   risk: { "read-only": "ok", "low-impact": "info", "high-impact": "warn", forbidden: "bad" },
+  scriptRun: {
+    awaiting_approval: "warn",
+    scheduled: "info",
+    running: "info",
+    succeeded: "ok",
+    failed: "bad",
+    rejected: "neutral",
+    expired: "neutral",
+    cancelled: "neutral",
+    refused: "bad",
+  },
+  scriptServer: {
+    waiting: "neutral",
+    skipped: "warn",
+    queued: "neutral",
+    sent: "info",
+    running: "info",
+    succeeded: "ok",
+    failed: "bad",
+    expired: "neutral",
+    cancelled: "neutral",
+  },
 } as const satisfies Record<string, Record<string, Tone>>;
 
 export type StatusKind = keyof typeof STATUS_TONES;

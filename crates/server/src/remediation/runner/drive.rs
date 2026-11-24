@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use monitorflow_ai::{Action, StepRequest, StopOutcome};
-use monitorflow_common::command::{ROOT_ACTION, SHELL};
+use monitorflow_common::command::{ROOT_ACTION, RUN_SCRIPT, SHELL};
 use monitorflow_common::proto::v1::ShellCommand;
 use prost::Message;
 use serde_json::json;
@@ -27,6 +27,7 @@ use crate::remediation::context::{self, Trigger};
 use crate::remediation::language;
 use crate::remediation::redact::Redactor;
 use crate::remediation::risk::{self, Decision, RuleSet, Tier};
+use crate::scripts;
 
 /// Longest diagnosis, reasoning or reason of the AI stored, in bytes.
 const AI_TEXT_BYTES: usize = 8 * 1024;
@@ -225,19 +226,26 @@ async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result
     let language = language::effective(&shared.pool).await?;
     let system_prompt = match progress.diagnosis_only {
         Some(why) => prompt::diagnosis_only(why.for_prompt(), incident.shell(), language),
-        None => prompt::system(prompt::Limits {
-            max_commands: incident.max_commands(),
-            commands_left: incident
-                .max_commands()
-                .saturating_sub(progress.commands_queued),
-            command_timeout: shared.settings.command_timeout,
-            shell: incident.shell(),
-            root_actions: acceptance::reported(&shared.pool, incident.server_id, ROOT_ACTION)
-                .await?
-                .as_deref()
-                == Some("accepted"),
-            language,
-        }),
+        None => {
+            let offered =
+                scripts::ai::offered(&shared.pool, incident.customer_id, incident.shell()).await?;
+            prompt::system(
+                prompt::Limits {
+                    max_commands: incident.max_commands(),
+                    commands_left: incident
+                        .max_commands()
+                        .saturating_sub(progress.commands_queued),
+                    command_timeout: shared.settings.command_timeout,
+                    shell: incident.shell(),
+                    root_actions: acceptance::reported(&shared.pool, incident.server_id, ROOT_ACTION)
+                        .await?
+                        .as_deref()
+                        == Some("accepted"),
+                    language,
+                },
+                &scripts::ai::describe(&offered),
+            )
+        }
     };
     let request = StepRequest {
         system_prompt,
@@ -284,6 +292,25 @@ async fn rules(shared: &Shared, incident: &Incident) -> Result<RuleSet, DriveErr
     Ok(risk::store::rule_set(&shared.pool, incident.customer_id, Some(incident.site_id)).await?)
 }
 
+/// The rules' decision on `command`, and the library script it calls, if
+/// it is one (ADR-0179): the script's lines and values are classified,
+/// and a script the AI may not use there is forbidden.
+async fn decide(
+    shared: &Shared,
+    incident: &Incident,
+    command: &str,
+) -> Result<(Decision, Option<scripts::ai::Resolved>), DriveError> {
+    let rules = rules(shared, incident).await?;
+    Ok(scripts::ai::classify_command(
+        &shared.pool,
+        incident.customer_id,
+        incident.shell(),
+        command,
+        &rules,
+    )
+    .await?)
+}
+
 /// Whether `decision` lets a command run without a human.
 async fn automatic(
     shared: &Shared,
@@ -312,7 +339,7 @@ async fn route(
     command: &str,
     reasoning: &str,
 ) -> Result<Pass, DriveError> {
-    let decision = risk::classify_for(incident.shell(), command, &rules(shared, incident).await?);
+    let (decision, _) = decide(shared, incident, command).await?;
     let automatic = automatic(shared, incident, &decision).await?;
     let Some(mut tx) = leased(shared, incident.id).await? else {
         return Ok(Pass::Done);
@@ -386,9 +413,19 @@ async fn run(
     // is still refused when forbidden, and a system approval needs a tier
     // that runs without one.
     let rules = rules(shared, incident).await?;
-    let decision = risk::classify_for(incident.shell(), command, &rules);
+    let (decision, script) = scripts::ai::classify_command(
+        &shared.pool,
+        incident.customer_id,
+        incident.shell(),
+        command,
+        &rules,
+    )
+    .await?;
     // A root action goes to the agent's root helper, never to a shell.
-    let root = risk::root_action(incident.shell(), command, &rules);
+    let root = match script {
+        Some(_) => None,
+        None => risk::root_action(incident.shell(), command, &rules),
+    };
     if decision.tier == Tier::Forbidden {
         let reason = CloseReason::ApprovedForbidden(decision.reason);
         return finish(shared, incident, IncidentState::Escalated, reason).await;
@@ -398,7 +435,14 @@ async fn run(
         return finish(shared, incident, IncidentState::Escalated, reason).await;
     }
     // Before any snapshot: the agent would refuse the command anyway.
-    if let Some(refusal) = acceptance::shell_refusal(&shared.pool, incident.server_id).await? {
+    if script.is_some() {
+        if let Some(why) = acceptance::script_refusal_of(&shared.pool, incident.server_id).await? {
+            let reason = CloseReason::ScriptsOff(why.to_owned());
+            return finish(shared, incident, IncidentState::Escalated, reason).await;
+        }
+    } else if let Some(refusal) =
+        acceptance::shell_refusal(&shared.pool, incident.server_id).await?
+    {
         return finish(
             shared,
             incident,
@@ -442,9 +486,12 @@ async fn run(
         };
     }
     let timeout = shared.settings.command_timeout;
-    let (kind, payload) = match &root {
-        Some(action) => (ROOT_ACTION, action.to_proto().encode_to_vec()),
-        None => (
+    let (kind, payload) = match (&script, &root) {
+        // The incident's own timeout bounds the script's, as the loop
+        // waits no longer for its result.
+        (Some(resolved), _) => (RUN_SCRIPT, scripts::ai::payload(resolved, timeout)),
+        (None, Some(action)) => (ROOT_ACTION, action.to_proto().encode_to_vec()),
+        (None, None) => (
             SHELL,
             ShellCommand {
                 command: command.to_owned(),

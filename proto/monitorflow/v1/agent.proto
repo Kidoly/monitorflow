@@ -406,3 +406,31 @@ message RestartService {
   // A unit name ending in `.service`, never a critical one (ADR-0181).
   string unit = 1;
 }
+
+// Payload of "run_script" commands (ADR-0179): a script of the central
+// server's library, run by the agent as its own user. Agents refuse it
+// unless `commands.scripts` is enabled in their configuration, which only
+// the host's administrator sets.
+message RunScript {
+  // "sh" (`/bin/sh -c`, Linux) or "powershell" (Windows PowerShell 5.1).
+  // An agent refuses an interpreter its system does not have.
+  string interpreter = 1;
+  // The script's text, exactly as the server classified it.
+  string body = 2;
+  // Parameters, given to the script as environment variables
+  // `MF_PARAM_<NAME>` (the name in upper case), never written into its
+  // text.
+  repeated ScriptParameter parameters = 3;
+  // The agent kills the script and what it started after this many
+  // seconds; 0 means the agent's default.
+  uint32 timeout_seconds = 4;
+  // The library script and its version, for the agent's log.
+  string script_id = 5;
+  uint32 version = 6;
+}
+
+message ScriptParameter {
+  // Lower case letters, digits and `_`, starting with a letter.
+  string name = 1;
+  string value = 2;
+}

@@ -10,9 +10,9 @@
 //! the command started, pipelines included.
 
 #[cfg(unix)]
-mod unix;
+pub(crate) mod unix;
 #[cfg(windows)]
-mod windows;
+pub(crate) mod windows;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -90,7 +90,7 @@ impl Handler for ShellHandler {
 }
 
 /// What a command that could not start reports.
-fn not_started(program: &str, error: std::io::Error) -> Output {
+pub(crate) fn not_started(program: &str, error: std::io::Error) -> Output {
     Output {
         exit_code: -1,
         error: Some(format!("cannot start {program}: {error}")),

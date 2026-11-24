@@ -32,8 +32,9 @@ pub struct Limits {
     pub language: Language,
 }
 
-/// The server's instructions for one step.
-pub fn system(limits: Limits) -> String {
+/// The server's instructions for one step. `scripts` describes the
+/// library scripts the AI may propose (ADR-0179), empty without any.
+pub fn system(limits: Limits, scripts: &str) -> String {
     let timeout = limits.command_timeout.as_secs();
     let commands = match limits.shell {
         Shell::Posix => posix(timeout),
@@ -58,7 +59,7 @@ fixed; the incident closes when the sensor confirms it. Stop with \
 access you do not have, or you are unsure.
 
 {writing}
-
+{scripts}
 {DATA_RULES}",
         max = limits.max_commands,
         left = limits.commands_left,
@@ -241,7 +242,7 @@ mod tests {
     #[test]
     fn the_prompt_states_the_limits() {
         for shell in [Shell::Posix, Shell::PowerShell] {
-            let prompt = system(limits(shell));
+            let prompt = system(limits(shell), "");
             assert!(prompt.contains("killed"), "{prompt}");
             assert!(prompt.contains("after 120 seconds"), "{prompt}");
             assert!(prompt.contains("At most 10 commands run for this incident; 4 remain"));
@@ -252,10 +253,10 @@ mod tests {
 
     #[test]
     fn the_prompt_follows_the_server_shell() {
-        let linux = system(limits(Shell::Posix));
+        let linux = system(limits(Shell::Posix), "");
         assert!(linux.contains("one Linux server") && linux.contains("/bin/sh -c"));
         assert!(!linux.contains("PowerShell"));
-        let windows = system(limits(Shell::PowerShell));
+        let windows = system(limits(Shell::PowerShell), "");
         assert!(windows.contains("one Windows server"), "{windows}");
         assert!(windows.contains("Windows PowerShell 5.1"));
         assert!(windows.contains(r"NT SERVICE\MonitorFlowAgent"));
@@ -277,18 +278,32 @@ mod tests {
         let windows = diagnosis_only("x", Shell::PowerShell, Language::En);
         assert!(windows.contains("Windows PowerShell 5.1"));
         // The same rules as the other prompt.
-        assert!(system(limits(Shell::Posix)).ends_with(DATA_RULES));
+        assert!(system(limits(Shell::Posix), "").ends_with(DATA_RULES));
+    }
+
+    #[test]
+    fn library_scripts_come_before_the_data_rules() {
+        let prompt = system(
+            limits(Shell::Posix),
+            "\nLibrary scripts:\n- clear-cache: x\n",
+        );
+        let scripts = prompt.find("Library scripts:").unwrap();
+        assert!(scripts < prompt.find("Data rules:").unwrap(), "{prompt}");
+        assert!(prompt.ends_with(DATA_RULES));
     }
 
     #[test]
     fn root_actions_are_listed_where_the_agent_accepts_them() {
-        let without = system(limits(Shell::Posix));
+        let without = system(limits(Shell::Posix), "");
         assert!(without.contains("Root actions (`monitorflow-root`) are not available"));
         assert!(!without.contains("vacuum-journal"));
-        let with = system(Limits {
-            root_actions: true,
-            ..limits(Shell::Posix)
-        });
+        let with = system(
+            Limits {
+                root_actions: true,
+                ..limits(Shell::Posix)
+            },
+            "",
+        );
         for action in [
             "`monitorflow-root clean-package-cache`",
             "`monitorflow-root vacuum-journal <size>`",
@@ -299,10 +314,13 @@ mod tests {
         ] {
             assert!(with.contains(action), "{action}: {with}");
         }
-        let windows = system(Limits {
-            root_actions: true,
-            ..limits(Shell::PowerShell)
-        });
+        let windows = system(
+            Limits {
+                root_actions: true,
+                ..limits(Shell::PowerShell)
+            },
+            "",
+        );
         assert!(!windows.contains("monitorflow-root"));
     }
 
@@ -333,13 +351,16 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_language_and_the_markdown() {
-        let english = system(limits(Shell::Posix));
+        let english = system(limits(Shell::Posix), "");
         assert!(english.contains("every reason in English."), "{english}");
         assert!(english.contains("**bold**") && english.contains("no headings"));
-        let french = system(Limits {
-            language: Language::Fr,
-            ..limits(Shell::Posix)
-        });
+        let french = system(
+            Limits {
+                language: Language::Fr,
+                ..limits(Shell::Posix)
+            },
+            "",
+        );
         assert!(french.contains("every reason in French, for administrators who read French"));
         assert!(french.contains("keep commands, paths"));
         let only = diagnosis_only("x", Shell::Posix, Language::Fr);

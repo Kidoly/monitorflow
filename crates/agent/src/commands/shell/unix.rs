@@ -12,6 +12,12 @@ const SHELL: &str = "/bin/sh";
 const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 pub(super) async fn run(line: &str, timeout: Duration) -> Output {
+    run_with(line, &[], timeout).await
+}
+
+/// [`run`] with `env` added to the environment, for library scripts
+/// (ADR-0179).
+pub(crate) async fn run_with(line: &str, env: &[(String, String)], timeout: Duration) -> Output {
     let mut command = tokio::process::Command::new(SHELL);
     command
         .arg("-c")
@@ -19,6 +25,7 @@ pub(super) async fn run(line: &str, timeout: Duration) -> Output {
         .env_clear()
         .env("PATH", PATH)
         .env("LC_ALL", "C")
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .current_dir("/")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -32,6 +32,9 @@ pub(super) enum CloseReason {
     Refused(Refusal),
     /// The agent would refuse the root action (ADR-0181).
     RootRefused(RootRefusal),
+    /// The agent would refuse a library script the AI proposed (ADR-0179),
+    /// with the way to allow them.
+    ScriptsOff(String),
     SnapshotFailed(String),
     CommandGone,
     /// No result in time for the command.
@@ -63,6 +66,7 @@ impl CloseReason {
             Self::NeedsApproval(_) => "needs_approval",
             Self::Refused(refusal) => refusal.code(),
             Self::RootRefused(refusal) => refusal.code(),
+            Self::ScriptsOff(_) => "scripts_off",
             Self::SnapshotFailed(_) => "snapshot_failed",
             Self::CommandGone => "command_gone",
             Self::TimedOut(_) => "timed_out",
@@ -92,6 +96,7 @@ impl CloseReason {
             }
             Self::Refused(refusal) => refusal.message().into(),
             Self::RootRefused(refusal) => refusal.message().into(),
+            Self::ScriptsOff(why) => why.clone(),
             Self::SnapshotFailed(e) => format!("the snapshot before the change failed: {e}"),
             Self::CommandGone => "the queued command is gone".into(),
             Self::TimedOut(command) => format!("the command timed out: {command}"),
@@ -116,6 +121,7 @@ impl CloseReason {
             | Self::ApprovedForbidden(s)
             | Self::NeedsApproval(s)
             | Self::SnapshotFailed(s)
+            | Self::ScriptsOff(s)
             | Self::TimedOut(s) => Some(s),
             _ => None,
         }

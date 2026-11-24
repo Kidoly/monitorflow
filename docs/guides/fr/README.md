@@ -26,6 +26,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment tout surveiller avec votre propre script (Bash ou PowerShell)](surveiller-avec-votre-script.md) : Transformez un script shell ou PowerShell en vérification avec alerte : codes de sortie pour OK, avertissement et critique, lignes nom=valeur en métriques.
 - [Comment surveiller switchs, imprimantes, onduleurs et autres équipements réseau](surveiller-equipements-reseau.md) : Surveillez ce qui ne peut pas faire tourner l’agent : ping, ports TCP et UDP, et SNMP v2c ou v3 pour les interfaces, le trafic, la batterie des onduleurs, les températures et les consommables d’imprimante.
 - [Comment trouver ce qui est sur votre réseau](analyser-le-reseau.md) : Analysez une plage d’adresses depuis le serveur central ou un relais, voyez quelles machines peuvent recevoir l’agent et quels équipements surveiller, et ajoutez-les en un clic.
+- [Comment lancer des scripts sur vos serveurs et automatiser les correctifs](lancer-des-scripts-et-automatiser.md) : Gardez vos scripts shell et PowerShell dans MonitorFlow, lancez-les sur un serveur, un service métier ou un site entier, tout de suite ou cette nuit, lisez la sortie de chaque serveur, et lancez-les tout seuls quand un incident s’ouvre.
 
 ## Bases de données
 

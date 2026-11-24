@@ -5,11 +5,13 @@ import {
   APPROVALS_PATH,
   AUDIT_PATH,
   AUTO_UPDATE_PATH,
+  AUTOMATION_PATH,
   CAMPAIGNS_PATH,
   DASHBOARDS_PATH,
   MIRRORS_PATH,
   ON_CALL_PATH,
   REPORTS_PATH,
+  SCRIPTS_PATH,
   SETTINGS_PATH,
 } from "@/lib/routes";
 
@@ -69,6 +71,8 @@ export const NAVIGATION: NavSection[] = [
     items: [
       { id: "approvals", label: "shell.nav.approvals", href: APPROVALS_PATH, icon: "approvals" },
       { id: "audit", label: "shell.nav.audit", href: AUDIT_PATH, icon: "audit" },
+      { id: "scripts", label: "shell.nav.scripts", href: SCRIPTS_PATH, icon: "scripts", alsoCurrent: ["/remediation/runs/"] },
+      { id: "automation", label: "shell.nav.automation", href: AUTOMATION_PATH, icon: "automation" },
     ],
   },
 ];

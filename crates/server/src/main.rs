@@ -544,6 +544,9 @@ async fn main() -> anyhow::Result<()> {
         .with_sources(api_settings.live.clone(), mirrors.clone())
         .with_agent_releases(api_settings.agent_releases.clone())
         .with_proxmox(config.proxmox.enabled);
+    // The script library: due runs and automation rules (ADR-0179).
+    let script_worker = monitorflow_server::scripts::worker::Worker::new(pool.clone())
+        .with_commands(commands.clone());
     // Virtual machines, hosts and datastores from the samples (ADR-0156).
     let virt = monitorflow_server::virt::Sink::spawn(pool.clone());
     let service = AgentStreamService::new(
@@ -713,6 +716,14 @@ async fn main() -> anyhow::Result<()> {
         },
         async {
             campaigns.clone().run(campaign::POLL, until_stopped()).await;
+            Ok(())
+        },
+        // Every instance runs it; runs and events are claimed (ADR-0179).
+        async {
+            script_worker
+                .clone()
+                .run(monitorflow_server::scripts::worker::POLL, until_stopped())
+                .await;
             Ok(())
         },
         // Every instance sends integration events; claims are leased

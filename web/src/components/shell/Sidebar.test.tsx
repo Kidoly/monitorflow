@@ -102,6 +102,8 @@ describe("sidebar preferences", () => {
         "Campaigns",
         "Automatic updates",
         "Approvals",
+        "Scripts",
+        "Automation",
         "Settings",
       ]);
     });

@@ -32,6 +32,7 @@
 
 pub mod ai_switch;
 pub mod journal;
+pub mod script;
 pub mod shell;
 pub mod unsupported;
 

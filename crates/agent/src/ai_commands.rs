@@ -57,6 +57,9 @@ pub enum Key {
     FromWeb,
     /// `root_actions`: whether AI commands may ask for root actions.
     RootActions,
+    /// `scripts`: library scripts (ADR-0179), `monitorflow-agent.exe
+    /// scripts on|off`.
+    Scripts,
 }
 
 impl Key {
@@ -65,6 +68,7 @@ impl Key {
             Self::Shell => "shell",
             Self::FromWeb => "from_web",
             Self::RootActions => "root_actions",
+            Self::Scripts => "scripts",
         }
     }
 
@@ -73,6 +77,7 @@ impl Key {
             Self::Shell => config.commands.shell,
             Self::FromWeb => config.commands.from_web,
             Self::RootActions => config.commands.root_actions,
+            Self::Scripts => config.commands.scripts,
         }
     }
 }
@@ -181,6 +186,22 @@ mod tests {
             !load(&std::fs::read_to_string(&path).unwrap())
                 .commands
                 .root_actions
+        );
+    }
+
+    #[test]
+    fn allows_library_scripts_and_takes_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.toml");
+        std::fs::write(&path, WRITTEN).unwrap();
+        let (outcome, config) = set(&path, Key::Scripts, true).unwrap();
+        assert_eq!(outcome, Outcome::Changed);
+        assert!(config.commands.scripts && !config.commands.shell);
+        assert_eq!(set(&path, Key::Scripts, false).unwrap().0, Outcome::Changed);
+        assert!(
+            !load(&std::fs::read_to_string(&path).unwrap())
+                .commands
+                .scripts
         );
     }
 

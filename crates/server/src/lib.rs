@@ -33,6 +33,7 @@ pub mod relay_commands;
 pub mod release_check;
 pub mod remediation;
 pub mod renew;
+pub mod scripts;
 pub mod secrets;
 pub mod sensor_config;
 pub mod server_history;

@@ -176,6 +176,8 @@ describe("AppShell", () => {
       "Campaigns",
       "Approvals",
       "Audit log",
+      "Scripts",
+      "Automation",
       "Settings",
       "Aalice",
     ]);
