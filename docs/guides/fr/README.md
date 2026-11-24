@@ -63,3 +63,4 @@ Les guides existent aussi [en anglais](../README.md).
 ## Administration
 
 - [Comment se connecter à MonitorFlow avec votre propre fournisseur d'identité](connexion-avec-votre-fournisseur.md) : Laissez vos collègues se connecter avec les comptes et le second facteur qu'ils ont déjà : OpenID Connect (Entra ID, Google, Keycloak, authentik) ou un annuaire LDAP en TLS.
+- [Comment recevoir les alertes MonitorFlow sur votre téléphone](alertes-sur-votre-telephone.md) : Installez MonitorFlow sur l’écran d’accueil de votre téléphone, recevez des notifications push pendant l’astreinte, et prenez en charge ou mettez en silence une alerte en deux gestes, sans store ni service extérieur.

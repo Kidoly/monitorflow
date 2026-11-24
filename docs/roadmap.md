@@ -202,7 +202,8 @@ What established monitoring tools still do better once Phase 17 is done: alerts 
 - [ ] Ready-made application checks: PostgreSQL, MySQL and MariaDB, SQL Server, Redis, Java (JMX), Docker, Kubernetes and the main cloud providers, as built-in check templates instead of scripts.
 - [ ] Traffic flows: NetFlow, sFlow and IPFIX received by a relay, to say which addresses and applications use the bandwidth.
 - [ ] Network maps: drawn from discovery and dependencies, with live states, editable by hand and usable on a wall screen.
-- [ ] A mobile application with push notifications, to acknowledge and silence from a phone.
+- [x] A mobile web app with push notifications (ADR-0186): installed on the phone's home screen, notifications by Web Push through the phone's own push service, acknowledge and silence from a phone, who is on call, a long session per phone that its person can remove.
+- [ ] Native applications in the App Store and Google Play around the same pages, with an optional push relay for native notifications (ADR-0186).
 
 ## Phase 19: Keeping servers current
 
