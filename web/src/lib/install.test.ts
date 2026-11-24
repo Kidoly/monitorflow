@@ -153,7 +153,7 @@ describe("install commands", () => {
     expect(text(windowsInstallCommand(target(), "github", ORIGIN))).not.toContain("FROM_WEB");
   });
 
-  it("allows a remote terminal only when asked (ADR-0178)", () => {
+  it("allows a remote terminal only when asked (ADR-0190)", () => {
     expect(text(linuxInstallCommand(target(), "github", ORIGIN, "", true, false, false, true))).toBe(
       `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_AI_COMMANDS_FROM_WEB=1 MF_REMOTE_TERMINAL=1 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
     );

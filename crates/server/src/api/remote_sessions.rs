@@ -1,4 +1,4 @@
-//! Remote terminals from a server's page (ADR-0178): who may open them,
+//! Remote terminals from a server's page (ADR-0190): who may open them,
 //! starting one, its WebSocket, the list of past sessions and their
 //! recordings.
 //!

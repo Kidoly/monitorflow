@@ -59,7 +59,7 @@ pub enum Key {
     FromWeb,
     /// `root_actions`: whether AI commands may ask for root actions.
     RootActions,
-    /// `scripts`: library scripts (ADR-0179), `monitorflow-agent.exe
+    /// `scripts`: library scripts (ADR-0189), `monitorflow-agent.exe
     /// scripts on|off`.
     Scripts,
     /// `software`: whether the central server may install and remove

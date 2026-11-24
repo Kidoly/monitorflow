@@ -27,7 +27,7 @@
 //! while disconnected wait in its queue.
 //!
 //! Frames of remote terminals go both ways between the stream and the
-//! sessions (ADR-0178); when a connection ends, every session ends with
+//! sessions (ADR-0190); when a connection ends, every session ends with
 //! it.
 //!
 //! Envelope payloads are never logged.
@@ -211,7 +211,7 @@ impl Agent {
         self
     }
 
-    /// Carries the frames of remote terminals (ADR-0178).
+    /// Carries the frames of remote terminals (ADR-0190).
     pub fn with_remote(mut self, remote: remote::StreamEnd) -> Self {
         self.remote = Some(remote);
         self

@@ -333,7 +333,7 @@ pub async fn approve(
     }
     // It would only come back refused, with the incident gone to a person.
     if script.is_some() {
-        // A library script (ADR-0179): the agent's report for scripts.
+        // A library script (ADR-0189): the agent's report for scripts.
         if let Some(why) = acceptance::script_refusal_of(&state.pool, target.server_id).await? {
             return Err(ApiError::Conflict(why.into()));
         }

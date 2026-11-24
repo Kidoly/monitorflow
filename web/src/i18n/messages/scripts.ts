@@ -1,6 +1,6 @@
 import type { Catalog, Translation } from "../catalog";
 
-/** The script library, its runs and automation rules (ADR-0179). */
+/** The script library, its runs and automation rules (ADR-0189). */
 export const en = {
   "title": "Scripts",
   "intro": "Shell and PowerShell scripts kept in MonitorFlow, with their parameters and every version. A run is classified by the risk rules of AI commands and runs as the agent's user, never as root, only on servers whose administrator allowed scripts at install.",

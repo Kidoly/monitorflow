@@ -1,4 +1,4 @@
-# ADR-0179: Script library and automation rules
+# ADR-0189: Script library and automation rules
 
 Date: 2026-11-23
 Status: accepted

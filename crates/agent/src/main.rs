@@ -93,7 +93,7 @@ enum Command {
         state: Toggle,
     },
     /// Start a remote terminal's shell as `remote.terminal_user`, run as
-    /// root through sudo by the agent (ADR-0178): reads a signed
+    /// root through sudo by the agent (ADR-0190): reads a signed
     /// `remote_session` command on stdin, checks it, then becomes that
     /// account's login shell on the terminal of its stdout.
     #[cfg(unix)]
@@ -125,7 +125,7 @@ enum Command {
         action: AiCommandsAction,
     },
     /// Let this agent run scripts of the central server's script library,
-    /// or stop it (ADR-0179): sets `commands.scripts` in `--config`,
+    /// or stop it (ADR-0189): sets `commands.scripts` in `--config`,
     /// keeping the rest of the file. The web interface cannot turn it on.
     /// Restart the MonitorFlowAgent service afterwards.
     #[cfg(windows)]
@@ -134,7 +134,7 @@ enum Command {
         state: OnOff,
     },
     /// Allow or refuse remote terminals opened from the web interface on
-    /// this host (ADR-0178): sets `remote.terminal` in `--config`, keeping
+    /// this host (ADR-0190): sets `remote.terminal` in `--config`, keeping
     /// the rest of the file. Restart the agent afterwards.
     RemoteAccess {
         #[command(subcommand)]
@@ -767,7 +767,7 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
             config.commands.scripts,
         )),
     );
-    // Remote terminals (ADR-0178), only where the host allowed them.
+    // Remote terminals (ADR-0190), only where the host allowed them.
     let (remote, remote_end) = monitorflow_agent::remote::link(
         config.remote.terminal,
         Box::new(updates.clone()),

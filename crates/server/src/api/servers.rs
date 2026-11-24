@@ -214,7 +214,7 @@ pub struct ServerDetail {
     /// The last time AI commands were turned on or off from the web
     /// interface, `null` if never (ADR-0098).
     pub ai_commands_change: Option<super::ai_commands::AiCommandsChange>,
-    /// What this person may do with remote terminals here (ADR-0178).
+    /// What this person may do with remote terminals here (ADR-0190).
     pub remote_terminal: super::remote_sessions::RemoteTerminalAccess,
 }
 

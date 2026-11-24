@@ -1,4 +1,4 @@
-//! Remote terminals from a server's page (ADR-0178): the settings, who
+//! Remote terminals from a server's page (ADR-0190): the settings, who
 //! may start, list, close and replay sessions, what the agent's report and
 //! connection allow, the one-time token and the audit entries. Ignored
 //! without `DATABASE_URL`.

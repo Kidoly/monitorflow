@@ -1,4 +1,4 @@
-//! `monitorflow-agent remote-shell` (ADR-0178): the root helper that
+//! `monitorflow-agent remote-shell` (ADR-0190): the root helper that
 //! starts a remote terminal's login shell as the account the host's
 //! administrator chose, `remote.terminal_user`, never root unless named
 //! there.

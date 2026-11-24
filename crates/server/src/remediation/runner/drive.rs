@@ -293,7 +293,7 @@ async fn rules(shared: &Shared, incident: &Incident) -> Result<RuleSet, DriveErr
 }
 
 /// The rules' decision on `command`, and the library script it calls, if
-/// it is one (ADR-0179): the script's lines and values are classified,
+/// it is one (ADR-0189): the script's lines and values are classified,
 /// and a script the AI may not use there is forbidden.
 async fn decide(
     shared: &Shared,

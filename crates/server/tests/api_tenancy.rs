@@ -194,7 +194,7 @@ struct Tenant {
     object: &'static str,
     object_oid: &'static str,
     /// A library script of the customer, a run of it on the server waiting
-    /// for approval, and a rule running it (ADR-0179).
+    /// for approval, and a rule running it (ADR-0189).
     script: Uuid,
     script_run: Uuid,
     automation_rule: Uuid,
@@ -1149,7 +1149,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(queued, 1, "only B's own fixture command");
         }
-        // Remote terminals (ADR-0178): B's server and sessions do not exist
+        // Remote terminals (ADR-0190): B's server and sessions do not exist
         // for A.
         ("POST", "/api/servers/{id}/remote-sessions")
         | ("GET", "/api/servers/{id}/remote-sessions") => {
@@ -2085,7 +2085,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(state, "pending");
         }
-        // The script library (ADR-0179): B's scripts, runs and rules do
+        // The script library (ADR-0189): B's scripts, runs and rules do
         // not exist for A, and nothing of A's runs on B's servers.
         ("GET", "/api/remediation/scripts")
         | ("GET", "/api/remediation/script-runs")

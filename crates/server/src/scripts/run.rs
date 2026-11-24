@@ -1,4 +1,4 @@
-//! Runs of library scripts (ADR-0179): which servers, whether a person
+//! Runs of library scripts (ADR-0189): which servers, whether a person
 //! must approve, and the signed `run_script` command each server gets.
 //!
 //! A run is classified when it is made, for every server by the rules of

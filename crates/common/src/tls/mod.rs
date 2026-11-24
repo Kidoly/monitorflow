@@ -233,7 +233,7 @@ impl Identity {
 
     /// Signs `message` with our certificate's key, ECDSA P-256 with
     /// SHA-256 in ASN.1 form, the kind of key enrollment makes: what proves
-    /// a remote session's keys are ours (ADR-0178). `None` for a key of
+    /// a remote session's keys are ours (ADR-0190). `None` for a key of
     /// another kind.
     pub fn sign(&self, message: &[u8]) -> Option<Vec<u8>> {
         self.key

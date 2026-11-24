@@ -258,7 +258,7 @@ impl AgentStreamService {
         self
     }
 
-    /// Carries the frames of agents' remote sessions (ADR-0178).
+    /// Carries the frames of agents' remote sessions (ADR-0190).
     pub fn with_remote(mut self, remote: RemoteHub) -> Self {
         self.remote = Some(remote);
         self
@@ -959,7 +959,7 @@ impl Connection {
                 }
                 _ => tracing::debug!(agent_id = %id, sequence, "ignoring flow reports"),
             },
-            // Only an agent's own stream carries its sessions (ADR-0178);
+            // Only an agent's own stream carries its sessions (ADR-0190);
             // the frames are sealed end to end, so the hub only routes them.
             Some(Payload::Remote(frame)) => match (&self.remote, self.role) {
                 (Some(remote), PeerRole::Agent) => remote.from_agent(id, frame).await,

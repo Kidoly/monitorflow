@@ -32,7 +32,7 @@ pub(super) enum CloseReason {
     Refused(Refusal),
     /// The agent would refuse the root action (ADR-0181).
     RootRefused(RootRefusal),
-    /// The agent would refuse a library script the AI proposed (ADR-0179),
+    /// The agent would refuse a library script the AI proposed (ADR-0189),
     /// with the way to allow them.
     ScriptsOff(String),
     SnapshotFailed(String),

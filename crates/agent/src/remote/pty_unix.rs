@@ -1,4 +1,4 @@
-//! A login shell on a pseudo-terminal, as the agent's own user (ADR-0178).
+//! A login shell on a pseudo-terminal, as the agent's own user (ADR-0190).
 //!
 //! The shell gets a clean environment: the agent's holds what systemd gave
 //! it, such as the enrollment token on a first start, which a person in

@@ -295,11 +295,11 @@ export interface ServerDetail extends Server {
   certificate: Certificate | null;
   /** The last time AI commands were turned on or off from the web interface; null if never (ADR-0098). */
   ai_commands_change?: AiCommandsChange | null;
-  /** What this person may do with remote terminals here (ADR-0178); absent from older servers. */
+  /** What this person may do with remote terminals here (ADR-0190); absent from older servers. */
   remote_terminal?: RemoteTerminalAccess;
 }
 
-/** What `GET /api/servers/{id}` says about remote terminals for the person asking (ADR-0178). */
+/** What `GET /api/servers/{id}` says about remote terminals for the person asking (ADR-0190). */
 export interface RemoteTerminalAccess {
   /** The role lets them open one; the agent must also accept `remote_session`. */
   can_open: boolean;
@@ -310,7 +310,7 @@ export interface RemoteTerminalAccess {
   idle_timeout_minutes: number;
 }
 
-/** A remote terminal session (ADR-0178). */
+/** A remote terminal session (ADR-0190). */
 export interface RemoteSession {
   id: string;
   server_id: string;
@@ -347,7 +347,7 @@ export interface RemoteRecording {
   chunks: { at_ms: number; data: string }[];
 }
 
-/** `GET /api/settings/remote-access` (ADR-0178). */
+/** `GET /api/settings/remote-access` (ADR-0190). */
 export interface RemoteAccessSettings {
   /** The lowest role that may open terminals; null lets nobody. */
   min_role: "operator" | "approver" | "administrator" | null;
@@ -4784,7 +4784,7 @@ export function describeError(error: unknown): string {
   }
 }
 
-/** A library script's interpreter (ADR-0179): `sh` on Linux, `powershell` on Windows. */
+/** A library script's interpreter (ADR-0189): `sh` on Linux, `powershell` on Windows. */
 export type ScriptInterpreter = "sh" | "powershell";
 export type ScriptParameterType = "string" | "integer" | "boolean" | "choice";
 
@@ -6316,7 +6316,7 @@ export const api = {
   switchAllAiCommands: (on: boolean) =>
     request<SiteSourcesChange>("/api/remediation/ai-commands", { method: "POST", body: { on } }),
 
-  /** Starts a remote terminal; the WebSocket at `socket` takes it on (ADR-0178). */
+  /** Starts a remote terminal; the WebSocket at `socket` takes it on (ADR-0190). */
   startRemoteSession: (serverId: string) =>
     request<RemoteSessionStart>(`/api/servers/${encodeURIComponent(serverId)}/remote-sessions`, {
       method: "POST",
@@ -6379,7 +6379,7 @@ export const api = {
       method: "POST",
     }),
 
-  /** The script library (ADR-0179): scripts of every customer and of the customers the user reads. */
+  /** The script library (ADR-0189): scripts of every customer and of the customers the user reads. */
   scripts: (signal?: AbortSignal) => request<{ scripts: LibraryScript[] }>("/api/remediation/scripts", { signal }),
 
   script: (id: string, signal?: AbortSignal) =>

@@ -332,7 +332,7 @@ fn list_servers() {}
     summary = "Get a server",
     description = "One server: the fields of a listing row, plus the certificate MonitorFlow issued it last \
 and the last time its AI commands were turned on or off from the web interface, and what the key's person may \
-do with remote terminals there (ADR-0178). A removed server stays readable here, with `revoked_at` set, for \
+do with remote terminals there (ADR-0190). A removed server stays readable here, with `revoked_at` set, for \
 its history.\n\n\
 **Who**: any role on the server's site. **Area**: `servers`.",
     params(("id" = uuid::Uuid, Path, description = "The server")),

@@ -41,7 +41,7 @@ pub(super) async fn run(line: &str, timeout: Duration) -> Output {
 }
 
 /// Reads the script from stdin as UTF-8 and runs it as one script block,
-/// so its size is not bound by the command line's (ADR-0179).
+/// so its size is not bound by the command line's (ADR-0189).
 const FROM_STDIN: &str = "[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)\n\
      $__mfScript = [Console]::In.ReadToEnd()\n\
      & ([scriptblock]::Create($__mfScript))";

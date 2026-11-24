@@ -1,4 +1,4 @@
-# ADR-0178: Remote terminals through the agent's connection
+# ADR-0190: Remote terminals through the agent's connection
 
 Date: 2026-11-24
 Status: accepted; the terminal is implemented, the remote desktop is planned below

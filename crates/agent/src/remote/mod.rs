@@ -1,4 +1,4 @@
-//! Remote terminals opened from the web interface (ADR-0178).
+//! Remote terminals opened from the web interface (ADR-0190).
 //!
 //! The central server sends a signed `remote_session` command. Its handler
 //! refuses it unless the host's administrator set `remote.terminal` in

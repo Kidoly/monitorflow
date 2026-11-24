@@ -1,4 +1,4 @@
-//! The script library and automation rules (ADR-0179).
+//! The script library and automation rules (ADR-0189).
 //!
 //! A script is shell or PowerShell text with typed parameters, kept in
 //! versions. A run sends one version to servers as signed `run_script`

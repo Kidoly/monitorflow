@@ -1,4 +1,4 @@
-//! The task of the script library (ADR-0179): every [`POLL`], it queues
+//! The task of the script library (ADR-0189): every [`POLL`], it queues
 //! the commands of runs whose time came, expires runs nobody approved in
 //! time, and lets automation rules take new events. Every instance of a
 //! cluster runs it; claims make each run and event taken once.

@@ -184,7 +184,7 @@
 //! | GET | `/api/remediation/approvals` | any role | [`approvals::PendingList`], see below |
 //! | POST | `/api/remediation/approvals/{id}/approve` | approver, see below | body `{"command"?}`; 200 [`approvals::DecisionView`]; 409 once decided, past the deadline, or when the server refuses these commands (ADR-0076) |
 //! | POST | `/api/remediation/approvals/{id}/reject` | approver | body `{"reason"}`; 200 [`approvals::DecisionView`]; 409 as for approve |
-//! | GET | `/api/remediation/scripts` | any role | [`scripts::ScriptList`]: the script library (ADR-0179) |
+//! | GET | `/api/remediation/scripts` | any role | [`scripts::ScriptList`]: the script library (ADR-0189) |
 //! | POST | `/api/remediation/scripts` | administrator of the customer, or of everything | body [`scripts::ScriptRequest`]; 201 [`scripts::ScriptDetail`] |
 //! | GET, PUT, DELETE | `/api/remediation/scripts/{id}` | read; administrator to change | [`scripts::ScriptDetail`]; a new text makes a new version; 409 on delete while rules run it |
 //! | POST | `/api/remediation/scripts/{id}/runs` | the script's `run_role` on every server's site | body [`scripts::RunRequest`]; 201 [`scripts::RunDetail`], waiting for approval unless the caller may approve its tier |
@@ -1070,7 +1070,7 @@ pub struct ApiState {
     /// Runs one-off probe tests, for "Add a device" (ADR-0149); without
     /// it, tests run on this central server only.
     pub probes: Option<crate::probes::Probes>,
-    /// Runs remote terminals (ADR-0178); `None` refuses to start them.
+    /// Runs remote terminals (ADR-0190); `None` refuses to start them.
     pub remote: Option<crate::remote::RemoteHub>,
 }
 
@@ -1138,7 +1138,7 @@ impl ApiState {
         self
     }
 
-    /// Runs remote terminals (ADR-0178).
+    /// Runs remote terminals (ADR-0190).
     pub fn with_remote(mut self, remote: crate::remote::RemoteHub) -> Self {
         self.remote = Some(remote);
         self

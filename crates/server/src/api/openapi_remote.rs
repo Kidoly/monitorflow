@@ -1,4 +1,4 @@
-//! Remote terminals (ADR-0178) in the OpenAPI document: merged into it by
+//! Remote terminals (ADR-0190) in the OpenAPI document: merged into it by
 //! [`super::openapi::build`]; the router in `mod.rs` serves the routes.
 
 #![allow(dead_code)] // The functions exist for their `#[utoipa::path]`.

@@ -1,4 +1,4 @@
-//! Automation rules (ADR-0179): run a library script on a server when an
+//! Automation rules (ADR-0189): run a library script on a server when an
 //! incident opens there, one of its checks fails, or it joins.
 //!
 //! A rule covers everything, one customer or one site. Those who read

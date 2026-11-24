@@ -1,4 +1,4 @@
-//! The script library, its runs and automation rules (ADR-0179): who may
+//! The script library, its runs and automation rules (ADR-0189): who may
 //! manage and run scripts, versions, classification and approval, the
 //! signed command each server gets, servers that refuse scripts, rules
 //! fired by events with their limits, and scripts the AI proposes.

@@ -1,4 +1,4 @@
-//! The tables of the script library (ADR-0179).
+//! The tables of the script library (ADR-0189).
 
 use chrono::{DateTime, Utc};
 use sqlx::types::Json;

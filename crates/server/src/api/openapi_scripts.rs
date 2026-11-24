@@ -1,5 +1,5 @@
 //! The OpenAPI description of the script library, its runs and the
-//! automation rules (ADR-0179). Merged into the document by
+//! automation rules (ADR-0189). Merged into the document by
 //! [`super::openapi::build`]; the router in `mod.rs` serves the routes.
 
 #![allow(dead_code)] // The functions exist for their `#[utoipa::path]`.
@@ -27,7 +27,7 @@ use crate::scripts::{Interpreter, Parameter, ParameterType};
     )),
     modifiers(&Common),
     tags(
-        (name = "scripts", description = "The script library (ADR-0179): shell (`sh`, Linux) and \
+        (name = "scripts", description = "The script library (ADR-0189): shell (`sh`, Linux) and \
 PowerShell (Windows) scripts kept in MonitorFlow, with typed parameters, every version kept, and the \
 least role that may run them. A run sends one version to one server, a chosen group of servers, a \
 site or a business service, now or at a set time, as a signed `run_script` command each agent checks. \

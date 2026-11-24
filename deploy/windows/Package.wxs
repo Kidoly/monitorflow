@@ -16,11 +16,11 @@
                       off (commands.from_web in agent.toml, ADR-0098), on a
                       new install or an upgrade
     ALLOW_SCRIPTS=1   let the agent run scripts of the script library
-                      (commands.scripts in agent.toml, ADR-0179), on a new
+                      (commands.scripts in agent.toml, ADR-0189), on a new
                       install or an upgrade
     REMOTE_TERMINAL=1 let people allowed on the central server open a
                       terminal on this host from its page (remote.terminal
-                      in agent.toml, ADR-0178); REMOTE_TERMINAL=0 refuses it
+                      in agent.toml, ADR-0190); REMOTE_TERMINAL=0 refuses it
     SOFTWARE_FROM_WEB=1  let the central server install and remove
                       software from its catalogue (commands.software in
                       agent.toml, ADR-0188), on a new install or an upgrade
@@ -188,12 +188,12 @@
                   Return="check"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; ai-commands from-web on" />
     <!-- ALLOW_SCRIPTS=1: lets the agent run scripts of the script library
-         (commands.scripts, ADR-0179), as `scripts on` does. -->
+         (commands.scripts, ADR-0189), as `scripts on` does. -->
     <CustomAction Id="AllowScripts" FileRef="AgentExe" Execute="deferred" Impersonate="no"
                   Return="check"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; scripts on" />
     <!-- REMOTE_TERMINAL=1 or 0: the agent edits agent.toml itself, as
-         `remote-access terminal on|off` does (ADR-0178). -->
+         `remote-access terminal on|off` does (ADR-0190). -->
     <CustomAction Id="AllowRemoteTerminal" FileRef="AgentExe" Execute="deferred" Impersonate="no"
                   Return="check"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; remote-access terminal on" />

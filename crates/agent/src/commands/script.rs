@@ -1,4 +1,4 @@
-//! The `run_script` command (ADR-0179): a script of the central server's
+//! The `run_script` command (ADR-0189): a script of the central server's
 //! library, run as the agent's user with the same isolation as `shell`
 //! commands: environment reset, no stdin for the script, from the root
 //! directory, and a timeout that kills everything it started.

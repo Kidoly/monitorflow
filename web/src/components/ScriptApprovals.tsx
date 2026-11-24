@@ -17,7 +17,7 @@ import { requester } from "./ScriptLibrary";
 import { Decision } from "./ScriptRunPage";
 
 /**
- * Script runs waiting for a decision (ADR-0179), under the AI's commands
+ * Script runs waiting for a decision (ADR-0189), under the AI's commands
  * on the approval queue: runs asked by someone who may not approve their
  * tier, and runs of automation rules the risk rules keep for a person.
  * Hidden while there is none, or when they cannot be read.

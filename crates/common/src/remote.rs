@@ -1,4 +1,4 @@
-//! Remote sessions (ADR-0178): the keys the central server and an agent
+//! Remote sessions (ADR-0190): the keys the central server and an agent
 //! agree on, and the sealing of the frames between them, so the relays on
 //! the way pass frames on without reading or changing them.
 //!

@@ -1,5 +1,5 @@
 //! One remote session, run on the instance holding the browser's
-//! WebSocket (ADR-0178). The WebSocket itself is the API's: here the
+//! WebSocket (ADR-0190). The WebSocket itself is the API's: here the
 //! browser is two channels, so the session can be driven without one.
 
 use std::time::Duration;

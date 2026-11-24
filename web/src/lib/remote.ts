@@ -1,7 +1,7 @@
 import type { RemoteSession, ServerDetail } from "./api";
 import { acceptance, type Acceptance } from "./commandKinds";
 
-/** What the agent does with remote terminals, as it last reported (ADR-0178). */
+/** What the agent does with remote terminals, as it last reported (ADR-0190). */
 export const terminalAcceptance = (server: Pick<ServerDetail, "command_kinds">): Acceptance =>
   acceptance(server.command_kinds?.remote_session);
 

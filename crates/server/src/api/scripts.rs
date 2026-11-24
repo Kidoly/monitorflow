@@ -1,4 +1,4 @@
-//! The script library and its runs (ADR-0179).
+//! The script library and its runs (ADR-0189).
 //!
 //! A script belongs to every customer (`customer_id` null) or to one.
 //! Anyone who reads a customer sees its scripts and those of every

@@ -33,7 +33,7 @@ pub struct Limits {
 }
 
 /// The server's instructions for one step. `scripts` describes the
-/// library scripts the AI may propose (ADR-0179), empty without any.
+/// library scripts the AI may propose (ADR-0189), empty without any.
 pub fn system(limits: Limits, scripts: &str) -> String {
     let timeout = limits.command_timeout.as_secs();
     let commands = match limits.shell {

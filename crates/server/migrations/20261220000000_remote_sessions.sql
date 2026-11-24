@@ -1,4 +1,4 @@
--- Remote terminals opened from a server's page (ADR-0178).
+-- Remote terminals opened from a server's page (ADR-0190).
 --
 -- Who may open them, whether they are recorded and when an idle one
 -- closes: one row, changed by global administrators. The host itself must
@@ -18,7 +18,7 @@ CREATE TABLE remote_access_settings (
 );
 INSERT INTO remote_access_settings (min_role) VALUES ('administrator');
 COMMENT ON TABLE remote_access_settings IS
-    'Who may open remote terminals, recording and idle time; one row. See ADR-0178.';
+    'Who may open remote terminals, recording and idle time; one row. See ADR-0190.';
 
 -- One row per session, kept when it closes: who, on which server, when
 -- and for how long. The audit log has the same events.
@@ -54,7 +54,7 @@ CREATE TABLE remote_sessions (
 CREATE INDEX remote_sessions_server_idx ON remote_sessions (server_id, created_at DESC);
 CREATE INDEX remote_sessions_open_idx ON remote_sessions (seen_at) WHERE closed_at IS NULL;
 COMMENT ON TABLE remote_sessions IS
-    'Remote terminals: who opened them on which server, when and for how long. See ADR-0178.';
+    'Remote terminals: who opened them on which server, when and for how long. See ADR-0190.';
 
 -- What recorded sessions printed, in order: the terminal's transcript.
 -- Keystrokes are not kept apart: what the terminal echoed is in it, and
@@ -68,4 +68,4 @@ CREATE TABLE remote_session_recordings (
     PRIMARY KEY (session_id, seq)
 );
 COMMENT ON TABLE remote_session_recordings IS
-    'Output of recorded remote terminals, for replay. See ADR-0178.';
+    'Output of recorded remote terminals, for replay. See ADR-0190.';

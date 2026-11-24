@@ -173,7 +173,7 @@ async fn handle(state: ApiState, inner: Router, request: Request) -> Response {
     *request.version_mut() = parts.version;
     *request.headers_mut() = parts.headers;
     // A WebSocket's upgrade travels in the extensions: a remote session's
-    // socket must keep it (ADR-0178).
+    // socket must keep it (ADR-0190).
     if let Some(upgrade) = parts.extensions.remove::<hyper::upgrade::OnUpgrade>() {
         request.extensions_mut().insert(upgrade);
     }

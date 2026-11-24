@@ -57,7 +57,7 @@ async function loadTerminal(element: HTMLElement, readOnly: boolean) {
 }
 
 /**
- * A live terminal on `serverId` (ADR-0178): starts a session, opens its WebSocket with the
+ * A live terminal on `serverId` (ADR-0190): starts a session, opens its WebSocket with the
  * one-time token, and carries keystrokes, output and size changes until the session ends.
  */
 export function RemoteTerminal({

@@ -1,4 +1,4 @@
-//! `monitorflow-agent remote-access terminal on|off` (ADR-0178): allows
+//! `monitorflow-agent remote-access terminal on|off` (ADR-0190): allows
 //! or refuses remote terminals on this host, `[remote] terminal` in the
 //! configuration file. The Linux installer's `MF_REMOTE_TERMINAL` and the
 //! MSI's `REMOTE_TERMINAL` run it.

@@ -1,4 +1,4 @@
--- The script library and automation rules (ADR-0179).
+-- The script library and automation rules (ADR-0189).
 
 -- A script kept in MonitorFlow, for every customer (customer_id NULL) or
 -- one. Its text and parameters are in script_versions; `version` is the
@@ -22,7 +22,7 @@ CREATE TABLE scripts (
     updated_at   timestamptz NOT NULL DEFAULT now(),
     deleted_at   timestamptz
 );
-COMMENT ON TABLE scripts IS 'The script library; see ADR-0179.';
+COMMENT ON TABLE scripts IS 'The script library; see ADR-0189.';
 CREATE UNIQUE INDEX scripts_name_key ON scripts (customer_id, name) NULLS NOT DISTINCT
     WHERE deleted_at IS NULL;
 
@@ -40,7 +40,7 @@ CREATE TABLE script_versions (
     created_at  timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (script_id, version)
 );
-COMMENT ON TABLE script_versions IS 'Versions of library scripts; see ADR-0179.';
+COMMENT ON TABLE script_versions IS 'Versions of library scripts; see ADR-0189.';
 
 -- Run a script when something happens. Covers everything, a customer or
 -- a site, like integration endpoints.
@@ -66,7 +66,7 @@ CREATE TABLE automation_rules (
     CHECK (event <> 'check_failed' OR metric IS NOT NULL),
     CHECK (event <> 'server_joined' OR metric IS NULL)
 );
-COMMENT ON TABLE automation_rules IS 'Scripts run when something happens; see ADR-0179.';
+COMMENT ON TABLE automation_rules IS 'Scripts run when something happens; see ADR-0189.';
 CREATE INDEX automation_rules_script_idx ON automation_rules (script_id);
 
 -- A run of one script version on its servers: by a person, a rule or
@@ -104,7 +104,7 @@ CREATE TABLE script_runs (
         ON DELETE CASCADE,
     CHECK ((state = 'dispatched') = (dispatched_at IS NOT NULL))
 );
-COMMENT ON TABLE script_runs IS 'Runs of library scripts; see ADR-0179.';
+COMMENT ON TABLE script_runs IS 'Runs of library scripts; see ADR-0189.';
 CREATE INDEX script_runs_script_idx ON script_runs (script_id, created_at);
 CREATE INDEX script_runs_due_idx ON script_runs (scheduled_at) WHERE state = 'scheduled';
 CREATE INDEX script_runs_waiting_idx ON script_runs (created_at)
@@ -120,7 +120,7 @@ CREATE TABLE script_run_targets (
     error      text CHECK (char_length(error) <= 1000),
     PRIMARY KEY (run_id, server_id)
 );
-COMMENT ON TABLE script_run_targets IS 'Servers of script runs and their commands; see ADR-0179.';
+COMMENT ON TABLE script_run_targets IS 'Servers of script runs and their commands; see ADR-0189.';
 CREATE INDEX script_run_targets_server_idx ON script_run_targets (server_id);
 CREATE UNIQUE INDEX script_run_targets_command_key ON script_run_targets (command_id);
 
@@ -135,6 +135,6 @@ CREATE TABLE automation_firings (
     created_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (rule_id, event_id)
 );
-COMMENT ON TABLE automation_firings IS 'Events automation rules took; see ADR-0179.';
+COMMENT ON TABLE automation_firings IS 'Events automation rules took; see ADR-0189.';
 CREATE INDEX automation_firings_cooldown_idx ON automation_firings (rule_id, server_id, created_at)
     WHERE run_id IS NOT NULL;

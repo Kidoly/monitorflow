@@ -38,10 +38,10 @@ One command serves every server of a site, for 30 days by default[^0073]. Each s
 | `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. Either value also undoes what the web interface last set. Each server shows whether it accepts AI commands[^0064]. An open alert whose AI remediation stopped because they were off gets a new attempt by itself once they are allowed[^0165] |
 | `MF_AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page (`commands.from_web`), through a systemd drop-in. Without it, the web interface can only turn them off. Works on an installed agent too; `MF_AI_COMMANDS_FROM_WEB=0` takes it back. "Allow AI commands to be turned on from the web interface" on the Add servers page, ticked by default, adds it to the command; AI commands stay off until an administrator turns them on there[^0098][^0175] |
 | `MF_AI_ROOT_ACTIONS=0` | Refuse the AI root actions (clearing the package cache, vacuuming the journal, pruning unused Docker images, restarting a service), which a new install allows (`commands.root_actions` in `agent.toml`). `MF_AI_ROOT_ACTIONS=1` allows them, also on an installed agent; without the variable an installed agent keeps its choice. They run only while AI commands are on ([AI root actions](#ai-root-actions))[^0181] |
-| `MF_ALLOW_SCRIPTS=1` | Let this agent run scripts of the script library (`commands.scripts`) as its own user, never as root, through a systemd drop-in. Off by default, and the web interface cannot turn it on: whoever runs the central server could otherwise run code on this host. Works on an installed agent too; `MF_ALLOW_SCRIPTS=0` takes it back. "Allow scripts from the script library" on the Add servers page, unticked by default, adds it to the command[^0179] |
+| `MF_ALLOW_SCRIPTS=1` | Let this agent run scripts of the script library (`commands.scripts`) as its own user, never as root, through a systemd drop-in. Off by default, and the web interface cannot turn it on: whoever runs the central server could otherwise run code on this host. Works on an installed agent too; `MF_ALLOW_SCRIPTS=0` takes it back. "Allow scripts from the script library" on the Add servers page, unticked by default, adds it to the command[^0189] |
 | `MF_MAJOR_UPGRADES_FROM_WEB=1` | Allow major upgrades of the distribution from the web interface (`packages.major_upgrades` in `agent.toml`), Debian 12 to 13 for now ([below](#major-upgrades)). Works on an installed agent too; `MF_MAJOR_UPGRADES_FROM_WEB=0` takes it back. "Allow major upgrades from the web interface" on the Add servers page, off by default, adds it to the command[^0182] |
-| `MF_REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page in the web interface, as the agent's user, through the agent's connection: sets `[remote] terminal = true` in `agent.toml` with `monitorflow-agent remote-access terminal on`. Who may (administrators by default), recording and idle time are set on the central server; this line is the server's own consent, which the central server cannot give itself. Works on an installed agent too; `MF_REMOTE_TERMINAL=0` takes it back. "Allow a remote terminal" on the Add servers page, unticked by default, adds it[^0178] |
-| `MF_REMOTE_TERMINAL_USER=<account>` | The local account remote terminals run as (`[remote] terminal_user`), instead of the agent's user. A root helper checks each signed command before it starts that account's login shell; the central server cannot choose the account. Never root unless named here; `none` goes back to the agent's user. Linux only[^0178] |
+| `MF_REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page in the web interface, as the agent's user, through the agent's connection: sets `[remote] terminal = true` in `agent.toml` with `monitorflow-agent remote-access terminal on`. Who may (administrators by default), recording and idle time are set on the central server; this line is the server's own consent, which the central server cannot give itself. Works on an installed agent too; `MF_REMOTE_TERMINAL=0` takes it back. "Allow a remote terminal" on the Add servers page, unticked by default, adds it[^0190] |
+| `MF_REMOTE_TERMINAL_USER=<account>` | The local account remote terminals run as (`[remote] terminal_user`), instead of the agent's user. A root helper checks each signed command before it starts that account's login shell; the central server cannot choose the account. Never root unless named here; `none` goes back to the agent's user. Linux only[^0190] |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
@@ -294,8 +294,8 @@ msiexec /i monitorflow-agent-0.11.0-x64.msi /qn /l*v install.log `
 | `ENROLLMENT_TOKEN` | Optional single-use token. The MSI log shows asterisks in its place. Remove it from `agent.toml` once connected (below) |
 | `REMOVE_DATA=1` | On uninstall, also deletes `%ProgramData%\MonitorFlow`: configuration, identity and logs |
 | `AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page, on a new install or an upgrade: sets `[commands] from_web = true` in `agent.toml`, as `ai-commands from-web on` does[^0098] |
-| `ALLOW_SCRIPTS=1` | Let the agent run scripts of the script library, on a new install or an upgrade: sets `[commands] scripts = true` in `agent.toml`, as `scripts on` does[^0179] |
-| `REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page, on a new install or an upgrade: sets `[remote] terminal = true` in `agent.toml`, as `remote-access terminal on` does; `REMOTE_TERMINAL=0` refuses it[^0178] |
+| `ALLOW_SCRIPTS=1` | Let the agent run scripts of the script library, on a new install or an upgrade: sets `[commands] scripts = true` in `agent.toml`, as `scripts on` does[^0189] |
+| `REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page, on a new install or an upgrade: sets `[remote] terminal = true` in `agent.toml`, as `remote-access terminal on` does; `REMOTE_TERMINAL=0` refuses it[^0190] |
 | `SOFTWARE_FROM_WEB=1` | Let administrators install and remove software of the catalogue on this server, on a new install or an upgrade: sets `[commands] software = true` in `agent.toml`, as `software on` does. "Allow installing and removing software from the web interface" on the Add servers page, off by default, adds it to the command[^0188] |
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
@@ -414,11 +414,11 @@ The first line sets `[commands] shell = true` in `agent.toml` and leaves the res
 
 To let administrators turn AI commands on and off from the server's page instead, run `ai-commands from-web on` the same way, then restart the service; `ai-commands from-web off` takes it back. The MSI's `AI_COMMANDS_FROM_WEB=1` does the same at install[^0098].
 
-To let the agent run scripts of the script library, run `monitorflow-agent.exe scripts on` the same way, then restart the service; `scripts off` takes it back. The MSI's `ALLOW_SCRIPTS=1` does the same at install[^0179].
+To let the agent run scripts of the script library, run `monitorflow-agent.exe scripts on` the same way, then restart the service; `scripts off` takes it back. The MSI's `ALLOW_SCRIPTS=1` does the same at install[^0189].
 
 ### Remote terminals
 
-People of the roles the central server allows can open a terminal on a server from its Terminal tab, through the agent's connection and its relay: nothing to open or install[^0178]. The server must allow it first, on the server itself:
+People of the roles the central server allows can open a terminal on a server from its Terminal tab, through the agent's connection and its relay: nothing to open or install[^0190]. The server must allow it first, on the server itself:
 
 ```
 sudo monitorflow-agent remote-access terminal on      # Linux, or MF_REMOTE_TERMINAL=1 with the installer
@@ -470,10 +470,10 @@ It sets `[commands] software = true` in `agent.toml`; `software off` takes it ba
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
 [^0182]: [ADR-0182: Major distribution upgrades](adr/0182-major-distribution-upgrades.md)
-[^0178]: [ADR-0178: Remote terminals through the agent's connection](adr/0178-remote-terminals.md)
+[^0190]: [ADR-0190: Remote terminals through the agent's connection](adr/0190-remote-terminals.md)
 [^0175]: [ADR-0175: A diagnosis for every alert, commands where allowed](adr/0175-diagnosis-for-every-alert.md)
 [^0181]: [ADR-0181: AI root actions, and the diagnosis in the reader's language](adr/0181-ai-root-actions.md)
-[^0179]: [ADR-0179: Script library and automation rules](adr/0179-script-library-and-automation-rules.md)
+[^0189]: [ADR-0189: Script library and automation rules](adr/0189-script-library-and-automation-rules.md)
 [^0188]: [ADR-0188: Software deployment and update approvals](adr/0188-software-deployment.md)
 [^0103]: [ADR-0103: Plugins](adr/0103-plugins.md)
 [^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)

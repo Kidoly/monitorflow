@@ -1,4 +1,4 @@
-//! Automation rules (ADR-0179): run a library script on a server when
+//! Automation rules (ADR-0189): run a library script on a server when
 //! something happens there.
 //!
 //! Rules read the events integrations already get (ADR-0102), which every

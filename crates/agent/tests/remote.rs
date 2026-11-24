@@ -1,4 +1,4 @@
-//! Remote terminals end to end (ADR-0178): the server's hub and the
+//! Remote terminals end to end (ADR-0190): the server's hub and the
 //! agent's sessions over a real mTLS stream, with PostgreSQL and a real
 //! shell on a pseudo-terminal.
 

@@ -231,7 +231,7 @@ export function campaignHref(id: string): string {
 export const APPROVALS_PATH = "/remediation/approvals/";
 export const AUDIT_PATH = "/remediation/audit/";
 
-/** The script library and automation rules (ADR-0179). */
+/** The script library and automation rules (ADR-0189). */
 export const SCRIPTS_PATH = "/remediation/scripts/";
 export const AUTOMATION_PATH = "/remediation/automation/";
 

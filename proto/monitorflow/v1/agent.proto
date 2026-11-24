@@ -52,7 +52,7 @@ message Envelope {
     // sent added up to, a window at a time (ADR-0184).
     FlowReports flow_reports = 26;
     // Both ways, on an agent's stream: the frames of a remote session
-    // (ADR-0178), sealed end to end between the central server and the
+    // (ADR-0190), sealed end to end between the central server and the
     // agent, so relays pass them on without reading or changing them.
     RemoteFrame remote = 27;
     // Agent to server: what the machine is made of and runs (ADR-0187).
@@ -471,7 +471,7 @@ message RestartService {
   string unit = 1;
 }
 
-// Payload of "run_script" commands (ADR-0179): a script of the central
+// Payload of "run_script" commands (ADR-0189): a script of the central
 // server's library, run by the agent as its own user. Agents refuse it
 // unless `commands.scripts` is enabled in their configuration, which only
 // the host's administrator sets.
@@ -499,7 +499,7 @@ message ScriptParameter {
   string value = 2;
 }
 
-// Payload of "remote_session" commands (ADR-0178): opens a terminal on the
+// Payload of "remote_session" commands (ADR-0190): opens a terminal on the
 // agent, as the user its host allowed, when its administrator turned
 // remote terminals on (`remote.terminal`). The server's key starts the
 // session's end-to-end keys; the command's signature is what makes it the

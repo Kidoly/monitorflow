@@ -11,7 +11,7 @@ import type {
   ScriptTarget,
 } from "./api";
 
-/** The script library (ADR-0179): what the forms hold and send. */
+/** The script library (ADR-0189): what the forms hold and send. */
 
 export const INTERPRETERS: ScriptInterpreter[] = ["sh", "powershell"];
 export const RUN_ROLES: Role[] = ["operator", "approver", "administrator"];

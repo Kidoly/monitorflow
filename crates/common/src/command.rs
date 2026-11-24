@@ -18,9 +18,9 @@ pub const SHELL: &str = "shell";
 pub const AI_COMMANDS: &str = "ai_commands";
 /// Kind of [`crate::proto::v1::RootAction`] commands (ADR-0181).
 pub const ROOT_ACTION: &str = "root_action";
-/// Kind of [`crate::proto::v1::RunScript`] commands (ADR-0179).
+/// Kind of [`crate::proto::v1::RunScript`] commands (ADR-0189).
 pub const RUN_SCRIPT: &str = "run_script";
-/// Kind of [`crate::proto::v1::RemoteSessionOpen`] commands (ADR-0178).
+/// Kind of [`crate::proto::v1::RemoteSessionOpen`] commands (ADR-0190).
 pub const REMOTE_SESSION: &str = "remote_session";
 /// Kind of [`crate::proto::v1::SelfUpdate`] commands (ADR-0053).
 pub const SELF_UPDATE: &str = "self_update";

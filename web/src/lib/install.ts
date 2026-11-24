@@ -132,10 +132,10 @@ const MAJOR_FROM_WEB = "MF_MAJOR_UPGRADES_FROM_WEB=1";
 
 /** Lets the web interface turn the agent's AI commands on and off (ADR-0098). */
 const FROM_WEB = "MF_AI_COMMANDS_FROM_WEB=1";
-/** Lets people open a terminal on the server from its page (ADR-0178). */
+/** Lets people open a terminal on the server from its page (ADR-0190). */
 const REMOTE_TERMINAL = "MF_REMOTE_TERMINAL=1";
 
-/** Lets the agent run scripts of the script library (ADR-0179); off by default. */
+/** Lets the agent run scripts of the script library (ADR-0189); off by default. */
 const ALLOW_SCRIPTS = "MF_ALLOW_SCRIPTS=1";
 
 /**
@@ -190,14 +190,14 @@ export function allowCommandsCommand(
   return runInstaller(install, install.source, files.url, (download) => [...download, variable].join(" "));
 }
 
-/** The one line that lets an installed Linux agent open remote terminals (ADR-0178). */
+/** The one line that lets an installed Linux agent open remote terminals (ADR-0190). */
 export function allowTerminalCommand(install: AgentInstall, address: PublicAddress, origin: string): Command {
   const files = base(install, install.source, publicOrigin(origin, address.address));
   if ("unavailable" in files) return files;
   return runInstaller(install, install.source, files.url, (download) => [...download, REMOTE_TERMINAL].join(" "));
 }
 
-/** The Windows lines that let an installed agent open remote terminals (ADR-0178). */
+/** The Windows lines that let an installed agent open remote terminals (ADR-0190). */
 export const WINDOWS_ALLOW_TERMINAL = [
   `& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" remote-access terminal on`,
   `Restart-Service MonitorFlowAgent`,

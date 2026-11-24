@@ -1,6 +1,6 @@
 # MonitorFlow agent: the privileged commands it runs through `sudo -n`
-# (ADR-0031, ADR-0032, ADR-0035, ADR-0036, ADR-0053, ADR-0094, ADR-0178,
-# ADR-0181, ADR-0182). Install as /etc/sudoers.d/monitorflow-agent, owner
+# (ADR-0031, ADR-0032, ADR-0035, ADR-0036, ADR-0053, ADR-0094, ADR-0181,
+# ADR-0182, ADR-0190). Install as /etc/sudoers.d/monitorflow-agent, owner
 # root, mode 0440, and check with `visudo -cf`. See docs/deploy-agent.md.
 #
 # Exact command lines, no wildcards: sudo refuses any other argument.
@@ -40,7 +40,7 @@ Cmnd_Alias MONITORFLOW_ROOT_ACTIONS = /usr/bin/monitorflow-agent root-action
 # Remote terminals as the account `remote.terminal_user` names: the helper
 # reads a signed remote_session command on stdin, checks it against its
 # own copy of the certificate authority, and refuses unless agent.toml
-# allows terminals and names that account (ADR-0178).
+# allows terminals and names that account (ADR-0190).
 Cmnd_Alias MONITORFLOW_REMOTE_SHELL = /usr/bin/monitorflow-agent remote-shell
 
 monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES, MONITORFLOW_SELF_UPDATE, MONITORFLOW_SNAPSHOTS, MONITORFLOW_MAJOR_UPGRADE, MONITORFLOW_ROOT_ACTIONS, MONITORFLOW_REMOTE_SHELL

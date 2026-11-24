@@ -383,7 +383,7 @@ describe("TokensAdmin", () => {
     expect(linux).not.toHaveTextContent("MF_AI_COMMANDS_FROM_WEB");
     expect(within(install).getByLabelText(/^Windows/)).not.toHaveTextContent("AI_COMMANDS_FROM_WEB");
 
-    // Off by default (ADR-0179): scripts need the host's own choice.
+    // Off by default (ADR-0189): scripts need the host's own choice.
     const scripts = within(install).getByRole("switch", { name: /Allow scripts from the script library/ });
     expect(scripts).not.toBeChecked();
     expect(linux).not.toHaveTextContent("MF_ALLOW_SCRIPTS");

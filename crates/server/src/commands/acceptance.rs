@@ -190,7 +190,7 @@ pub async fn root_refusal(
     Ok(row.and_then(|(word, os_family)| RootRefusal::of(word.as_deref(), &os_family)))
 }
 
-/// Why a server's agent would refuse library scripts (ADR-0179), as it
+/// Why a server's agent would refuse library scripts (ADR-0189), as it
 /// last reported, with the way to allow them on its system; `None` when
 /// it accepts them or never said.
 pub fn script_refusal(word: Option<&str>, os_family: &str) -> Option<&'static str> {

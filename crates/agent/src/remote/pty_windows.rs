@@ -1,5 +1,5 @@
 //! Windows PowerShell on a pseudo console (ConPTY), as the agent's service
-//! account (ADR-0178). Two threads move the bytes over the console's
+//! account (ADR-0190). Two threads move the bytes over the console's
 //! pipes, as reads and writes on them block.
 
 use std::ffi::c_void;

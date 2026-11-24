@@ -116,7 +116,7 @@ Check ($config.Contains('upstream_url = "https://127.0.0.1:7443"')) "agent.toml 
 Check ($config.Contains($token)) "agent.toml has the token"
 Check (-not (Dacl "$data\agent.toml").Protected) "agent.toml inherits the ACL of $data"
 Check ($config -match '(?m)^from_web = true') "AI_COMMANDS_FROM_WEB=1 lets the web interface turn AI commands on (ADR-0098)"
-Check ($config -match '(?m)^terminal = true') "REMOTE_TERMINAL=1 allows remote terminals (ADR-0178)"
+Check ($config -match '(?m)^terminal = true') "REMOTE_TERMINAL=1 allows remote terminals (ADR-0190)"
 Check ($config -match '(?m)^software = true') "SOFTWARE_FROM_WEB=1 lets the central server install software (ADR-0188)"
 $source = "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\$service"
 Check (Test-Path $source) "the Event Log source is registered"

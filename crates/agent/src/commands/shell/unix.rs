@@ -16,7 +16,7 @@ pub(super) async fn run(line: &str, timeout: Duration) -> Output {
 }
 
 /// [`run`] with `env` added to the environment, for library scripts
-/// (ADR-0179).
+/// (ADR-0189).
 pub(crate) async fn run_with(line: &str, env: &[(String, String)], timeout: Duration) -> Output {
     let mut command = tokio::process::Command::new(SHELL);
     command

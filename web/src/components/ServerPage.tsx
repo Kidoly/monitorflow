@@ -198,7 +198,7 @@ export function ServerPage({ id }: { id: string | null }) {
   const checkNames = "sensors" in sensors ? [...new Set(sensors.sensors.map((s) => s.name))].sort() : [];
   // A device has no agent: only its checks, dependencies and traffic flows
   // (ADR-0148, ADR-0184); a server has no flows tab. Remote terminals
-  // (ADR-0178): for those who may open them or see their sessions.
+  // (ADR-0190): for those who may open them or see their sessions.
   const terminal = !device && !!server.remote_terminal && (server.remote_terminal.can_open || server.remote_terminal.can_review);
   const shown: ServerTab = device
     ? tab === "dependencies" || tab === "flows"

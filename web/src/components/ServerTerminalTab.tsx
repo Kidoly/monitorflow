@@ -47,7 +47,7 @@ function statusLine(state: TerminalState | null): string {
   }
 }
 
-/** The Terminal tab (ADR-0178): a live terminal, the server's past sessions and their recordings. */
+/** The Terminal tab (ADR-0190): a live terminal, the server's past sessions and their recordings. */
 export function ServerTerminalTab({ server }: { server: ServerDetail }) {
   const me = useMe();
   const access = server.remote_terminal;

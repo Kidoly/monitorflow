@@ -1,6 +1,6 @@
 import type { Catalog, Translation } from "../catalog";
 
-/** Remote terminals (ADR-0178): the server's Terminal tab and their settings. */
+/** Remote terminals (ADR-0190): the server's Terminal tab and their settings. */
 export const en = {
   "tab": "Terminal",
   "notYet": "This server's agent cannot open remote terminals yet. It updates by itself.",

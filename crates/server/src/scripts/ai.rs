@@ -1,4 +1,4 @@
-//! Library scripts as ready-made fixes for the AI (ADR-0179).
+//! Library scripts as ready-made fixes for the AI (ADR-0189).
 //!
 //! The prompt lists the scripts marked for AI use that fit the server's
 //! system, with their parameters. The AI proposes one as its command,

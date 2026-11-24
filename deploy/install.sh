@@ -51,7 +51,7 @@
 #                    there.
 #   MF_ALLOW_SCRIPTS=1  agent only: let it run scripts of the central
 #                    server's script library as its own user
-#                    (commands.scripts, ADR-0179), also on a host already
+#                    (commands.scripts, ADR-0189), also on a host already
 #                    installed; 0 takes that back. Unset keeps what is there.
 #   MF_MAJOR_UPGRADES_FROM_WEB=1  agent only: allow major upgrades of the
 #                    distribution from the web interface
@@ -60,7 +60,7 @@
 #                    is there.
 #   MF_REMOTE_TERMINAL=1  agent only: let people of the roles the central
 #                    server allows open a terminal on this host from its page,
-#                    as the agent's user (remote.terminal, ADR-0178), also on a
+#                    as the agent's user (remote.terminal, ADR-0190), also on a
 #                    host already installed; 0 takes that back.
 #   MF_REMOTE_TERMINAL_USER=name  agent only: the local account remote
 #                    terminals run as (remote.terminal_user), through a root

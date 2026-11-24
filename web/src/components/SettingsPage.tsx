@@ -470,7 +470,7 @@ function RetentionForm({
 
 const ROLES: RemoteAccessSettings["min_role"][] = [null, "administrator", "approver", "operator"];
 
-/** Who may open remote terminals, recording and idle time (ADR-0178). */
+/** Who may open remote terminals, recording and idle time (ADR-0190). */
 function RemoteAccessSection() {
   const fetcher = useCallback((signal: AbortSignal) => api.remoteAccessSettings(signal), []);
   const { data, error, refresh } = usePolledData(fetcher);

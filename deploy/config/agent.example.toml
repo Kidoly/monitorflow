@@ -116,7 +116,7 @@ upstream_url = "https://relay.example.com:7443"
 # it on a new install unless MF_AI_ROOT_ACTIONS=0; `monitorflow-agent
 # ai-commands root-actions on|off` changes it.
 # root_actions = false
-# Run scripts of the central server's script library (ADR-0179), with
+# Run scripts of the central server's script library (ADR-0189), with
 # /bin/sh -c as the agent's user, never as root. Off unless enabled here;
 # the web interface cannot turn it on. The installer's MF_ALLOW_SCRIPTS
 # sets it.
@@ -129,7 +129,7 @@ upstream_url = "https://relay.example.com:7443"
 
 [remote]
 # Let people of the roles the central server allows open a terminal on
-# this host from its page in the web interface (ADR-0178), through the
+# this host from its page in the web interface (ADR-0190), through the
 # agent's connection, as the agent's own user. The installer's
 # MF_REMOTE_TERMINAL and `monitorflow-agent remote-access terminal on|off`
 # set it; restart the agent after editing it by hand.

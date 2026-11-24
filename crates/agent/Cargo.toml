@@ -45,7 +45,7 @@ base64.workspace = true
 reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
 
 [target.'cfg(unix)'.dependencies]
-# Pseudo-terminals of remote terminals (ADR-0178).
+# Pseudo-terminals of remote terminals (ADR-0190).
 rustix = { workspace = true, features = ["process", "pty", "termios", "stdio"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -55,7 +55,7 @@ windows-service.workspace = true
 windows-registry.workspace = true
 # Windows Update calls and the update service's pipe (ADR-0049).
 windows.workspace = true
-# Pseudo consoles of remote terminals (ADR-0178).
+# Pseudo consoles of remote terminals (ADR-0190).
 windows-sys = { workspace = true, features = ["Win32_System_EventLog", "Win32_System_Pipes", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]

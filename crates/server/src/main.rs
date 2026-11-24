@@ -544,7 +544,7 @@ async fn main() -> anyhow::Result<()> {
         .with_sources(api_settings.live.clone(), mirrors.clone())
         .with_agent_releases(api_settings.agent_releases.clone())
         .with_proxmox(config.proxmox.enabled);
-    // The script library: due runs and automation rules (ADR-0179).
+    // The script library: due runs and automation rules (ADR-0189).
     let script_worker = monitorflow_server::scripts::worker::Worker::new(pool.clone())
         .with_commands(commands.clone());
     // Proxmox snapshots before major upgrades (ADR-0182).
@@ -608,7 +608,7 @@ async fn main() -> anyhow::Result<()> {
         .with_enabled_override(config.auto_update.enabled)
         .with_registry(registry.clone())
         .with_relay_commands(relay_commands.clone());
-    // Remote terminals (ADR-0178), carried by the agents' streams.
+    // Remote terminals (ADR-0190), carried by the agents' streams.
     let remote = monitorflow_server::remote::RemoteHub::spawn(
         pool.clone(),
         registry.clone(),
@@ -747,7 +747,7 @@ async fn main() -> anyhow::Result<()> {
             campaigns.clone().run(campaign::POLL, until_stopped()).await;
             Ok(())
         },
-        // Every instance runs it; runs and events are claimed (ADR-0179).
+        // Every instance runs it; runs and events are claimed (ADR-0189).
         async {
             script_worker
                 .clone()

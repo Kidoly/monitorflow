@@ -521,7 +521,7 @@ pub struct AgentConfig {
 }
 
 /// Remote sessions opened from the web interface on this host
-/// (ADR-0178). Only the host's administrator sets these, in this file:
+/// (ADR-0190). Only the host's administrator sets these, in this file:
 /// the installer and `remote-access` edit it, and the agent's user cannot.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -586,7 +586,7 @@ pub struct AgentCommandsConfig {
     /// it from the file itself, never from the environment.
     pub root_actions: bool,
     /// Runs `run_script` commands, scripts of the central server's
-    /// library, as the agent's user (ADR-0179). Off unless enabled here:
+    /// library, as the agent's user (ADR-0189). Off unless enabled here:
     /// the server cannot turn it on.
     pub scripts: bool,
     /// Lets the central server install and remove software from its
