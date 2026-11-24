@@ -15,6 +15,7 @@ pub mod release;
 #[cfg(all(unix, feature = "server-update"))]
 pub mod server_update;
 pub mod snapshot;
+pub mod software;
 pub mod third_party;
 pub mod tls;
 pub mod via;

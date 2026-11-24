@@ -103,6 +103,11 @@ upstream_url = "https://relay.example.com:7443"
 # the web interface (ADR-0098). Without it the web interface can only turn
 # it off. The installer's MF_AI_COMMANDS_FROM_WEB sets it.
 # from_web = false
+# Let the central server install and remove software from its catalogue
+# (ADR-0188). Windows only for now: `monitorflow-agent.exe software on`
+# or the MSI property SOFTWARE_FROM_WEB=1 sets it. The update service,
+# which installs as LocalSystem, reads it here too.
+# software = false
 
 [plugins]
 # Run the check plugins the central server gives this machine (ADR-0103):

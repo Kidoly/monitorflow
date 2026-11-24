@@ -322,6 +322,8 @@ mod tests {
         let bad = Request::Install {
             kind: super::super::Kind::Named,
             updates: vec!["openssl".into()],
+            classifications: vec![],
+            hold: vec![],
         };
         assert_eq!(
             client.call(&bad).await.unwrap(),

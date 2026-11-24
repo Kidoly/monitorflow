@@ -91,6 +91,15 @@ enum Command {
         #[command(subcommand)]
         action: AiCommandsAction,
     },
+    /// Let the central server install and remove software from its
+    /// catalogue on this host, or stop it (ADR-0188): sets
+    /// `commands.software` in `--config`. Restart the MonitorFlowAgent
+    /// service afterwards; the update service reads it at each request.
+    #[cfg(windows)]
+    Software {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
     /// Check that only administrators and the agent's service own the
     /// folder of `--config` and what it holds, and may write there; the MSI
     /// package runs this before it writes the configuration (ADR-0050).
@@ -263,6 +272,10 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
             return set_ai_commands(&cli.config, action).await;
         }
         #[cfg(windows)]
+        Some(Command::Software { state }) => {
+            return set_software(&cli.config, state == OnOff::On).await;
+        }
+        #[cfg(windows)]
         Some(Command::CheckDataFolder) => {
             use monitorflow_agent::packages::windows_update::{service_sid, AGENT_SERVICE};
 
@@ -313,14 +326,32 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
 /// also forget what the web interface last set, so they win over it.
 #[cfg(windows)]
 async fn set_ai_commands(path: &Path, action: AiCommandsAction) -> anyhow::Result<()> {
-    use monitorflow_agent::ai_commands::{self, Key, Outcome};
-    use monitorflow_agent::commands::ai_switch;
+    use monitorflow_agent::ai_commands::Key;
 
     let (key, on) = match action {
         AiCommandsAction::On => (Key::Shell, true),
         AiCommandsAction::Off => (Key::Shell, false),
         AiCommandsAction::FromWeb { state } => (Key::FromWeb, state == OnOff::On),
     };
+    set_key(path, key, on).await
+}
+
+/// `software on|off`: sets `commands.software` (ADR-0188).
+#[cfg(windows)]
+async fn set_software(path: &Path, on: bool) -> anyhow::Result<()> {
+    set_key(path, monitorflow_agent::ai_commands::Key::Software, on).await
+}
+
+/// Sets `commands.<key>` in the configuration file and says so.
+#[cfg(windows)]
+async fn set_key(
+    path: &Path,
+    key: monitorflow_agent::ai_commands::Key,
+    on: bool,
+) -> anyhow::Result<()> {
+    use monitorflow_agent::ai_commands::{self, Key, Outcome};
+    use monitorflow_agent::commands::ai_switch;
+
     let file = path.to_owned();
     let (outcome, config) =
         tokio::task::spawn_blocking(move || ai_commands::set(&file, key, on)).await??;
@@ -336,13 +367,15 @@ async fn set_ai_commands(path: &Path, action: AiCommandsAction) -> anyhow::Resul
                     )
                 })?
         }
-        Key::FromWeb => false,
+        Key::FromWeb | Key::Software => false,
     };
     let what = match (key, on) {
         (Key::Shell, true) => "AI commands are on",
         (Key::Shell, false) => "AI commands are off",
         (Key::FromWeb, true) => "the web interface may turn AI commands on and off",
         (Key::FromWeb, false) => "the web interface may only turn AI commands off",
+        (Key::Software, true) => "the central server may install and remove software",
+        (Key::Software, false) => "the central server may not install or remove software",
     };
     if outcome == Outcome::Unchanged && !forgot {
         println!("{what} already ({})", path.display());
@@ -571,6 +604,11 @@ fn platform_handlers(
             handlers.register(kind, Arc::new(Unsupported::new(what, "this system")));
         }
     }
+    // Linux installs from the catalogue come later (ADR-0188).
+    handlers.register(
+        command::SOFTWARE,
+        Arc::new(Unsupported::new("software installs", "Linux")),
+    );
     handlers.register(
         command::SELF_UPDATE,
         Arc::new(self_update::handler::SelfUpdateHandler::new(
@@ -595,7 +633,7 @@ fn platform_handlers(
 ) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
     use monitorflow_agent::commands::unsupported::Unsupported;
     use monitorflow_agent::packages::windows_update::client::{
-        WindowsApplyHandler, WindowsUpdates,
+        SoftwareHandler, WindowsApplyHandler, WindowsUpdates,
     };
     use monitorflow_agent::packages::windows_update::{pipe::PipeClient, PIPE_NAME};
     use monitorflow_agent::packages::Reports;
@@ -608,7 +646,15 @@ fn platform_handlers(
     tokio::spawn(reports.clone().run(report_every, stop.clone()));
     handlers.register(
         command::APPLY_UPDATES,
-        Arc::new(WindowsApplyHandler::new(service.clone(), reports)),
+        Arc::new(WindowsApplyHandler::new(service.clone(), reports.clone())),
+    );
+    handlers.register(
+        command::SOFTWARE,
+        Arc::new(SoftwareHandler::new(
+            service.clone(),
+            reports,
+            config.commands.software,
+        )),
     );
     handlers.register(
         command::SELF_UPDATE,
@@ -1075,8 +1121,8 @@ mod update_service {
 
     use monitorflow_agent::helper_trust::{pin_once, Place};
     use monitorflow_agent::packages::windows_update::{
-        authorized, pipe, pipe_sddl, service_sid, wua, Reply, Request, SelfUpdated, AGENT_SERVICE,
-        PIPE_NAME, SERVICE_NAME,
+        authorized, consented, pipe, pipe_sddl, service_sid, wua, Reply, Request, SelfUpdated,
+        AGENT_SERVICE, PIPE_NAME, SERVICE_NAME,
     };
     use monitorflow_agent::packages::winget;
     use monitorflow_agent::self_update::swap::{self, Scm, Swapped, Watched};
@@ -1155,14 +1201,26 @@ mod update_service {
     }
 
     /// The request to run for what the pipe received: reads as they are,
-    /// anything else from the signed command it must carry.
+    /// anything else from the signed command it must carry. Software
+    /// installs and removals also need the host's consent, read from
+    /// `agent.toml` now, which the agent's account cannot write
+    /// (ADR-0188).
     fn checked(request: &Request) -> Result<Request, String> {
         if matches!(request, Request::Scan | Request::Status) {
             return Ok(request.clone());
         }
         let (place, data_dir) = pinned().map_err(|e| format!("{e:#}"))?;
         let now = monitorflow_agent::self_update::unix_ms();
-        authorized(request, &place, &data_dir, now)
+        let run = authorized(request, &place, &data_dir, now)?;
+        if matches!(
+            run,
+            Request::WingetInstall { .. } | Request::WingetRemove { .. }
+        ) {
+            let config: monitorflow_common::config::AgentConfig =
+                config::load(&super::default_config()).map_err(|e| format!("{e:#}"))?;
+            consented(&run, config.commands.software)?;
+        }
+        Ok(run)
     }
 
     /// The helper's place, with the CA of the token in `agent.toml`
