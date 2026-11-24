@@ -131,7 +131,7 @@ impl Area {
             ) => Self::Alerts,
             (
                 "commands" | "campaigns" | "auto-update" | "agent-releases" | "server-update"
-                | "mirrors",
+                | "mirrors" | "software",
                 _,
             ) => Self::Updates,
             ("settings", _) if segments.get(1) == Some(&"auto-update") => Self::Updates,
@@ -804,6 +804,7 @@ mod tests {
             (&post, "/api/servers/{id}/commands", Some(Area::Updates)),
             (&get, "/api/commands/{id}", Some(Area::Updates)),
             (&post, "/api/campaigns/{id}/start", Some(Area::Updates)),
+            (&get, "/api/software", Some(Area::Updates)),
             (&get, "/api/settings/auto-update", Some(Area::Updates)),
             (&get, "/api/auto-update/{kind}/peers", Some(Area::Updates)),
             (

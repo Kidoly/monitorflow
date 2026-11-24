@@ -9,8 +9,8 @@ use utoipa::OpenApi;
 use super::campaigns;
 use super::openapi::{Common, ErrorBody};
 use crate::campaign::{
-    CampaignState, FailureThreshold, FailureUnit, PinnedMirror, RunSettings, SourcesMode,
-    SourcesPin, UpdateSpec, WaveSpec, Window,
+    CampaignState, FailureThreshold, FailureUnit, PinnedMirror, RunSettings, SoftwareItem,
+    SoftwareSpec, SourcesMode, SourcesPin, UpdateSpec, WaveSpec, Window,
 };
 
 #[derive(OpenApi)]
@@ -23,7 +23,7 @@ use crate::campaign::{
     components(schemas(
         CampaignState, FailureThreshold, FailureUnit, PinnedMirror, SourcesMode, SourcesPin,
         UpdateSpec, WaveSpec, Window, campaigns::Progress, campaigns::TargetView,
-        campaigns::WaveView, campaigns::RelaunchServers, RunSettings,
+        campaigns::WaveView, campaigns::RelaunchServers, RunSettings, SoftwareSpec, SoftwareItem,
     )),
     modifiers(&Common),
     tags(
@@ -34,8 +34,12 @@ started. A campaign is edited at any time: fully before its first batch, only it
 and failure threshold while a run is under way, and fully once finished, for its next run. A \
 finished campaign runs again, all its servers or only those that failed, and keeps each past run \
 under `/campaigns/{id}/runs`. It is deleted as a draft or once finished. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an \
-agent update campaign), queued behind any other command of that server and checked by its agent, \
-which runs package updates only when its administrator allowed them. Campaign commands are made by \
+agent update campaign, or `software` for a software campaign), queued behind any other command of \
+that server and checked by its agent, which runs package updates only when its administrator \
+allowed them. On Windows servers an update approves Windows Update classifications \
+(`classifications`) and holds updates (`hold`) and apps (`third_party[].hold`). A software campaign \
+(`software`) installs or removes software of the catalogue (`/software`) on Windows servers whose \
+administrator allowed it (`monitorflow-agent.exe software on`); the others are skipped with why. Campaign commands are made by \
 an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading \
 needs a role on the customer as a whole (everything or the customer); creating and acting need an \
 administrator role on it. Needs the key area \"updates\"."),
@@ -91,7 +95,7 @@ fn campaign_in(state: &str) -> serde_json::Value {
         "state": state,
         "error": done.then_some("stopped by user"),
         "spec": {"packages": [], "security_only": true, "allow_reboot": false,
-                 "include_os": true, "third_party": []},
+                 "include_os": true, "third_party": [], "classifications": [], "hold": []},
         "command_ttl_s": 3600,
         "failure_threshold": {"value": 0, "unit": "count"},
         "windows": [{
@@ -100,6 +104,7 @@ fn campaign_in(state: &str) -> serde_json::Value {
         }],
         "sources": null,
         "agent_version": null,
+        "software": null,
         "server_ids": [],
         "wave_specs": [{"size": 1}],
         "wave_count": 2,
@@ -272,7 +277,8 @@ fn list_campaigns() {}
 expected JSON, no `site_id` nor `server_ids`, `unknown site <id>` or \
 `unknown server <id>` (not of the customer), `server <id> is revoked`, a bad name, `command_ttl_s` \
 outside 60 to 604800, a bad package name, batch, window, time zone, failure threshold or pinned \
-snapshot, `agent_version` not like `0.2.0`, or package options with `agent_version`"),
+snapshot, `agent_version` not like `0.2.0`, package options with `agent_version` or `software`, an \
+unknown classification, a bad held update, or `unknown catalogue entry <id>`"),
         (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
 without administering it as a whole. `api_key_scope`: the key lacks the area"),
         (status = 404, body = ErrorBody, description = "`not_found`: a customer the caller does not read"),

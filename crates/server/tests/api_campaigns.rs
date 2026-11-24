@@ -177,13 +177,14 @@ db_tests! {
             [
                 "agent_version", "command_ttl_s", "created_at", "created_by", "current_wave", "customer_id",
                 "customer_name", "error", "failure_threshold", "finished_at", "id", "name", "previous_runs",
-                "progress", "server_ids", "site_id", "sources", "spec", "started_at", "state",
+                "progress", "server_ids", "site_id", "software", "sources", "spec", "started_at", "state",
                 "wave_count", "wave_specs", "waves", "windows"
             ]
         );
         assert_eq!(created["state"], "draft");
         assert_eq!(created["customer_name"], "acme");
-        assert_eq!(created["spec"], json!({"packages": [], "security_only": true, "allow_reboot": false, "include_os": true, "third_party": []}));
+        assert_eq!(created["spec"], json!({"packages": [], "security_only": true, "allow_reboot": false, "include_os": true, "third_party": [], "classifications": [], "hold": []}));
+        assert_eq!(created["software"], Value::Null);
         assert_eq!(created["command_ttl_s"], 3600);
         assert_eq!(created["failure_threshold"], json!({"value": 10, "unit": "percent"}));
         assert_eq!(created["windows"], h.body()["windows"]);
