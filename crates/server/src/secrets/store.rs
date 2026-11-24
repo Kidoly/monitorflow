@@ -17,6 +17,7 @@ pub const SEALED: &[Column] = &[
     Column::NetworkScans,
     Column::VmwareCredentials,
     Column::PsaConnections,
+    Column::WebPushKeys,
 ];
 
 #[derive(Debug, thiserror::Error)]

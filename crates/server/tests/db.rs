@@ -198,6 +198,7 @@ db_tests! {
                 "password_links",
                 "peer_streams",
                 "pending_hosts",
+                "phones",
                 "plugin_places",
                 "plugin_publishers",
                 "plugins",
@@ -249,7 +250,8 @@ db_tests! {
                 "users",
                 "virtual_objects",
                 "virtual_sources",
-                "vmware_credentials"
+                "vmware_credentials",
+                "web_push_keys"
             ]
         );
     }

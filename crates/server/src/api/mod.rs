@@ -37,6 +37,13 @@
 //! | GET | `/api/me/preferences` | session | [`preferences::Preferences`]: the signed-in person's own `{"theme", "language", "sidebar": {"collapsed", "hidden", "order"}}`, every key optional, `{}` when never saved (ADR-0137); never through an API key |
 //! | PUT | `/api/me/preferences` | session | body [`preferences::Preferences`], replacing the stored one; 400 for an unknown key or value, a list over 64 items, an item identifier out of form or a body over 16 KiB. Not audited |
 //! | POST | `/api/me/password` | session | body [`own_password::ChangeRequest`] `{"current_password", "new_password"}`; 204, the person's other sessions ended and this one kept; 400 for a short or unchanged new password or a wrong current one, 429 `rate_limited` within the sign-in limits; audited; never through an API key (ADR-0141) |
+//! | GET | `/api/me/phones` | session | [`phones::Phones`]: the person's phones, `push_key` to subscribe with, and how long a phone's session lasts (ADR-0186); never through an API key |
+//! | POST | `/api/me/phones` | session | body [`phones::AddPhone`] `{"name"}`; 201 [`phones::PhoneView`]: this browser is now a phone of the person, its session lasts 90 days (30 unused) and ends with the phone; 409 over 10 phones; audited `user.phone_add` |
+//! | PUT | `/api/me/phones/{id}` | session | body [`phones::Rename`] `{"name"}`; audited `user.phone_rename` |
+//! | DELETE | `/api/me/phones/{id}` | session | 204; the phone is signed out and gets no more notifications; audited `user.phone_remove` |
+//! | PUT | `/api/me/phones/{id}/push` | session | body [`phones::PushRequest`], the browser's `PushSubscription.toJSON()`; only from that phone's own session; 400 for an endpoint that is not https on the internet; audited `user.phone_push_on` |
+//! | DELETE | `/api/me/phones/{id}/push` | session | notifications off; audited `user.phone_push_off` |
+//! | POST | `/api/me/phones/{id}/test` | session | [`phones::TestResult`] `{"ok", "error"}`; 429 beyond 6 tests a minute with the contact's |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
 //! | GET | `/api/servers/summary` | any role | [`servers::ServerSummary`]: how many servers are critical, warning, acknowledged, silenced, offline and ok, out of `total`; `?site_id` or `?customer_id` narrows it (ADR-0130) |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
@@ -810,6 +817,7 @@ pub mod own_password;
 pub mod package_sources;
 pub mod packages;
 pub mod password;
+pub mod phones;
 pub mod plugins;
 pub mod preferences;
 pub mod proxmox;
@@ -1148,6 +1156,16 @@ pub fn router(state: ApiState) -> Router {
             get(identity_providers::groups).put(identity_providers::set_groups),
         )
         .route("/api/me/password", post(own_password::change))
+        .route("/api/me/phones", get(phones::list).post(phones::add))
+        .route(
+            "/api/me/phones/{id}",
+            put(phones::rename).delete(phones::remove),
+        )
+        .route(
+            "/api/me/phones/{id}/push",
+            put(phones::set_push).delete(phones::delete_push),
+        )
+        .route("/api/me/phones/{id}/test", post(phones::test))
         .route(
             "/api/me/preferences",
             get(preferences::get)

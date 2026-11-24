@@ -7,6 +7,7 @@
 //! (ADR-0080). Whoever is [`on_call`] for the place hears of it in person
 //! too, grouped the same way (ADR-0081). When nobody acknowledges a
 //! critical incident, the next step of its [`follow_up`] is told (ADR-0082).
+//! People hear it on their phones too, by [`push`] (ADR-0186).
 
 pub mod backup;
 pub mod chat;
@@ -16,6 +17,7 @@ pub mod group;
 pub mod maintenance;
 pub mod message;
 pub mod on_call;
+pub mod push;
 pub mod send;
 pub mod silence;
 

@@ -57194,7 +57194,7 @@
       },
       "OnCallGap": {
         "type": "string",
-        "description": "Why the person on call cannot be told: a gap. `nobody`: a schedule\nwithout members; `removed`: a removed user's turn; `disabled`;\n`no_access`: no longer sees the schedule's place; `no_contact`: no\nemail address, chat or webhook; `no_mail_server`: only an email\naddress, and no email channel to send it through.",
+        "description": "Why the person on call cannot be told: a gap. `nobody`: a schedule\nwithout members; `removed`: a removed user's turn; `disabled`;\n`no_access`: no longer sees the schedule's place; `no_contact`: no\nemail address, chat, webhook or phone; `no_mail_server`: only an email\naddress, and no email channel to send it through.",
         "enum": [
           "nobody",
           "removed",

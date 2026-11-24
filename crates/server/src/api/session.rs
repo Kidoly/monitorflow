@@ -96,6 +96,61 @@ pub fn from_headers(headers: &HeaderMap, settings: &ApiSettings) -> Option<Sessi
         .and_then(|(_, v)| SessionToken::parse(v))
 }
 
+/// How long a session opened on a phone lasts at most (ADR-0186), unless
+/// the server's own lifetime is longer.
+pub const PHONE_LIFETIME: Duration = Duration::from_secs(90 * 86_400);
+/// How long a phone's session survives without being used, unless the
+/// server's own idle timeout is longer.
+pub const PHONE_IDLE: Duration = Duration::from_secs(30 * 86_400);
+
+/// The lifetime of a phone's session under `settings`.
+pub fn phone_lifetime(settings: &ApiSettings) -> Duration {
+    PHONE_LIFETIME.max(settings.live.session_lifetime())
+}
+
+/// The idle timeout of a phone's session under `settings`.
+pub fn phone_idle(settings: &ApiSettings) -> Duration {
+    PHONE_IDLE.max(settings.live.session_idle_timeout())
+}
+
+/// `Set-Cookie` value that keeps `token` for a phone's session.
+pub fn set_phone_cookie(settings: &ApiSettings, token: &SessionToken) -> HeaderValue {
+    cookie(settings, &token.0, phone_lifetime(settings).as_secs())
+}
+
+/// Makes the session of `token` the session of `phone`: it lasts as long
+/// as a phone's from now and ends when the phone is removed. Returns
+/// whether the session exists.
+pub async fn attach_phone(
+    db: impl PgExecutor<'_>,
+    token: &SessionToken,
+    phone: Uuid,
+    settings: &ApiSettings,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE sessions SET phone_id = $2, expires_at = now() + make_interval(secs => $3)
+         WHERE token_hash = $1",
+    )
+    .bind(token.hash())
+    .bind(phone)
+    .bind(phone_lifetime(settings).as_secs_f64())
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() > 0)
+}
+
+/// The phone the session of `token` belongs to, if any.
+pub async fn phone_of(
+    db: impl PgExecutor<'_>,
+    token: &SessionToken,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    sqlx::query_scalar::<_, Option<Uuid>>("SELECT phone_id FROM sessions WHERE token_hash = $1")
+        .bind(token.hash())
+        .fetch_optional(db)
+        .await
+        .map(Option::flatten)
+}
+
 /// Starts a session for `user_id` and returns its token.
 pub async fn create(
     db: impl PgExecutor<'_>,
@@ -127,23 +182,32 @@ pub async fn resolve(
     settings: &ApiSettings,
 ) -> Result<Option<Uuid>, sqlx::Error> {
     let idle = settings.live.session_idle_timeout();
+    // A phone's session has its own idle timeout (ADR-0186), and using it
+    // tells when the phone was last used.
     sqlx::query_scalar(
         "WITH live AS (
-             SELECT s.token_hash, s.user_id, s.last_seen_at
+             SELECT s.token_hash, s.user_id, s.last_seen_at, s.phone_id
              FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token_hash = $1 AND u.disabled_at IS NULL
                AND s.expires_at > now()
-               AND s.last_seen_at > now() - make_interval(secs => $2)),
+               AND s.last_seen_at > now() - make_interval(
+                   secs => CASE WHEN s.phone_id IS NULL THEN $2 ELSE $4 END)),
          touched AS (
              UPDATE sessions s SET last_seen_at = now()
              FROM live
              WHERE s.token_hash = live.token_hash
+               AND live.last_seen_at <= now() - make_interval(secs => $3)),
+         phone AS (
+             UPDATE phones p SET last_seen_at = now()
+             FROM live
+             WHERE p.id = live.phone_id
                AND live.last_seen_at <= now() - make_interval(secs => $3))
          SELECT user_id FROM live",
     )
     .bind(token.hash())
     .bind(idle.as_secs_f64())
     .bind(touch_every(idle).as_secs_f64())
+    .bind(phone_idle(settings).as_secs_f64())
     .fetch_optional(pool)
     .await
 }
@@ -183,9 +247,12 @@ pub async fn revoke_others(
 pub async fn prune(db: impl PgExecutor<'_>, settings: &ApiSettings) -> Result<u64, sqlx::Error> {
     let done = sqlx::query(
         "DELETE FROM sessions
-         WHERE expires_at <= now() OR last_seen_at <= now() - make_interval(secs => $1)",
+         WHERE expires_at <= now()
+            OR last_seen_at <= now() - make_interval(
+                secs => CASE WHEN phone_id IS NULL THEN $1 ELSE $2 END)",
     )
     .bind(settings.live.session_idle_timeout().as_secs_f64())
+    .bind(phone_idle(settings).as_secs_f64())
     .execute(db)
     .await?;
     Ok(done.rows_affected())
