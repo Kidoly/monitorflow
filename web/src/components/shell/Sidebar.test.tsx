@@ -96,6 +96,7 @@ describe("sidebar preferences", () => {
       expect(links()).toEqual([
         "Incidents",
         "Dashboards",
+        "Network maps",
         "Fleet",
         "On call",
         "Reports",
@@ -154,11 +155,11 @@ describe("sidebar preferences", () => {
       expect(main.getByRole("button", { name: "Move Fleet up" })).toBeDisabled();
       down.focus();
       await user.keyboard("{Enter}");
-      expect(links().slice(0, 3)).toEqual(["Dashboards", "Fleet", "Incidents"]);
+      expect(links().slice(0, 3)).toEqual(["Dashboards", "Fleet", "Network maps"]);
       expect(main.getByRole("button", { name: "Move Fleet down" })).toHaveFocus();
-      expect(screen.getByRole("status")).toHaveTextContent("Fleet moved to position 2 of 5.");
+      expect(screen.getByRole("status")).toHaveTextContent("Fleet moved to position 2 of 6.");
       const sidebar = await saved(fetchMock);
-      expect(sidebar?.order?.slice(0, 3)).toEqual(["dashboards", "fleet", "incidents"]);
+      expect(sidebar?.order?.slice(0, 3)).toEqual(["dashboards", "fleet", "maps"]);
       // At the top, focus moves to the button that still works.
       await user.click(main.getByRole("button", { name: "Move Fleet up" }));
       expect(main.getByRole("button", { name: "Move Fleet up" })).toBeDisabled();

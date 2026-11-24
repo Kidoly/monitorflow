@@ -136,9 +136,10 @@ impl Area {
             ) => Self::Updates,
             ("settings", _) if segments.get(1) == Some(&"auto-update") => Self::Updates,
             ("remediation", _) => Self::Remediation,
-            ("dashboards" | "dashboard-data" | "dashboard-metrics" | "display-links", _) => {
-                Self::Dashboards
-            }
+            (
+                "dashboards" | "dashboard-data" | "dashboard-metrics" | "display-links" | "maps",
+                _,
+            ) => Self::Dashboards,
             _ => Self::Administration,
         })
     }

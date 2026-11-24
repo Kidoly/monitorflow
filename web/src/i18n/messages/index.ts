@@ -23,6 +23,7 @@ import * as install from "./install";
 import * as integrations from "./integrations";
 import * as license from "./license";
 import * as maintenance from "./maintenance";
+import * as maps from "./maps";
 import * as mirrors from "./mirrors";
 import * as monitoring from "./monitoring";
 import * as notifications from "./notifications";
@@ -74,6 +75,7 @@ export const en = {
   integrations: integrations.en,
   license: license.en,
   maintenance: maintenance.en,
+  maps: maps.en,
   mirrors: mirrors.en,
   monitoring: monitoring.en,
   notifications: notifications.en,
@@ -124,6 +126,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   integrations: integrations.fr,
   license: license.fr,
   maintenance: maintenance.fr,
+  maps: maps.fr,
   mirrors: mirrors.fr,
   monitoring: monitoring.fr,
   notifications: notifications.fr,

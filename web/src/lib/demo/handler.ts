@@ -364,6 +364,7 @@ const ROUTES: [RegExp, Handler][] = [
     return DASHBOARD;
   }],
   [/^\/api\/dashboards\/([^/]+)\/display-links$/, () => ({ links: [] })],
+  [/^\/api\/maps$/, () => ({ maps: [] })],
   [/^\/api\/dashboard-data$/, (_, __, body) => {
     const request = body as { range: string; within: Within; panels: Panel[] };
     return dashboardData(request.range, request.panels);
@@ -546,6 +547,8 @@ function dashboardData(range: string, panels: Panel[]): DashboardData {
         }
         case "text":
           return { ...base, kind: "text" };
+        case "map":
+          return { ...base, kind: "error", error: "Network maps are not in the demo." };
         case "states":
           return {
             ...base,

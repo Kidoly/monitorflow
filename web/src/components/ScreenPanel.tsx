@@ -3,7 +3,7 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 import { t } from "@/i18n";
-import type { DashboardData, Panel, PanelData } from "@/lib/api";
+import type { DashboardData, MapLive, Panel, PanelData } from "@/lib/api";
 import { endWords } from "@/lib/dependencies";
 import { heatColor, levelColor, panelAdditive, panelColor, panelFormat, panelScale, thresholdBands, worstFirst } from "@/lib/dashboards";
 import { formatSensorValue } from "@/lib/sensors";
@@ -34,6 +34,8 @@ import {
   variantOf,
 } from "./DashboardPanel";
 import styles from "./Display.module.css";
+import { LiveMap } from "./MapCanvas";
+import mapStyles from "./Maps.module.css";
 
 /** Chart text in SVG units; the drawing is scaled so it matches the panel's text. */
 const TEXT = 16;
@@ -178,10 +180,13 @@ export function ScreenPanel({
   panel,
   data,
   window,
+  loadBackground,
 }: {
   panel: Panel;
   data: PanelData | undefined;
   window: Pick<DashboardData, "start" | "end" | "step" | "at"> | undefined;
+  /** Reads a map's background the way this screen may (ADR-0185). */
+  loadBackground?: (live: MapLive) => Promise<string | null>;
 }) {
   const format = panelFormat(panel);
   if (panel.kind === "text") {
@@ -386,6 +391,14 @@ export function ScreenPanel({
         </Frame>
       );
     }
+    case "map":
+      return (
+        <Frame panel={panel}>
+          <div className={mapStyles.screenPanel}>
+            <LiveMap live={data.map} mode="screen" loadBackground={loadBackground} />
+          </div>
+        </Frame>
+      );
     case "alerts": {
       const now = new Date(window.at * 1000);
       return (

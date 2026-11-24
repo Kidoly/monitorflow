@@ -201,7 +201,7 @@ What established monitoring tools still do better once Phase 17 is done: alerts 
 - [x] Custom SNMP checks (ADR-0157): watch any OID, not only the common MIBs: up to 10 channels per check, each a gauge, a rate or a text with its name, unit, scaling and limits; lookups that name enumerated values and their states; tables whose rows appear by themselves; Test and Browse from the probe, and MIB uploads to name objects. SNMPv1 joins v2c and v3. The importer moves custom SNMP sensors of PRTG, Zabbix SNMP items and Prometheus snmp_exporter modules.
 - [ ] Ready-made application checks: PostgreSQL, MySQL and MariaDB, SQL Server, Redis, Java (JMX), Docker, Kubernetes and the main cloud providers, as built-in check templates instead of scripts.
 - [ ] Traffic flows: NetFlow, sFlow and IPFIX received by a relay, to say which addresses and applications use the bandwidth.
-- [ ] Network maps: drawn from discovery and dependencies, with live states, editable by hand and usable on a wall screen.
+- [x] Network maps: drawn from discovery and dependencies, with live states, editable by hand and usable on a wall screen.
 - [ ] A mobile application with push notifications, to acknowledge and silence from a phone.
 
 ## Phase 19: Keeping servers current

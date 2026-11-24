@@ -22,6 +22,7 @@ pub mod import;
 pub mod ingest;
 pub mod integrations;
 pub mod live_settings;
+pub mod maps;
 pub mod mirror;
 pub mod netscan;
 pub mod notify;

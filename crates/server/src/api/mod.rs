@@ -214,6 +214,12 @@
 //! | POST | `/api/display/start` | display link | body `{"token"}`; [`display::ScreenView`] and a one-hour screen session cookie; 410 for a link turned off, expired or whose maker is disabled, 403 when its maker may show none of its dashboards, 429 over the limits |
 //! | GET | `/api/display` | screen session | [`display::ScreenView`]; 401 once the session or link ends |
 //! | POST | `/api/display/data` | screen session | body `{"dashboard_id"}`; [`dashboard_data::DataResponse`] of one of the link's dashboards, read as its maker with their roles of now |
+//! | POST | `/api/display/map-background` | screen session | body `{"dashboard_id", "map_id"}`; the background image of a map that a panel of one of the link's dashboards shows (ADR-0185) |
+//! | GET, POST | `/api/maps` | read, modify the place | [`maps::MapList`] (`?site_id=`, `?customer_id=`); body [`maps::MapRequest`], 201 [`maps::MapView`]; audited (ADR-0185) |
+//! | GET, PUT, DELETE | `/api/maps/{id}` | read, modify the place | [`maps::MapView`]; body [`maps::MapRequest`] with `revision`, 409 when someone saved since; 204; audited |
+//! | GET | `/api/maps/{id}/live` | read | [`maps::MapLive`]: its nodes and links with their states and traffic now, as the user may read them |
+//! | GET, PUT, DELETE | `/api/maps/{id}/background` | read, modify the place | the image; body [`maps::BackgroundRequest`], 204; 204; audited |
+//! | POST | `/api/maps/{id}/neighbors` | modify the place | [`maps::NeighborRead`]: reads the LLDP and CDP neighbours of its SNMP devices the user may change |
 //! | GET | `/api/servers/{id}/logs` | read | [`logs::LogList`]: the server's system logs, newest first, see below |
 //! | GET | `/api/servers/{id}/packages` | read | [`packages::PackageList`], see below |
 //! | GET | `/api/servers/{id}/third-party` | read | [`third_party::List`]: third-party package managers and their apps (ADR-0138); `manager`, `pending`, paginated |
@@ -790,6 +796,7 @@ pub mod login_limit;
 pub mod logs;
 pub mod maintenance_windows;
 pub mod major_upgrades;
+pub mod maps;
 pub mod metrics;
 pub mod mirrors;
 pub mod network_scans;
@@ -807,6 +814,7 @@ mod openapi_dependencies;
 mod openapi_devices;
 mod openapi_imports;
 mod openapi_maintenance;
+mod openapi_maps;
 mod openapi_network_scans;
 mod openapi_plugins;
 mod openapi_psa;
@@ -1527,6 +1535,20 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/display", get(display::view))
         .route("/api/display/start", post(display::start))
         .route("/api/display/data", post(display::data))
+        .route("/api/display/map-background", post(display::map_background))
+        .route("/api/maps", get(maps::list).post(maps::create))
+        .route(
+            "/api/maps/{id}",
+            get(maps::get).put(maps::update).delete(maps::delete),
+        )
+        .route("/api/maps/{id}/live", get(maps::live))
+        .route(
+            "/api/maps/{id}/background",
+            get(maps::background)
+                .put(maps::set_background)
+                .delete(maps::remove_background),
+        )
+        .route("/api/maps/{id}/neighbors", post(maps::read_neighbors))
         .route("/api/dashboard-metrics", get(dashboard_data::catalog))
         .route(
             "/api/servers/{id}/sensor_configs",

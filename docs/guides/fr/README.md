@@ -27,6 +27,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller switchs, imprimantes, onduleurs et autres équipements réseau](surveiller-equipements-reseau.md) : Surveillez ce qui ne peut pas faire tourner l’agent : ping, ports TCP et UDP, et SNMP v2c ou v3 pour les interfaces, le trafic, la batterie des onduleurs, les températures et les consommables d’imprimante.
 - [Comment trouver ce qui est sur votre réseau](analyser-le-reseau.md) : Analysez une plage d’adresses depuis le serveur central ou un relais, voyez quelles machines peuvent recevoir l’agent et quels équipements surveiller, et ajoutez-les en un clic.
 - [Comment lancer des scripts sur vos serveurs et automatiser les correctifs](lancer-des-scripts-et-automatiser.md) : Gardez vos scripts shell et PowerShell dans MonitorFlow, lancez-les sur un serveur, un service métier ou un site entier, tout de suite ou cette nuit, lisez la sortie de chaque serveur, et lancez-les tout seuls quand un incident s’ouvre.
+- [Comment dessiner une carte de votre réseau en direct](dessiner-des-cartes-reseau.md) : Obtenez la carte d’un site ou d’un client dessinée à partir de vos relais, de vos dépendances et des voisins LLDP et CDP de vos commutateurs, colorée par les incidents et affichée sur un écran mural.
 
 ## Bases de données
 

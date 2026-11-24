@@ -18129,6 +18129,1707 @@
         }
       }
     },
+    "/api/v1/maps": {
+      "get": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "List network maps",
+        "description": "The maps the caller sees, by name: those of the sites it reads, and of the customers it reads as a whole. `site_id` keeps those of one site, `customer_id` those of a customer and of its sites.\n\n**Who**: any role. **Area**: `dashboards`.",
+        "operationId": "list_maps",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the maps of this site.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only the maps of this customer and of its sites.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The maps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapList"
+                },
+                "example": {
+                  "maps": [
+                    {
+                      "background_updated_at": null,
+                      "can_edit": true,
+                      "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "name": "Paris network",
+                      "place": {
+                        "id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                        "kind": "site",
+                        "name": "paris"
+                      },
+                      "updated_at": "2026-12-27T09:30:00Z",
+                      "updated_by_username": "alice"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The site of the filter is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Make a network map",
+        "description": "A map of a site (`{\"kind\": \"site\", \"id\"}`) or of a customer as a whole (`{\"kind\": \"customer\", \"id\"}`). Without `document`, it draws everything from its sources and lays it out by itself; `document` holds what people placed by hand: positions (`nodes`, by key: `central`, `server:<id>`, `relay:<id>`, `host:<address>`, `neighbor:<name>`, with `hidden` to leave one off), `zones`, `links` (with the `interface` whose traffic a link shows), `labels`, and where the background lies. `sources` says what draws it: relays, dependencies and neighbours by default, and the unmonitored addresses of the latest network scans when `discovered` is set.\n\n**Who**: operator or above on the site, or on the customer as a whole. **Area**: `dashboards`. Audited as `network_map.create`.",
+        "operationId": "create_map",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MapRequest"
+              },
+              "example": {
+                "document": {
+                  "group_by_site": true,
+                  "labels": [
+                    {
+                      "id": "title",
+                      "size": "large",
+                      "text": "Paris office",
+                      "x": 300.0,
+                      "y": 20.0
+                    }
+                  ],
+                  "links": [
+                    {
+                      "from": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                      "id": "wan",
+                      "interface": {
+                        "instance": "Gi1/0/48",
+                        "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+                      },
+                      "label": "Fibre",
+                      "to": "relay:3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7"
+                    }
+                  ],
+                  "nodes": [
+                    {
+                      "key": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                      "x": 400.0,
+                      "y": 120.0
+                    },
+                    {
+                      "key": "server:6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "x": 400.0,
+                      "y": 300.0
+                    }
+                  ],
+                  "sources": {
+                    "dependencies": true,
+                    "discovered": false,
+                    "neighbors": true,
+                    "relays": true
+                  },
+                  "version": 1,
+                  "zones": [
+                    {
+                      "color": 2,
+                      "height": 320.0,
+                      "id": "rack-a",
+                      "label": "Rack A",
+                      "width": 240.0,
+                      "x": 300.0,
+                      "y": 60.0
+                    }
+                  ]
+                },
+                "name": "Paris network",
+                "place": {
+                  "id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "kind": "site"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The map",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapView"
+                },
+                "example": {
+                  "background_updated_at": null,
+                  "can_edit": true,
+                  "document": {
+                    "group_by_site": true,
+                    "labels": [
+                      {
+                        "id": "title",
+                        "size": "large",
+                        "text": "Paris office",
+                        "x": 300.0,
+                        "y": 20.0
+                      }
+                    ],
+                    "links": [
+                      {
+                        "from": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "id": "wan",
+                        "interface": {
+                          "instance": "Gi1/0/48",
+                          "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+                        },
+                        "label": "Fibre",
+                        "to": "relay:3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7"
+                      }
+                    ],
+                    "nodes": [
+                      {
+                        "key": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "x": 400.0,
+                        "y": 120.0
+                      },
+                      {
+                        "key": "server:6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "x": 400.0,
+                        "y": 300.0
+                      }
+                    ],
+                    "sources": {
+                      "dependencies": true,
+                      "discovered": false,
+                      "neighbors": true,
+                      "relays": true
+                    },
+                    "version": 1,
+                    "zones": [
+                      {
+                        "color": 2,
+                        "height": 320.0,
+                        "id": "rack-a",
+                        "label": "Rack A",
+                        "width": 240.0,
+                        "x": 300.0,
+                        "y": 60.0
+                      }
+                    ]
+                  },
+                  "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "name": "Paris network",
+                  "place": {
+                    "id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                    "kind": "site",
+                    "name": "paris"
+                  },
+                  "revision": 3,
+                  "updated_at": "2026-12-27T09:30:00Z",
+                  "updated_by_username": "alice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A name too long, a document that does not hold, or a link's interface outside the place: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the place: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The site or customer is outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/maps/{id}": {
+      "get": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "A network map",
+        "description": "Its name, place and what people placed by hand, with the `revision` to pass back when saving.\n\n**Who**: any role on its place. **Area**: `dashboards`.",
+        "operationId": "get_map",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The map",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapView"
+                },
+                "example": {
+                  "background_updated_at": null,
+                  "can_edit": true,
+                  "document": {
+                    "group_by_site": true,
+                    "labels": [
+                      {
+                        "id": "title",
+                        "size": "large",
+                        "text": "Paris office",
+                        "x": 300.0,
+                        "y": 20.0
+                      }
+                    ],
+                    "links": [
+                      {
+                        "from": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "id": "wan",
+                        "interface": {
+                          "instance": "Gi1/0/48",
+                          "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+                        },
+                        "label": "Fibre",
+                        "to": "relay:3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7"
+                      }
+                    ],
+                    "nodes": [
+                      {
+                        "key": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "x": 400.0,
+                        "y": 120.0
+                      },
+                      {
+                        "key": "server:6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "x": 400.0,
+                        "y": 300.0
+                      }
+                    ],
+                    "sources": {
+                      "dependencies": true,
+                      "discovered": false,
+                      "neighbors": true,
+                      "relays": true
+                    },
+                    "version": 1,
+                    "zones": [
+                      {
+                        "color": 2,
+                        "height": 320.0,
+                        "id": "rack-a",
+                        "label": "Rack A",
+                        "width": 240.0,
+                        "x": 300.0,
+                        "y": 60.0
+                      }
+                    ]
+                  },
+                  "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "name": "Paris network",
+                  "place": {
+                    "id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                    "kind": "site",
+                    "name": "paris"
+                  },
+                  "revision": 3,
+                  "updated_at": "2026-12-27T09:30:00Z",
+                  "updated_by_username": "alice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such map, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Change a network map",
+        "description": "Replaces its name, place and document. `revision` is the one read: when someone saved since, the answer is 409 and nothing changes.\n\n**Who**: operator or above on its place, and on the new one. **Area**: `dashboards`. Audited as `network_map.update`.",
+        "operationId": "update_map",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MapRequest"
+              },
+              "example": {
+                "document": {
+                  "group_by_site": true,
+                  "labels": [
+                    {
+                      "id": "title",
+                      "size": "large",
+                      "text": "Paris office",
+                      "x": 300.0,
+                      "y": 20.0
+                    }
+                  ],
+                  "links": [
+                    {
+                      "from": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                      "id": "wan",
+                      "interface": {
+                        "instance": "Gi1/0/48",
+                        "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+                      },
+                      "label": "Fibre",
+                      "to": "relay:3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7"
+                    }
+                  ],
+                  "nodes": [
+                    {
+                      "key": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                      "x": 400.0,
+                      "y": 120.0
+                    },
+                    {
+                      "key": "server:6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "x": 400.0,
+                      "y": 300.0
+                    }
+                  ],
+                  "sources": {
+                    "dependencies": true,
+                    "discovered": false,
+                    "neighbors": true,
+                    "relays": true
+                  },
+                  "version": 1,
+                  "zones": [
+                    {
+                      "color": 2,
+                      "height": 320.0,
+                      "id": "rack-a",
+                      "label": "Rack A",
+                      "width": 240.0,
+                      "x": 300.0,
+                      "y": 60.0
+                    }
+                  ]
+                },
+                "name": "Paris network",
+                "place": {
+                  "id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "kind": "site"
+                },
+                "revision": 3
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The map",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapView"
+                },
+                "example": {
+                  "background_updated_at": null,
+                  "can_edit": true,
+                  "document": {
+                    "group_by_site": true,
+                    "labels": [
+                      {
+                        "id": "title",
+                        "size": "large",
+                        "text": "Paris office",
+                        "x": 300.0,
+                        "y": 20.0
+                      }
+                    ],
+                    "links": [
+                      {
+                        "from": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "id": "wan",
+                        "interface": {
+                          "instance": "Gi1/0/48",
+                          "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+                        },
+                        "label": "Fibre",
+                        "to": "relay:3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7"
+                      }
+                    ],
+                    "nodes": [
+                      {
+                        "key": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                        "x": 400.0,
+                        "y": 120.0
+                      },
+                      {
+                        "key": "server:6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                        "x": 400.0,
+                        "y": 300.0
+                      }
+                    ],
+                    "sources": {
+                      "dependencies": true,
+                      "discovered": false,
+                      "neighbors": true,
+                      "relays": true
+                    },
+                    "version": 1,
+                    "zones": [
+                      {
+                        "color": 2,
+                        "height": 320.0,
+                        "id": "rack-a",
+                        "label": "Rack A",
+                        "width": 240.0,
+                        "x": 300.0,
+                        "y": 60.0
+                      }
+                    ]
+                  },
+                  "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "name": "Paris network",
+                  "place": {
+                    "id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                    "kind": "site",
+                    "name": "paris"
+                  },
+                  "revision": 3,
+                  "updated_at": "2026-12-27T09:30:00Z",
+                  "updated_by_username": "alice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No `revision`, or as for making one: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read it: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such map, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Someone saved it since `revision`: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Delete a network map",
+        "description": "With its background. Dashboard panels that showed it say it is gone.\n\n**Who**: operator or above on its place. **Area**: `dashboards`. Audited as `network_map.delete`.",
+        "operationId": "delete_map",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read it: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such map, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/maps/{id}/background": {
+      "get": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "A network map's background",
+        "description": "The image under the map, as it was given.\n\n**Who**: any role on its place. **Area**: `dashboards`.",
+        "operationId": "get_background",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image: PNG, JPEG or WebP, as its `Content-Type` says",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such map, one the key does not see, or no background: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Set a network map's background",
+        "description": "A floor plan, a rack, a city: a PNG, JPEG or WebP image of at most 1 MiB, in base64. Other formats, SVG included, are refused. Where it lies is the document's `background`.\n\n**Who**: operator or above on its place. **Area**: `dashboards`. Audited as `network_map.background`.",
+        "operationId": "set_background",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackgroundRequest"
+              },
+              "example": {
+                "image": "iVBORw0KGgo..."
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Set"
+          },
+          "400": {
+            "description": "Not base64, over 1 MiB, or not a PNG, JPEG or WebP image: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read it: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such map, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Remove a network map's background",
+        "description": "**Who**: operator or above on its place. **Area**: `dashboards`. Audited as `network_map.background` when there was one.",
+        "operationId": "remove_background",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed, or there was none"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read it: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such map, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/maps/{id}/live": {
+      "get": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "A network map now",
+        "description": "Everything needed to draw the map now, as the caller may read it: its nodes with their states (as the fleet's pages say them, and `unknown` for what nothing watches) and where they were placed (`null` lets the client lay them out), its links with their states and the traffic of their interface, its zones, labels and background. A customer's map shows a viewer of one of its sites that site only.\n\nA link is as bad as the worse of its two ends and of its interface: critical when an end is critical, offline or unreachable, or its interface is down; warning when an end has a warning or the interface is used at 90 % or more of its speed. Links between the same two nodes are one, whatever said them; links drawn by hand always show. At most 2,000 nodes, and 500 found addresses and unmonitored neighbours; `truncated` says when some were left out.\n\n**Who**: any role on its place. **Area**: `dashboards`.",
+        "operationId": "live_map",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The map now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapLive"
+                },
+                "example": {
+                  "background": null,
+                  "group_by_site": true,
+                  "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "labels": [],
+                  "links": [
+                    {
+                      "from": "central",
+                      "from_port": null,
+                      "id": "central|relay:3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                      "interface": null,
+                      "label": null,
+                      "source": "relay",
+                      "state": "ok",
+                      "to": "relay:3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                      "to_port": null,
+                      "traffic": null
+                    },
+                    {
+                      "from": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                      "from_port": "Gi1/0/3",
+                      "id": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b|server:6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "interface": {
+                        "instance": "Gi1/0/3",
+                        "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+                      },
+                      "label": null,
+                      "source": "neighbor",
+                      "state": "warning",
+                      "to": "server:6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "to_port": "eth0",
+                      "traffic": {
+                        "in_bytes_per_second": 1250000.0,
+                        "out_bytes_per_second": 310000.0,
+                        "up": true,
+                        "utilization": 0.01
+                      }
+                    }
+                  ],
+                  "name": "Paris network",
+                  "neighbors_read_at": "2026-12-27T09:00:00Z",
+                  "nodes": [
+                    {
+                      "address": null,
+                      "hidden": false,
+                      "key": "central",
+                      "kind": "central",
+                      "name": "MonitorFlow",
+                      "os_family": null,
+                      "relay_id": null,
+                      "server_id": null,
+                      "site_id": null,
+                      "state": "ok",
+                      "template": null,
+                      "x": null,
+                      "y": null
+                    },
+                    {
+                      "address": null,
+                      "hidden": false,
+                      "key": "relay:3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                      "kind": "relay",
+                      "name": "gw-1",
+                      "os_family": null,
+                      "relay_id": "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+                      "server_id": null,
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "state": "ok",
+                      "template": null,
+                      "x": null,
+                      "y": null
+                    },
+                    {
+                      "address": "192.0.2.2",
+                      "hidden": false,
+                      "key": "server:1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                      "kind": "device",
+                      "name": "sw-core",
+                      "os_family": "device",
+                      "relay_id": null,
+                      "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "state": "warning",
+                      "template": "switch",
+                      "x": 400.0,
+                      "y": 120.0
+                    },
+                    {
+                      "address": null,
+                      "hidden": false,
+                      "key": "server:6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "kind": "server",
+                      "name": "web-1",
+                      "os_family": "debian",
+                      "relay_id": null,
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "state": "ok",
+                      "template": null,
+                      "x": 400.0,
+                      "y": 300.0
+                    }
+                  ],
+                  "now": 1798362000,
+                  "sites": [
+                    {
+                      "id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "name": "paris"
+                    }
+                  ],
+                  "truncated": false,
+                  "zones": []
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such map, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/maps/{id}/neighbors": {
+      "post": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Read devices' neighbours",
+        "description": "Asks the SNMP devices of the map's site or customer that the caller may change, at most 50, for their LLDP and CDP neighbours, each from its probe, and keeps them for every map. A neighbour that is a server or device of the map (by its address, else its host name without the domain) becomes a link between them, showing the traffic of the device's port; others are shown as unmonitored neighbours. Each device takes six walks of its probe, so this can take a minute.\n\n**Who**: operator or above on its place, as it sends the devices' credentials to their probes. **Area**: `dashboards`. Not audited: it changes no setting.",
+        "operationId": "read_neighbors",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NeighborRead"
+                },
+                "example": {
+                  "devices": 3,
+                  "failed": [
+                    {
+                      "error": "the device did not answer in time",
+                      "name": "sw-core",
+                      "server_id": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+                    }
+                  ],
+                  "neighbors": 17
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read it: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such map, or one the key does not see: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/metrics/query": {
       "get": {
         "tags": [
@@ -51394,6 +53095,20 @@
           }
         }
       },
+      "BackgroundRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/maps/{id}/background`.",
+        "required": [
+          "image"
+        ],
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "A PNG, JPEG or WebP image of at most 1 MiB, in base64."
+          }
+        },
+        "additionalProperties": false
+      },
       "BackupArchive": {
         "type": "string",
         "format": "binary",
@@ -58735,6 +60450,864 @@
           }
         }
       },
+      "MapBackgroundPlacement": {
+        "type": "object",
+        "description": "Where the background image lies, in the map's coordinates.",
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "height": {
+            "type": "number",
+            "format": "double"
+          },
+          "opacity": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "0.1 to 1; 1 when absent."
+          },
+          "width": {
+            "type": "number",
+            "format": "double"
+          },
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MapDocument": {
+        "type": "object",
+        "description": "What a person set on a map. Everything not placed here is laid out by\nthe client.",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "background": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MapBackgroundPlacement",
+                "description": "Where the background image lies; `null` lays it from the origin\nat its own size."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "group_by_site": {
+            "type": "boolean",
+            "description": "Whether a customer's map draws a zone around each site's nodes.\n`true` when absent."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapLabel"
+            },
+            "description": "At most 200."
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapLink"
+            },
+            "description": "At most 500."
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapPlacement"
+            },
+            "description": "At most 2,000."
+          },
+          "sources": {
+            "$ref": "#/components/schemas/MapSources"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Format of the document: 1.",
+            "minimum": 0
+          },
+          "zones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapZone"
+            },
+            "description": "At most 100."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MapInterface": {
+        "type": "object",
+        "description": "One interface of a server or device whose traffic a link shows.",
+        "required": [
+          "server_id",
+          "instance"
+        ],
+        "properties": {
+          "instance": {
+            "type": "string",
+            "description": "The interface's instance, as its metrics name it: `Gi0/1`, `eth0`."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MapLabel": {
+        "type": "object",
+        "description": "Text placed on the map.",
+        "required": [
+          "id",
+          "text",
+          "x",
+          "y"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique within the map, as a zone's."
+          },
+          "size": {
+            "$ref": "#/components/schemas/MapLabelSize"
+          },
+          "text": {
+            "type": "string",
+            "description": "1 to 200 characters."
+          },
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MapLabelSize": {
+        "type": "string",
+        "description": "How large a label is written.",
+        "enum": [
+          "small",
+          "medium",
+          "large"
+        ]
+      },
+      "MapLink": {
+        "type": "object",
+        "description": "A link drawn by hand.",
+        "required": [
+          "id",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The key of one end."
+          },
+          "id": {
+            "type": "string",
+            "description": "Unique within the map, as a zone's."
+          },
+          "interface": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MapInterface",
+                "description": "The interface whose traffic and state it shows."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Up to 80 characters."
+          },
+          "to": {
+            "type": "string",
+            "description": "The key of the other end."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MapLinkSource": {
+        "type": "string",
+        "description": "Where a link comes from.",
+        "enum": [
+          "relay",
+          "dependency",
+          "neighbor",
+          "manual"
+        ]
+      },
+      "MapLinkState": {
+        "type": "string",
+        "description": "A link's colour.",
+        "enum": [
+          "unknown",
+          "ok",
+          "warning",
+          "critical"
+        ]
+      },
+      "MapList": {
+        "type": "object",
+        "description": "Body of `GET /api/maps`, by name.",
+        "required": [
+          "maps"
+        ],
+        "properties": {
+          "maps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapSummary"
+            }
+          }
+        }
+      },
+      "MapLive": {
+        "type": "object",
+        "description": "`GET /api/maps/{id}/live`, and a map panel's data: everything needed\nto draw the map now.",
+        "required": [
+          "id",
+          "name",
+          "group_by_site",
+          "sites",
+          "nodes",
+          "links",
+          "zones",
+          "labels",
+          "truncated",
+          "now"
+        ],
+        "properties": {
+          "background": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MapLiveBackground"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "group_by_site": {
+            "type": "boolean",
+            "description": "Whether to draw a zone around each site's nodes."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapLabel"
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapLiveLink"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "neighbors_read_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When a device's neighbours were last read; `null` when never."
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapNode"
+            }
+          },
+          "now": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The server's clock, unix seconds (ADR-0099)."
+          },
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapSite"
+            },
+            "description": "The sites of its nodes, for those zones."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "More than 2,000 nodes: the rest are left out."
+          },
+          "zones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapZone"
+            }
+          }
+        }
+      },
+      "MapLiveBackground": {
+        "type": "object",
+        "description": "The background of a map as it shows now.",
+        "required": [
+          "updated_at"
+        ],
+        "properties": {
+          "placement": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MapBackgroundPlacement",
+                "description": "Where it lies; `null` from the origin at the image's own size."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Changes when the image does; read the image again then."
+          }
+        }
+      },
+      "MapLiveLink": {
+        "type": "object",
+        "description": "One link as the map shows it now.",
+        "required": [
+          "id",
+          "from",
+          "to",
+          "source",
+          "state"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "Key of one end: the parent of a dependency or relay link."
+          },
+          "from_port": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The port at `from`, when a neighbour said it."
+          },
+          "id": {
+            "type": "string",
+            "description": "A hand-drawn link's id, else made of its ends."
+          },
+          "interface": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MapInterface",
+                "description": "The interface whose traffic it shows."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/MapLinkSource"
+          },
+          "state": {
+            "$ref": "#/components/schemas/MapLinkState",
+            "description": "As bad as the worse of its ends and of its interface."
+          },
+          "to": {
+            "type": "string"
+          },
+          "to_port": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The port at `to`."
+          },
+          "traffic": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MapTraffic",
+                "description": "That interface's traffic now; `null` without one or without data."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "MapNode": {
+        "type": "object",
+        "description": "One node as the map shows it now.",
+        "required": [
+          "key",
+          "kind",
+          "name",
+          "state",
+          "hidden"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A device's or found host's address."
+          },
+          "hidden": {
+            "type": "boolean",
+            "description": "Left off the map by hand."
+          },
+          "key": {
+            "type": "string",
+            "description": "What a placement, a link or a click names it by."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MapNodeKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "os_family": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`debian`, `rhel`, `windows`, `linux` or `device`."
+          },
+          "relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A relay's ID: its page."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A server's or device's ID: its page."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for the central server and neighbours."
+          },
+          "state": {
+            "$ref": "#/components/schemas/MapNodeState"
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A device's kind: `switch`, `router`, `firewall`, `printer`, `ups`,\n`nas` or `generic`."
+          },
+          "x": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Where it was placed; `null` lets the client lay it out."
+          },
+          "y": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "MapNodeKind": {
+        "type": "string",
+        "description": "What a node is.",
+        "enum": [
+          "central",
+          "server",
+          "device",
+          "relay",
+          "host",
+          "neighbor"
+        ]
+      },
+      "MapNodeState": {
+        "type": "string",
+        "description": "A node's state, as the fleet's pages say it (ADR-0130), and `unknown`\nfor what nothing watches.",
+        "enum": [
+          "critical",
+          "warning",
+          "acknowledged",
+          "silenced",
+          "offline",
+          "unreachable",
+          "waiting",
+          "ok",
+          "unknown"
+        ]
+      },
+      "MapPlace": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "site"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "customer"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Where a map belongs."
+      },
+      "MapPlaceView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MapPlace"
+          },
+          {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The site's or customer's name."
+              }
+            }
+          }
+        ],
+        "description": "[`Place`] with its name."
+      },
+      "MapPlacement": {
+        "type": "object",
+        "description": "Where a node is, and whether it is left off the map.",
+        "required": [
+          "key",
+          "x",
+          "y"
+        ],
+        "properties": {
+          "hidden": {
+            "type": "boolean",
+            "description": "Left off the map; it comes back when shown again."
+          },
+          "key": {
+            "type": "string",
+            "description": "The node: `central`, `server:<id>` (a server or device),\n`relay:<id>`, `host:<address>` (found by a scan) or\n`neighbor:<name>` (reported by a device, not monitored)."
+          },
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MapRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/maps` and `PUT /api/maps/{id}`.",
+        "required": [
+          "name",
+          "place"
+        ],
+        "properties": {
+          "document": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MapDocument",
+                "description": "What was placed by hand; an empty map when absent."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 80 characters."
+          },
+          "place": {
+            "$ref": "#/components/schemas/MapPlace"
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The revision the edit started from; `PUT` only."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MapSite": {
+        "type": "object",
+        "description": "A site of a map's nodes.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "MapSources": {
+        "type": "object",
+        "description": "What draws a map besides what was added by hand.",
+        "properties": {
+          "dependencies": {
+            "type": "boolean",
+            "description": "Dependencies set by people or imported (ADR-0152). `true` when\nabsent."
+          },
+          "discovered": {
+            "type": "boolean",
+            "description": "Addresses the latest run of the site's network scans found and\nnothing watches yet (ADR-0154). `false` when absent."
+          },
+          "neighbors": {
+            "type": "boolean",
+            "description": "LLDP and CDP neighbours that SNMP devices last reported. `true`\nwhen absent."
+          },
+          "relays": {
+            "type": "boolean",
+            "description": "The central server, its relays, and what each relay carries or\nchecks. `true` when absent."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MapSummary": {
+        "type": "object",
+        "description": "One row of `GET /api/maps`.",
+        "required": [
+          "id",
+          "name",
+          "place",
+          "updated_at",
+          "can_edit"
+        ],
+        "properties": {
+          "background_updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its background image was set; `null` without one."
+          },
+          "can_edit": {
+            "type": "boolean",
+            "description": "Whether the caller may change and delete it."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "place": {
+            "$ref": "#/components/schemas/MapPlaceView"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` once the user is deleted."
+          }
+        }
+      },
+      "MapTraffic": {
+        "type": "object",
+        "description": "What a link's interface reads now.",
+        "properties": {
+          "in_bytes_per_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Received by the interface."
+          },
+          "out_bytes_per_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Sent by the interface."
+          },
+          "up": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the interface is up; `null` when it does not say."
+          },
+          "utilization": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The higher of in and out over the link's speed, 0 to 1."
+          }
+        }
+      },
+      "MapView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MapSummary"
+          },
+          {
+            "type": "object",
+            "required": [
+              "document",
+              "revision"
+            ],
+            "properties": {
+              "document": {
+                "$ref": "#/components/schemas/MapDocument"
+              },
+              "revision": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Pass back on `PUT`."
+              }
+            }
+          }
+        ],
+        "description": "`GET /api/maps/{id}` and the answer to writes."
+      },
+      "MapZone": {
+        "type": "object",
+        "description": "A rectangle drawn under nodes, with a name: a floor, a rack, a room.",
+        "required": [
+          "id",
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "color": {
+            "type": "integer",
+            "format": "int32",
+            "description": "A colour of the palette, 1 to 8; 1 when absent.",
+            "minimum": 0
+          },
+          "height": {
+            "type": "number",
+            "format": "double"
+          },
+          "id": {
+            "type": "string",
+            "description": "Unique within the map: 1 to 36 letters, digits, `-` and `_`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Up to 80 characters; may be empty."
+          },
+          "width": {
+            "type": "number",
+            "format": "double"
+          },
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
       "MappingView": {
         "type": "object",
         "description": "One line of \"Groups and roles\".",
@@ -59362,6 +61935,54 @@
           }
         },
         "additionalProperties": false
+      },
+      "NeighborFailure": {
+        "type": "object",
+        "description": "A device whose neighbours could not be read.",
+        "required": [
+          "server_id",
+          "name",
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "NeighborRead": {
+        "type": "object",
+        "description": "Body of `POST /api/maps/{id}/neighbors`.",
+        "required": [
+          "devices",
+          "neighbors",
+          "failed"
+        ],
+        "properties": {
+          "devices": {
+            "type": "integer",
+            "description": "Devices asked: the SNMP devices of the map's place the caller may\nchange, at most 50.",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NeighborFailure"
+            }
+          },
+          "neighbors": {
+            "type": "integer",
+            "description": "Neighbours they reported.",
+            "minimum": 0
+          }
+        }
       },
       "NetworkScan": {
         "type": "object",
@@ -61064,6 +63685,14 @@
             ],
             "description": "Whether a chart names its lines; `true` when absent."
           },
+          "map_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The network map a map panel shows (ADR-0185)."
+          },
           "max": {
             "type": [
               "number",
@@ -61226,7 +63855,8 @@
           "text",
           "states",
           "pie",
-          "timeline"
+          "timeline",
+          "map"
         ]
       },
       "PanelOrder": {
@@ -61431,6 +64061,25 @@
                   "$ref": "#/components/schemas/UnreachableServer"
                 },
                 "description": "Its servers behind a parent that is down (ADR-0152): they open\nno incident of their own meanwhile."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A network map as it is now (ADR-0185).",
+            "required": [
+              "map",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "map"
+                ]
+              },
+              "map": {
+                "$ref": "#/components/schemas/MapLive"
               }
             }
           },

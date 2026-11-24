@@ -168,6 +168,7 @@ describe("AppShell", () => {
       "MonitorFlow",
       "Fleet",
       "Dashboards",
+      "Network maps",
       "Incidents",
       "On call",
       "Reports",
@@ -192,7 +193,7 @@ describe("AppShell", () => {
     const links = within(nav())
       .getAllByRole("link")
       .map((a) => a.textContent);
-    expect(links.slice(1, 6)).toEqual(["Parc", "Tableaux de bord", "Incidents", "Astreinte", "Rapports"]);
+    expect(links.slice(1, 7)).toEqual(["Parc", "Tableaux de bord", "Cartes réseau", "Incidents", "Astreinte", "Rapports"]);
     expect(within(nav()).getByText("Supervision")).toBeInTheDocument();
     expect(await within(nav()).findByLabelText("3 incidents ouverts")).toHaveTextContent("3");
     expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeInTheDocument();
