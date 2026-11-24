@@ -33,6 +33,7 @@ fn person(id: Uuid, grants: Vec<(bool, Option<Uuid>, Option<Uuid>)>) -> Person {
         grants,
         email: Some(format!("u{}@x.io", id.as_u128())),
         chat: None,
+        phones: 0,
     }
 }
 

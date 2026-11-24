@@ -32,7 +32,7 @@ use crate::enroll::limiter::{Attempts, MAX_SOURCES};
 use crate::notify::on_call::{
     self, mail_channel, Directory, Problem, Rota, Rotation, Schedule, Source,
 };
-use crate::notify::{self, Channel, Coverage, Destination, Dispatcher};
+use crate::notify::{self, push, Channel, Coverage, Destination, Dispatcher};
 
 /// How far ahead the screen shows turns.
 pub const HORIZON_DAYS: i64 = 28;
@@ -262,6 +262,9 @@ pub struct ContactView {
     pub last_sent_at: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
     pub last_error_at: Option<DateTime<Utc>>,
+    /// The person's phones with notifications on (ADR-0186), which reach
+    /// them too.
+    pub phones: i64,
 }
 
 /// Body of `PUT /api/on-call/contact`.
@@ -282,7 +285,7 @@ pub struct ContactRequest {
 
 #[derive(Debug, Serialize)]
 pub struct ContactTest {
-    /// `email` or the chat's kind.
+    /// `email`, the chat's kind, or `phone` for each phone (ADR-0186).
     pub kind: String,
     pub ok: bool,
     pub error: Option<String>,
@@ -1037,19 +1040,29 @@ async fn stored(db: impl PgExecutor<'_>, user: Uuid) -> Result<Option<Stored>, A
     }))
 }
 
-async fn contact_view(db: impl PgExecutor<'_>, user: Uuid) -> Result<ContactView, ApiError> {
+async fn contact_view(db: &mut PgConnection, user: Uuid) -> Result<ContactView, ApiError> {
+    let phones: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM phones WHERE user_id = $1 AND push_endpoint IS NOT NULL",
+    )
+    .bind(user)
+    .fetch_one(&mut *db)
+    .await?;
     let row = sqlx::query(
         "SELECT email, kind, settings, secret IS NOT NULL AS has_secret, last_sent_at,
                 last_error, last_error_at
          FROM user_contacts WHERE user_id = $1",
     )
     .bind(user)
-    .fetch_optional(db)
+    .fetch_optional(&mut *db)
     .await?;
     let Some(row) = row else {
-        return Ok(ContactView::default());
+        return Ok(ContactView {
+            phones,
+            ..ContactView::default()
+        });
     };
     Ok(ContactView {
+        phones,
         email: row.try_get("email")?,
         kind: row.try_get("kind")?,
         settings: row.try_get("settings")?,
@@ -1066,7 +1079,8 @@ pub async fn contact(
     user: CurrentUser,
 ) -> Result<Json<ContactView>, ApiError> {
     user.in_person()?;
-    Ok(Json(contact_view(&state.pool, user.id).await?))
+    let mut conn = state.pool.acquire().await?;
+    Ok(Json(contact_view(&mut conn, user.id).await?))
 }
 
 /// `PUT /api/on-call/contact`: replaces the signed-in user's contact. A
@@ -1186,7 +1200,7 @@ pub async fn set_contact(
         details,
     )
     .await?;
-    let view = contact_view(&mut *tx, user.id).await?;
+    let view = contact_view(&mut tx, user.id).await?;
     tx.commit().await?;
     Ok(Json(view))
 }
@@ -1227,7 +1241,7 @@ pub async fn test_contact(
         .people
         .get(&user.id)
         .ok_or(ApiError::Unauthorized)?;
-    if person.email.is_none() && person.chat.is_none() {
+    if person.email.is_none() && person.chat.is_none() && person.phones == 0 {
         return Err(ApiError::Invalid(
             "Add an email address or a chat first.".into(),
         ));
@@ -1259,6 +1273,34 @@ pub async fn test_contact(
             ok: result.is_ok(),
             error: result.err().map(|e| e.message),
         });
+    }
+    // Each phone with notifications on (ADR-0186).
+    let phones = push::phones(&state.pool, user.id).await?;
+    if !phones.is_empty() {
+        let vapid = push::vapid(&state.pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        let (client, subject) = dispatcher.push_sender();
+        for phone in phones {
+            let outcome = push::send(
+                &client,
+                &vapid,
+                &subject,
+                &phone.subscription,
+                &push::Notice::test(),
+            )
+            .await;
+            push::record(&state.pool, phone.id, &outcome).await?;
+            results.push(ContactTest {
+                kind: "phone".into(),
+                ok: matches!(outcome, push::Outcome::Sent),
+                error: match outcome {
+                    push::Outcome::Sent => None,
+                    push::Outcome::Gone => Some(push::GONE.into()),
+                    push::Outcome::Failed(error) => Some(error.message),
+                },
+            });
+        }
     }
     tracing::info!(user = %user.id, "tested a personal contact");
     Ok(Json(ContactTests { results }))
@@ -1302,6 +1344,7 @@ mod tests {
                 None,
                 true,
             )),
+            phones: 0,
         };
         let directory = Directory {
             people: [(alice, person(alice, "alice")), (bob, person(bob, "bob"))].into(),

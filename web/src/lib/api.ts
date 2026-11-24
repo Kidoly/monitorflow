@@ -4305,6 +4305,34 @@ export interface Contact {
   last_sent_at: string | null;
   last_error: string | null;
   last_error_at: string | null;
+  /** Phones with notifications on, which reach the person too (ADR-0186). */
+  phones?: number;
+}
+
+/** One phone of the signed-in person (ADR-0186). */
+export interface Phone {
+  id: string;
+  name: string;
+  created_at: string;
+  last_seen_at: string;
+  /** Whether notifications are on. */
+  push: boolean;
+  /** The push service its browser uses. */
+  push_host: string | null;
+  push_sent_at: string | null;
+  /** Why the last notification was not taken, in a sentence. */
+  push_error: string | null;
+  /** The phone of this very session. */
+  this_phone: boolean;
+}
+
+/** `GET /api/me/phones`. */
+export interface PhoneList {
+  phones: Phone[];
+  /** The key a browser subscribes with, base64url. */
+  push_key: string;
+  session_days: number;
+  idle_days: number;
 }
 
 export interface ContactRequest {
@@ -5563,6 +5591,28 @@ export const api = {
     request<IncidentDetail>(`/api/incidents/${encodeURIComponent(id)}`, {
       signal,
     }),
+
+  /** The person's phones and the key to subscribe with (ADR-0186). */
+  phones: (signal?: AbortSignal) => request<PhoneList>("/api/me/phones", { signal }),
+
+  /** Makes this browser a phone of the person: its session lasts longer. */
+  addPhone: (name: string) => request<Phone>("/api/me/phones", { method: "POST", body: { name } }),
+
+  renamePhone: (id: string, name: string) =>
+    request<Phone>(`/api/me/phones/${encodeURIComponent(id)}`, { method: "PUT", body: { name } }),
+
+  /** Signs the phone out and stops its notifications. */
+  removePhone: (id: string) => request<void>(`/api/me/phones/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Turns notifications on with the browser's `PushSubscription.toJSON()`. */
+  setPhonePush: (id: string, subscription: PushSubscriptionJSON) =>
+    request<Phone>(`/api/me/phones/${encodeURIComponent(id)}/push`, { method: "PUT", body: subscription }),
+
+  deletePhonePush: (id: string) =>
+    request<Phone>(`/api/me/phones/${encodeURIComponent(id)}/push`, { method: "DELETE" }),
+
+  testPhone: (id: string) =>
+    request<ChannelTestResult>(`/api/me/phones/${encodeURIComponent(id)}/test`, { method: "POST" }),
 
   /** Says the user is on these incidents, so nobody else is told next (ADR-0082). */
   acknowledgeIncidents: (ids: string[], note: string) =>

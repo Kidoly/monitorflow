@@ -26,6 +26,7 @@ import * as license from "./license";
 import * as maintenance from "./maintenance";
 import * as maps from "./maps";
 import * as mirrors from "./mirrors";
+import * as mobile from "./mobile";
 import * as monitoring from "./monitoring";
 import * as notifications from "./notifications";
 import * as onCall from "./onCall";
@@ -80,6 +81,7 @@ export const en = {
   maintenance: maintenance.en,
   maps: maps.en,
   mirrors: mirrors.en,
+  mobile: mobile.en,
   monitoring: monitoring.en,
   notifications: notifications.en,
   onCall: onCall.en,
@@ -133,6 +135,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   maintenance: maintenance.fr,
   maps: maps.fr,
   mirrors: mirrors.fr,
+  mobile: mobile.fr,
   monitoring: monitoring.fr,
   notifications: notifications.fr,
   onCall: onCall.fr,

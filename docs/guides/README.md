@@ -66,3 +66,4 @@ Guides are also available [in French](fr/README.md).
 ## Administration
 
 - [How to sign in to MonitorFlow with your own identity provider](sign-in-with-your-identity-provider.md): Let your colleagues sign in with the accounts and second factor they already have: OpenID Connect (Entra ID, Google, Keycloak, authentik) or an LDAP directory over TLS.
+- [How to get MonitorFlow alerts on your phone](alerts-on-your-phone.md): Install MonitorFlow on your phone's home screen, get push notifications when you are on call, and acknowledge or silence an alert in two taps, without a store or an outside service.

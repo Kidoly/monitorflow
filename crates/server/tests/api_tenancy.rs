@@ -920,6 +920,47 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::BAD_REQUEST);
             assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
         }
+        // Personal (ADR-0186): one's own phones only. B's phone is not
+        // found, whatever is asked of it, and stays as it was.
+        ("GET", "/api/me/phones") | ("POST", "/api/me/phones") => {
+            let body = (method == "POST").then(|| json!({ "name": "A's phone" }));
+            let (status, body) = ctx.call(method, path, body).await;
+            assert!(status.is_success(), "{status} {body}");
+            assert!(!body.to_string().contains("member-b"), "{body}");
+        }
+        ("PUT", "/api/me/phones/{id}")
+        | ("DELETE", "/api/me/phones/{id}")
+        | ("PUT", "/api/me/phones/{id}/push")
+        | ("DELETE", "/api/me/phones/{id}/push")
+        | ("POST", "/api/me/phones/{id}/test") => {
+            let theirs: Uuid = sqlx::query_scalar(
+                "INSERT INTO phones (user_id, name) VALUES ($1, 'member-b phone') RETURNING id",
+            )
+            .bind(b.member)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            let uri = path.replace("{id}", &theirs.to_string());
+            let body = match (method, path.ends_with("/push")) {
+                ("PUT", true) => Some(json!({
+                    "endpoint": "https://push.example.net/x",
+                    "keys": {
+                        "p256dh": "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
+                        "auth": "BTBZMqHH6r4Tts7J_aSIgg",
+                    },
+                })),
+                ("PUT", false) => Some(json!({ "name": "renamed" })),
+                _ => None,
+            };
+            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::NOT_FOUND);
+            let (name, endpoint): (String, Option<String>) =
+                sqlx::query_as("SELECT name, push_endpoint FROM phones WHERE id = $1")
+                    .bind(theirs)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!((name.as_str(), endpoint), ("member-b phone", None));
+        }
         // Global: the agent releases the server holds (ADR-0053).
         ("GET", "/api/agent-releases") => {
             let (status, body) = ctx.call(method, path, None).await;

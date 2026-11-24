@@ -1,7 +1,7 @@
 # ADR-0081: On call
 
 Date: 2026-11-02
-Status: accepted; when nobody acknowledges a critical alert, a follow-up tells the next step, and the resolution reaches everyone told (ADR-0082)
+Status: accepted; when nobody acknowledges a critical alert, a follow-up tells the next step, and the resolution reaches everyone told (ADR-0082); a phone with notifications on reaches its person too (ADR-0186)
 
 ## Context
 

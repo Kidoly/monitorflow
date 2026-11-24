@@ -297,7 +297,7 @@ impl Schedule {
 /// Why the person on call cannot be told: a gap. `nobody`: a schedule
 /// without members; `removed`: a removed user's turn; `disabled`;
 /// `no_access`: no longer sees the schedule's place; `no_contact`: no
-/// email address, chat or webhook; `no_mail_server`: only an email
+/// email address, chat, webhook or phone; `no_mail_server`: only an email
 /// address, and no email channel to send it through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[schema(as = OnCallGap)]
@@ -310,7 +310,8 @@ pub enum Problem {
     Disabled,
     /// No longer has a role that sees the schedule's place.
     NoAccess,
-    /// Neither an email address nor a chat or webhook destination.
+    /// Neither an email address, a chat or webhook destination, nor a
+    /// phone with notifications on (ADR-0186).
     NoContact,
     /// Only an email address, and no email channel to send it through.
     NoMailServer,
@@ -331,6 +332,8 @@ pub struct Person {
     /// Their chat or webhook destination, its secret or why it does not
     /// open (ADR-0125), and whether only public addresses may be reached.
     pub chat: Option<(Destination, Option<crate::secrets::Opened>, bool)>,
+    /// Their phones with notifications on (ADR-0186).
+    pub phones: usize,
 }
 
 /// Every user, and which customer each site belongs to.
@@ -344,7 +347,9 @@ impl Directory {
     pub async fn load(db: &mut sqlx::PgConnection) -> Result<Self, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT u.id, u.username, u.disabled_at IS NOT NULL AS disabled, c.email, c.kind,
-                    c.settings, c.secret, coalesce(c.public_only, true) AS public_only
+                    c.settings, c.secret, coalesce(c.public_only, true) AS public_only,
+                    (SELECT count(*) FROM phones p
+                     WHERE p.user_id = u.id AND p.push_endpoint IS NOT NULL) AS phones
              FROM users u LEFT JOIN user_contacts c ON c.user_id = u.id",
         )
         .fetch_all(&mut *db)
@@ -382,6 +387,7 @@ impl Directory {
                     operates: Vec::new(),
                     email: row.try_get("email")?,
                     chat,
+                    phones: usize::try_from(row.try_get::<i64, _>("phones")?).unwrap_or(0),
                 },
             );
         }
@@ -459,9 +465,9 @@ impl Directory {
             Some(Problem::Disabled)
         } else if !self.sees(person, coverage) {
             Some(Problem::NoAccess)
-        } else if person.email.is_none() && person.chat.is_none() {
+        } else if person.email.is_none() && person.chat.is_none() && person.phones == 0 {
             Some(Problem::NoContact)
-        } else if person.chat.is_none() && !mail {
+        } else if person.chat.is_none() && person.phones == 0 && !mail {
             Some(Problem::NoMailServer)
         } else {
             None
@@ -706,6 +712,53 @@ pub fn deliveries(
     extra: &Extra,
     now: DateTime<Utc>,
 ) -> Vec<(Channel, Vec<i64>)> {
+    let (out, _) = routes(schedules, directory, channels, events, targets, extra, now);
+    out.into_iter()
+        .filter_map(|((user, mail), ids)| {
+            let person = directory.people.get(&user)?;
+            let channel = match mail {
+                Some(mail) => {
+                    let mail = channels.iter().find(|c| c.id == mail)?;
+                    contact_channels(person, Some(mail)).into_iter().next()?
+                }
+                None => contact_channels(person, None).into_iter().next()?,
+            };
+            Some((channel, ids))
+        })
+        .collect()
+}
+
+/// The events each person's phones are told of in one pass (ADR-0186):
+/// exactly those their email or chat gets, but never a copy owed to one
+/// chat, which went to the phones already.
+pub fn push_deliveries(
+    schedules: &[Schedule],
+    directory: &Directory,
+    channels: &[Channel],
+    events: &[Event],
+    targets: &HashMap<i64, Uuid>,
+    extra: &Extra,
+    now: DateTime<Utc>,
+) -> Vec<(Uuid, Vec<i64>)> {
+    let (_, push) = routes(schedules, directory, channels, events, targets, extra, now);
+    push.into_iter().collect()
+}
+
+/// Per person and route (a mail channel, or `None` for their chat), the
+/// events they are told of; and per person with phones, theirs.
+#[allow(clippy::type_complexity)]
+fn routes(
+    schedules: &[Schedule],
+    directory: &Directory,
+    channels: &[Channel],
+    events: &[Event],
+    targets: &HashMap<i64, Uuid>,
+    extra: &Extra,
+    now: DateTime<Utc>,
+) -> (
+    BTreeMap<(Uuid, Option<Uuid>), Vec<i64>>,
+    BTreeMap<Uuid, Vec<i64>>,
+) {
     // A schedule for follow-ups only hears of an event through a step that
     // names it, which comes in `extra.users`.
     let found: Vec<(&Schedule, Option<&Channel>, Vec<Uuid>)> = schedules
@@ -718,6 +771,7 @@ pub fn deliveries(
         .collect();
     // (user, mail channel or none for their chat) -> events
     let mut out: BTreeMap<(Uuid, Option<Uuid>), Vec<i64>> = BTreeMap::new();
+    let mut push: BTreeMap<Uuid, Vec<i64>> = BTreeMap::new();
     for event in events {
         if targets.contains_key(&event.id) {
             continue;
@@ -768,21 +822,12 @@ pub fn deliveries(
             if person.chat.is_some() {
                 out.entry((user, None)).or_default().push(event.id);
             }
+            if person.phones > 0 {
+                push.entry(user).or_default().push(event.id);
+            }
         }
     }
-    out.into_iter()
-        .filter_map(|((user, mail), ids)| {
-            let person = directory.people.get(&user)?;
-            let channel = match mail {
-                Some(mail) => {
-                    let mail = channels.iter().find(|c| c.id == mail)?;
-                    contact_channels(person, Some(mail)).into_iter().next()?
-                }
-                None => contact_channels(person, None).into_iter().next()?,
-            };
-            Some((channel, ids))
-        })
-        .collect()
+    (out, push)
 }
 
 #[cfg(test)]
@@ -1110,6 +1155,7 @@ mod tests {
             grants,
             email: email.then(|| format!("u{}@x.io", id.as_u128())),
             chat: None,
+            phones: 0,
         }
     }
 
@@ -1165,6 +1211,15 @@ mod tests {
             None,
             true,
         ));
+        assert_eq!(d.problem(Some(CAROL), customer, false), None);
+        // So does a phone with notifications on (ADR-0186).
+        let carol = d.people.get_mut(&CAROL).unwrap();
+        carol.chat = None;
+        assert_eq!(
+            d.problem(Some(CAROL), customer, false),
+            Some(Problem::NoContact)
+        );
+        d.people.get_mut(&CAROL).unwrap().phones = 1;
         assert_eq!(d.problem(Some(CAROL), customer, false), None);
     }
 
@@ -1368,5 +1423,59 @@ mod tests {
                 (BOB, "webhook".into(), vec![1, 2, 3, 4, 6]),
             ]
         );
+    }
+
+    #[test]
+    fn phones_hear_what_their_person_is_told_but_not_copies() {
+        let mut alice = person(ALICE, vec![(false, Some(CUSTOMER), None)], true);
+        alice.phones = 2;
+        let mut bob = person(BOB, vec![(true, None, None)], false);
+        bob.phones = 1;
+        let carol = person(CAROL, vec![(false, Some(CUSTOMER), None)], true);
+        let d = directory(vec![alice, bob, carol]);
+        let channels = vec![email_channel(1, Coverage::Everything, "msp")];
+        let mut acme = schedule(rota(Tz::UTC, Rotation::Daily, time(9, 0), "2026-11-02"));
+        acme.rota.members = vec![Some(ALICE)];
+        let mut everything = acme.clone();
+        everything.coverage = Coverage::Everything;
+        everything.rota.members = vec![Some(BOB)];
+        let mut carols = acme.clone();
+        carols.rota.members = vec![Some(CAROL)];
+        let events = vec![
+            event(1, Some(CUSTOMER), Some(SITE)),
+            event(2, Some(OTHER), None),
+            event(3, Some(CUSTOMER), Some(SITE)),
+        ];
+        let extra = Extra {
+            copies: HashMap::from([(3, BOB)]),
+            ..Extra::default()
+        };
+        let now = utc("2026-11-02T10:00:00Z");
+        let schedules = [acme, everything, carols];
+        let push = push_deliveries(
+            &schedules,
+            &d,
+            &channels,
+            &events,
+            &HashMap::new(),
+            &extra,
+            now,
+        );
+        assert_eq!(push, vec![(ALICE, vec![1]), (BOB, vec![1, 2])]);
+        // Bob has no email nor chat: his phone is his only way.
+        let mail: Vec<Uuid> = deliveries(
+            &schedules,
+            &d,
+            &channels,
+            &events,
+            &HashMap::new(),
+            &extra,
+            now,
+        )
+        .into_iter()
+        .map(|(c, _)| c.id)
+        .collect();
+        assert!(!mail.contains(&BOB));
+        assert!(mail.contains(&CAROL));
     }
 }

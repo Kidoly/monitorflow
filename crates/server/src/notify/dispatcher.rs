@@ -4,7 +4,8 @@
 //! covers is held back instead of claimed (ADR-0079). A customer's events
 //! are claimed together, at most once a [`WINDOW`], and grouped into a few
 //! messages per channel (ADR-0080). Whoever is on call for an event's place
-//! gets the same messages in person (ADR-0081).
+//! gets the same messages in person (ADR-0081), and on their phones
+//! (ADR-0186).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
@@ -23,6 +24,7 @@ use super::follow_up;
 use super::group::{self, render_group, Group, Outgoing};
 use super::message::{render, with_acknowledge, Event, Message, ACKNOWLEDGE_PATH};
 use super::on_call;
+use super::push::{self, Notice};
 use super::send::{deliver, http_client, public_http_client, SendError};
 use super::silence::{self, Budget};
 use super::{channels, record_outcome, Channel, Coverage, Destination, Service};
@@ -82,6 +84,8 @@ pub struct Dispatcher {
     http: reqwest::Client,
     /// For channels limited to public addresses.
     public_http: reqwest::Client,
+    /// For push services: public addresses only (ADR-0186).
+    push_http: reqwest::Client,
     /// Waits before the second and later tries of a delivery.
     retries: Vec<Duration>,
     /// Whether chat channels get their service's pace.
@@ -105,6 +109,7 @@ impl Dispatcher {
             web_url: web_url.into().trim_end_matches('/').to_owned(),
             http: http_client(),
             public_http: public_http_client(),
+            push_http: public_http_client(),
             retries: vec![Duration::from_secs(2), Duration::from_secs(10)],
             paced: true,
             budget: BUDGET,
@@ -146,6 +151,18 @@ impl Dispatcher {
     pub fn without_pace(mut self) -> Self {
         self.paced = false;
         self
+    }
+
+    /// Sends pushes with `client`, for tests that run a push service on a
+    /// local address.
+    pub fn with_push_client(mut self, client: reqwest::Client) -> Self {
+        self.push_http = client;
+        self
+    }
+
+    /// The client and VAPID subject phones are reached with.
+    pub fn push_sender(&self) -> (reqwest::Client, String) {
+        (self.push_http.clone(), push::subject(&self.web_url))
     }
 
     /// Notifies failed backups reported in the updater's `dir`.
@@ -416,6 +433,15 @@ impl Dispatcher {
             &extra,
             now,
         );
+        let phones = on_call::push_deliveries(
+            &schedules,
+            &directory,
+            &channels,
+            &fresh,
+            &targets.channels,
+            &extra,
+            now,
+        );
         let mut groups = Groups::default();
         let mut links = Links::default();
         let mut told: HashMap<Uuid, follow_up::Told> = HashMap::new();
@@ -469,6 +495,39 @@ impl Dispatcher {
             }
             work.push((channel, messages));
         }
+        // Phones get the same groups, as notices with no link that acts by
+        // itself: acknowledging goes through the phone's session.
+        let mut push_work = Vec::new();
+        for (user, ids) in phones {
+            let Some(person) = directory.people.get(&user) else {
+                continue;
+            };
+            let events: Vec<&Event> = fresh.iter().filter(|e| ids.contains(&e.id)).collect();
+            for event in events.iter().filter(|e| problem(e)) {
+                if let Some(incident) = silence::incident_of(event) {
+                    let users = &mut told.entry(incident).or_default().users;
+                    if !users.contains(&user) {
+                        users.push(user);
+                    }
+                }
+            }
+            let notices = self
+                .grouped(&events, several, &mut groups, None)
+                .iter()
+                .map(|message| {
+                    let rows = group::rows(&message.payload);
+                    let mut incidents: Vec<Uuid> = events
+                        .iter()
+                        .filter(|e| rows.contains(&e.id) && problem(e))
+                        .filter_map(|e| silence::incident_of(e))
+                        .collect();
+                    incidents.dedup();
+                    let can = acknowledgeable(message, &events, person, &directory);
+                    Notice::from_message(message, &incidents, &can)
+                })
+                .collect();
+            push_work.push((user, push::limit(notices)));
+        }
         for (incident, told) in &told {
             follow_up::record_told(&mut conn, *incident, told, now).await?;
         }
@@ -485,6 +544,24 @@ impl Dispatcher {
         for (channel, messages) in work {
             let this = self.clone();
             tasks.spawn(async move { this.deliver_all(&channel, &messages).await });
+        }
+        for (user, notices) in push_work {
+            let this = self.clone();
+            tasks.spawn(async move {
+                let subject = push::subject(&this.web_url);
+                if let Err(error) = push::deliver(
+                    &this.pool,
+                    &this.push_http,
+                    &subject,
+                    user,
+                    &notices,
+                    &this.retries,
+                )
+                .await
+                {
+                    tracing::warn!(%user, %error, "could not send to phones");
+                }
+            });
         }
         while tasks.join_next().await.is_some() {}
         Ok(claimed)
@@ -506,6 +583,18 @@ impl Dispatcher {
             return events.iter().map(|e| render(e, &self.web_url)).collect();
         }
         let service = channel.destination.chat().map(|(service, _)| service);
+        self.grouped(events, several, groups, service)
+    }
+
+    /// `events` in groups (ADR-0080), for a chat `service` or none, naming
+    /// the customer only when there are `several`.
+    fn grouped(
+        &self,
+        events: &[&Event],
+        several: bool,
+        groups: &mut Groups,
+        service: Option<Service>,
+    ) -> Vec<Message> {
         let unnamed: Vec<Event>;
         let events: Vec<&Event> = if several {
             events.to_vec()
