@@ -16,6 +16,7 @@ use monitorflow_agent::commands::{
     self, Dispatcher, DispatcherSettings, Handler, Handlers, Output,
 };
 use monitorflow_agent::identity::AgentIdentity;
+use monitorflow_agent::inventory::Snapshot;
 use monitorflow_agent::os::{HostInfo, OsFamily};
 use monitorflow_agent::sensor_config::{self, SensorsEnd};
 use monitorflow_agent::shutdown::{self, Shutdown, Trigger};
@@ -25,6 +26,7 @@ use monitorflow_common::client::enroll::{self, EnrollSettings};
 use monitorflow_common::client::renew::{Renewal, RenewalSettings};
 use monitorflow_common::command;
 use monitorflow_common::config::{AgentConfig, TlsPaths};
+use monitorflow_common::inventory::Items;
 use monitorflow_common::proto::v1::{Package, PackageReport, SensorConfigAck};
 use monitorflow_common::redact::Secret;
 use monitorflow_common::tls;
@@ -314,6 +316,9 @@ async fn run_agent(
     tokio::spawn(dispatcher.run(commands_end, stop.clone()));
     let (reports_tx, reports) = watch::channel(None);
     reports_tx.send_replace(Some(package_report(index)));
+    // The inventory (ADR-0187): the whole one on its first connection,
+    // its hash on the next ones.
+    let (inventory_tx, inventory) = watch::channel(Some(Arc::new(inventory(index))));
 
     let host = HostInfo {
         hostname: member.id.clone(),
@@ -342,12 +347,14 @@ async fn run_agent(
         .with_upload(uplink)
         .with_commands(commands_stream)
         .with_command_kinds(command_kinds)
-        .with_reports(reports);
+        .with_reports(reports)
+        .with_inventory(inventory);
     if let Err(error) = agent.run(stop).await {
         tracing::error!(agent = %member.id, %error, "agent stopped");
     }
     // Keeps the report publisher, so the stream never sees it closed.
     drop(reports_tx);
+    drop(inventory_tx);
 }
 
 /// Answers every command after `delay`, successfully, without running it.
@@ -475,6 +482,50 @@ fn package_report(index: usize) -> PackageReport {
     }
 }
 
+/// The inventory agent `index` has: a system, two disks, a network card
+/// and 120 services, about the size of a small Debian server's.
+fn inventory(index: usize) -> Snapshot {
+    let mut items = Items::new();
+    items.push(
+        "system",
+        "system",
+        [
+            ("manufacturer", "QEMU".to_owned()),
+            ("model", "Standard PC (Q35 + ICH9, 2009)".to_owned()),
+            ("serial", format!("LOADTEST-{index:06}")),
+            ("bios_version", "1.16.3".to_owned()),
+            ("os", "Debian GNU/Linux 12 (bookworm)".to_owned()),
+            ("memory_bytes", (4u64 << 30).to_string()),
+        ],
+    );
+    for disk in ["sda", "sdb"] {
+        items.push(
+            "disk",
+            disk,
+            [
+                ("model", "QEMU HARDDISK".to_owned()),
+                ("size_bytes", (32u64 << 30).to_string()),
+            ],
+        );
+    }
+    items.push(
+        "nic",
+        "ens18",
+        [(
+            "mac",
+            format!("bc:24:11:00:{:02x}:{:02x}", index / 256 % 256, index % 256),
+        )],
+    );
+    for n in 0..120 {
+        items.push(
+            "service",
+            format!("service-{n:03}.service"),
+            [("start", "enabled".to_owned())],
+        );
+    }
+    Snapshot::new(items.finish(), unix_ms())
+}
+
 fn unix_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -510,6 +561,13 @@ mod tests {
             .filter(|p| !p.upgradable_version.is_empty())
             .count();
         assert_eq!(upgradable, PACKAGES / UPGRADABLE_EVERY);
+    }
+
+    #[test]
+    fn inventories_differ_by_agent() {
+        let (a, b) = (inventory(1), inventory(2));
+        assert_eq!(a.inventory.items.len(), 124);
+        assert_ne!(a.hash, b.hash);
     }
 
     #[test]

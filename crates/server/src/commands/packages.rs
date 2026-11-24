@@ -53,8 +53,8 @@ impl PackageStore {
         let collected_at =
             (report.collected_at_unix_ms > 0).then(|| report.collected_at_unix_ms as f64 / 1000.0);
         let mut tx = self.pool.begin().await?;
-        let server: Option<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT id FROM servers
+        let server: Option<(uuid::Uuid, bool)> = sqlx::query_as(
+            "SELECT id, packages_reported_at IS NOT NULL FROM servers
              WHERE peer_id = $1
                AND (packages_reported_at IS NULL
                     OR packages_reported_at < COALESCE(to_timestamp($2), now()))
@@ -64,7 +64,7 @@ impl PackageStore {
         .bind(collected_at)
         .fetch_optional(&mut *tx)
         .await?;
-        let Some(server) = server else {
+        let Some((server, had_report)) = server else {
             return Ok(false);
         };
         let packages: Vec<&Package> = report
@@ -76,10 +76,23 @@ impl PackageStore {
         let column = |f: fn(&Package) -> &String| -> Vec<&str> {
             packages.iter().map(|p| f(p).as_str()).collect()
         };
-        sqlx::query("DELETE FROM server_packages WHERE server_id = $1")
-            .bind(server)
-            .execute(&mut *tx)
-            .await?;
+        let old: Vec<(String, String, String)> = sqlx::query_as(
+            "DELETE FROM server_packages WHERE server_id = $1 RETURNING name, arch, version",
+        )
+        .bind(server)
+        .fetch_all(&mut *tx)
+        .await?;
+        // What changed goes in the inventory's history (ADR-0187), from
+        // the second report on.
+        if had_report {
+            let new: Vec<(&str, &str, &str)> = packages
+                .iter()
+                .map(|p| (p.name.as_str(), p.arch.as_str(), p.version.as_str()))
+                .collect();
+            crate::server_inventory::package_changes(&old, &new)
+                .write(&mut tx, server)
+                .await?;
+        }
         let sizes: Vec<i64> = packages.iter().map(|p| p.size_bytes as i64).collect();
         let reboots: Vec<bool> = packages.iter().map(|p| p.reboot_required).collect();
         sqlx::query(

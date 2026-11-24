@@ -99,6 +99,7 @@ describe("sidebar preferences", () => {
         "Network maps",
         "Fleet",
         "On call",
+        "Inventory",
         "Reports",
         "Campaigns",
         "Automatic updates",

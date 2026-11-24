@@ -19,6 +19,7 @@ pub mod hardware;
 pub mod helper_trust;
 pub mod identity;
 pub mod init_config;
+pub mod inventory;
 #[cfg(unix)]
 pub mod journald;
 #[cfg(unix)]

@@ -29,6 +29,7 @@ Guides are also available [in French](fr/README.md).
 - [How to run scripts on your servers and automate fixes](run-scripts-and-automate-fixes.md): Keep shell and PowerShell scripts in MonitorFlow, run them on a server, a business service or a whole site, now or tonight, read each server's output, and run them by themselves when an incident opens.
 - [How to draw a live map of your network](draw-network-maps.md): Get a map of a site or a customer drawn from your relays, dependencies and switches' LLDP and CDP neighbours, coloured by incidents, arranged by hand on your floor plan, and shown on a wall screen.
 - [How to see which addresses and applications use your bandwidth (NetFlow, sFlow, IPFIX)](monitor-traffic-flows.md): Receive NetFlow, sFlow or IPFIX from your routers, firewalls and switches on a relay or the central server, see the largest addresses, applications and interfaces over time, and get alerted when one address uses too much.
+- [How to know what each server is made of and what it runs](hardware-and-software-inventory.md): See the model, serial number, disks, BIOS, installed software, services and licences of every server, find which servers have an old OpenSSL, follow changes and export them as CSV.
 
 ## Databases
 

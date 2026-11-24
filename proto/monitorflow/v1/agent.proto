@@ -7,6 +7,7 @@ syntax = "proto3";
 
 package monitorflow.v1;
 
+import "monitorflow/v1/inventory.proto";
 import "monitorflow/v1/packages.proto";
 
 // Long-lived bidirectional stream between an agent (or relay) and its upstream.
@@ -54,6 +55,10 @@ message Envelope {
     // (ADR-0178), sealed end to end between the central server and the
     // agent, so relays pass them on without reading or changing them.
     RemoteFrame remote = 27;
+    // Agent to server: what the machine is made of and runs (ADR-0187).
+    InventoryReport inventory = 28;
+    // Server to agent: send the inventory again (ADR-0187).
+    InventoryRequest inventory_request = 29;
     Command command = 20;
     CommandResult command_result = 21;
   }

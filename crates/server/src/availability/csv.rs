@@ -34,7 +34,7 @@ const HEADER: [&str; 17] = [
 
 /// A field quoted when it needs to be, with a leading `'` before what a
 /// spreadsheet would read as a formula.
-fn field(value: &str) -> String {
+pub fn field(value: &str) -> String {
     let value = match value.chars().next() {
         Some('=' | '+' | '-' | '@' | '\t' | '\r') if value.parse::<f64>().is_err() => {
             format!("'{value}")

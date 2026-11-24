@@ -1,0 +1,68 @@
+// MonitorFlow hardware and software inventory, version 1. See ADR-0187.
+//
+// Rules: changes are additive only. Never renumber or reuse a field number.
+
+syntax = "proto3";
+
+package monitorflow.v1;
+
+// What a server is made of and what it runs, as a list of items. An item
+// is identified by its kind and key; its fields are plain text. The kinds
+// and the fields each one has are listed in ADR-0187; a server ignores
+// kinds it does not know. Linux packages are not items: they come in
+// PackageReport (ADR-0031).
+//
+// The canonical form (`common::inventory::canonical`) sorts items by kind
+// then key and fields by name, and drops empty fields; the hash is the
+// SHA-256 of that form's protobuf encoding.
+message Inventory {
+  repeated InventoryItem items = 1;
+}
+
+message InventoryItem {
+  // Like "system", "disk" or "software".
+  string kind = 1;
+  // Unique within its kind: a disk's device name, a program's name.
+  string key = 2;
+  repeated InventoryField fields = 3;
+}
+
+message InventoryField {
+  string name = 1;
+  string value = 2;
+}
+
+// The changes from the inventory hashed `base_hash` to the one the report
+// names: items added or changed, whole, and items removed.
+message InventoryDelta {
+  bytes base_hash = 1;
+  repeated InventoryItem upserted = 2;
+  repeated InventoryItemKey removed = 3;
+}
+
+message InventoryItemKey {
+  string kind = 1;
+  string key = 2;
+}
+
+// Agent to server (ADR-0187). Sent when a stream opens, when the
+// inventory changes and at least once a day. Without a body it says only
+// "my inventory is still `hash`"; the server asks for more with an
+// InventoryRequest when it holds something else. Untrusted: the server
+// bounds every field.
+message InventoryReport {
+  int64 collected_at_unix_ms = 1;
+  // SHA-256 of the canonical inventory, 32 bytes.
+  bytes hash = 2;
+  oneof body {
+    Inventory full = 3;
+    InventoryDelta delta = 4;
+  }
+}
+
+// Server to agent: send the inventory again. `known_hash` is what the
+// server holds, empty for nothing; the agent answers with the changes
+// since it when it still has that inventory, else with the whole one.
+message InventoryRequest {
+  bytes known_hash = 1;
+}

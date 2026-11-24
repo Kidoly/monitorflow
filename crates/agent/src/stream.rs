@@ -120,6 +120,7 @@ pub struct Agent {
     reports: Option<watch::Receiver<Option<PackageReport>>>,
     discovery: Option<watch::Receiver<Option<DiscoveryReport>>>,
     remote: Option<remote::StreamEnd>,
+    inventory: Option<crate::inventory::Link>,
     on_open: Option<Arc<dyn Fn() + Send + Sync>>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
@@ -143,6 +144,7 @@ impl Agent {
             reports: None,
             discovery: None,
             remote: None,
+            inventory: None,
             on_open: None,
             sequence: 0,
         }
@@ -212,6 +214,17 @@ impl Agent {
     /// Carries the frames of remote terminals (ADR-0178).
     pub fn with_remote(mut self, remote: remote::StreamEnd) -> Self {
         self.remote = Some(remote);
+        self
+    }
+
+    /// Sends the inventory published on `snapshots` (ADR-0187): its hash
+    /// when a stream opens, its changes when it changes, and what the
+    /// server asks for.
+    pub fn with_inventory(
+        mut self,
+        snapshots: watch::Receiver<Option<std::sync::Arc<crate::inventory::Snapshot>>>,
+    ) -> Self {
+        self.inventory = Some(crate::inventory::Link::new(snapshots));
         self
     }
 
@@ -323,6 +336,14 @@ impl Agent {
         if let Some(on_open) = &self.on_open {
             on_open();
         }
+        if let Some(report) = self
+            .inventory
+            .as_mut()
+            .and_then(crate::inventory::Link::opened)
+        {
+            let envelope = self.envelope(Payload::Inventory(report));
+            let _ = tx.try_send(envelope);
+        }
 
         let every = self.settings.heartbeat_interval;
         let mut heartbeat = interval_at(Instant::now() + every, every);
@@ -418,7 +439,27 @@ impl Agent {
                     let _ = tx.send(envelope).await;
                     None
                 }
+                snapshot = published(&mut self.inventory) => {
+                    if let Some(link) = &mut self.inventory {
+                        let report = link.report(snapshot);
+                        let envelope = self.envelope(Payload::Inventory(report));
+                        let _ = tx.send(envelope).await;
+                    }
+                    None
+                }
                 message = inbound.message() => match message {
+                    Ok(Some(Envelope { payload: Some(Payload::InventoryRequest(request)), sequence })) => {
+                        tracing::debug!(sequence, "inventory requested");
+                        let report = self
+                            .inventory
+                            .as_mut()
+                            .and_then(|link| link.requested(&request.known_hash));
+                        if let Some(report) = report {
+                            let envelope = self.envelope(Payload::Inventory(report));
+                            let _ = tx.send(envelope).await;
+                        }
+                        None
+                    }
                     Ok(Some(envelope)) => {
                         self.receive(envelope);
                         None
@@ -545,6 +586,8 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::ProbeTestResult(_) => "probe_test_result",
         Payload::FlowReports(_) => "flow_reports",
         Payload::Remote(_) => "remote",
+        Payload::Inventory(_) => "inventory",
+        Payload::InventoryRequest(_) => "inventory_request",
     }
 }
 
@@ -576,6 +619,16 @@ async fn next_result(commands: &mut Option<commands::StreamEnd>) -> Option<Comma
 async fn next_frame(remote: &mut Option<remote::StreamEnd>) -> Option<RemoteFrame> {
     match remote {
         Some(remote) => remote.up.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The next inventory published; never without a collector.
+async fn published(
+    link: &mut Option<crate::inventory::Link>,
+) -> std::sync::Arc<crate::inventory::Snapshot> {
+    match link {
+        Some(link) => link.published().await,
         None => std::future::pending().await,
     }
 }

@@ -6,6 +6,15 @@
 
 import { t } from "@/i18n";
 
+import {
+  type InventoryChangeList,
+  type InventoryQuery,
+  type InventorySearch,
+  type ServerInventory,
+  type Warranty,
+  inventoryQueryString,
+} from "./inventory";
+
 /** Header the API requires on every state-changing request (ADR-0006). */
 export const CSRF_HEADER = "X-MonitorFlow-CSRF";
 
@@ -5015,6 +5024,25 @@ export const api = {
     } while (cursor !== undefined);
     return { ...page, packages, next_cursor: null };
   },
+
+  /** The server's hardware and software inventory (ADR-0187). */
+  serverInventory: (serverId: string, signal?: AbortSignal) =>
+    request<ServerInventory>(`/api/servers/${encodeURIComponent(serverId)}/inventory`, { signal }),
+
+  /** What changed in the server's inventory and packages, newest first. */
+  inventoryChanges: (serverId: string, cursor?: string, signal?: AbortSignal) =>
+    request<InventoryChangeList>(
+      `/api/servers/${encodeURIComponent(serverId)}/inventory/changes?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      { signal },
+    ),
+
+  /** Sets the server's warranty; both `null` removes it. */
+  setWarranty: (serverId: string, warranty: { ends_on: string | null; note: string | null }) =>
+    request<Warranty | null>(`/api/servers/${encodeURIComponent(serverId)}/warranty`, { method: "PUT", body: warranty }),
+
+  /** Searches the inventory of the fleet. */
+  searchInventory: (query: InventoryQuery, signal?: AbortSignal) =>
+    request<InventorySearch>(`/api/inventory?${inventoryQueryString(query)}`, { signal }),
 
   /** The server's third-party managers and apps (ADR-0138), following `next_cursor` across pages. */
   serverThirdParty: async (serverId: string, signal?: AbortSignal): Promise<ThirdPartyList> => {

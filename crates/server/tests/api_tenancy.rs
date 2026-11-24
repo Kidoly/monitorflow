@@ -1072,6 +1072,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             );
         }
         ("GET", "/api/servers/{id}/packages")
+        | ("GET", "/api/servers/{id}/inventory")
+        | ("GET", "/api/servers/{id}/inventory/changes")
         | ("GET", "/api/servers/{id}/third-party")
         | ("GET", "/api/servers/{id}/commands")
         | ("GET", "/api/servers/{id}/rollback") => {
@@ -2819,6 +2821,38 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 not_found,
                 "{uri}"
             );
+        }
+        // The inventory (ADR-0187): another customer's servers are not
+        // searched, and their warranty cannot be set.
+        ("GET", "/api/inventory") => {
+            for server in [a.server, b.server] {
+                sqlx::query(
+                    "INSERT INTO server_inventory_items (server_id, kind, key, fields)
+                     VALUES ($1, 'disk', 'sda', '{\"model\": \"TENANCY DISK\"}')
+                     ON CONFLICT DO NOTHING",
+                )
+                .bind(server)
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
+            }
+            let (status, body) = ctx
+                .call(method, &format!("{path}?kind=disk&q=tenancy"), None)
+                .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert!(
+                Ctx::mentions(&body, a.server) && !Ctx::mentions(&body, b.server),
+                "{body}"
+            );
+            let uri = format!("{path}?kind=disk&server_id={}", b.server);
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["hits"], json!([]));
+        }
+        ("PUT", "/api/servers/{id}/warranty") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "ends_on": "2030-01-01", "note": null }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
         // Network scans (ADR-0154): another customer's scans are not
         // listed nor found, and none can be made in its site.

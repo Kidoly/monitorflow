@@ -110,7 +110,7 @@ impl Area {
             },
             (
                 "servers" | "relays" | "metrics" | "devices" | "virtual-objects" | "network-scans"
-                | "snmp-lookups" | "snmp-mibs" | "snmp-objects" | "remote-sessions",
+                | "inventory" | "snmp-lookups" | "snmp-mibs" | "snmp-objects" | "remote-sessions",
                 _,
             ) => Self::Servers,
             (

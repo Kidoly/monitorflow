@@ -171,6 +171,7 @@ describe("AppShell", () => {
       "Network maps",
       "Incidents",
       "On call",
+      "Inventory",
       "Reports",
       "Linux mirrors",
       "Automatic updates",
@@ -193,7 +194,15 @@ describe("AppShell", () => {
     const links = within(nav())
       .getAllByRole("link")
       .map((a) => a.textContent);
-    expect(links.slice(1, 7)).toEqual(["Parc", "Tableaux de bord", "Cartes réseau", "Incidents", "Astreinte", "Rapports"]);
+    expect(links.slice(1, 8)).toEqual([
+      "Parc",
+      "Tableaux de bord",
+      "Cartes réseau",
+      "Incidents",
+      "Astreinte",
+      "Inventaire",
+      "Rapports",
+    ]);
     expect(within(nav()).getByText("Supervision")).toBeInTheDocument();
     expect(await within(nav()).findByLabelText("3 incidents ouverts")).toHaveTextContent("3");
     expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeInTheDocument();

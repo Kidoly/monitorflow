@@ -52,6 +52,7 @@ import { VirtualizationSection } from "./Virtualization";
 import { serverSiblings } from "./breadcrumbSiblings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
+import { InventoryTab } from "./InventoryTab";
 import { ServerCommandsTab } from "./ServerCommandsTab";
 import { RollbackBadge, RollbackFact, useRollback } from "./ServerRollback";
 import { ServerLogsTab } from "./ServerLogsTab";
@@ -66,7 +67,7 @@ export const COMMANDS_PAGE = 50;
 /** The API's largest page, which caps what a refresh reloads. */
 const MAX_LIMIT = 500;
 
-const TABS = ["sensors", "dependencies", "flows", "logs", "updates", "commands", "terminal"] as const;
+const TABS = ["sensors", "dependencies", "flows", "logs", "updates", "commands", "terminal", "inventory"] as const;
 export type ServerTab = (typeof TABS)[number];
 
 /** The server page for the `id` query parameter. */
@@ -277,6 +278,7 @@ export function ServerPage({ id }: { id: string | null }) {
                   extra: active > 0 ? t("server.tab.running", { count: active }) : undefined,
                 },
                 ...(terminal ? [{ id: "terminal" as const, label: t("remote.tab") }] : []),
+                { id: "inventory" as const, label: t("inventory.tab") },
               ]),
         ]}
       />
@@ -300,6 +302,7 @@ export function ServerPage({ id }: { id: string | null }) {
         )}
         {!device && tab === "logs" && <ServerLogsTab server={server} />}
         {!device && tab === "updates" && <ServerUpdatesTab server={server} />}
+        {!device && tab === "inventory" && <InventoryTab server={server} />}
         {!device && tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} onOpenDetails={() => {
           setDetails(true);
           window.scrollTo({ top: 0 });

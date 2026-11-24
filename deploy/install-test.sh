@@ -230,6 +230,10 @@ check "runtime dir monitorflow 0700" mode_is /run/monitorflow-agent "monitorflow
 if sudo test -e /sys/class/dmi/id/product_uuid; then
     check "UUID copy monitorflow:root 0400" mode_is /run/monitorflow-agent/product_uuid "monitorflow:root 400"
 fi
+# The root-only serial number, copied for the inventory (ADR-0187).
+if sudo test -e /sys/class/dmi/id/product_serial; then
+    check "serial copy monitorflow:root 0400" mode_is /run/monitorflow-agent/product_serial "monitorflow:root 400"
+fi
 # The service's user asking the root helper itself, with what the helper
 # read before ADR-0108 and no command the server signed: refused, and
 # nothing replaced.

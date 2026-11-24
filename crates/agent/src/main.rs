@@ -791,6 +791,10 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         tokio::spawn(discovery.run(stop.clone()));
         agent = agent.with_discovery(reports);
     }
+    // What the machine is made of and runs (ADR-0187).
+    let (inventory, snapshots) = monitorflow_agent::inventory::Collector::new();
+    tokio::spawn(inventory.run(stop.clone()));
+    agent = agent.with_inventory(snapshots);
     let result = agent.run(stop).await.context("cannot connect upstream");
     if result.is_ok() {
         let _ = sensors.await;

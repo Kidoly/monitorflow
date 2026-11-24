@@ -232,6 +232,10 @@
 //! | POST | `/api/maps/{id}/neighbors` | modify the place | [`maps::NeighborRead`]: reads the LLDP and CDP neighbours of its SNMP devices the user may change |
 //! | GET | `/api/servers/{id}/logs` | read | [`logs::LogList`]: the server's system logs, newest first, see below |
 //! | GET | `/api/servers/{id}/packages` | read | [`packages::PackageList`], see below |
+//! | GET | `/api/servers/{id}/inventory` | read | [`inventory::ServerInventory`]: hardware and software inventory, warranty and asset facts (ADR-0187) |
+//! | GET | `/api/servers/{id}/inventory/changes` | read | [`inventory::ChangeList`]: what changed in the inventory and packages, newest first, paginated |
+//! | PUT | `/api/servers/{id}/warranty` | operator | body [`inventory::Warranty`]; both `null` removes it; audited |
+//! | GET | `/api/inventory` | any role | [`inventory::SearchResult`]: the fleet search by kind, text and version, or `format=csv` |
 //! | GET | `/api/servers/{id}/third-party` | read | [`third_party::List`]: third-party package managers and their apps (ADR-0138); `manager`, `pending`, paginated |
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
@@ -803,6 +807,7 @@ pub mod imports;
 pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
+pub mod inventory;
 pub mod license;
 pub mod login_limit;
 pub mod logs;
@@ -826,6 +831,7 @@ mod openapi_dependencies;
 mod openapi_devices;
 mod openapi_flows;
 mod openapi_imports;
+mod openapi_inventory;
 mod openapi_maintenance;
 mod openapi_maps;
 mod openapi_network_scans;
@@ -1634,6 +1640,13 @@ pub fn router(state: ApiState) -> Router {
             post(threshold_preview::site),
         )
         .route("/api/servers/{id}/packages", get(packages::list))
+        .route("/api/servers/{id}/inventory", get(inventory::server))
+        .route(
+            "/api/servers/{id}/inventory/changes",
+            get(inventory::changes),
+        )
+        .route("/api/servers/{id}/warranty", put(inventory::set_warranty))
+        .route("/api/inventory", get(inventory::search))
         .route("/api/servers/{id}/third-party", get(third_party::list))
         .route("/api/servers/{id}/rollback", get(rollback::get))
         .route("/api/major-upgrades", get(major_upgrades::list))

@@ -54,6 +54,7 @@ import {
   logsOf,
   mirrorDetail,
   onCallSchedule,
+  inventoryOf,
   packagesOf,
 } from "./data";
 import {
@@ -164,6 +165,9 @@ const ROUTES: [RegExp, Handler][] = [
     const s = server(id!);
     return { reboot_required: false, reported_at: ago(2 * HOUR), packages: packagesOf(s), next_cursor: null };
   }],
+  [/^\/api\/servers\/([^/]+)\/inventory$/, ([id]) => inventoryOf(server(id!))],
+  [/^\/api\/servers\/([^/]+)\/inventory\/changes$/, () => ({ changes: [], next_cursor: null })],
+  [/^\/api\/inventory$/, () => ({ hits: [], truncated: false })],
   [/^\/api\/servers\/([^/]+)\/third-party$/, () => ({ reported: false, managers: [], packages: [], next_cursor: null })],
   [/^\/api\/servers\/([^/]+)\/proxmox$/, ([id]) => ({
     server_id: server(id!).id, mapping: null, snapshots: { available: false, reason: "disabled" }, clusters: [], candidates: [],

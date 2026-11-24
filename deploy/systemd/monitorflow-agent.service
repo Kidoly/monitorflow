@@ -16,6 +16,11 @@ User=monitorflow
 RuntimeDirectory=monitorflow-agent
 RuntimeDirectoryMode=0700
 ExecStartPre=+-/usr/bin/install -m 0400 -o monitorflow /sys/class/dmi/id/product_uuid /run/monitorflow-agent/product_uuid
+# The serial numbers, root-only too, for the hardware inventory
+# (ADR-0187), copied the same way.
+ExecStartPre=+-/usr/bin/install -m 0400 -o monitorflow /sys/class/dmi/id/product_serial /run/monitorflow-agent/product_serial
+ExecStartPre=+-/usr/bin/install -m 0400 -o monitorflow /sys/class/dmi/id/board_serial /run/monitorflow-agent/board_serial
+ExecStartPre=+-/usr/bin/install -m 0400 -o monitorflow /sys/class/dmi/id/chassis_serial /run/monitorflow-agent/chassis_serial
 # Reads the system journal to forward its warnings and errors (ADR-0091).
 SupplementaryGroups=systemd-journal
 ExecStart=/usr/bin/monitorflow-agent --config /etc/monitorflow/agent.toml
