@@ -30,6 +30,7 @@ import type {
   Silence,
   ThresholdSnapshot,
 } from "../api";
+import type { InventoryItem, ServerInventory } from "../inventory";
 
 import { BRANCH, CUSTOMER, DATACENTER, type DemoServer, SERVERS, USERS, demoId, isWindows, serverByName } from "./fleet";
 import { DAY, HOUR, START, ago, later } from "./time";
@@ -696,3 +697,41 @@ export const DASHBOARD: Dashboard = {
     ],
   },
 };
+
+/** A server's inventory (ADR-0187): made-up hardware, a few services. */
+export function inventoryOf(server: DemoServer): ServerInventory {
+  const windows = isWindows(server);
+  const at = ago(6 * 60);
+  const items: InventoryItem[] = [
+    {
+      kind: "system",
+      key: "system",
+      fields: {
+        manufacturer: "Dell Inc.", model: "PowerEdge R650", serial: `DEMO${server.hostname.length}X${server.id.slice(0, 3).toUpperCase()}`,
+        bios_vendor: "Dell Inc.", bios_version: "1.10.2", bios_date: "2023-05-04", os: server.distribution,
+        architecture: "x86_64", memory_bytes: String(32 * 1024 ** 3),
+      },
+    },
+    { kind: "processor", key: "0", fields: { model: "Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz", cores: "8", threads: "16", max_mhz: "3200" } },
+    { kind: "disk", key: windows ? "disk0" : "sda", fields: { model: "SAMSUNG MZ7LH480", size_bytes: "480103981056", media: "ssd", firmware: "HXT7404Q", transport: "sata" } },
+    { kind: "nic", key: windows ? "Ethernet" : "eno1", fields: { mac: "b0:7b:25:00:11:22", speed_mbps: "1000", addresses: server.address } },
+    ...(windows
+      ? [
+          { kind: "software", key: "7-Zip 24.08 (x64)", fields: { version: "24.08", publisher: "Igor Pavlov" } },
+          { kind: "service", key: "wuauserv", fields: { start: "manual", display_name: "Windows Update" } },
+          { kind: "feature", key: "NetFx4", fields: { display_name: ".NET Framework 4.8" } },
+          { kind: "licence", key: "Windows(R), ServerStandard edition", fields: { status: "licensed", partial_key: "3V66T" } },
+        ]
+      : [
+          { kind: "service", key: "nginx.service", fields: { start: "enabled" } },
+          { kind: "service", key: "ssh.service", fields: { start: "enabled" } },
+        ]),
+  ];
+  return {
+    reported: { collected_at: at, first_at: ago(40 * 24 * 60), changed_at: ago(3 * 24 * 60), checked_at: at },
+    items,
+    package_count: packagesOf(server).length,
+    warranty: null,
+    asset: { hostname: server.hostname, manufacturer: "Dell Inc.", model: "PowerEdge R650", serial: null },
+  };
+}

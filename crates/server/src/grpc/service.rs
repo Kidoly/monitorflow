@@ -9,6 +9,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -16,7 +17,9 @@ use std::time::Duration;
 use chrono::Utc;
 use monitorflow_common::proto::v1::agent_service_server::AgentService;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Hello, LogBatch, SampleBatch, SensorConfigAck};
+use monitorflow_common::proto::v1::{
+    Envelope, Hello, InventoryReport, InventoryRequest, LogBatch, SampleBatch, SensorConfigAck,
+};
 use monitorflow_common::release::Version;
 use monitorflow_common::tls::{self, PeerIdentity, PeerRole};
 use monitorflow_common::via::Via;
@@ -38,6 +41,7 @@ use crate::probes::Probes;
 use crate::relay_commands::RelayCommands;
 use crate::renew::PresentedCert;
 use crate::sensor_config::{Resolved, SensorConfigs};
+use crate::server_inventory::Outcome;
 
 /// Least time between two warnings about invalid samples on one stream.
 const INVALID_SAMPLE_LOG_INTERVAL: Duration = Duration::from_secs(60);
@@ -507,6 +511,8 @@ impl AgentService for AgentStreamService {
             invalid_logs_logged: None,
             pending_logs: ingest::journal::Pending::default(),
             last_discovery: None,
+            last_inventory: None,
+            inventory_asked: Arc::new(AtomicBool::new(false)),
             writes: Arc::new(Semaphore::new(WRITES_PER_STREAM)),
         };
         tokio::spawn(connection.run(
@@ -575,6 +581,11 @@ struct Connection {
     pending_logs: ingest::journal::Pending,
     /// When this stream's last discovery report was taken (ADR-0134).
     last_discovery: Option<Instant>,
+    /// When this stream's last inventory report was taken (ADR-0187).
+    last_inventory: Option<Instant>,
+    /// Set while the server waits for the inventory it asked for: the
+    /// answer is taken even within [`INVENTORY_EVERY`].
+    inventory_asked: Arc<AtomicBool>,
     /// Database writes of this stream's reports still running; see
     /// [`WRITES_PER_STREAM`].
     writes: Arc<Semaphore>,
@@ -589,6 +600,11 @@ const WRITES_PER_STREAM: usize = 2;
 /// Fewest seconds between two discovery reports stored for one stream;
 /// agents send one every 5 minutes at most.
 const DISCOVERY_EVERY: Duration = Duration::from_secs(60);
+
+/// Fewest seconds between two inventory reports taken from one stream,
+/// answers to the server's requests aside; agents send one when a stream
+/// opens, when it changes and once a day.
+const INVENTORY_EVERY: Duration = Duration::from_secs(60);
 
 /// Fields of the stream events recorded in VictoriaLogs. Identifiers only.
 struct StreamEvent {
@@ -849,6 +865,51 @@ impl Connection {
             .expect("the semaphore is never closed")
     }
 
+    /// An inventory report (ADR-0187): only an agent speaks for its
+    /// machine. When the server cannot use it, it asks the agent for
+    /// more, once per report.
+    async fn asset_inventory(&mut self, sequence: u64, report: InventoryReport) {
+        let id = &self.id;
+        let body = report.body.is_some();
+        tracing::debug!(agent_id = %id, sequence, body, "inventory report");
+        let asked = self.inventory_asked.swap(false, Ordering::AcqRel);
+        let due = self
+            .last_inventory
+            .is_none_or(|at| at.elapsed() >= INVENTORY_EVERY);
+        if self.role != PeerRole::Agent || !(due || (asked && body)) {
+            tracing::debug!(agent_id = %id, sequence, "ignoring the inventory report");
+            return;
+        }
+        self.last_inventory = Some(Instant::now());
+        let (inventory, registry, asked) = (
+            self.inventory.clone(),
+            self.registry.clone(),
+            self.inventory_asked.clone(),
+        );
+        let id = id.clone();
+        let turn = self.write_turn().await;
+        tokio::spawn(async move {
+            match inventory.asset_inventory(&id, report).await {
+                Ok(Outcome::Want(known_hash)) => {
+                    asked.store(true, Ordering::Release);
+                    let envelope = registry
+                        .envelope(Payload::InventoryRequest(InventoryRequest { known_hash }));
+                    if let Err(error) = registry.send(PeerRole::Agent, &id, envelope).await {
+                        tracing::debug!(agent_id = %id, %error, "could not ask for the inventory");
+                    }
+                }
+                Ok(Outcome::Stored { changes }) => {
+                    tracing::debug!(agent_id = %id, changes, "inventory stored")
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(agent_id = %id, %error, "could not record the inventory")
+                }
+            }
+            drop(turn);
+        });
+    }
+
     async fn handle(&mut self, sequence: u64, payload: Option<Payload>) {
         let id = &self.id;
         match payload {
@@ -944,6 +1005,10 @@ impl Connection {
                         tracing::warn!(agent_id = %id, %error, "could not record the discovery report");
                     }
                 });
+            }
+            Some(Payload::Inventory(report)) => self.asset_inventory(sequence, report).await,
+            Some(Payload::InventoryRequest(_)) => {
+                tracing::warn!(agent_id = %id, sequence, "ignoring InventoryRequest sent upstream")
             }
             Some(Payload::RelayMirrors(report)) => {
                 tracing::debug!(agent_id = %id, sequence, mirrors = report.mirrors.len(), "relay mirror report");

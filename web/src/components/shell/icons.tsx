@@ -54,6 +54,7 @@ const PATHS = {
   ai: <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />,
   bell: <path d="M4 11V7a4 4 0 0 1 8 0v4l1 1H3zM7 14h2" />,
   reports: <path d="M3 2h7l3 3v9H3zM6 11V8M8 11V6M10 11V9" />,
+  inventory: <path d="M2 5l6-3 6 3v6l-6 3-6-3zM2 5l6 3 6-3M8 8v6" />,
   dashboards: <path d="M2 2h5v6H2zM9 2h5v3H9zM9 7h5v7H9zM2 10h5v4H2z" />,
   backups: <path d="M3 4h10v3H3zM4 7v6h8V7M7 10h2" />,
   plugin: <path d="M6 2v3M10 2v3M4 5h8v3a4 4 0 0 1-8 0zM8 12v2" />,

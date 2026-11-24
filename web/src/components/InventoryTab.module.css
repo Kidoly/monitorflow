@@ -1,0 +1,53 @@
+/* The Inventory tab (ADR-0187): boxes of facts and tables, no inner scroll. */
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.details {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Fields and buttons of one line share their bottom edge. */
+.row,
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+}
+
+.toolbar {
+  padding: 12px 16px 4px;
+  justify-content: space-between;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.field input {
+  color: var(--text);
+}
+
+.grow {
+  flex: 1 1 240px;
+}

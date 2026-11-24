@@ -114,6 +114,7 @@ pub struct Agent {
     reporting_again: bool,
     reports: Option<watch::Receiver<Option<PackageReport>>>,
     discovery: Option<watch::Receiver<Option<DiscoveryReport>>>,
+    inventory: Option<crate::inventory::Link>,
     on_open: Option<Arc<dyn Fn() + Send + Sync>>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
@@ -136,6 +137,7 @@ impl Agent {
             reporting_again: false,
             reports: None,
             discovery: None,
+            inventory: None,
             on_open: None,
             sequence: 0,
         }
@@ -199,6 +201,17 @@ impl Agent {
     /// once when connected, else on the next connection.
     pub fn with_discovery(mut self, reports: watch::Receiver<Option<DiscoveryReport>>) -> Self {
         self.discovery = Some(reports);
+        self
+    }
+
+    /// Sends the inventory published on `snapshots` (ADR-0187): its hash
+    /// when a stream opens, its changes when it changes, and what the
+    /// server asks for.
+    pub fn with_inventory(
+        mut self,
+        snapshots: watch::Receiver<Option<std::sync::Arc<crate::inventory::Snapshot>>>,
+    ) -> Self {
+        self.inventory = Some(crate::inventory::Link::new(snapshots));
         self
     }
 
@@ -306,6 +319,14 @@ impl Agent {
         if let Some(on_open) = &self.on_open {
             on_open();
         }
+        if let Some(report) = self
+            .inventory
+            .as_mut()
+            .and_then(crate::inventory::Link::opened)
+        {
+            let envelope = self.envelope(Payload::Inventory(report));
+            let _ = tx.try_send(envelope);
+        }
 
         let every = self.settings.heartbeat_interval;
         let mut heartbeat = interval_at(Instant::now() + every, every);
@@ -396,7 +417,27 @@ impl Agent {
                     let _ = tx.send(envelope).await;
                     None
                 }
+                snapshot = published(&mut self.inventory) => {
+                    if let Some(link) = &mut self.inventory {
+                        let report = link.report(snapshot);
+                        let envelope = self.envelope(Payload::Inventory(report));
+                        let _ = tx.send(envelope).await;
+                    }
+                    None
+                }
                 message = inbound.message() => match message {
+                    Ok(Some(Envelope { payload: Some(Payload::InventoryRequest(request)), sequence })) => {
+                        tracing::debug!(sequence, "inventory requested");
+                        let report = self
+                            .inventory
+                            .as_mut()
+                            .and_then(|link| link.requested(&request.known_hash));
+                        if let Some(report) = report {
+                            let envelope = self.envelope(Payload::Inventory(report));
+                            let _ = tx.send(envelope).await;
+                        }
+                        None
+                    }
                     Ok(Some(envelope)) => {
                         self.receive(envelope);
                         None
@@ -517,6 +558,8 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::ProbeConfigAck(_) => "probe_config_ack",
         Payload::ProbeTest(_) => "probe_test",
         Payload::ProbeTestResult(_) => "probe_test_result",
+        Payload::Inventory(_) => "inventory",
+        Payload::InventoryRequest(_) => "inventory_request",
     }
 }
 
@@ -540,6 +583,16 @@ async fn next_ack(sensors: &mut Option<StreamEnd>) -> Option<SensorConfigAck> {
 async fn next_result(commands: &mut Option<commands::StreamEnd>) -> Option<CommandResult> {
     match commands {
         Some(commands) => commands.results.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The next inventory published; never without a collector.
+async fn published(
+    link: &mut Option<crate::inventory::Link>,
+) -> std::sync::Arc<crate::inventory::Snapshot> {
+    match link {
+        Some(link) => link.published().await,
         None => std::future::pending().await,
     }
 }

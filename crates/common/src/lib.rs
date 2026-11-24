@@ -6,6 +6,7 @@ pub mod client;
 pub mod command;
 pub mod config;
 pub mod grpc_url;
+pub mod inventory;
 pub mod logging;
 pub mod mirror;
 pub mod plugin_grant;

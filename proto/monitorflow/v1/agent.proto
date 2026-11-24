@@ -7,6 +7,7 @@ syntax = "proto3";
 
 package monitorflow.v1;
 
+import "monitorflow/v1/inventory.proto";
 import "monitorflow/v1/packages.proto";
 
 // Long-lived bidirectional stream between an agent (or relay) and its upstream.
@@ -47,6 +48,10 @@ message Envelope {
     ProbeTest probe_test = 24;
     // Relay to server: what that check measured.
     ProbeTestResult probe_test_result = 25;
+    // Agent to server: what the machine is made of and runs (ADR-0187).
+    InventoryReport inventory = 26;
+    // Server to agent: send the inventory again (ADR-0187).
+    InventoryRequest inventory_request = 27;
     Command command = 20;
     CommandResult command_result = 21;
   }

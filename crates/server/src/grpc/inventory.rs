@@ -3,7 +3,7 @@
 //! a revoked row refuses the stream even with a valid certificate.
 
 use chrono::{DateTime, Utc};
-use monitorflow_common::proto::v1::{DiscoveryReport, Hello, RelayMirrors};
+use monitorflow_common::proto::v1::{DiscoveryReport, Hello, InventoryReport, RelayMirrors};
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
 use sqlx::{PgPool, Postgres, Transaction};
 use tonic::async_trait;
@@ -74,6 +74,15 @@ pub trait Inventory: Send + Sync + 'static {
         _report: DiscoveryReport,
     ) -> Result<(), InventoryError> {
         Ok(())
+    }
+    /// Records the hardware and software inventory of the agent `id`
+    /// (ADR-0187) and says whether the agent must send more.
+    async fn asset_inventory(
+        &self,
+        _id: &str,
+        _report: InventoryReport,
+    ) -> Result<crate::server_inventory::Outcome, InventoryError> {
+        Ok(crate::server_inventory::Outcome::Confirmed)
     }
 }
 
@@ -171,6 +180,14 @@ impl Inventory for DbInventory {
         }
         crate::discovery::record(&self.pool, id, received_at, &discovered, dropped).await?;
         Ok(())
+    }
+
+    async fn asset_inventory(
+        &self,
+        id: &str,
+        report: InventoryReport,
+    ) -> Result<crate::server_inventory::Outcome, InventoryError> {
+        Ok(crate::server_inventory::record(&self.pool, id, report).await?)
     }
 }
 
