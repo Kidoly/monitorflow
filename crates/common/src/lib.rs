@@ -12,6 +12,7 @@ pub mod plugin_grant;
 pub mod rate;
 pub mod redact;
 pub mod release;
+pub mod remote;
 #[cfg(all(unix, feature = "server-update"))]
 pub mod server_update;
 pub mod snapshot;

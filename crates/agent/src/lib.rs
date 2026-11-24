@@ -24,6 +24,8 @@ pub mod journald;
 pub mod os;
 pub mod packages;
 pub mod plugins;
+pub mod remote;
+pub mod remote_access;
 pub mod renew;
 pub mod self_update;
 pub mod sensor_config;

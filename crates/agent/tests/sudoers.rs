@@ -1,6 +1,6 @@
 //! `deploy/sudoers/monitorflow-agent` allows exactly the privileged command
 //! lines the agent runs (ADR-0031, ADR-0032, ADR-0035, ADR-0036,
-//! ADR-0053, ADR-0094), with the program
+//! ADR-0053, ADR-0094, ADR-0178), with the program
 //! paths of [`Tools::default`], no wildcard, and parses with `visudo -cf`
 //! where `visudo` is installed.
 
@@ -59,6 +59,7 @@ fn the_rules_are_the_agents_exact_command_lines() {
         format!("{agent} snapshots inspect"),
         format!("{agent} snapshots take"),
         format!("{agent} snapshots delete"),
+        format!("{agent} remote-shell"),
     ];
     assert_eq!(allowed(), expected);
     assert_eq!(tools.agent, Path::new("/usr/bin/monitorflow-agent"));

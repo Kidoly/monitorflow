@@ -67,6 +67,13 @@ enum Command {
         #[command(subcommand)]
         step: Option<SelfUpdateStep>,
     },
+    /// Start a remote terminal's shell as `remote.terminal_user`, run as
+    /// root through sudo by the agent (ADR-0178): reads a signed
+    /// `remote_session` command on stdin, checks it, then becomes that
+    /// account's login shell on the terminal of its stdout.
+    #[cfg(unix)]
+    #[command(hide = true)]
+    RemoteShell,
     /// Records the certificate authority of the install command as the one
     /// the root helpers trust (ADR-0108). Run as root by the installer,
     /// with the token in MONITORFLOW_ENROLLMENT_TOKEN.
@@ -91,6 +98,13 @@ enum Command {
         #[command(subcommand)]
         action: AiCommandsAction,
     },
+    /// Allow or refuse remote terminals opened from the web interface on
+    /// this host (ADR-0178): sets `remote.terminal` in `--config`, keeping
+    /// the rest of the file. Restart the agent afterwards.
+    RemoteAccess {
+        #[command(subcommand)]
+        what: RemoteAccessWhat,
+    },
     /// Check that only administrators and the agent's service own the
     /// folder of `--config` and what it holds, and may write there; the MSI
     /// package runs this before it writes the configuration (ADR-0050).
@@ -110,7 +124,6 @@ enum Command {
     },
 }
 
-#[cfg(windows)]
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 enum OnOff {
     On,
@@ -130,6 +143,20 @@ enum AiCommandsAction {
         #[arg(value_enum)]
         state: OnOff,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum RemoteAccessWhat {
+    /// `on` lets people of the roles the central server allows open a
+    /// terminal here, as the agent's user; `off` refuses it.
+    Terminal {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
+    /// The account terminals run as, on Linux, through a root helper that
+    /// checks each signed command; `none` goes back to the agent's user.
+    /// Never root unless named here.
+    TerminalUser { account: String },
 }
 
 #[cfg(unix)]
@@ -243,6 +270,19 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
             return tokio::task::spawn_blocking(move || snapshots(&path, command)).await?;
         }
         #[cfg(unix)]
+        Some(Command::RemoteShell) => {
+            let now = monitorflow_agent::self_update::unix_ms();
+            let path = cli.config.clone();
+            // Returns only when refused; the shell replaced it otherwise.
+            let refused = tokio::task::spawn_blocking(move || {
+                monitorflow_agent::remote::helper::run(&path, now)
+            })
+            .await?;
+            let Err(error) = refused;
+            eprintln!("monitorflow: remote terminal refused: {error}");
+            std::process::exit(1);
+        }
+        #[cfg(unix)]
         Some(Command::PinCa) => {
             let config: AgentConfig = config::load(&cli.config)?;
             let place = monitorflow_agent::helper_trust::Place::agent(&config.tls_paths());
@@ -261,6 +301,16 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         #[cfg(windows)]
         Some(Command::AiCommands { action }) => {
             return set_ai_commands(&cli.config, action).await;
+        }
+        Some(Command::RemoteAccess {
+            what: RemoteAccessWhat::Terminal { state },
+        }) => {
+            return set_remote_terminal(&cli.config, state == OnOff::On).await;
+        }
+        Some(Command::RemoteAccess {
+            what: RemoteAccessWhat::TerminalUser { account },
+        }) => {
+            return set_terminal_user(&cli.config, account).await;
         }
         #[cfg(windows)]
         Some(Command::CheckDataFolder) => {
@@ -355,6 +405,58 @@ async fn set_ai_commands(path: &Path, action: AiCommandsAction) -> anyhow::Resul
     Ok(())
 }
 
+/// `remote-access terminal on|off`: sets `remote.terminal`.
+async fn set_remote_terminal(path: &Path, on: bool) -> anyhow::Result<()> {
+    use monitorflow_agent::remote_access::{self, Outcome};
+
+    let file = path.to_owned();
+    let (outcome, _) = tokio::task::spawn_blocking(move || remote_access::set(&file, on)).await??;
+    let what = if on {
+        "remote terminals are allowed"
+    } else {
+        "remote terminals are refused"
+    };
+    #[cfg(unix)]
+    let restart = "systemctl restart monitorflow-agent";
+    #[cfg(windows)]
+    let restart = "Restart-Service MonitorFlowAgent";
+    match outcome {
+        Outcome::Unchanged => println!("{what} already ({})", path.display()),
+        Outcome::Changed => println!(
+            "{what} in {}; restart the agent to apply it: {restart}",
+            path.display()
+        ),
+    }
+    Ok(())
+}
+
+/// `remote-access terminal-user <account>|none`: sets `remote.terminal_user`.
+async fn set_terminal_user(path: &Path, account: String) -> anyhow::Result<()> {
+    use monitorflow_agent::remote_access::{self, Outcome};
+
+    let user = (account != "none").then_some(account);
+    let file = path.to_owned();
+    let chosen = user.clone();
+    let (outcome, _) =
+        tokio::task::spawn_blocking(move || remote_access::set_user(&file, chosen.as_deref()))
+            .await??;
+    let what = match &user {
+        Some(user) if user == "root" => {
+            "remote terminals run as root, with every right on this host".to_owned()
+        }
+        Some(user) => format!("remote terminals run as {user}"),
+        None => "remote terminals run as the agent's user".to_owned(),
+    };
+    match outcome {
+        Outcome::Unchanged => println!("{what} already ({})", path.display()),
+        Outcome::Changed => println!(
+            "{what} in {}; restart the agent to apply it",
+            path.display()
+        ),
+    }
+    Ok(())
+}
+
 /// Where the agent's logs go.
 #[derive(Debug, Clone, Copy)]
 enum Logs {
@@ -436,6 +538,17 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     let mut handlers = Handlers::default();
     let latest_report = platform_handlers(&config, &host, &mut handlers, &stop);
     let ai_switch = ai_handlers(&config, &mut handlers);
+    // Remote terminals (ADR-0178), only where the host allowed them.
+    let (remote, remote_end) = monitorflow_agent::remote::link(
+        config.remote.terminal,
+        Box::new(updates.clone()),
+        monitorflow_agent::remote::platform_spawner(config.remote.terminal_user.clone()),
+        monitorflow_agent::remote::platform_announce(),
+    );
+    handlers.register(
+        monitorflow_common::command::REMOTE_SESSION,
+        Arc::new(monitorflow_agent::remote::RemoteSessionHandler::new(remote)),
+    );
     let reporting = handlers.clone();
     let (commands_stream, commands_end) = commands::link();
     let ca_certs =
@@ -469,6 +582,7 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         .with_sensors(stream_end)
         .with_upload(uplink)
         .with_commands(commands_stream)
+        .with_remote(remote_end)
         .with_command_handlers(reporting, ai_switch.subscribe());
     if let Some(reports) = latest_report {
         agent = agent.with_reports(reports);

@@ -37,6 +37,8 @@ One command serves every server of a site, for 30 days by default[^0073]. Each s
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
 | `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. Either value also undoes what the web interface last set. Each server shows whether it accepts AI commands[^0064]. An open alert whose AI remediation stopped because they were off gets a new attempt by itself once they are allowed[^0165] |
 | `MF_AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page (`commands.from_web`), through a systemd drop-in. Without it, the web interface can only turn them off. Works on an installed agent too; `MF_AI_COMMANDS_FROM_WEB=0` takes it back. "Allow AI commands to be turned on from the web interface" on the Add servers page, ticked by default, adds it to the command; AI commands stay off until an administrator turns them on there[^0098][^0175] |
+| `MF_REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page in the web interface, as the agent's user, through the agent's connection: sets `[remote] terminal = true` in `agent.toml` with `monitorflow-agent remote-access terminal on`. Who may (administrators by default), recording and idle time are set on the central server; this line is the server's own consent, which the central server cannot give itself. Works on an installed agent too; `MF_REMOTE_TERMINAL=0` takes it back. "Allow a remote terminal" on the Add servers page, unticked by default, adds it[^0178] |
+| `MF_REMOTE_TERMINAL_USER=<account>` | The local account remote terminals run as (`[remote] terminal_user`), instead of the agent's user. A root helper checks each signed command before it starts that account's login shell; the central server cannot choose the account. Never root unless named here; `none` goes back to the agent's user. Linux only[^0178] |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
@@ -241,6 +243,7 @@ msiexec /i monitorflow-agent-0.11.0-x64.msi /qn /l*v install.log `
 | `ENROLLMENT_TOKEN` | Optional single-use token. The MSI log shows asterisks in its place. Remove it from `agent.toml` once connected (below) |
 | `REMOVE_DATA=1` | On uninstall, also deletes `%ProgramData%\MonitorFlow`: configuration, identity and logs |
 | `AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page, on a new install or an upgrade: sets `[commands] from_web = true` in `agent.toml`, as `ai-commands from-web on` does[^0098] |
+| `REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page, on a new install or an upgrade: sets `[remote] terminal = true` in `agent.toml`, as `remote-access terminal on` does; `REMOTE_TERMINAL=0` refuses it[^0178] |
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
 
@@ -356,6 +359,22 @@ The first line sets `[commands] shell = true` in `agent.toml` and leaves the res
 
 To let administrators turn AI commands on and off from the server's page instead, run `ai-commands from-web on` the same way, then restart the service; `ai-commands from-web off` takes it back. The MSI's `AI_COMMANDS_FROM_WEB=1` does the same at install[^0098].
 
+### Remote terminals
+
+People of the roles the central server allows can open a terminal on a server from its Terminal tab, through the agent's connection and its relay: nothing to open or install[^0178]. The server must allow it first, on the server itself:
+
+```
+sudo monitorflow-agent remote-access terminal on      # Linux, or MF_REMOTE_TERMINAL=1 with the installer
+sudo systemctl restart monitorflow-agent
+```
+
+```powershell
+& "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" remote-access terminal on
+Restart-Service MonitorFlowAgent
+```
+
+`remote-access terminal off` takes it back. The shell runs as the agent's user (`monitorflow` with a login shell on Linux, `NT SERVICE\MonitorFlowAgent` with Windows PowerShell on Windows). On Linux, `remote-access terminal-user <account>` (or `MF_REMOTE_TERMINAL_USER`) makes it that account's login shell instead, started by the root helper `remote-shell` once it checked the signed command; it is never root unless you name root there. Keystrokes and output are sealed end to end between the central server and the agent, so relays cannot read or change them. While a session is open, people logged in on the server are told who opened it (`wall` on Linux, `msg` on Windows), and again when it closes. Sessions close after the idle time the central server sets, 15 minutes by default, and after 12 hours.
+
 Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SERVICE\MonitorFlowAgent`, from `C:\`, with the system `PATH`, and is stopped with everything it started at the time limit. That account is not an administrator: it reads services, processes, the System and Application event logs, disks and network state, but cannot restart most services. To let AI restart one service after approval, grant the account that right on that service, for example with `sc.exe sdshow` and `sc.exe sdset`, adding `(A;;RPWPLCRC;;;S-1-5-80-546755567-1596817566-60379001-3258130523-3598288828)` (the service SID of `MonitorFlowAgent`). Without it, the command fails with "access denied" and the incident goes to a person.
 
 [^0007]: [ADR-0007: Enrollment bootstrap](adr/0007-enrollment-bootstrap.md)
@@ -382,6 +401,7 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0091]: [ADR-0091: System logs](adr/0091-system-logs.md)
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
+[^0178]: [ADR-0178: Remote terminals through the agent's connection](adr/0178-remote-terminals.md)
 [^0175]: [ADR-0175: A diagnosis for every alert, commands where allowed](adr/0175-diagnosis-for-every-alert.md)
 [^0103]: [ADR-0103: Plugins](adr/0103-plugins.md)
 [^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)

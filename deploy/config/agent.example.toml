@@ -104,6 +104,19 @@ upstream_url = "https://relay.example.com:7443"
 # it off. The installer's MF_AI_COMMANDS_FROM_WEB sets it.
 # from_web = false
 
+[remote]
+# Let people of the roles the central server allows open a terminal on
+# this host from its page in the web interface (ADR-0178), through the
+# agent's connection, as the agent's own user. The installer's
+# MF_REMOTE_TERMINAL and `monitorflow-agent remote-access terminal on|off`
+# set it; restart the agent after editing it by hand.
+# terminal = false
+# The local account terminals run as, on Linux, instead of the agent's
+# user: a root helper checks each signed command, then starts that
+# account's login shell. Never root unless named here. The installer's
+# MF_REMOTE_TERMINAL_USER and `remote-access terminal-user` set it.
+# terminal_user = "ops"
+
 [plugins]
 # Run the check plugins the central server gives this machine (ADR-0103):
 # WebAssembly modules in a sandbox with no file, program or network

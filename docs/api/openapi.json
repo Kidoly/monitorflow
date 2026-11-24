@@ -31012,6 +31012,466 @@
         }
       }
     },
+    "/api/v1/remote-sessions/{id}": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Get a remote session",
+        "description": "One remote session, as in the server's list.\n\n**Who**: those who may open terminals on its server, and the site's administrators. **Area**: `servers`.",
+        "operationId": "detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The session",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteSession"
+                },
+                "example": {
+                  "bytes_in": 412,
+                  "bytes_out": 18734,
+                  "close_reason": "closed by alice",
+                  "closed_at": "2026-11-23T09:41:15Z",
+                  "created_at": "2026-11-23T09:30:00Z",
+                  "duration_seconds": 673,
+                  "hostname": "web-1",
+                  "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
+                  "kind": "terminal",
+                  "opened_at": "2026-11-23T09:30:02Z",
+                  "recorded": true,
+                  "requested_by": "alice",
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The role may not see it: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remote-sessions/{id}/close": {
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Close a remote session",
+        "description": "Ends an open session, wherever it runs: the shell gets a hangup and the person in it sees who closed it. A session whose WebSocket never came closes at once, and its token stops working.\n\n**Who**: whoever opened it, or an administrator of its server's site. **Area**: `servers`. Audited as `remote_session.close_request`, then `remote_session.close`.",
+        "operationId": "close",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The session",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Closing"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Neither who opened it nor an administrator there: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It is already closed: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remote-sessions/{id}/recording": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Get a remote session's recording",
+        "description": "What a recorded session printed, in order, each chunk with its time after the session opened: written into a terminal of the session's size, it shows what the person saw. Keystrokes are not kept apart: what the terminal echoed is in it, and what it did not, such as a password, is not.\n\n**Who**: administrators of the server's site. **Area**: `servers`. Audited as `remote_session.recording_read`.",
+        "operationId": "recording",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The session",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteRecording"
+                },
+                "example": {
+                  "chunks": [
+                    {
+                      "at_ms": 120,
+                      "data": "YWxpY2VAd2ViLTE6fiQg"
+                    },
+                    {
+                      "at_ms": 4310,
+                      "data": "dXB0aW1lDQogMDk6MzA6MDYgdXAgMyBkYXlzDQo="
+                    }
+                  ],
+                  "session": {
+                    "bytes_in": 412,
+                    "bytes_out": 18734,
+                    "close_reason": "closed by alice",
+                    "closed_at": "2026-11-23T09:41:15Z",
+                    "created_at": "2026-11-23T09:30:00Z",
+                    "duration_seconds": 673,
+                    "hostname": "web-1",
+                    "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
+                    "kind": "terminal",
+                    "opened_at": "2026-11-23T09:30:02Z",
+                    "recorded": true,
+                    "requested_by": "alice",
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator there: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session, not recorded, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remote-sessions/{id}/socket": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Open a remote session's WebSocket",
+        "description": "The session's terminal, as a WebSocket (`Upgrade: websocket`). No key or cookie is needed: the first message must be a text message with the session's one-time token and the terminal's size, `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`, within 10 seconds.\n\nThen, from the central server: text messages `{\"type\": \"waiting\"}` while the agent opens the terminal, `{\"type\": \"opened\"}` once it did, `{\"type\": \"closed\", \"reason\": \"…\"}` at the end; and binary messages with what the terminal prints. To it: binary messages with keystrokes, and text messages `{\"type\": \"resize\", \"cols\": 100, \"rows\": 30}` or `{\"type\": \"close\"}`. Messages are at most 64 KiB.\n\nThe session closes after the idle time of the settings without keystrokes, when the shell exits, when the agent's connection drops, and after 12 hours.",
+        "operationId": "socket",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The session",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching to the WebSocket protocol"
+          },
+          "400": {
+            "description": "Not a WebSocket request"
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This central server does not run remote sessions: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/report-schedules": {
       "get": {
         "tags": [
@@ -32936,7 +33396,7 @@
           "servers"
         ],
         "summary": "Get a server",
-        "description": "One server: the fields of a listing row, plus the certificate MonitorFlow issued it last and the last time its AI commands were turned on or off from the web interface. A removed server stays readable here, with `revoked_at` set, for its history.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "description": "One server: the fields of a listing row, plus the certificate MonitorFlow issued it last and the last time its AI commands were turned on or off from the web interface, and what the key's person may do with remote terminals there (ADR-0178). A removed server stays readable here, with `revoked_at` set, for its history.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
         "operationId": "server",
         "parameters": [
           {
@@ -32990,6 +33450,12 @@
                   "package_updates": true,
                   "peer_id": "web-1",
                   "relay_id": null,
+                  "remote_terminal": {
+                    "can_open": true,
+                    "can_review": true,
+                    "idle_timeout_minutes": 15,
+                    "recorded": true
+                  },
                   "revoked_at": null,
                   "silenced_until": null,
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
@@ -35487,6 +35953,292 @@
           },
           "409": {
             "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/remote-sessions": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "List a server's remote sessions",
+        "description": "The server's last 100 remote sessions, newest first: who opened them, when, for how long, why they ended and whether they were recorded. Open ones have `closed_at` null.\n\n**Who**: those who may open terminals there, and the site's administrators. **Area**: `servers`.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RemoteSession"
+                  }
+                },
+                "example": [
+                  {
+                    "bytes_in": 412,
+                    "bytes_out": 18734,
+                    "close_reason": "closed by alice",
+                    "closed_at": "2026-11-23T09:41:15Z",
+                    "created_at": "2026-11-23T09:30:00Z",
+                    "duration_seconds": 673,
+                    "hostname": "web-1",
+                    "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
+                    "kind": "terminal",
+                    "opened_at": "2026-11-23T09:30:02Z",
+                    "recorded": true,
+                    "requested_by": "alice",
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  }
+                ]
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The role may not see them: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Start a remote terminal",
+        "description": "Starts a terminal on the server, through its agent's connection and its relay: no port to open and nothing to install. Answers the session and a one-time `token`, valid one minute: open the WebSocket at `socket` and send it first, with the terminal's size, as `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. Only then does the central server send the agent a signed `remote_session` command, which opens a login shell as the agent's own user, or on Linux as the account the host's administrator chose (`MF_REMOTE_TERMINAL_USER`); the central server cannot choose it.\n\nThe host must have allowed it: `command_kinds.remote_session` of the server is `accepted` where its administrator ran the installer with `MF_REMOTE_TERMINAL=1`, or `monitorflow-agent remote-access terminal on`. The central server cannot allow it by itself. While the session is open, people logged in on the server are told who opened it and whether it is recorded.\n\n**Who**: the role `GET /api/v1/settings/remote-access` names, or above, on the server's site. **Area**: `servers`. Audited as `remote_session.start`, then `remote_session.open` and `remote_session.close` with its duration. **Not safe to repeat**: each call starts another session.",
+        "operationId": "start",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRequest"
+              },
+              "example": {
+                "kind": "terminal"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The session, waiting for its WebSocket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteSessionStart"
+                },
+                "example": {
+                  "session": {
+                    "bytes_in": 0,
+                    "bytes_out": 0,
+                    "close_reason": null,
+                    "closed_at": null,
+                    "created_at": "2026-11-23T09:30:00Z",
+                    "duration_seconds": null,
+                    "hostname": "web-1",
+                    "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
+                    "kind": "terminal",
+                    "opened_at": null,
+                    "recorded": true,
+                    "requested_by": "alice",
+                    "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b"
+                  },
+                  "socket": "/api/v1/remote-sessions/0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e/socket",
+                  "token": "4f9a0c3e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f",
+                  "token_expires_at": "2026-11-23T09:31:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Another `kind` than `terminal`: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The role may not open terminals here: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, a device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The server is removed, its host did not allow terminals (the message gives the line that allows it), its agent is too old or not connected: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -39855,6 +40607,245 @@
           },
           "409": {
             "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/remote-access": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get the remote access settings",
+        "description": "Who may open remote terminals, whether sessions are recorded, when an idle one closes and how long recordings are kept. Each host must also allow terminals itself, which no setting here can change.\n\n**Who**: global administrators. **Area**: `administration`.",
+        "operationId": "get_settings",
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteAccessSettings"
+                },
+                "example": {
+                  "idle_timeout_minutes": 15,
+                  "min_role": "administrator",
+                  "record": true,
+                  "retention_days": 90
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Change the remote access settings",
+        "description": "Replaces the settings. `min_role` is the lowest role, on a server's site, that may open a terminal there: `operator`, `approver` or `administrator`; `null` lets nobody. New sessions follow the new values; open ones keep theirs.\n\n**Who**: global administrators. **Area**: `administration`. Audited as `settings.remote_access`.",
+        "operationId": "set_settings",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoteAccessSettings"
+              },
+              "example": {
+                "idle_timeout_minutes": 15,
+                "min_role": "administrator",
+                "record": true,
+                "retention_days": 90
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteAccessSettings"
+                },
+                "example": {
+                  "idle_timeout_minutes": 15,
+                  "min_role": "administrator",
+                  "record": true,
+                  "retention_days": 90
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`viewer`, or a number out of its range: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
             "content": {
               "application/json": {
                 "schema": {
@@ -60119,6 +61110,25 @@
           }
         }
       },
+      "RecordingChunk": {
+        "type": "object",
+        "description": "One write of a recording.",
+        "required": [
+          "at_ms",
+          "data"
+        ],
+        "properties": {
+          "at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds after the session opened."
+          },
+          "data": {
+            "type": "string",
+            "description": "What the terminal printed, base64: bytes as the shell wrote them,\nescape sequences included."
+          }
+        }
+      },
       "RejectRequest": {
         "type": "object",
         "description": "Body of `POST .../reject`.",
@@ -61383,6 +62393,202 @@
           }
         }
       },
+      "RemoteAccessSettings": {
+        "type": "object",
+        "description": "Who may open remote terminals, and how sessions run.",
+        "required": [
+          "record",
+          "idle_timeout_minutes",
+          "retention_days"
+        ],
+        "properties": {
+          "idle_timeout_minutes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "A session closes after this many minutes without input, 1 to 1440."
+          },
+          "min_role": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Role",
+                "description": "The lowest role, on a server's site, that may open a terminal\nthere; `null` lets nobody. Viewers never may."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "record": {
+            "type": "boolean",
+            "description": "Whether what sessions print is kept, for replay by the site's\nadministrators."
+          },
+          "retention_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Recordings older than this many days are deleted, 1 to 3650."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RemoteRecording": {
+        "type": "object",
+        "description": "Answer of `GET /api/remote-sessions/{id}/recording`.",
+        "required": [
+          "session",
+          "chunks"
+        ],
+        "properties": {
+          "chunks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecordingChunk"
+            },
+            "description": "In order; replaying them into a terminal of the session's size\nshows what it showed."
+          },
+          "session": {
+            "$ref": "#/components/schemas/RemoteSession"
+          }
+        }
+      },
+      "RemoteSession": {
+        "type": "object",
+        "description": "A remote session.",
+        "required": [
+          "id",
+          "server_id",
+          "hostname",
+          "kind",
+          "requested_by",
+          "created_at",
+          "recorded",
+          "bytes_in",
+          "bytes_out"
+        ],
+        "properties": {
+          "bytes_in": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes typed."
+          },
+          "bytes_out": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes the terminal printed."
+          },
+          "close_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it ended, in plain words; `null` while it is open."
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` while it is open."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "From opening to closing, or to now while open; `null` if it never\nopened."
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`terminal`."
+          },
+          "opened_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the agent opened the terminal; `null` if it never did."
+          },
+          "recorded": {
+            "type": "boolean"
+          },
+          "requested_by": {
+            "type": "string",
+            "description": "The username of who opened it, kept when the account goes."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RemoteSessionStart": {
+        "type": "object",
+        "description": "Answer of `POST /api/servers/{id}/remote-sessions`.",
+        "required": [
+          "session",
+          "token",
+          "token_expires_at",
+          "socket"
+        ],
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/RemoteSession"
+          },
+          "socket": {
+            "type": "string",
+            "description": "The WebSocket's path, `/api/v1/remote-sessions/{id}/socket` through\nthe public API."
+          },
+          "token": {
+            "type": "string",
+            "description": "Send it as the first WebSocket message, with the terminal's size:\n`{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. It works once."
+          },
+          "token_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RemoteTerminalAccess": {
+        "type": "object",
+        "description": "What `GET /api/servers/{id}` says about remote terminals for the\nperson asking.",
+        "required": [
+          "can_open",
+          "can_review",
+          "recorded",
+          "idle_timeout_minutes"
+        ],
+        "properties": {
+          "can_open": {
+            "type": "boolean",
+            "description": "Whether this person's role lets them open a terminal here. The\nagent must also allow it: `command_kinds.remote_session` is\n`accepted`."
+          },
+          "can_review": {
+            "type": "boolean",
+            "description": "Whether this person may see the past sessions of this server."
+          },
+          "idle_timeout_minutes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "recorded": {
+            "type": "boolean",
+            "description": "Whether new sessions are recorded."
+          }
+        }
+      },
       "ReportSchedule": {
         "type": "object",
         "description": "One schedule.",
@@ -62308,6 +63514,9 @@
           },
           {
             "type": "object",
+            "required": [
+              "remote_terminal"
+            ],
             "properties": {
               "ai_commands_change": {
                 "oneOf": [
@@ -62330,6 +63539,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "remote_terminal": {
+                "$ref": "#/components/schemas/RemoteTerminalAccess",
+                "description": "What this person may do with remote terminals here (ADR-0178)."
               }
             }
           }
@@ -64984,6 +66197,20 @@
             "description": "Unix seconds, within the range."
           }
         }
+      },
+      "StartRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/remote-sessions`.",
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`terminal`, the only kind for now; the default."
+          }
+        },
+        "additionalProperties": false
       },
       "StateCell": {
         "type": "object",

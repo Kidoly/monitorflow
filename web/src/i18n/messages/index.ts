@@ -31,6 +31,7 @@ import * as plugins from "./plugins";
 import * as psa from "./psa";
 import * as relays from "./relays";
 import * as remediation from "./remediation";
+import * as remote from "./remote";
 import * as reports from "./reports";
 import * as rollback from "./rollback";
 import * as rules from "./rules";
@@ -81,6 +82,7 @@ export const en = {
   psa: psa.en,
   relays: relays.en,
   remediation: remediation.en,
+  remote: remote.en,
   reports: reports.en,
   rollback: rollback.en,
   rules: rules.en,
@@ -130,6 +132,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   psa: psa.fr,
   relays: relays.fr,
   remediation: remediation.fr,
+  remote: remote.fr,
   reports: reports.fr,
   rollback: rollback.fr,
   rules: rules.fr,

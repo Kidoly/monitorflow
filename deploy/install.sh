@@ -43,6 +43,14 @@
 #   MF_AI_COMMANDS_FROM_WEB=1  agent only: let the web interface turn AI
 #                    commands on and off (commands.from_web, ADR-0098); it
 #                    can always turn them off. 0 takes that back.
+#   MF_REMOTE_TERMINAL=1  agent only: let people of the roles the central
+#                    server allows open a terminal on this host from its page,
+#                    as the agent's user (remote.terminal, ADR-0178), also on a
+#                    host already installed; 0 takes that back.
+#   MF_REMOTE_TERMINAL_USER=name  agent only: the local account remote
+#                    terminals run as (remote.terminal_user), through a root
+#                    helper that checks each signed command; never root unless
+#                    named here. "none" goes back to the agent's own user.
 #   MF_UNINSTALL=1   remove the binary, service and sudo rules; keep the
 #                    configuration and identity. With MF_PURGE=1, remove
 #                    those and the service's user too.
@@ -96,6 +104,8 @@ MF_MIRROR_URL=${MF_MIRROR_URL:-}
 MF_MIRROR=${MF_MIRROR:-}
 MF_ALLOW_COMMANDS=${MF_ALLOW_COMMANDS:-}
 MF_AI_COMMANDS_FROM_WEB=${MF_AI_COMMANDS_FROM_WEB:-}
+MF_REMOTE_TERMINAL=${MF_REMOTE_TERMINAL:-}
+MF_REMOTE_TERMINAL_USER=${MF_REMOTE_TERMINAL_USER:-}
 
 # Public keys that sign releases (ADR-0053), filled in from
 # deploy/release-keys.pem by deploy/release-files.sh.
@@ -369,6 +379,19 @@ case $MF_AI_COMMANDS_FROM_WEB in
     *) die "MF_AI_COMMANDS_FROM_WEB must be 1 or 0" ;;
 esac
 [ -z "$MF_AI_COMMANDS_FROM_WEB" ] || [ "$MF_ROLE" = agent ] || die "MF_AI_COMMANDS_FROM_WEB is for agents"
+case $MF_REMOTE_TERMINAL in
+    '' | 0 | 1) ;;
+    *) die "MF_REMOTE_TERMINAL must be 1 or 0" ;;
+esac
+[ -z "$MF_REMOTE_TERMINAL" ] || [ "$MF_ROLE" = agent ] || die "MF_REMOTE_TERMINAL is for agents"
+if [ -n "$MF_REMOTE_TERMINAL_USER" ]; then
+    [ "$MF_ROLE" = agent ] || die "MF_REMOTE_TERMINAL_USER is for agents"
+    case $MF_REMOTE_TERMINAL_USER in
+        none) ;;
+        [a-z_]*[!a-z0-9_.-]* | [!a-z_]*) die "MF_REMOTE_TERMINAL_USER must be a local account name, or none" ;;
+        *) getent passwd "$MF_REMOTE_TERMINAL_USER" >/dev/null || die "MF_REMOTE_TERMINAL_USER: no local account $MF_REMOTE_TERMINAL_USER" ;;
+    esac
+fi
 
 if [ -n "$MF_DOWNLOAD_URL" ]; then
     [ -z "$MF_VERSION" ] || die "MF_VERSION selects a GitHub release; with MF_DOWNLOAD_URL, point it at the files of that version instead"
@@ -467,6 +490,33 @@ elif [ -n "$upstream_url" ]; then
     chmod 0640 "$CONF"
     say "wrote $CONF for $upstream_url"
 fi
+
+# In agent.toml, which root owns: the agent's user cannot change it.
+case $MF_REMOTE_TERMINAL in
+    1)
+        "$BIN" --config "$CONF" remote-access terminal on >/dev/null
+        say "people allowed on the central server can open a terminal on this host from its page; MF_REMOTE_TERMINAL=0 takes that back"
+        ;;
+    0)
+        "$BIN" --config "$CONF" remote-access terminal off >/dev/null
+        say "remote terminals are refused on this host"
+        ;;
+esac
+case $MF_REMOTE_TERMINAL_USER in
+    '') ;;
+    none)
+        "$BIN" --config "$CONF" remote-access terminal-user none >/dev/null
+        say "remote terminals run as the agent's user $RUN_USER"
+        ;;
+    *)
+        "$BIN" --config "$CONF" remote-access terminal-user "$MF_REMOTE_TERMINAL_USER" >/dev/null
+        if [ "$MF_REMOTE_TERMINAL_USER" = root ]; then
+            say "warning: remote terminals run as root, with every right on this host; MF_REMOTE_TERMINAL_USER=none takes that back"
+        else
+            say "remote terminals run as $MF_REMOTE_TERMINAL_USER; MF_REMOTE_TERMINAL_USER=none takes that back"
+        fi
+        ;;
+esac
 
 pin_ca
 systemctl enable --quiet "$SERVICE"

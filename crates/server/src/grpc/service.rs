@@ -36,6 +36,7 @@ use crate::commands::Commands;
 use crate::ingest::{self, Identity, Ingest, LogRecord};
 use crate::probes::Probes;
 use crate::relay_commands::RelayCommands;
+use crate::remote::RemoteHub;
 use crate::renew::PresentedCert;
 use crate::sensor_config::{Resolved, SensorConfigs};
 
@@ -193,6 +194,7 @@ pub struct AgentStreamService {
     probes: Option<Probes>,
     commands: Option<Commands>,
     relay_commands: Option<RelayCommands>,
+    remote: Option<RemoteHub>,
     settings: StreamSettings,
     /// Started by the first stream, which runs on the runtime.
     seen: Arc<OnceLock<SeenWriter>>,
@@ -212,6 +214,7 @@ impl AgentStreamService {
             probes: None,
             commands: None,
             relay_commands: None,
+            remote: None,
             settings,
             seen: Arc::default(),
         }
@@ -248,6 +251,12 @@ impl AgentStreamService {
     /// no incident opens.
     pub fn with_alerts(mut self, alerts: Alerts) -> Self {
         self.alerts = Some(alerts);
+        self
+    }
+
+    /// Carries the frames of agents' remote sessions (ADR-0178).
+    pub fn with_remote(mut self, remote: RemoteHub) -> Self {
+        self.remote = Some(remote);
         self
     }
 
@@ -501,6 +510,7 @@ impl AgentService for AgentStreamService {
             probes: self.probes.clone(),
             commands: self.commands.clone(),
             relay_commands: self.relay_commands.clone(),
+            remote: self.remote.clone(),
             event,
             invalid_logged: None,
             log_limit: ingest::journal::LogLimit::default(),
@@ -564,6 +574,7 @@ struct Connection {
     probes: Option<Probes>,
     commands: Option<Commands>,
     relay_commands: Option<RelayCommands>,
+    remote: Option<RemoteHub>,
     event: StreamEvent,
     /// When invalid samples were last logged.
     invalid_logged: Option<Instant>,
@@ -878,6 +889,12 @@ impl Connection {
                     probes.ingest(id, results);
                 }
                 _ => tracing::debug!(agent_id = %id, sequence, "ignoring probe results"),
+            },
+            // Only an agent's own stream carries its sessions (ADR-0178);
+            // the frames are sealed end to end, so the hub only routes them.
+            Some(Payload::Remote(frame)) => match (&self.remote, self.role) {
+                (Some(remote), PeerRole::Agent) => remote.from_agent(id, frame).await,
+                _ => tracing::debug!(agent_id = %id, sequence, "ignoring a remote session frame"),
             },
             Some(Payload::ProbeTest(_)) => {
                 tracing::warn!(agent_id = %id, sequence, "ignoring ProbeTest sent upstream")

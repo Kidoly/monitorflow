@@ -585,6 +585,14 @@ async fn main() -> anyhow::Result<()> {
         .with_enabled_override(config.auto_update.enabled)
         .with_registry(registry.clone())
         .with_relay_commands(relay_commands.clone());
+    // Remote terminals (ADR-0178), carried by the agents' streams.
+    let remote = monitorflow_server::remote::RemoteHub::spawn(
+        pool.clone(),
+        registry.clone(),
+        ca.clone(),
+        Some(commands.clone()),
+    );
+    let service = service.with_remote(remote.clone());
     let api_state = ApiState::new(pool.clone(), registry, api_settings)
         .with_probes(probes.clone())
         .with_metrics(
@@ -602,6 +610,7 @@ async fn main() -> anyhow::Result<()> {
         .with_crl(crl.clone())
         .with_ca_rotation(rotator.clone())
         .with_commands(commands.clone())
+        .with_remote(remote)
         .with_relay_commands(relay_commands.clone())
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());

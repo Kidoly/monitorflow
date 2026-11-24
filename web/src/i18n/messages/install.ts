@@ -97,6 +97,8 @@ export const en = {
   "agent.relayInvalid": "Enter a name or IP address, with an optional port; IPv6 addresses in brackets.",
   "agent.aiFromWeb": "Allow AI commands to be turned on from the web interface",
   "agent.aiFromWebNote": "(administrators can then turn AI commands on and off from the server's page; they stay off until someone does. Without it, they can only turn them off)",
+  "agent.remoteTerminal": "Allow a remote terminal",
+  "agent.remoteTerminalNote": "(people of the roles allowed in Server settings can then open a terminal on the server from its page, as the agent's user unless MF_REMOTE_TERMINAL_USER names another account. Sessions are audited and can be recorded)",
   "command.unavailable": "{name}: {reason}",
   "relay.title": "Install the relay",
   "relay.central":
@@ -298,6 +300,8 @@ export const fr: Translation<typeof en> = {
   "agent.relayInvalid": "Saisissez un nom ou une adresse IP, avec un port facultatif ; les adresses IPv6 entre crochets.",
   "agent.aiFromWeb": "Autoriser l’activation des commandes IA depuis l’interface web",
   "agent.aiFromWebNote": "(les administrateurs peuvent alors activer et désactiver les commandes IA depuis la page du serveur ; elles restent désactivées tant que personne ne le fait. Sans cela, ils peuvent seulement les désactiver)",
+  "agent.remoteTerminal": "Autoriser un terminal à distance",
+  "agent.remoteTerminalNote": "(les personnes des rôles autorisés dans les réglages du serveur central peuvent alors ouvrir un terminal sur le serveur depuis sa page, avec l’utilisateur de l’agent, sauf si MF_REMOTE_TERMINAL_USER nomme un autre compte. Les sessions sont tracées dans le journal d’audit et peuvent être enregistrées)",
   "command.unavailable": "{name} : {reason}",
   "relay.title": "Installer le relais",
   "relay.central":
