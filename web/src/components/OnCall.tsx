@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type FormEvent, useCallback, useState } from "react";
 
 import { rich, t } from "@/i18n";
@@ -36,6 +37,7 @@ import {
   weekdayName,
   who,
 } from "@/lib/onCall";
+import { MOBILE_PHONE_PATH } from "@/lib/mobile";
 import { useScope } from "@/lib/scope";
 import { fromLocalInput } from "@/lib/silences";
 import { usePolledData } from "@/lib/usePolledData";
@@ -130,6 +132,12 @@ function ContactSection() {
           {t("onCall.contact.title")}
         </span>
         <span className={admin.dim}>{t("onCall.contact.intro")}</span>
+        {data && (
+          <span className={admin.dim}>
+            {data.phones ? t("onCall.contact.phones", { count: data.phones }) : t("onCall.contact.noPhone")}{" "}
+            <Link href={MOBILE_PHONE_PATH}>{t("onCall.contact.managePhones")}</Link>
+          </span>
+        )}
       </div>
       <div className={styles.body}>
         {!data && error !== null ? (

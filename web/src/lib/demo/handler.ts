@@ -134,6 +134,8 @@ const ROUTES: [RegExp, Handler][] = [
     local_administrators: 1,
   })],
   [/^\/api\/me\/preferences$/, () => preferences],
+  // The phone pages (ADR-0186): no phone yet; adding one is a write the demo refuses.
+  [/^\/api\/me\/phones$/, () => ({ phones: [], push_key: "BA", session_days: 90, idle_days: 30 })],
 
   // Fleet
   [/^\/api\/servers$/, (_, q) => {

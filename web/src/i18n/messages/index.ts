@@ -24,6 +24,7 @@ import * as integrations from "./integrations";
 import * as license from "./license";
 import * as maintenance from "./maintenance";
 import * as mirrors from "./mirrors";
+import * as mobile from "./mobile";
 import * as monitoring from "./monitoring";
 import * as notifications from "./notifications";
 import * as onCall from "./onCall";
@@ -74,6 +75,7 @@ export const en = {
   license: license.en,
   maintenance: maintenance.en,
   mirrors: mirrors.en,
+  mobile: mobile.en,
   monitoring: monitoring.en,
   notifications: notifications.en,
   onCall: onCall.en,
@@ -123,6 +125,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   license: license.fr,
   maintenance: maintenance.fr,
   mirrors: mirrors.fr,
+  mobile: mobile.fr,
   monitoring: monitoring.fr,
   notifications: notifications.fr,
   onCall: onCall.fr,
