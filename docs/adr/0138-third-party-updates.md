@@ -1,7 +1,7 @@
 # ADR-0138: Third-party updates
 
 Date: 2026-11-16
-Status: accepted; Windows details in ADR-0139, Linux details in ADR-0140
+Status: accepted; Windows details in ADR-0139, Linux details in ADR-0140; held apps since ADR-0188
 
 ## Context
 

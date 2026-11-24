@@ -1,7 +1,7 @@
 # ADR-0049: Windows Update
 
 Date: 2026-10-30
-Status: accepted; the update source is reported since ADR-0086; the service runs winget since ADR-0139
+Status: accepted; the update source is reported since ADR-0086; the service runs winget since ADR-0139; approvals and holds since ADR-0188
 
 ## Context
 
