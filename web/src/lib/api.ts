@@ -2940,6 +2940,10 @@ export interface UpdateSpec {
   include_os?: boolean;
   /** Third-party managers to update after the OS (ADR-0138). */
   third_party?: ThirdPartySelection[];
+  /** Windows Update classifications approved (ADR-0188); empty is every one but Upgrades. Absent from older servers. */
+  classifications?: string[];
+  /** Windows updates never installed: KB numbers or update IDs (ADR-0188). Absent from older servers. */
+  hold?: string[];
 }
 
 /** A third-party package manager (ADR-0138): winget on Windows, Flatpak and Snap on Linux. */
@@ -2949,6 +2953,53 @@ export type ThirdPartyManagerName = "winget" | "flatpak" | "snap";
 export interface ThirdPartySelection {
   manager: ThirdPartyManagerName;
   packages: string[];
+  /** App IDs never updated (ADR-0188); winget only. */
+  hold?: string[];
+}
+
+/** Software managers of the catalogue (ADR-0188): winget only for now. */
+export type SoftwareManager = "winget";
+
+/** One entry of the software catalogue (ADR-0188). */
+export interface SoftwareEntry {
+  id: string;
+  /** Null: shared by every customer. */
+  customer_id: string | null;
+  name: string;
+  manager: SoftwareManager;
+  /** The winget ID, like `7zip.7zip`. */
+  package_id: string;
+  source: string;
+  description: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Body of `POST /api/software` and `PUT /api/software/{id}`. */
+export interface SoftwareRequest {
+  /** Null or absent: shared by every customer, global administrators only. */
+  customer_id?: string | null;
+  name: string;
+  manager?: SoftwareManager;
+  package_id: string;
+  source?: string;
+  description?: string;
+}
+
+/** Install or remove catalogue entries (ADR-0188). */
+export type SoftwareAction = "install" | "remove";
+
+/** A software campaign of a `CampaignRequest`: catalogue entries by ID. */
+export interface SoftwareSelection {
+  action: SoftwareAction;
+  catalog_ids: string[];
+}
+
+/** A software campaign as saved: its entries as they were resolved, kept if later deleted. */
+export interface CampaignSoftware {
+  action: SoftwareAction;
+  packages: { catalog_id: string; name: string; manager: SoftwareManager; id: string; source: string }[];
 }
 
 /** Published mirror snapshots a campaign installs from (ADR-0038). */
@@ -2986,6 +3037,8 @@ export interface Campaign {
   sources: SourcesPin | null;
   /** Set for an agent update campaign: the version agents update to (ADR-0053). */
   agent_version: string | null;
+  /** Set for a software campaign (ADR-0188); absent from older servers. */
+  software?: CampaignSoftware | null;
   /** The request's `server_ids` and `waves` as last written; null before ADR-0179, absent from older servers. */
   server_ids?: string[] | null;
   wave_specs?: WaveSpec[] | null;
@@ -3009,6 +3062,8 @@ export interface CampaignRunSettings {
   wave_specs: WaveSpec[];
   spec: UpdateSpec;
   agent_version: string | null;
+  /** Set for a software campaign (ADR-0188). */
+  software?: CampaignSoftware | null;
   command_ttl_s: number;
   failure_threshold: FailureThreshold;
   windows: CampaignWindow[];
@@ -3101,6 +3156,12 @@ export interface CampaignRequest {
   third_party?: ThirdPartySelection[];
   /** Mirror snapshots to pin (ADR-0038); the form keeps those of the campaign it edits. */
   sources?: SourcesPin;
+  /** Windows Update classifications approved (ADR-0188); empty or absent is every one but Upgrades. */
+  classifications?: string[];
+  /** Windows updates never installed: KB numbers or update IDs (ADR-0188). */
+  hold?: string[];
+  /** A software campaign (ADR-0188): Windows servers only, no packages nor apps. */
+  software?: SoftwareSelection;
 }
 
 /** A package of a server's latest report (ADR-0031). */
@@ -5328,6 +5389,22 @@ export const api = {
   /** The past runs of a campaign, newest first (ADR-0173). */
   campaignRuns: (id: string, signal?: AbortSignal) =>
     request<{ runs: CampaignRun[] }>(`/api/campaigns/${encodeURIComponent(id)}/runs`, { signal }),
+
+  /** The software catalogue (ADR-0188): shared entries and those of `customerId`, or of every visible customer. */
+  softwareCatalog: (customerId?: string, signal?: AbortSignal) =>
+    request<{ software: SoftwareEntry[] }>(
+      `/api/software${customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ""}`,
+      { signal },
+    ),
+
+  /** Adds a catalogue entry; 409 when the package is already listed for that customer. */
+  createSoftware: (body: SoftwareRequest) => request<SoftwareEntry>("/api/software", { method: "POST", body }),
+
+  /** Changes a catalogue entry; its customer stays the same. */
+  updateSoftware: (id: string, body: SoftwareRequest) =>
+    request<SoftwareEntry>(`/api/software/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteSoftware: (id: string) => request<void>(`/api/software/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** 409 when the campaign's state does not allow `action`. */
   campaignAction: (id: string, action: CampaignAction) =>

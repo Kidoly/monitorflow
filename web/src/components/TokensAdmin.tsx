@@ -626,6 +626,8 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   // Ticked by default (ADR-0175): the server's page can then turn AI
   // commands on; nothing runs until someone does.
   const [aiFromWeb, setAiFromWeb] = useState(true);
+  // Off by default (ADR-0188): software from the catalogue, on Windows only.
+  const [softwareFromWeb, setSoftwareFromWeb] = useState(false);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
   const origin = pageOrigin();
@@ -638,7 +640,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
     {
       name: "Windows",
       note: t("install.windows.note"),
-      command: windowsInstallCommand(token, source, origin, through, aiFromWeb),
+      command: windowsInstallCommand(token, source, origin, through, aiFromWeb, softwareFromWeb),
     },
   ];
   // One note when both commands are missing for the same reason.
@@ -679,6 +681,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
         </p>
       )}
       <Switch checked={aiFromWeb} onChange={setAiFromWeb} label={t("install.agent.aiFromWeb")} note={t("install.agent.aiFromWebNote")} />
+      <Switch
+        checked={softwareFromWeb}
+        onChange={setSoftwareFromWeb}
+        label={t("install.agent.softwareFromWeb")}
+        note={t("install.agent.softwareFromWebNote")}
+      />
       {shared ? (
         <Banner tone="warn">{shared}</Banner>
       ) : (

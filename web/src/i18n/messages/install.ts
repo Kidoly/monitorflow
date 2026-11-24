@@ -97,6 +97,8 @@ export const en = {
   "agent.relayInvalid": "Enter a name or IP address, with an optional port; IPv6 addresses in brackets.",
   "agent.aiFromWeb": "Allow AI commands to be turned on from the web interface",
   "agent.aiFromWebNote": "(administrators can then turn AI commands on and off from the server's page; they stay off until someone does. Without it, they can only turn them off)",
+  "agent.softwareFromWeb": "Allow installing and removing software from the web interface",
+  "agent.softwareFromWebNote": "(Windows servers: administrators can then install and remove software of the catalogue. Linux comes later)",
   "command.unavailable": "{name}: {reason}",
   "relay.title": "Install the relay",
   "relay.central":
@@ -298,6 +300,8 @@ export const fr: Translation<typeof en> = {
   "agent.relayInvalid": "Saisissez un nom ou une adresse IP, avec un port facultatif ; les adresses IPv6 entre crochets.",
   "agent.aiFromWeb": "Autoriser l’activation des commandes IA depuis l’interface web",
   "agent.aiFromWebNote": "(les administrateurs peuvent alors activer et désactiver les commandes IA depuis la page du serveur ; elles restent désactivées tant que personne ne le fait. Sans cela, ils peuvent seulement les désactiver)",
+  "agent.softwareFromWeb": "Autoriser l’installation et la suppression de logiciels depuis l’interface web",
+  "agent.softwareFromWebNote": "(serveurs Windows : les administrateurs peuvent alors installer et supprimer les logiciels du catalogue. Linux viendra plus tard)",
   "command.unavailable": "{name} : {reason}",
   "relay.title": "Installer le relais",
   "relay.central":

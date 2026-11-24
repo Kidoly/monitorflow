@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 
@@ -11,6 +12,7 @@ import {
   type Me,
   type Server,
   type Site,
+  type SoftwareEntry,
   api,
   describeError,
   isAbortError,
@@ -21,7 +23,9 @@ import {
   type WaveDraft,
   MANAGER_NAMES,
   THIRD_PARTY_MANAGERS,
+  WINDOWS_CLASSIFICATIONS,
   campaignTargets,
+  classificationName,
   copyName,
   draftFromCampaign,
   editMode,
@@ -38,7 +42,7 @@ import {
 } from "@/lib/campaigns";
 import { formatDuration } from "@/lib/format";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
-import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
+import { CAMPAIGNS_PATH, SOFTWARE_CATALOG_PATH, campaignHref } from "@/lib/routes";
 import { UUID } from "@/lib/uuid";
 import { Switch } from "@/components/ui/Switch";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -58,6 +62,7 @@ const UPDATE_KINDS: [UpdateKind, PlainKey][] = [
   ["security", "campaigns.form.security"],
   ["packages", "campaigns.form.packages"],
   ["agent", "campaigns.form.agent"],
+  ["software", "campaigns.form.software"],
 ];
 
 /** `/campaigns/new/`; `?edit=<id>` edits a campaign, `?from=<id>` starts a copy of one (ADR-0179). */
@@ -148,6 +153,26 @@ export function CampaignForm({
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The software catalogue of the customer, read once a software campaign is chosen (ADR-0188).
+  const [catalog, setCatalog] = useState<{ customerId: string; software: SoftwareEntry[] } | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const softwareUpdate = draft.update === "software";
+
+  useEffect(() => {
+    if (!softwareUpdate || !draft.customerId) return;
+    const controller = new AbortController();
+    const customerId = draft.customerId;
+    api.softwareCatalog(customerId, controller.signal).then(
+      (list) => {
+        setCatalog({ customerId, software: list.software });
+        setCatalogError(null);
+      },
+      (e: unknown) => {
+        if (!isAbortError(e)) setCatalogError(describeError(e));
+      },
+    );
+    return () => controller.abort();
+  }, [softwareUpdate, draft.customerId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -193,10 +218,25 @@ export function CampaignForm({
     .filter((s) => s.customer_id === draft.customerId && s.revoked_at === null)
     .sort((a, b) => a.site_name.localeCompare(b.site_name) || a.hostname.localeCompare(b.hostname));
   const agentUpdate = draft.update === "agent";
-  const appsOnly = !agentUpdate && draft.sources === "apps" ? draft.managers : null;
-  const targets = campaignTargets(inventory.servers, draft.customerId, draft.siteId, draft.serverIds, agentUpdate, appsOnly);
+  const appsOnly = !agentUpdate && !softwareUpdate && draft.sources === "apps" ? draft.managers : null;
+  const targets = campaignTargets(
+    inventory.servers,
+    draft.customerId,
+    draft.siteId,
+    draft.serverIds,
+    agentUpdate,
+    appsOnly,
+    softwareUpdate,
+  );
   const noPackages = (s: Server) =>
-    appsOnly ? !appsOnly.some((m) => managerFits(m, s.os_family)) : !agentUpdate && s.package_updates === false;
+    softwareUpdate
+      ? s.os_family !== "windows"
+      : appsOnly
+        ? !appsOnly.some((m) => managerFits(m, s.os_family))
+        : !agentUpdate && s.package_updates === false;
+  // OS updates of Windows servers take approved classifications and held updates (ADR-0188).
+  const osUpdate = !agentUpdate && !softwareUpdate && includesOs(draft.sources);
+  const wingetApps = !agentUpdate && !softwareUpdate && includesApps(draft.sources) && draft.managers.includes("winget");
   const leftOut = servers.filter((s) => noPackages(s) && (s.site_id === draft.siteId || draft.serverIds.includes(s.id))).length;
   const request =
     locked && source
@@ -255,7 +295,7 @@ export function CampaignForm({
                 className={fieldClass}
                 value={draft.customerId}
                 disabled={locked}
-                onChange={(e) => set({ customerId: e.target.value, siteId: "", serverIds: [], waves: [] })}
+                onChange={(e) => set({ customerId: e.target.value, siteId: "", serverIds: [], waves: [], softwareIds: [] })}
               >
                 {inventory.customers.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -295,12 +335,22 @@ export function CampaignForm({
             siteId={draft.siteId}
             selected={draft.serverIds}
             onChange={(serverIds) => set({ serverIds })}
-            unavailable={(s) => (noPackages(s) ? t("campaigns.form.noPackages") : null)}
+            unavailable={(s) =>
+              noPackages(s) ? t(softwareUpdate ? "campaigns.form.notWindows" : "campaigns.form.noPackages") : null
+            }
             showSite={multiSite(me)}
           />
           <p className={own.note} role="status">
             {t("campaigns.form.targeted", { count: targets.length })}
-            {leftOut > 0 && ` ${t(appsOnly ? "campaigns.form.leftOutApps" : "campaigns.form.leftOut", { count: leftOut })}`}
+            {leftOut > 0 &&
+              ` ${t(
+                softwareUpdate
+                  ? "campaigns.form.leftOutSoftware"
+                  : appsOnly
+                    ? "campaigns.form.leftOutApps"
+                    : "campaigns.form.leftOut",
+                { count: leftOut },
+              )}`}
           </p>
         </Fieldset>
 
@@ -324,7 +374,7 @@ export function CampaignForm({
         </Fieldset>
 
         <Fieldset legend={t("campaigns.form.update")} locked={locked}>
-          {!agentUpdate && (
+          {!agentUpdate && !softwareUpdate && (
             <div className={own.row} role="group" aria-label={t("campaigns.form.sources")}>
               <Switch
                 checked={includesOs(draft.sources)}
@@ -342,7 +392,7 @@ export function CampaignForm({
               />
             </div>
           )}
-          {!agentUpdate && includesApps(draft.sources) && (
+          {!agentUpdate && !softwareUpdate && includesApps(draft.sources) && (
             <>
               <div className={own.row} role="group" aria-label={t("campaigns.form.managers")}>
                 {THIRD_PARTY_MANAGERS.map((manager) => (
@@ -370,11 +420,23 @@ export function CampaignForm({
           <SegmentedControl
             label={t("campaigns.form.updateKind")}
             options={UPDATE_KINDS.filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
-              .filter(([kind]) => includesOs(draft.sources) || kind === "all" || kind === "agent")
+              .filter(([kind]) => includesOs(draft.sources) || kind === "all" || kind === "agent" || kind === "software")
               .map(([value, label]) => ({ value, label: t(label) }))}
             value={draft.update}
-            onChange={(update) => set({ update })}
+            onChange={(update) =>
+              // Software leaves the OS and app switches aside: back from it, OS updates as by default.
+              set({ update, ...(draft.update === "software" && update !== "software" && { sources: "os" as const }) })
+            }
           />
+          {softwareUpdate && (
+            <SoftwareChoice
+              draft={draft}
+              set={set}
+              catalog={catalog?.customerId === draft.customerId ? catalog.software : null}
+              error={catalogError}
+              source={source}
+            />
+          )}
           {draft.update === "agent" && (
             <label className={own.fld}>
               {t("campaigns.form.agentVersion")}
@@ -399,6 +461,20 @@ export function CampaignForm({
               />
             </label>
           )}
+          {wingetApps && (
+            <label className={own.fld}>
+              {t("campaigns.form.appHold")}
+              <textarea
+                className={own.textarea}
+                value={draft.appHold}
+                onChange={(e) => set({ appHold: e.target.value })}
+                rows={1}
+                placeholder={t("campaigns.form.appHoldPlaceholder")}
+                spellCheck={false}
+              />
+            </label>
+          )}
+          {osUpdate && <WindowsApprovals draft={draft} set={set} />}
           <div className={own.row}>
             {draft.update !== "agent" && (
               <Switch
@@ -483,6 +559,136 @@ export function CampaignForm({
           </Button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/** Install or remove, and which entries of the customer's software catalogue (ADR-0188). */
+function SoftwareChoice({
+  draft,
+  set,
+  catalog,
+  error,
+  source,
+}: {
+  draft: CampaignDraft;
+  set: (patch: Partial<CampaignDraft>) => void;
+  /** Null while loading. */
+  catalog: SoftwareEntry[] | null;
+  error: string | null;
+  source?: CampaignDetail;
+}) {
+  const toggle = (id: string, on: boolean) =>
+    set({ softwareIds: on ? [...draft.softwareIds.filter((x) => x !== id), id] : draft.softwareIds.filter((x) => x !== id) });
+  // Entries the campaign holds that were deleted from the catalogue since: shown, so they can be unticked.
+  const gone = (source?.software?.packages ?? []).filter(
+    (p) => draft.softwareIds.includes(p.catalog_id) && catalog !== null && !catalog.some((e) => e.id === p.catalog_id),
+  );
+  return (
+    <>
+      <SegmentedControl
+        label={t("campaigns.form.softwareAction")}
+        options={[
+          { value: "install" as const, label: t("campaigns.form.install") },
+          { value: "remove" as const, label: t("campaigns.form.uninstall") },
+        ]}
+        value={draft.softwareAction}
+        onChange={(softwareAction) => set({ softwareAction })}
+      />
+      <p className={own.note}>{t("campaigns.form.softwareNote")}</p>
+      {error ? (
+        <Banner tone="bad">{t("campaigns.form.softwareFailed", { error })}</Banner>
+      ) : catalog === null ? (
+        <LoadingBlock label={t("campaigns.form.softwareLoading")} />
+      ) : catalog.length === 0 && gone.length === 0 ? (
+        <p className={own.note}>
+          {t("campaigns.form.softwareEmpty")} <Link href={SOFTWARE_CATALOG_PATH}>{t("campaigns.software.link")}</Link>
+        </p>
+      ) : (
+        <div className={own.fld} role="group" aria-label={t("campaigns.form.softwareList")}>
+          {t("campaigns.form.softwareList")}
+          <ul className={own.softwareList}>
+            {catalog.map((entry) => (
+              <li key={entry.id}>
+                <label className={own.inline}>
+                  <input
+                    type="checkbox"
+                    checked={draft.softwareIds.includes(entry.id)}
+                    onChange={(e) => toggle(entry.id, e.target.checked)}
+                  />
+                  {entry.name}
+                  <span className={own.dim}>
+                    {entry.package_id} · {entry.source}
+                  </span>
+                </label>
+              </li>
+            ))}
+            {gone.map((p) => (
+              <li key={p.catalog_id}>
+                <label className={own.inline}>
+                  <input type="checkbox" checked onChange={(e) => toggle(p.catalog_id, e.target.checked)} />
+                  {p.name}
+                  <span className={own.dim}>
+                    {p.id} · {t("campaigns.form.softwareGone")}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <span className={own.note}>
+            <Link href={SOFTWARE_CATALOG_PATH}>{t("campaigns.software.link")}</Link>
+          </span>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Approved Windows Update classifications and held updates (ADR-0188); Windows servers only. */
+function WindowsApprovals({ draft, set }: { draft: CampaignDraft; set: (patch: Partial<CampaignDraft>) => void }) {
+  // Classifications narrow all or security updates, not named packages: the API refuses them together.
+  const classifications = draft.update !== "packages";
+  return (
+    <div className={own.subgroup} role="group" aria-label={t("campaigns.form.windowsUpdate")}>
+      <strong className={own.subtitle}>{t("campaigns.form.windowsUpdate")}</strong>
+      <p className={own.note}>{t("campaigns.form.windowsOnly")}</p>
+      {classifications && (
+        <div className={own.fld} role="group" aria-label={t("campaigns.form.classifications")}>
+          {t("campaigns.form.classifications")}
+          <div className={own.row}>
+            {WINDOWS_CLASSIFICATIONS.map((name) => (
+              <label key={name} className={own.inline}>
+                <input
+                  type="checkbox"
+                  checked={draft.classifications.includes(name)}
+                  onChange={(e) =>
+                    set({
+                      classifications: e.target.checked
+                        ? WINDOWS_CLASSIFICATIONS.filter((c) => c === name || draft.classifications.includes(c))
+                        : draft.classifications.filter((c) => c !== name),
+                    })
+                  }
+                />
+                {classificationName(name)}
+              </label>
+            ))}
+          </div>
+          {draft.classifications.length === 0 && (
+            <span className={own.note}>{t("campaigns.form.everyClassification")}</span>
+          )}
+        </div>
+      )}
+      <label className={own.fld}>
+        {t("campaigns.form.hold")}
+        <textarea
+          className={own.textarea}
+          value={draft.hold}
+          onChange={(e) => set({ hold: e.target.value })}
+          rows={1}
+          placeholder={t("campaigns.form.holdPlaceholder")}
+          spellCheck={false}
+        />
+      </label>
     </div>
   );
 }

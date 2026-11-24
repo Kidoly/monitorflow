@@ -183,6 +183,36 @@
   height: 28px;
 }
 
+/* The software of a software campaign (ADR-0188): every entry shown, no inner scroll. */
+.softwareList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-weight: 400;
+}
+
+.softwareList .inline {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 28px;
+}
+
+/* Windows Update approvals inside the Update fieldset. */
+.subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.subtitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
 /* The server picker: a search, a page of results, the chosen servers. */
 .picker {
   display: flex;
