@@ -84,6 +84,7 @@ pub fn build() -> Document {
     doc.merge(super::openapi_snmp::Doc::openapi());
     doc.merge(super::openapi_psa::Doc::openapi());
     doc.merge(super::openapi_scripts::Doc::openapi());
+    doc.merge(super::openapi_remote::Doc::openapi());
     doc
 }
 
@@ -328,8 +329,9 @@ fn list_servers() {}
 #[utoipa::path(get, path = "/api/v1/servers/{id}", tag = "servers",
     summary = "Get a server",
     description = "One server: the fields of a listing row, plus the certificate MonitorFlow issued it last \
-and the last time its AI commands were turned on or off from the web interface. A removed server stays \
-readable here, with `revoked_at` set, for its history.\n\n\
+and the last time its AI commands were turned on or off from the web interface, and what the key's person may \
+do with remote terminals there (ADR-0178). A removed server stays readable here, with `revoked_at` set, for \
+its history.\n\n\
 **Who**: any role on the server's site. **Area**: `servers`.",
     params(("id" = uuid::Uuid, Path, description = "The server")),
     responses(
@@ -340,7 +342,9 @@ readable here, with `revoked_at` set, for its history.\n\n\
                     "not_after": "2027-02-12T06:12:40Z", "issued_at": "2026-11-14T06:12:40Z",
                     "revoked": false, "revoked_at": null, "revocation_reason": null
                 },
-                "ai_commands_change": null
+                "ai_commands_change": null,
+                "remote_terminal": {"can_open": true, "can_review": true, "recorded": true,
+                                    "idle_timeout_minutes": 15}
             })))),
         (status = 404, description = "No such server, or outside the key's reach: `not_found`",
             body = ErrorBody),

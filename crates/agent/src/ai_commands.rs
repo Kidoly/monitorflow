@@ -36,7 +36,7 @@ pub enum AiCommandsError {
         path: PathBuf,
         error: Box<toml_edit::TomlError>,
     },
-    #[error("{}: `commands` is not a table", path.display())]
+    #[error("{}: the section to edit is not a table", path.display())]
     NotATable { path: PathBuf },
     /// The message never contains secrets (see [`ConfigError::Parse`]).
     #[error(transparent)]

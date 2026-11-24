@@ -83,7 +83,7 @@ function Random-Part {
 $token = "mfe1.$(Random-Part).$(Random-Part)"
 
 Write-Host "== install"
-$log = Msiexec "install" @("/i", "`"$Msi`"", "UPSTREAM_URL=https://127.0.0.1:7443", "ENROLLMENT_TOKEN=$token", "AI_COMMANDS_FROM_WEB=1")
+$log = Msiexec "install" @("/i", "`"$Msi`"", "UPSTREAM_URL=https://127.0.0.1:7443", "ENROLLMENT_TOKEN=$token", "AI_COMMANDS_FROM_WEB=1", "REMOTE_TERMINAL=1")
 Check (-not (Select-String -Path $log -SimpleMatch $token -Quiet)) "the MSI log does not contain the token"
 Check (Test-Path "$bin\monitorflow-agent.exe") "the binary is in $bin"
 Check (Test-Path "$bin\agent.windows.example.toml") "the example configuration is in $bin"
@@ -116,6 +116,7 @@ Check ($config.Contains('upstream_url = "https://127.0.0.1:7443"')) "agent.toml 
 Check ($config.Contains($token)) "agent.toml has the token"
 Check (-not (Dacl "$data\agent.toml").Protected) "agent.toml inherits the ACL of $data"
 Check ($config -match '(?m)^from_web = true') "AI_COMMANDS_FROM_WEB=1 lets the web interface turn AI commands on (ADR-0098)"
+Check ($config -match '(?m)^terminal = true') "REMOTE_TERMINAL=1 allows remote terminals (ADR-0178)"
 $source = "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\$service"
 Check (Test-Path $source) "the Event Log source is registered"
 

@@ -18,6 +18,9 @@
     ALLOW_SCRIPTS=1   let the agent run scripts of the script library
                       (commands.scripts in agent.toml, ADR-0179), on a new
                       install or an upgrade
+    REMOTE_TERMINAL=1 let people allowed on the central server open a
+                      terminal on this host from its page (remote.terminal
+                      in agent.toml, ADR-0178); REMOTE_TERMINAL=0 refuses it
     REMOVE_DATA=1     on uninstall, also delete %ProgramData%\MonitorFlow
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
@@ -46,6 +49,7 @@
     <Property Id="REMOVE_DATA" Secure="yes" />
     <Property Id="AI_COMMANDS_FROM_WEB" Secure="yes" />
     <Property Id="ALLOW_SCRIPTS" Secure="yes" />
+    <Property Id="REMOTE_TERMINAL" Secure="yes" />
 
     <Feature Id="Agent" Title="MonitorFlow agent">
       <ComponentGroupRef Id="AgentProgram" />
@@ -184,6 +188,14 @@
     <CustomAction Id="AllowScripts" FileRef="AgentExe" Execute="deferred" Impersonate="no"
                   Return="check"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; scripts on" />
+    <!-- REMOTE_TERMINAL=1 or 0: the agent edits agent.toml itself, as
+         `remote-access terminal on|off` does (ADR-0178). -->
+    <CustomAction Id="AllowRemoteTerminal" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; remote-access terminal on" />
+    <CustomAction Id="RefuseRemoteTerminal" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; remote-access terminal off" />
     <InstallExecuteSequence>
       <Custom Action="CheckDataFolder" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="WriteAgentConfig" After="CheckDataFolder" Condition="UPSTREAM_URL AND NOT REMOVE" />
@@ -191,6 +203,10 @@
               Condition="AI_COMMANDS_FROM_WEB = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
       <Custom Action="AllowScripts" After="AllowAiCommandsFromWeb"
               Condition="ALLOW_SCRIPTS = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
+      <Custom Action="AllowRemoteTerminal" After="AllowScripts"
+              Condition="REMOTE_TERMINAL = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
+      <Custom Action="RefuseRemoteTerminal" After="AllowRemoteTerminal"
+              Condition="REMOTE_TERMINAL = &quot;0&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

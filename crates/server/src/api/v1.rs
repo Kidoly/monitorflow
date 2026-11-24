@@ -166,12 +166,17 @@ async fn handle(state: ApiState, inner: Router, request: Request) -> Response {
     };
     // A new request without the outer router's extensions: its path
     // parameters and matched path would be added to the inner router's.
-    let (parts, body) = request.into_parts();
+    let (mut parts, body) = request.into_parts();
     let mut request = Request::new(body);
     *request.method_mut() = parts.method;
     *request.uri_mut() = uri;
     *request.version_mut() = parts.version;
     *request.headers_mut() = parts.headers;
+    // A WebSocket's upgrade travels in the extensions: a remote session's
+    // socket must keep it (ADR-0178).
+    if let Some(upgrade) = parts.extensions.remove::<hyper::upgrade::OnUpgrade>() {
+        request.extensions_mut().insert(upgrade);
+    }
     let slot = Slot::default();
     request.extensions_mut().insert(V1);
     request.extensions_mut().insert(slot.clone());

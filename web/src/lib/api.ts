@@ -286,6 +286,65 @@ export interface ServerDetail extends Server {
   certificate: Certificate | null;
   /** The last time AI commands were turned on or off from the web interface; null if never (ADR-0098). */
   ai_commands_change?: AiCommandsChange | null;
+  /** What this person may do with remote terminals here (ADR-0178); absent from older servers. */
+  remote_terminal?: RemoteTerminalAccess;
+}
+
+/** What `GET /api/servers/{id}` says about remote terminals for the person asking (ADR-0178). */
+export interface RemoteTerminalAccess {
+  /** The role lets them open one; the agent must also accept `remote_session`. */
+  can_open: boolean;
+  /** They may see the server's past sessions. */
+  can_review: boolean;
+  /** New sessions are recorded. */
+  recorded: boolean;
+  idle_timeout_minutes: number;
+}
+
+/** A remote terminal session (ADR-0178). */
+export interface RemoteSession {
+  id: string;
+  server_id: string;
+  hostname: string;
+  kind: "terminal";
+  /** The username of who opened it. */
+  requested_by: string;
+  created_at: string;
+  /** Null if the agent never opened it. */
+  opened_at: string | null;
+  /** Null while it is open. */
+  closed_at: string | null;
+  close_reason: string | null;
+  duration_seconds: number | null;
+  recorded: boolean;
+  bytes_in: number;
+  bytes_out: number;
+}
+
+/** Answer of `POST /api/servers/{id}/remote-sessions`. */
+export interface RemoteSessionStart {
+  session: RemoteSession;
+  /** The WebSocket's first message, once. */
+  token: string;
+  token_expires_at: string;
+  /** The WebSocket's path. */
+  socket: string;
+}
+
+/** What a recorded session printed. */
+export interface RemoteRecording {
+  session: RemoteSession;
+  /** In order; `data` is base64. */
+  chunks: { at_ms: number; data: string }[];
+}
+
+/** `GET /api/settings/remote-access` (ADR-0178). */
+export interface RemoteAccessSettings {
+  /** The lowest role that may open terminals; null lets nobody. */
+  min_role: "operator" | "approver" | "administrator" | null;
+  record: boolean;
+  idle_timeout_minutes: number;
+  retention_days: number;
 }
 
 /** An `ai_commands` command: who asked to turn AI commands on or off, and what came of it (ADR-0098). */
@@ -6101,6 +6160,31 @@ export const api = {
   /** The same for every server of every site the user administers. */
   switchAllAiCommands: (on: boolean) =>
     request<SiteSourcesChange>("/api/remediation/ai-commands", { method: "POST", body: { on } }),
+
+  /** Starts a remote terminal; the WebSocket at `socket` takes it on (ADR-0178). */
+  startRemoteSession: (serverId: string) =>
+    request<RemoteSessionStart>(`/api/servers/${encodeURIComponent(serverId)}/remote-sessions`, {
+      method: "POST",
+      body: { kind: "terminal" },
+    }),
+
+  /** The server's last remote sessions, newest first. */
+  remoteSessions: (serverId: string, signal?: AbortSignal) =>
+    request<RemoteSession[]>(`/api/servers/${encodeURIComponent(serverId)}/remote-sessions`, { signal }),
+
+  /** Ends a remote session, wherever it runs. */
+  closeRemoteSession: (sessionId: string) =>
+    request<void>(`/api/remote-sessions/${encodeURIComponent(sessionId)}/close`, { method: "POST" }),
+
+  /** What a recorded session printed; site administrators. */
+  remoteRecording: (sessionId: string, signal?: AbortSignal) =>
+    request<RemoteRecording>(`/api/remote-sessions/${encodeURIComponent(sessionId)}/recording`, { signal }),
+
+  remoteAccessSettings: (signal?: AbortSignal) =>
+    request<RemoteAccessSettings>("/api/settings/remote-access", { signal }),
+
+  setRemoteAccessSettings: (body: RemoteAccessSettings) =>
+    request<RemoteAccessSettings>("/api/settings/remote-access", { method: "PUT", body }),
 
   /** The same for every server of a site that can take it. */
   switchSiteAiCommands: (siteId: string, on: boolean) =>

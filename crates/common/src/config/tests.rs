@@ -1071,6 +1071,27 @@ fn agent_root_actions_come_from_the_file_only() {
 }
 
 #[test]
+fn agent_remote_terminals_are_off_unless_the_file_allows_them() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert!(!agent.remote.terminal);
+    let text = format!("{AGENT_MIN}\n[remote]\nterminal = true\n");
+    assert!(parse::<AgentConfig>(&text).unwrap().remote.terminal);
+    // Only the file says so: no environment variable turns them on.
+    let vars = [("MONITORFLOW_REMOTE_TERMINAL", "true")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert!(!agent.remote.terminal);
+    let text = format!("{AGENT_MIN}\n[remote]\nterminal = true\nterminal_user = \"ops\"\n");
+    let agent: AgentConfig = parse(&text).unwrap();
+    assert_eq!(agent.remote.terminal_user.as_deref(), Some("ops"));
+    for bad in ["-oProxy", "Ops", "", "a b", "ops;id"] {
+        let text = format!("{AGENT_MIN}\n[remote]\nterminal_user = {bad:?}\n");
+        assert!(parse::<AgentConfig>(&text).is_err(), "{bad}");
+    }
+    let text = format!("{AGENT_MIN}\n[remote]\ndesktop = true\n");
+    assert!(parse::<AgentConfig>(&text).is_err());
+}
+
+#[test]
 fn agent_switch_from_web_is_off_unless_allowed() {
     let agent: AgentConfig = parse(AGENT_MIN).unwrap();
     assert!(!agent.commands.from_web);

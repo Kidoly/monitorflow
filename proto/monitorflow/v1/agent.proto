@@ -50,6 +50,10 @@ message Envelope {
     // Relay to server, on its own stream: what the flows its exporters
     // sent added up to, a window at a time (ADR-0184).
     FlowReports flow_reports = 26;
+    // Both ways, on an agent's stream: the frames of a remote session
+    // (ADR-0178), sealed end to end between the central server and the
+    // agent, so relays pass them on without reading or changing them.
+    RemoteFrame remote = 27;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -488,4 +492,81 @@ message ScriptParameter {
   // Lower case letters, digits and `_`, starting with a letter.
   string name = 1;
   string value = 2;
+}
+
+// Payload of "remote_session" commands (ADR-0178): opens a terminal on the
+// agent, as the user its host allowed, when its administrator turned
+// remote terminals on (`remote.terminal`). The server's key starts the
+// session's end-to-end keys; the command's signature is what makes it the
+// server's.
+message RemoteSessionOpen {
+  // UUID of the session, chosen by the server; every frame names it.
+  string session_id = 1;
+  // "terminal". Other kinds are refused.
+  string kind = 2;
+  // The server's X25519 public key for this session, 32 bytes.
+  bytes server_key = 3;
+  // Initial size of the terminal.
+  uint32 cols = 4;
+  uint32 rows = 5;
+  // Who opened it, as shown on the server's banner.
+  string requested_by = 6;
+  // The agent closes the session after this long without input.
+  uint32 idle_timeout_seconds = 7;
+  // Whether the central server records the session, as the banner says.
+  bool recorded = 8;
+}
+
+// One frame of a remote session. Only `opened` and `closed` travel in the
+// clear; everything else is `sealed`.
+message RemoteFrame {
+  string session_id = 1;
+  oneof body {
+    // Agent to server, once: the agent's half of the keys.
+    RemoteOpened opened = 2;
+    // Both ways: a RemoteData sealed with ChaCha20-Poly1305 under the key
+    // of its direction, with `counter` as its nonce
+    // (`common::remote`). A frame out of order ends the session.
+    bytes sealed = 3;
+    // Both ways: the session ended, or could not start. Unauthenticated,
+    // as dropping frames is something any relay can do anyway.
+    RemoteClosed closed = 4;
+  }
+  // Number of the sealed frame in its direction, from 0.
+  uint64 counter = 5;
+}
+
+message RemoteOpened {
+  // The agent's X25519 public key for this session, 32 bytes.
+  bytes agent_key = 1;
+  // The agent's certificate, DER: the server checks that its CA issued it
+  // to this agent and that it is not revoked.
+  bytes certificate = 2;
+  // ECDSA P-256 signature with the certificate's key over the session ID
+  // and both keys (`common::remote::opened_signed_bytes`), so a relay
+  // cannot stand in for the agent.
+  bytes signature = 3;
+}
+
+// What a sealed frame holds.
+message RemoteData {
+  oneof body {
+    // Server to agent: keystrokes.
+    bytes input = 1;
+    // Agent to server: what the terminal printed.
+    bytes output = 2;
+    // Server to agent: the browser's terminal changed size.
+    RemoteResize resize = 3;
+    // Either way: the session ends, with why.
+    string close = 4;
+  }
+}
+
+message RemoteResize {
+  uint32 cols = 1;
+  uint32 rows = 2;
+}
+
+message RemoteClosed {
+  string reason = 1;
 }

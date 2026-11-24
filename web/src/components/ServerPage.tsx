@@ -56,6 +56,7 @@ import { ServerCommandsTab } from "./ServerCommandsTab";
 import { RollbackBadge, RollbackFact, useRollback } from "./ServerRollback";
 import { ServerLogsTab } from "./ServerLogsTab";
 import { type SensorRules, ServerSensorsTab } from "./ServerSensorsTab";
+import { ServerTerminalTab } from "./ServerTerminalTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
 import styles from "./ServerPage.module.css";
 import { type SilenceBarParts, useSilenceBar } from "./Silences";
@@ -65,7 +66,7 @@ export const COMMANDS_PAGE = 50;
 /** The API's largest page, which caps what a refresh reloads. */
 const MAX_LIMIT = 500;
 
-const TABS = ["sensors", "dependencies", "flows", "logs", "updates", "commands"] as const;
+const TABS = ["sensors", "dependencies", "flows", "logs", "updates", "commands", "terminal"] as const;
 export type ServerTab = (typeof TABS)[number];
 
 /** The server page for the `id` query parameter. */
@@ -195,12 +196,14 @@ export function ServerPage({ id }: { id: string | null }) {
   const rows = "sensors" in sensors ? sensorRows(sensors.sensors, values, incidents ?? []) : [];
   const checkNames = "sensors" in sensors ? [...new Set(sensors.sensors.map((s) => s.name))].sort() : [];
   // A device has no agent: only its checks, dependencies and traffic flows
-  // (ADR-0148, ADR-0184); a server has no flows tab.
+  // (ADR-0148, ADR-0184); a server has no flows tab. Remote terminals
+  // (ADR-0178): for those who may open them or see their sessions.
+  const terminal = !device && !!server.remote_terminal && (server.remote_terminal.can_open || server.remote_terminal.can_review);
   const shown: ServerTab = device
     ? tab === "dependencies" || tab === "flows"
       ? tab
       : "sensors"
-    : tab === "flows"
+    : tab === "flows" || (tab === "terminal" && !terminal)
       ? "sensors"
       : tab;
   const active = "commands" in commands ? commands.commands.filter(isActive).length : 0;
@@ -273,6 +276,7 @@ export function ServerPage({ id }: { id: string | null }) {
                   label: t("server.tab.commands"),
                   extra: active > 0 ? t("server.tab.running", { count: active }) : undefined,
                 },
+                ...(terminal ? [{ id: "terminal" as const, label: t("remote.tab") }] : []),
               ]),
         ]}
       />
@@ -309,6 +313,7 @@ export function ServerPage({ id }: { id: string | null }) {
             canLoadMore={commandLimit < MAX_LIMIT}
           />
         )}
+        {shown === "terminal" && <ServerTerminalTab server={server} />}
       </TabPanel>
     </Page>
   );

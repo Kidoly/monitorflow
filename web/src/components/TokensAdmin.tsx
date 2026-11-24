@@ -632,6 +632,8 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   // Off by default (ADR-0182): a major upgrade is the change most likely
   // to leave a server that does not boot.
   const [majorFromWeb, setMajorFromWeb] = useState(false);
+  // Unticked (ADR-0178): a terminal runs whatever is typed, so each host opts in.
+  const [remoteTerminal, setRemoteTerminal] = useState(false);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
   const origin = pageOrigin();
@@ -639,12 +641,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
     {
       name: "Linux",
       note: t("install.linux.note"),
-      command: linuxInstallCommand(token, source, origin, through, aiFromWeb, scripts, majorFromWeb),
+      command: linuxInstallCommand(token, source, origin, through, aiFromWeb, scripts, majorFromWeb, remoteTerminal),
     },
     {
       name: "Windows",
       note: t("install.windows.note"),
-      command: windowsInstallCommand(token, source, origin, through, aiFromWeb, scripts),
+      command: windowsInstallCommand(token, source, origin, through, aiFromWeb, scripts, remoteTerminal),
     },
   ];
   // One note when both commands are missing for the same reason.
@@ -691,6 +693,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
         onChange={setMajorFromWeb}
         label={t("install.agent.majorFromWeb")}
         note={t("install.agent.majorFromWebNote")}
+      />
+      <Switch
+        checked={remoteTerminal}
+        onChange={setRemoteTerminal}
+        label={t("install.agent.remoteTerminal")}
+        note={t("install.agent.remoteTerminalNote")}
       />
       {shared ? (
         <Banner tone="warn">{shared}</Banner>

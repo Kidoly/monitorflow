@@ -34,6 +34,7 @@ pub mod recommend;
 pub mod relay_commands;
 pub mod release_check;
 pub mod remediation;
+pub mod remote;
 pub mod renew;
 pub mod scripts;
 pub mod secrets;

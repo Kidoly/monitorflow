@@ -20,6 +20,8 @@ pub const AI_COMMANDS: &str = "ai_commands";
 pub const ROOT_ACTION: &str = "root_action";
 /// Kind of [`crate::proto::v1::RunScript`] commands (ADR-0179).
 pub const RUN_SCRIPT: &str = "run_script";
+/// Kind of [`crate::proto::v1::RemoteSessionOpen`] commands (ADR-0178).
+pub const REMOTE_SESSION: &str = "remote_session";
 /// Kind of [`crate::proto::v1::SelfUpdate`] commands (ADR-0053).
 pub const SELF_UPDATE: &str = "self_update";
 /// Kind of [`crate::proto::v1::TakeSnapshot`] commands (ADR-0094).

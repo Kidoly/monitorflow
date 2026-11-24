@@ -116,10 +116,14 @@ export function linuxInstallCommand(
   aiFromWeb = false,
   scripts = false,
   majorFromWeb = false,
+  remoteTerminal = false,
 ): Command {
-  const vars = [aiFromWeb && FROM_WEB, scripts && ALLOW_SCRIPTS, majorFromWeb && MAJOR_FROM_WEB].filter(
-    (v): v is string => Boolean(v),
-  );
+  const vars = [
+    aiFromWeb && FROM_WEB,
+    scripts && ALLOW_SCRIPTS,
+    majorFromWeb && MAJOR_FROM_WEB,
+    remoteTerminal && REMOTE_TERMINAL,
+  ].filter((v): v is string => Boolean(v));
   return installerCommand(target, source, origin, relay, vars);
 }
 
@@ -128,6 +132,8 @@ const MAJOR_FROM_WEB = "MF_MAJOR_UPGRADES_FROM_WEB=1";
 
 /** Lets the web interface turn the agent's AI commands on and off (ADR-0098). */
 const FROM_WEB = "MF_AI_COMMANDS_FROM_WEB=1";
+/** Lets people open a terminal on the server from its page (ADR-0178). */
+const REMOTE_TERMINAL = "MF_REMOTE_TERMINAL=1";
 
 /** Lets the agent run scripts of the script library (ADR-0179); off by default. */
 const ALLOW_SCRIPTS = "MF_ALLOW_SCRIPTS=1";
@@ -183,6 +189,19 @@ export function allowCommandsCommand(
   const variable = fromWeb ? FROM_WEB : "MF_ALLOW_COMMANDS=1";
   return runInstaller(install, install.source, files.url, (download) => [...download, variable].join(" "));
 }
+
+/** The one line that lets an installed Linux agent open remote terminals (ADR-0178). */
+export function allowTerminalCommand(install: AgentInstall, address: PublicAddress, origin: string): Command {
+  const files = base(install, install.source, publicOrigin(origin, address.address));
+  if ("unavailable" in files) return files;
+  return runInstaller(install, install.source, files.url, (download) => [...download, REMOTE_TERMINAL].join(" "));
+}
+
+/** The Windows lines that let an installed agent open remote terminals (ADR-0178). */
+export const WINDOWS_ALLOW_TERMINAL = [
+  `& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" remote-access terminal on`,
+  `Restart-Service MonitorFlowAgent`,
+].join("\n");
 
 /**
  * The lines that let an installed Windows agent run AI commands (ADR-0084), for
@@ -277,6 +296,7 @@ export function windowsInstallCommand(
   relay = "",
   aiFromWeb = false,
   scripts = false,
+  remoteTerminal = false,
 ): Command {
   const files = base(target.install, source, origin);
   if ("unavailable" in files) return files;
@@ -287,6 +307,7 @@ export function windowsInstallCommand(
     `ENROLLMENT_TOKEN=${target.token}`,
     aiFromWeb && "AI_COMMANDS_FROM_WEB=1",
     scripts && "ALLOW_SCRIPTS=1",
+    remoteTerminal && "REMOTE_TERMINAL=1",
   ].filter(Boolean);
   const msiexec = `msiexec /i monitorflow-agent.msi /qn /l*v install.log \``;
   const central = target.install.central;

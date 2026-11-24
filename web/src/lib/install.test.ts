@@ -6,7 +6,9 @@ import {
   type InstallTarget,
   WINDOWS_ALLOW_COMMANDS,
   WINDOWS_ALLOW_FROM_WEB,
+  WINDOWS_ALLOW_TERMINAL,
   allowCommandsCommand,
+  allowTerminalCommand,
   endpoints,
   hostPort,
   isHttpsOrigin,
@@ -149,6 +151,25 @@ describe("install commands", () => {
     );
     expect(text(linuxInstallCommand(target(), "github", ORIGIN))).not.toContain("FROM_WEB");
     expect(text(windowsInstallCommand(target(), "github", ORIGIN))).not.toContain("FROM_WEB");
+  });
+
+  it("allows a remote terminal only when asked (ADR-0178)", () => {
+    expect(text(linuxInstallCommand(target(), "github", ORIGIN, "", true, false, false, true))).toBe(
+      `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_AI_COMMANDS_FROM_WEB=1 MF_REMOTE_TERMINAL=1 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
+    );
+    expect(text(linuxInstallCommand(target(), "github", ORIGIN, "", false, false, false, true))).toContain(
+      "sudo MF_REMOTE_TERMINAL=1 MF_SERVER",
+    );
+    expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", false, false, true))).toContain(
+      `ENROLLMENT_TOKEN=${SECRET} REMOTE_TERMINAL=1`,
+    );
+    expect(text(linuxInstallCommand(target(), "github", ORIGIN, "", true))).not.toContain("REMOTE_TERMINAL");
+    expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", true))).not.toContain("REMOTE_TERMINAL");
+    expect(text(allowTerminalCommand(install(), { address: "mf.example" } as never, ORIGIN))).toBe(
+      `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_REMOTE_TERMINAL=1 sh`,
+    );
+    expect(WINDOWS_ALLOW_TERMINAL).toContain("remote-access terminal on");
+    expect(WINDOWS_ALLOW_TERMINAL).toContain("Restart-Service MonitorFlowAgent");
   });
 
   it("accepts only addresses and URLs that are safe in a shell command", () => {

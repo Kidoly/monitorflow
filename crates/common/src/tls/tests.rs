@@ -266,3 +266,23 @@ fn debug_hides_key() {
     let debug = format!("{:?}", Identity::load(&paths).unwrap());
     assert_eq!(debug, "Identity { ca_certs: 1, chain_len: 1, .. }");
 }
+
+#[test]
+fn signs_with_the_certificate_key_for_remote_sessions() {
+    use ring::signature::{UnparsedPublicKey, ECDSA_P256_SHA256_ASN1};
+    use x509_parser::prelude::{FromDer, X509Certificate};
+
+    let ca = Ca::new("ca");
+    let (_dir, paths) = write(&ca, &ca.client("agent-1", 10));
+    let identity = Identity::load(&paths).unwrap();
+    let signature = identity.sign(b"session keys").unwrap();
+    let (_, cert) = X509Certificate::from_der(identity.leaf()).unwrap();
+    let key = &cert.public_key().subject_public_key.data;
+    let verify = |m: &[u8]| {
+        UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, key)
+            .verify(m, &signature)
+            .is_ok()
+    };
+    assert!(verify(b"session keys"));
+    assert!(!verify(b"other keys"));
+}

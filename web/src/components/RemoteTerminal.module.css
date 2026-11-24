@@ -1,0 +1,29 @@
+/* A remote terminal: a fixed height, its own scrollback inside xterm. */
+.screen {
+  height: 480px;
+  padding: 8px;
+  border-radius: var(--radius-panel);
+  background: #0c0c0e;
+  overflow: hidden;
+}
+
+.recording {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Status and actions on one line, controls of one height. */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  min-height: var(--control-h);
+}
+
+.status {
+  font-size: 13px;
+  color: var(--muted);
+}

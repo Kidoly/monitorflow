@@ -825,6 +825,7 @@ mod openapi_network_scans;
 mod openapi_plugins;
 mod openapi_psa;
 pub mod openapi_remediation;
+mod openapi_remote;
 mod openapi_reports;
 mod openapi_scripts;
 mod openapi_settings;
@@ -849,6 +850,7 @@ pub mod remediation;
 pub mod remediation_events;
 pub mod remediation_incidents;
 pub mod remediation_runs;
+pub mod remote_sessions;
 pub mod report_schedules;
 pub mod revoke;
 pub mod roles;
@@ -1049,6 +1051,8 @@ pub struct ApiState {
     /// Runs one-off probe tests, for "Add a device" (ADR-0149); without
     /// it, tests run on this central server only.
     pub probes: Option<crate::probes::Probes>,
+    /// Runs remote terminals (ADR-0178); `None` refuses to start them.
+    pub remote: Option<crate::remote::RemoteHub>,
 }
 
 impl ApiState {
@@ -1074,6 +1078,7 @@ impl ApiState {
             contact_tests: Arc::new(on_call::test_limit()),
             oidc: crate::sso::oidc::Cache::default(),
             probes: None,
+            remote: None,
         }
     }
 
@@ -1111,6 +1116,12 @@ impl ApiState {
     /// Wakes `commands` when a command is queued.
     pub fn with_commands(mut self, commands: Commands) -> Self {
         self.commands = Some(commands);
+        self
+    }
+
+    /// Runs remote terminals (ADR-0178).
+    pub fn with_remote(mut self, remote: crate::remote::RemoteHub) -> Self {
+        self.remote = Some(remote);
         self
     }
 
@@ -1613,6 +1624,23 @@ pub fn router(state: ApiState) -> Router {
             get(commands::list).post(commands::create),
         )
         .route("/api/servers/{id}/ai-commands", post(ai_commands::server))
+        .route(
+            "/api/servers/{id}/remote-sessions",
+            get(remote_sessions::list).post(remote_sessions::start),
+        )
+        .route("/api/remote-sessions/{id}", get(remote_sessions::detail))
+        .route(
+            "/api/remote-sessions/{id}/close",
+            post(remote_sessions::close),
+        )
+        .route(
+            "/api/remote-sessions/{id}/recording",
+            get(remote_sessions::recording),
+        )
+        .route(
+            "/api/remote-sessions/{id}/socket",
+            get(remote_sessions::socket),
+        )
         .route("/api/sites/{id}/ai-commands", post(ai_commands::site))
         .route("/api/remediation/ai-commands", post(ai_commands::fleet))
         .route("/api/commands/{id}", get(commands::detail))
@@ -1701,6 +1729,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/settings/agent-install",
             get(settings::get_agent_install).put(settings::set_agent_install),
+        )
+        .route(
+            "/api/settings/remote-access",
+            get(remote_sessions::get_settings).put(remote_sessions::set_settings),
         )
         .route(
             "/api/settings/public-address",

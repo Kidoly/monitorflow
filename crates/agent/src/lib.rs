@@ -26,6 +26,8 @@ pub mod major_upgrade;
 pub mod os;
 pub mod packages;
 pub mod plugins;
+pub mod remote;
+pub mod remote_access;
 pub mod renew;
 #[cfg(unix)]
 pub mod root_actions;

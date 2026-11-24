@@ -14,6 +14,7 @@ pub mod rate;
 pub mod redact;
 pub mod release;
 pub mod root_action;
+pub mod remote;
 #[cfg(all(unix, feature = "server-update"))]
 pub mod server_update;
 pub mod snapshot;

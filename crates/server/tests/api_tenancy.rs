@@ -1106,6 +1106,53 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(queued, 1, "only B's own fixture command");
         }
+        // Remote terminals (ADR-0178): B's server and sessions do not exist
+        // for A.
+        ("POST", "/api/servers/{id}/remote-sessions")
+        | ("GET", "/api/servers/{id}/remote-sessions") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = method.eq("POST").then(|| json!({ "kind": "terminal" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+            let started: i64 = sqlx::query_scalar(
+                // Other cases insert B's own sessions, as `bob`.
+                "SELECT count(*) FROM remote_sessions WHERE username <> 'bob'",
+            )
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            assert_eq!(started, 0);
+        }
+        ("GET", "/api/remote-sessions/{id}")
+        | ("POST", "/api/remote-sessions/{id}/close")
+        | ("GET", "/api/remote-sessions/{id}/recording") => {
+            let session = uuid::Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO remote_sessions (id, server_id, kind, username, token_sha256,
+                     token_expires_at, recorded, idle_timeout_seconds)
+                 VALUES ($1, $2, 'terminal', 'bob', sha256('t'::bytea), now() + interval '1 minute',
+                         true, 900)",
+            )
+            .bind(session)
+            .bind(b.server)
+            .execute(&ctx.pool)
+            .await
+            .unwrap();
+            let uri = path.replace("{id}", &session.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            let closed: Option<chrono::DateTime<chrono::Utc>> =
+                sqlx::query_scalar("SELECT closed_at FROM remote_sessions WHERE id = $1")
+                    .bind(session)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(closed, None, "A cannot close B's session");
+        }
+        // Not a WebSocket request: refused before any session is touched.
+        ("GET", "/api/remote-sessions/{id}/socket") => {
+            let uri = path.replace("{id}", &uuid::Uuid::new_v4().to_string());
+            let status = ctx.status(method, &uri, None).await;
+            assert!(status.is_client_error(), "{uri}: {status}");
+        }
         ("POST", "/api/remediation/ai-commands") => {
             // A's administrator switches A's servers, never B's.
             let body = Some(json!({ "on": false }));
@@ -1617,6 +1664,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("GET", "/api/settings/server")
         | ("PUT", "/api/settings/server")
         | ("PUT", "/api/settings/retention")
+        | ("GET", "/api/settings/remote-access")
+        | ("PUT", "/api/settings/remote-access")
         | ("GET", "/api/auto-update/{kind}/peers")
         | ("GET", "/api/auto-update/{kind}/versions/peers")
         | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {

@@ -517,6 +517,35 @@ pub struct AgentConfig {
     pub packages: AgentPackagesConfig,
     pub commands: AgentCommandsConfig,
     pub plugins: AgentPluginsConfig,
+    pub remote: AgentRemoteConfig,
+}
+
+/// Remote sessions opened from the web interface on this host
+/// (ADR-0178). Only the host's administrator sets these, in this file:
+/// the installer and `remote-access` edit it, and the agent's user cannot.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentRemoteConfig {
+    /// Opens terminals. Off unless enabled here.
+    pub terminal: bool,
+    /// The account terminals run as, on Linux: the agent's own user when
+    /// unset, never root unless named here. A root helper checks the
+    /// signed command before it starts the shell as that account.
+    pub terminal_user: Option<String>,
+}
+
+/// A local account name the remote terminal may run as: letters, digits
+/// and `_.-`, starting with a letter or `_`, at most 32 characters, as
+/// `useradd` takes them, so it never reads as an option.
+pub fn valid_terminal_user(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '-'))
 }
 
 /// Check plugins on this host (ADR-0103). Only the host's administrator
@@ -692,6 +721,7 @@ impl Default for AgentConfig {
             packages: AgentPackagesConfig::default(),
             commands: AgentCommandsConfig::default(),
             plugins: AgentPluginsConfig::default(),
+            remote: AgentRemoteConfig::default(),
         }
     }
 }
@@ -757,6 +787,14 @@ impl LoadConfig for AgentConfig {
         }
         check.positive("heartbeat_interval", self.heartbeat_interval)?;
         check.positive("packages.report_interval", self.packages.report_interval)?;
+        if let Some(user) = &self.remote.terminal_user {
+            if !valid_terminal_user(user) {
+                return Err(check.fail(
+                    "remote.terminal_user",
+                    "must be a local account name: lowercase letters, digits and _.-",
+                ));
+            }
+        }
         self.sensors.validate(check)
     }
 }
