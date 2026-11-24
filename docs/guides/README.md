@@ -31,9 +31,9 @@ Guides are also available [in French](fr/README.md).
 
 ## Databases
 
-- [How to monitor PostgreSQL](monitor-postgresql.md): Get alerted when PostgreSQL stops or stops accepting connections on a Linux server, with two checks from the MonitorFlow catalogue.
-- [How to monitor MySQL and MariaDB](monitor-mysql-mariadb.md): Get alerted when MySQL or MariaDB stops or stops accepting connections, with the service and port checks of the MonitorFlow catalogue.
-- [How to monitor Redis](monitor-redis.md): Get alerted when Redis stops or stops accepting connections on a Linux server, with the service and port checks of MonitorFlow.
+- [How to monitor PostgreSQL](monitor-postgresql.md): Watch PostgreSQL's connections, long transactions, locks, cache and replication, and get alerted when it stops answering, with MonitorFlow's ready-made PostgreSQL check.
+- [How to monitor MySQL and MariaDB](monitor-mysql-mariadb.md): Watch MySQL and MariaDB connections, slow queries, the InnoDB buffer pool and replication, and get alerted when the database stops answering, with MonitorFlow's ready-made check.
+- [How to monitor Redis](monitor-redis.md): Watch Redis memory, evictions, clients, snapshots and replication, and get alerted when it stops answering, with MonitorFlow's ready-made Redis check.
 - [How to monitor MongoDB](monitor-mongodb.md): Get alerted when MongoDB stops or stops accepting connections on a Linux server, with the mongod service and port 27017 checks of MonitorFlow.
 - [How to monitor SQL Server](monitor-sql-server.md): Get alerted when a SQL Server instance stops or stops accepting connections on Windows, with the MSSQLSERVER service and port 1433 checks.
 
@@ -42,7 +42,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor nginx](monitor-nginx.md): Get alerted when nginx stops, when ports 80 and 443 stop answering, or when its error log reports critical errors, on every Linux server.
 - [How to monitor Apache](monitor-apache.md): Get alerted when the Apache web server stops or ports 80 and 443 stop answering, on Debian, Ubuntu, RHEL and Rocky servers.
 - [How to monitor a website over HTTPS](monitor-website-https.md): Know when your website stops answering as it should: its status code, the text on the page, how long it takes, its redirects and when its certificate expires.
-- [How to monitor Docker](monitor-docker.md): Get alerted when the Docker engine or containerd stops on a Linux server, and when a published container port stops answering.
+- [How to monitor Docker](monitor-docker.md): Watch each Docker or Podman container: whether it runs, its restarts, its health check, its processor and memory, and get alerted when the engine or a container stops.
 - [How to monitor Proxmox VE](monitor-proxmox-ve.md): Watch your Proxmox VE hosts: the web interface on port 8006, the cluster service, and the disk space, CPU and memory every VM depends on.
 - [How to monitor VMware vSphere and Hyper-V](monitor-vmware-hyper-v.md): Watch the hosts, clusters, virtual machines and datastores of a vCenter, an ESXi host or a Hyper-V host, get alerted on disconnected hosts, full datastores and old snapshots, and tie each virtual machine to its server.
 

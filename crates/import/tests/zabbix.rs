@@ -740,3 +740,58 @@ async fn vmware_hosts_become_a_vcenter_device() {
         .any(|u| u.why.code == "vmware_discovered"
             && u.hosts == ["4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"]));
 }
+
+/// Database, Redis and Docker templates (ADR-0183): one ready-made check
+/// per template on its host, where its macros say it connects, in place
+/// of the template's items and triggers; an ODBC template stays missing.
+#[tokio::test]
+async fn application_templates_become_their_checks() {
+    use monitorflow_import::model::{App, AppKind};
+    let inventory = read(vec![fixture("7.0", "apps.yaml")]).await;
+    let mut pg = App::new(AppKind::Postgresql);
+    pg.port = Some(5433);
+    pg.user = Some("zbx_monitor".into());
+    pg.database = Some("shop".into());
+    let check = check(&inventory, "db-01", &Watch::app(pg));
+    assert_eq!(note(&check.fidelity), Some("app_template"));
+    assert_eq!(check.origin.kind, "template");
+    assert_eq!(check.origin.name, "PostgreSQL by Zabbix agent 2");
+
+    let mut redis = App::new(AppKind::Redis);
+    redis.port = Some(6379);
+    let check = inventory
+        .checks
+        .iter()
+        .find(|c| c.host == "cache-01" && c.watch == Watch::app(redis.clone()))
+        .unwrap_or_else(|| panic!("{:#?}", inventory.checks));
+    assert_eq!(note(&check.fidelity), Some("app_template"));
+
+    let mut mysql = App::new(AppKind::Mysql);
+    mysql.address = Some("192.0.2.60".into());
+    mysql.port = Some(3307);
+    assert!(inventory
+        .checks
+        .iter()
+        .any(|c| c.host == "app-01" && c.watch == Watch::app(mysql.clone())));
+    let docker = inventory
+        .checks
+        .iter()
+        .find(|c| c.host == "app-01" && c.watch == Watch::app(App::new(AppKind::Docker)))
+        .unwrap();
+    assert_eq!(note(&docker.fidelity), Some("app_docker_template"));
+
+    // Neither the templates, their items and triggers, nor a host's own
+    // item of the same plugin are listed as not movable.
+    let listed: Vec<(&str, &str)> = inventory
+        .unmovable
+        .iter()
+        .map(|u| (u.origin.kind.as_str(), u.origin.name.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [("template", "MySQL by ODBC")],
+        "{:#?}",
+        inventory.unmovable
+    );
+    assert!(inventory.thresholds.is_empty());
+}

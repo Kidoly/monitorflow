@@ -1,0 +1,82 @@
+# Database, Redis and Docker templates (ADR-0183), written by hand in the
+# shape of a Zabbix 7.0 export (defaults left out, as Zabbix leaves them
+# out). The Redis template is exported with one item and one trigger; the
+# others are linked but not exported, so only their names and the
+# hosts' macros are known.
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 5b2c3d4e5f6a47b8c9d0e1f2a3b4c5d6
+      name: Templates/Databases
+  host_groups:
+    - uuid: 4a1b2c3d4e5f46a7b8c9d0e1f2a3b4c5
+      name: Databases
+  templates:
+    - uuid: 6c3d4e5f6a7b48c9d0e1f2a3b4c5d6e7
+      template: 'Redis by Zabbix agent 2'
+      name: 'Redis by Zabbix agent 2'
+      groups:
+        - name: Templates/Databases
+      items:
+        - uuid: 7d4e5f6a7b8c49d0e1f2a3b4c5d6e7f8
+          name: 'Redis: Ping'
+          key: 'redis.ping["{$REDIS.CONN.URI}"]'
+          triggers:
+            - uuid: 8e5f6a7b8c9d40e1f2a3b4c5d6e7f8a9
+              expression: 'last(/Redis by Zabbix agent 2/redis.ping["{$REDIS.CONN.URI}"])=0'
+              name: 'Redis: Service is down'
+              priority: AVERAGE
+      macros:
+        - macro: '{$REDIS.CONN.URI}'
+          value: 'tcp://localhost:6379'
+  hosts:
+    - host: db-01
+      name: db-01
+      templates:
+        - name: 'PostgreSQL by Zabbix agent 2'
+      groups:
+        - name: Databases
+      interfaces:
+        - ip: 192.0.2.50
+          interface_ref: if1
+      macros:
+        - macro: '{$PG.CONNSTRING.AGENT2}'
+          value: 'tcp://localhost:5433'
+        - macro: '{$PG.USER}'
+          value: zbx_monitor
+        - macro: '{$PG.PASSWORD}'
+          type: SECRET_TEXT
+        - macro: '{$PG.DATABASE}'
+          value: shop
+      items:
+        - name: 'Agent answers'
+          key: agent.ping
+          interface_ref: if1
+        - name: 'Own PostgreSQL ping'
+          key: 'pgsql.ping["{$PG.CONNSTRING.AGENT2}","{$PG.USER}","{$PG.PASSWORD}","{$PG.DATABASE}"]'
+          interface_ref: if1
+    - host: cache-01
+      name: cache-01
+      templates:
+        - name: 'Redis by Zabbix agent 2'
+      groups:
+        - name: Databases
+      interfaces:
+        - ip: 192.0.2.51
+          interface_ref: if1
+    - host: app-01
+      name: app-01
+      templates:
+        - name: 'Docker by Zabbix agent 2'
+        - name: 'MySQL by Zabbix agent'
+        - name: 'MySQL by ODBC'
+      groups:
+        - name: Databases
+      interfaces:
+        - ip: 192.0.2.52
+          interface_ref: if1
+      macros:
+        - macro: '{$MYSQL.HOST}'
+          value: 192.0.2.60
+        - macro: '{$MYSQL.PORT}'
+          value: '3307'

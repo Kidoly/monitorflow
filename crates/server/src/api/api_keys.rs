@@ -126,7 +126,8 @@ impl Area {
                 | "sensor_configs"
                 | "thresholds"
                 | "notifications"
-                | "checks",
+                | "checks"
+                | "check-templates",
                 _,
             ) => Self::Alerts,
             (
@@ -795,6 +796,7 @@ mod tests {
             (&get, "/api/servers/{id}/sensor_configs", Some(Area::Alerts)),
             (&get, "/api/sites/{id}/sensors", Some(Area::Alerts)),
             (&get, "/api/checks/usage", Some(Area::Alerts)),
+            (&get, "/api/check-templates", Some(Area::Alerts)),
             (&get, "/api/servers/{id}/sensor-values", Some(Area::Servers)),
             (
                 &post,

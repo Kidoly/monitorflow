@@ -766,4 +766,90 @@ db_tests! {
             &format!("/api/servers/{}/website-checks", f.paris_server), None).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY);
     }
+
+    #[sqlx::test]
+    async fn application_checks_keep_their_password_and_bring_their_alerts(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let f = fleet(&pool).await;
+        let operator = session(&pool, "op", Role::Operator, Some(f.paris)).await;
+        let uri = format!("/api/servers/{}/sensor_configs", f.paris_server);
+
+        // The templates, for anyone signed in.
+        let (status, body) = call(&pool, &operator, "GET", "/api/check-templates", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let kinds: Vec<&str> = body["templates"].as_array().unwrap().iter()
+            .map(|t| t["kind"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["postgresql", "mysql", "redis", "docker"]);
+
+        // Bad parameters are refused as the agent would.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "postgresql", "interval_ms": 60_000, "params": {"tls": "maybe"}
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "postgresql", "interval_ms": 60_000, "default_alerts": true,
+            "params": {"user": "monitorflow", "password": "pg-s3cret"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["name"], "postgresql");
+        assert_eq!(body["secret_set"], true);
+        assert!(!body.to_string().contains("pg-s3cret"), "{body}");
+        let id = body["id"].as_str().unwrap().to_owned();
+
+        // Its template's alerts, as thresholds of the server.
+        let metrics: Vec<String> = sqlx::query_scalar(
+            "SELECT metric FROM thresholds WHERE server_id = $1 ORDER BY metric")
+            .bind(f.paris_server).fetch_all(&pool).await.unwrap();
+        assert!(metrics.contains(&"monitorflow_postgresql_up".to_owned()), "{metrics:?}");
+        assert!(metrics.contains(&"monitorflow_postgresql_connections_ratio".to_owned()));
+        let up: (Option<f64>, i32) = sqlx::query_as(
+            "SELECT critical, duration_s FROM thresholds WHERE server_id = $1 AND metric = 'monitorflow_postgresql_up'")
+            .bind(f.paris_server).fetch_one(&pool).await.unwrap();
+        assert_eq!(up, (Some(1.0), 120));
+
+        // The agent gets the password over its stream.
+        let store = SensorConfigStore::new(pool.clone());
+        let config = store.load("agent-paris").await.unwrap().unwrap();
+        let check = config.sensors.iter().find(|s| s.kind == "postgresql").unwrap();
+        assert_eq!(check.params["password"], "pg-s3cret");
+
+        // Kept on an update at the same address, not to another one.
+        let row = |params: Value| json!({"kind": "postgresql", "interval_ms": 120_000, "params": params});
+        let (status, body) = call(&pool, &operator, "PUT", &format!("/api/sensor_configs/{id}"),
+            Some(row(json!({"user": "monitorflow"})))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["secret_set"], true);
+        for params in [json!({"host": "10.0.0.9"}), json!({"port": 6432})] {
+            let (status, body) = call(&pool, &operator, "PUT", &format!("/api/sensor_configs/{id}"),
+                Some(row(params))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert!(body["error"].as_str().unwrap().contains("password"), "{body}");
+        }
+
+        // Docker runs on the agent only; Redis from a probe names its host.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "docker", "interval_ms": 60_000, "probe": "central"
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "redis", "interval_ms": 60_000, "probe": "central",
+            "params": {"host": "10.0.0.12", "password": "r3dis-pw"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let redis = sets["central"].checks.iter().find(|c| c.kind == "redis").unwrap();
+        assert_eq!(redis.config.params["password"], "r3dis-pw");
+        assert_eq!(redis.config.params["host"], "10.0.0.12");
+        // Without default_alerts, none are added.
+        let redis_alerts: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM thresholds WHERE metric LIKE 'monitorflow_redis_%'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(redis_alerts, 0);
+
+        for (_, _, details) in audit(&pool).await {
+            let text = details.to_string();
+            assert!(!text.contains("pg-s3cret") && !text.contains("r3dis-pw"), "{text}");
+        }
+    }
 }

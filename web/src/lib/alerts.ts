@@ -278,6 +278,8 @@ export interface CheckType {
   probe?: boolean;
   /** Runs on the agent unless the form names a probe (ADR-0150). */
   anyRunner?: boolean;
+  /** Its alerts are its template's, added by the server (ADR-0183). */
+  template?: boolean;
   /** Alerts that come with it besides its own event, like a website's certificate (ADR-0150). */
   moreAlerts?: (metricOf: (suffix: string) => string, values: Record<string, string>) => ThresholdRequest[];
 }
@@ -425,6 +427,7 @@ export const CHECK_TYPES: CheckType[] = [
     duration_s: 60,
   },
   websiteType(false),
+  ...appTypes(false),
 ];
 
 const hostField = (): CheckField => ({
@@ -434,6 +437,119 @@ const hostField = (): CheckField => ({
   hint: t("devices.check.hostHint"),
   optional: true,
 });
+
+/** The fields every database and Redis check asks for (ADR-0183). */
+function connectionFields(port: number, user: string | null, device: boolean): CheckField[] {
+  return [
+    device
+      ? hostField()
+      : { key: "host", label: t("checks.field.address"), placeholder: "127.0.0.1", initial: "127.0.0.1", hint: t("checks.field.appAddressHint") },
+    { key: "port", label: t("checks.field.port"), placeholder: String(port), initial: String(port), check: portNumber },
+    {
+      key: "user",
+      label: t("checks.field.username"),
+      placeholder: user ?? "",
+      initial: user ?? undefined,
+      hint: t("checks.field.appUserHint"),
+      optional: user === null,
+    },
+    { key: "password", label: t("checks.field.password"), placeholder: "", hint: t("checks.field.appPasswordHint"), optional: true, input: "password" },
+  ];
+}
+
+const tlsField = (): CheckField => ({
+  key: "tls",
+  label: t("checks.field.tls"),
+  placeholder: "",
+  initial: "prefer",
+  optional: true,
+  advanced: true,
+  input: "select",
+  options: [
+    { value: "prefer", label: t("checks.field.tlsPrefer") },
+    { value: "verify", label: t("checks.field.tlsVerify") },
+    { value: "off", label: t("checks.field.tlsOff") },
+  ],
+});
+
+/**
+ * The ready-made application checks (ADR-0183): databases and Redis run by
+ * the agent or, chosen in the form, a probe; a device's by a probe.
+ * Docker is read by the server's agent only. Each comes with its
+ * template's alerts, which the server adds.
+ */
+function appTypes(device: boolean): CheckType[] {
+  const common = { os: null, nameFrom: "", severity: "critical" as const, duration_s: 120, template: true, probe: device, anyRunner: !device };
+  const types: CheckType[] = [
+    {
+      ...common,
+      kind: "postgresql",
+      get label() {
+        return t("checks.type.postgresql");
+      },
+      get fields(): CheckField[] {
+        return [
+          ...connectionFields(5432, "monitorflow", device),
+          { key: "database", label: t("checks.field.database"), placeholder: "postgres", initial: "postgres", optional: true, advanced: true },
+          tlsField(),
+          { key: "slow_after", label: t("checks.field.slowAfter"), placeholder: "30", initial: "30", hint: t("checks.field.slowAfterHint"), optional: true, advanced: true },
+        ];
+      },
+    },
+    {
+      ...common,
+      kind: "mysql",
+      get label() {
+        return t("checks.type.mysql");
+      },
+      get fields(): CheckField[] {
+        return [...connectionFields(3306, "monitorflow", device), tlsField()];
+      },
+    },
+    {
+      ...common,
+      kind: "redis",
+      get label() {
+        return t("checks.type.redis");
+      },
+      get fields(): CheckField[] {
+        return connectionFields(6379, null, device);
+      },
+    },
+  ];
+  if (device) return types;
+  return [
+    ...types,
+    {
+      ...common,
+      kind: "docker",
+      os: "linux",
+      probe: false,
+      anyRunner: false,
+      get label() {
+        return t("checks.type.docker");
+      },
+      get fields(): CheckField[] {
+        return [
+          { key: "containers", label: t("checks.field.containers"), placeholder: "^web-", hint: t("checks.field.containersHint"), optional: true },
+          {
+            key: "engine",
+            label: t("checks.field.engine"),
+            placeholder: "",
+            initial: "docker",
+            optional: true,
+            advanced: true,
+            input: "select",
+            options: [
+              { value: "docker", label: "Docker" },
+              { value: "podman", label: "Podman" },
+            ],
+          },
+        ];
+      },
+    },
+  ];
+}
 
 /** What a device can be checked with, from the central server or a relay (ADR-0148). */
 /**
@@ -572,6 +688,7 @@ export const DEVICE_CHECK_TYPES: CheckType[] = [
     probe: true,
   },
   websiteType(true),
+  ...appTypes(true),
 ];
 
 /** Which checks a server can run; every check for a site, which can mix systems. */
@@ -626,6 +743,8 @@ export function checkRequests(
     type.fields.map((f) => [f.key, (values[f.key] ?? "").trim()]).filter(([, value]) => value !== ""),
   );
   const sensor: SensorConfigRequest = { kind: type.kind, name, interval_ms: intervalMs, params: { ...params, ...type.fixed } };
+  // A template's alerts come from the server (ADR-0183).
+  if (type.template) return { sensor: { ...sensor, default_alerts: true }, threshold: null, more: [] };
   const event = EVENTS[type.kind];
   if (!event || type.noAlert) return { sensor, threshold: null, more: [] };
   const more = type.moreAlerts?.((suffix) => `${METRIC_PREFIX}${name}_${suffix}`, values) ?? [];
@@ -761,6 +880,15 @@ function ownTitle(sensor: EffectiveSensor): string {
       return t("virtualization.check.vmware");
     case "hyperv":
       return t("virtualization.check.hyperv");
+    case "postgresql":
+    case "mysql":
+    case "redis": {
+      const app = t(sensor.kind === "postgresql" ? "checks.type.postgresql" : sensor.kind === "mysql" ? "checks.type.mysql" : "checks.type.redis");
+      const host = remoteHost(params);
+      return host ? t("checks.title.appOn", { app, host }) : app;
+    }
+    case "docker":
+      return t("checks.type.docker");
     default:
       return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }

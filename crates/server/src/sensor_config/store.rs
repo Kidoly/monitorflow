@@ -17,15 +17,16 @@ use crate::secrets::{self, Column};
 /// as refused.
 const MAX_GRANTED_BYTES: usize = 3 * 1024 * 1024;
 
-/// Adds the opened password of a website check to its `params`, as the
-/// check reads it (ADR-0150). One that does not open is left out, so the
-/// check runs without it and its failure shows.
+/// Adds the opened password of a website check (ADR-0150) or an
+/// application check (ADR-0183) to its `params`, as the check reads it.
+/// One that does not open is left out, so the check runs without it and
+/// its failure shows.
 pub(crate) fn with_secret(
     kind: &str,
     params: &mut std::collections::BTreeMap<String, String>,
     secret: Option<String>,
 ) {
-    if kind != monitorflow_webcheck::KIND {
+    if kind != monitorflow_webcheck::KIND && !monitorflow_apps::takes_secret(kind) {
         return;
     }
     match secrets::open_stored(Column::SensorConfigs, secret) {
@@ -36,7 +37,7 @@ pub(crate) fn with_secret(
             );
         }
         Some(Err(error)) => {
-            tracing::warn!(%error, "the password of a website check does not open; sent without it")
+            tracing::warn!(%error, kind, "the password of a check does not open; sent without it")
         }
         None => {}
     }

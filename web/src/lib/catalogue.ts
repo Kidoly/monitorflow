@@ -12,7 +12,7 @@ import { type CheckUsage, type UsablePlugin } from "./api";
 
 export type Purpose = "availability" | "performance" | "disk" | "services" | "logs" | "network" | "updates" | "databases" | "web" | "containers";
 export type System = "linux" | "windows" | "proxmox";
-export type Technology = "agent" | "script" | "port" | "website" | "plugin";
+export type Technology = "agent" | "script" | "port" | "website" | "application" | "plugin";
 
 /** A filter choice whose label is read in the active language when shown. */
 const option = <T extends string>(value: T, key: PlainKey) => ({
@@ -45,6 +45,7 @@ export const TECHNOLOGIES: { value: Technology; label: string }[] = [
   option("agent", "checks.technology.agent"),
   option("port", "checks.technology.port"),
   option("website", "checks.technology.website"),
+  option("application", "checks.technology.application"),
   option("script", "checks.technology.script"),
   option("plugin", "checks.technology.plugin"),
 ];
@@ -165,6 +166,12 @@ export const CATALOGUE: CatalogueEntry[] = [
   website({ id: "website-text", purposes: ["web"], systems: ANY, keywords: ["content", "text", "keyword", "string", "error page"] }, ["url", "contains", "not_contains"]),
   website({ id: "website-certificate", purposes: ["web", "availability"], systems: ANY, keywords: ["ssl", "tls", "https", "certificate", "expiry", "expires", "renewal", "let's encrypt"] }, ["url"]),
   website({ id: "website-api", purposes: ["web", "availability"], systems: ANY, keywords: ["api", "rest", "json", "endpoint", "health", "token", "status code"] }, ["url", "status", "headers", "username", "password"], { status: "200" }),
+
+  // Ready-made application checks, with their alerts (ADR-0183).
+  plainKind({ id: "postgresql", purposes: ["databases", "performance", "availability"], systems: ANY, keywords: ["postgres", "sql", "database", "replication", "connections", "locks", "slow queries", "pg_stat"] }, "application", "postgresql"),
+  plainKind({ id: "mysql", purposes: ["databases", "performance", "availability"], systems: ANY, keywords: ["mariadb", "sql", "database", "replication", "innodb", "slow queries", "connections"] }, "application", "mysql"),
+  plainKind({ id: "redis", purposes: ["databases", "performance", "availability"], systems: ANY, keywords: ["cache", "key value", "memory", "evictions", "valkey", "keydb"] }, "application", "redis"),
+  plainKind({ id: "docker", purposes: ["containers", "availability", "performance"], systems: LINUX, keywords: ["container", "containers", "restarts", "health", "podman", "compose"] }, "application", "docker"),
 
   // Linux services.
   service({ id: "ssh-service", purposes: ["services", "availability"], systems: LINUX, keywords: ["sshd", "openssh", "remote access"] }, "ssh", true),

@@ -26,12 +26,14 @@ Retyping hundreds of devices, sensors and limits is the hardest part of switchin
 | HTTP and HTTP advanced sensors | Website check of the page: its method, the keyword it must or must not hold, custom headers and timeout, with the response time limits as a threshold | Exact; approximated for a POST, a keyword given as a regular expression or Windows authentication. A password is not imported: set it in the check afterwards |
 | SSL certificate sensor | Website check of its host and port, with its days limits on the days left. A page of the same site checked already takes them instead | Approximated: the check also requests the page, whatever it answers |
 | Event log sensors | Event log check of the same log, levels, sources and event IDs | Exact, or approximated when a message filter or a count limit cannot be moved |
+| PostgreSQL, MySQL v2 and MySQL sensors | PostgreSQL or MySQL check of the device's address, with its default alerts: run by the server's agent, or from a probe for a device | Approximated: the sensor's own query is not run, only the connection, the response time and the database's usual measures. The password is not imported: enter it on the check |
+| Docker Container Status sensor | Docker check of the server's agent, limited to that container, with its default alerts | Exact; approximated, every container, when the container's name cannot be read |
 | Maintenance window | Silence of the servers it covers | Exact; at most 30 days |
 | Paused device, group or probe | Silence of 30 days, the longest there is | Approximated |
 | Notification template sending email | Email channel | Approximated: it gets every incident, where PRTG used it only where a trigger named it. Its mail server is not in PRTG's API: add an email channel with yours if the preview says so |
 | Notification template calling a URL | Slack, Teams, Discord or webhook channel, by the URL | Approximated: MonitorFlow sends its own message |
 
-What cannot be moved is listed too, with the reason: SNMP traffic sensors, devices watched only over SNMP (switches, printers), sensors of a kind MonitorFlow has no check for, limits on channels MonitorFlow has no threshold for, sensors paused by a schedule or a dependency, a single paused sensor (MonitorFlow silences whole servers), and SMS or push notifications.
+What cannot be moved is listed too, with the reason: SNMP traffic sensors, devices watched only over SNMP (switches, printers), sensors of a kind MonitorFlow has no check for (Microsoft SQL and Oracle among them), limits on channels MonitorFlow has no threshold for, sensors paused by a schedule or a dependency, a single paused sensor (MonitorFlow silences whole servers), and SMS or push notifications.
 
 ## Before you start
 

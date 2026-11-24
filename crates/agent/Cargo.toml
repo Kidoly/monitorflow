@@ -33,6 +33,8 @@ thiserror.workspace = true
 monitorflow-sensors.workspace = true
 # Website checks (ADR-0150).
 monitorflow-webcheck.workspace = true
+# Ready-made application checks (ADR-0183).
+monitorflow-apps.workspace = true
 # Check plugins in their sandbox (ADR-0103).
 monitorflow-plugin.workspace = true
 prost.workspace = true

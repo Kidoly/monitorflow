@@ -613,6 +613,7 @@ async fn create_one(
                     params,
                     enabled: true,
                     probe: None,
+                    default_alerts: false,
                 },
                 address.as_deref(),
             )?;

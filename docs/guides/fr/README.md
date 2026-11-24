@@ -31,9 +31,9 @@ Les guides existent aussi [en anglais](../README.md).
 
 ## Bases de données
 
-- [Comment surveiller PostgreSQL](surveiller-postgresql.md) : Soyez alerté quand PostgreSQL s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec deux vérifications du catalogue MonitorFlow.
-- [Comment surveiller MySQL et MariaDB](surveiller-mysql-mariadb.md) : Soyez alerté quand MySQL ou MariaDB s'arrête ou n'accepte plus de connexions, avec les vérifications de service et de port du catalogue MonitorFlow.
-- [Comment surveiller Redis](surveiller-redis.md) : Soyez alerté quand Redis s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec les vérifications de service et de port de MonitorFlow.
+- [Comment surveiller PostgreSQL](surveiller-postgresql.md) : Suivez les connexions, transactions longues, verrous, cache et réplication de PostgreSQL, et soyez alerté quand il ne répond plus, avec le contrôle PostgreSQL prêt à l'emploi de MonitorFlow.
+- [Comment surveiller MySQL et MariaDB](surveiller-mysql-mariadb.md) : Suivez les connexions, requêtes lentes, le buffer pool InnoDB et la réplication de MySQL et MariaDB, et soyez alerté quand la base ne répond plus, avec le contrôle prêt à l'emploi de MonitorFlow.
+- [Comment surveiller Redis](surveiller-redis.md) : Suivez la mémoire, les évictions, les clients, les sauvegardes et la réplication de Redis, et soyez alerté quand il ne répond plus, avec le contrôle Redis prêt à l'emploi de MonitorFlow.
 - [Comment surveiller MongoDB](surveiller-mongodb.md) : Soyez alerté quand MongoDB s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec les vérifications du service mongod et du port 27017.
 - [Comment surveiller SQL Server](surveiller-sql-server.md) : Soyez alerté quand une instance SQL Server s'arrête ou refuse les connexions sous Windows, avec les vérifications du service MSSQLSERVER et du port 1433.
 
@@ -42,7 +42,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller nginx](surveiller-nginx.md) : Soyez alerté quand nginx s'arrête, quand les ports 80 et 443 ne répondent plus ou quand son journal signale des erreurs critiques.
 - [Comment surveiller Apache](surveiller-apache.md) : Soyez alerté quand le serveur web Apache s'arrête ou que les ports 80 et 443 ne répondent plus, sous Debian, Ubuntu, RHEL et Rocky.
 - [Comment surveiller un site web en HTTPS](surveiller-site-web-https.md) : Sachez quand votre site ne répond plus comme il le devrait : son code de réponse, le texte de la page, son temps de réponse, ses redirections et l'expiration de son certificat.
-- [Comment surveiller Docker](surveiller-docker.md) : Soyez alerté quand le moteur Docker ou containerd s'arrête sur un serveur Linux, et quand un port publié par un conteneur ne répond plus.
+- [Comment surveiller Docker](surveiller-docker.md) : Suivez chaque conteneur Docker ou Podman : s'il tourne, ses redémarrages, son contrôle de santé, son processeur et sa mémoire, et soyez alerté quand le moteur ou un conteneur s'arrête.
 - [Comment surveiller Proxmox VE](surveiller-proxmox-ve.md) : Surveillez vos hôtes Proxmox VE : l'interface web sur le port 8006, le service de cluster, et l'espace disque, le CPU et la mémoire des VM.
 - [Comment surveiller VMware vSphere et Hyper-V](surveiller-vmware-hyper-v.md) : Surveillez les hôtes, clusters, machines virtuelles et banques de données d'un vCenter, d'un hôte ESXi ou d'un hôte Hyper-V, et reliez chaque machine virtuelle à son serveur.
 

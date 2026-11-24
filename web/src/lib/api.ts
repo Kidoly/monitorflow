@@ -1416,11 +1416,13 @@ export interface SensorConfigRequest {
   enabled?: boolean;
   /** `central` or a relay's ID: it runs from there instead of the agent (ADR-0148). */
   probe?: string | null;
+  /** On a create of an application check: add its template's alerts too (ADR-0183). */
+  default_alerts?: boolean;
 }
 
 /** One stored row of `sensor_configs`; exactly one of `site_id` and `server_id` is set. */
 export interface SensorConfigEntry extends Required<
-  Omit<SensorConfigRequest, "timeout_ms" | "probe">
+  Omit<SensorConfigRequest, "timeout_ms" | "probe" | "default_alerts">
 > {
   id: string;
   site_id: string | null;

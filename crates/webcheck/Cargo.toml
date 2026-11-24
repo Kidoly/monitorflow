@@ -10,6 +10,8 @@ description = "Website checks: an HTTP(S) request and the certificate it met (AD
 monitorflow-sensors.workspace = true
 # Website checks run by probes too (ADR-0148).
 monitorflow-probe.workspace = true
+# The central server's application checks (ADR-0183).
+monitorflow-apps.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 http-body-util.workspace = true

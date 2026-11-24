@@ -7,6 +7,7 @@ members = [
     "crates/snmp",
     "crates/vmware",
     "crates/webcheck",
+    "crates/apps",
     "crates/import",
     "crates/ai",
     "crates/agent",
@@ -41,6 +42,7 @@ monitorflow-server-ee = { path = "ee/crates/server-ee" }
 monitorflow-plugin = { path = "crates/plugin" }
 monitorflow-import = { path = "crates/import" }
 monitorflow-webcheck = { path = "crates/webcheck" }
+monitorflow-apps = { path = "crates/apps" }
 
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.14", features = ["tls-ring"] }
