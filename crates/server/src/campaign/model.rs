@@ -9,9 +9,10 @@ use monitorflow_common::command::valid_package_name;
 use monitorflow_common::major_upgrade;
 use monitorflow_common::proto::v1::configure_sources::Mode;
 use monitorflow_common::proto::v1::{
-    ApplyUpdates, MajorUpgrade, PackageManager, ThirdPartySelection,
+    ApplyUpdates, MajorUpgrade, PackageManager, SoftwareChange, SoftwarePackage,
+    ThirdPartySelection,
 };
-use monitorflow_common::third_party;
+use monitorflow_common::{software, third_party};
 use prost::Message;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
@@ -414,6 +415,17 @@ pub struct UpdateSpec {
     /// Third-party managers to update, after the OS (ADR-0138).
     #[serde(default)]
     pub third_party: Vec<ThirdPartySpec>,
+    /// Windows Update classifications approved, by English name (`Security
+    /// Updates`, `Critical Updates`, `Definition Updates`, `Update
+    /// Rollups`, `Updates`, `Feature Packs`, `Service Packs`, `Tools`,
+    /// `Upgrades`); empty approves every one but `Upgrades` (ADR-0188).
+    /// Windows servers only; Linux servers of the campaign ignore it.
+    #[serde(default)]
+    pub classifications: Vec<String>,
+    /// Windows updates never installed, as KB numbers or update IDs
+    /// (ADR-0188). Windows servers only, like `classifications`.
+    #[serde(default)]
+    pub hold: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -428,6 +440,8 @@ impl Default for UpdateSpec {
             allow_reboot: false,
             include_os: true,
             third_party: Vec::new(),
+            classifications: Vec::new(),
+            hold: Vec::new(),
         }
     }
 }
@@ -442,11 +456,20 @@ pub struct ThirdPartySpec {
     /// Package IDs to update; empty updates every pending one.
     #[serde(default)]
     pub packages: Vec<String>,
+    /// Package IDs never updated, whatever else selects them (ADR-0188).
+    /// Windows (winget) only for now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hold: Vec<String>,
 }
 
 /// Why a server gets no third-party update: its agent, or a relay on the
 /// way, predates them (ADR-0138).
 pub const NO_THIRD_PARTY: &str = "agent does not report third-party apps";
+
+/// Why a server gets no update that approves or holds: its agent predates
+/// ADR-0188 and would install what is held.
+pub const NO_APPROVALS: &str =
+    "agent does not know approvals and held updates yet; it updates by itself";
 
 impl UpdateSpec {
     pub fn validate(&self) -> Result<(), String> {
@@ -456,7 +479,23 @@ impl UpdateSpec {
         if let Some(bad) = self.packages.iter().find(|p| !valid_package_name(p)) {
             return Err(format!("invalid package name `{}`", bad.escape_debug()));
         }
-        third_party::check(&self.apply(), None).map_err(|e| e.to_string())
+        let apply = self.apply();
+        third_party::check(&apply, None).map_err(|e| e.to_string())?;
+        software::check_approvals(&apply).map_err(|e| e.to_string())?;
+        // Held apps are winget's only, for now (ADR-0188).
+        if self
+            .third_party
+            .iter()
+            .any(|s| !s.hold.is_empty() && s.manager != "winget")
+        {
+            return Err("held apps are for winget only for now".into());
+        }
+        Ok(())
+    }
+
+    /// Whether it approves classifications or holds anything.
+    pub fn has_approvals(&self) -> bool {
+        software::has_approvals(&self.apply())
     }
 
     /// Whether any third-party manager is selected.
@@ -484,8 +523,11 @@ impl UpdateSpec {
                 .map(|s| ThirdPartySelection {
                     manager: third_party::parse(&s.manager).map_or(0, Into::into),
                     packages: s.packages.clone(),
+                    hold: s.hold.clone(),
                 })
                 .collect(),
+            classifications: self.classifications.clone(),
+            hold: self.hold.clone(),
         }
     }
 
@@ -496,9 +538,25 @@ impl UpdateSpec {
     /// The `ApplyUpdates` for one server of `os_family`: managers of
     /// another platform are left out, and so is every manager when its
     /// agent does not `report` third-party apps, which an OS-less update
-    /// then cannot do without (ADR-0138).
-    pub fn for_server(&self, os_family: &str, reports: bool) -> Result<ApplyUpdates, String> {
+    /// then cannot do without (ADR-0138). Approvals and holds are Windows
+    /// Update's and winget's: left out for Linux servers, and refused for
+    /// a Windows agent that does not know them (`approvals`, ADR-0188).
+    pub fn for_server(
+        &self,
+        os_family: &str,
+        reports: bool,
+        approvals: bool,
+    ) -> Result<ApplyUpdates, String> {
         let mut apply = self.apply();
+        if os_family != "windows" {
+            apply.classifications.clear();
+            apply.hold.clear();
+            for selection in &mut apply.third_party {
+                selection.hold.clear();
+            }
+        } else if software::has_approvals(&apply) && !approvals {
+            return Err(NO_APPROVALS.into());
+        }
         let platform = third_party::managers_for(os_family);
         apply
             .third_party
@@ -513,6 +571,75 @@ impl UpdateSpec {
             return Err("nothing to update on this server".into());
         }
         Ok(apply)
+    }
+}
+
+/// What a software campaign or command installs or removes (ADR-0188),
+/// resolved from the catalogue when it is made: later changes to the
+/// catalogue do not change it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = SoftwareDeployment)]
+#[serde(deny_unknown_fields)]
+pub struct SoftwareSpec {
+    /// `install` or `remove`.
+    pub action: String,
+    /// At least one, at most 100.
+    pub packages: Vec<SoftwareItem>,
+}
+
+/// One package of a [`SoftwareSpec`], as the catalogue held it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = SoftwareDeploymentPackage)]
+#[serde(deny_unknown_fields)]
+pub struct SoftwareItem {
+    /// The catalogue entry it came from; it may have been deleted since.
+    pub catalog_id: Uuid,
+    pub name: String,
+    /// `winget`.
+    pub manager: String,
+    /// The package ID, like `7zip.7zip`.
+    pub id: String,
+    /// The winget source it installs from, like `winget`.
+    pub source: String,
+}
+
+impl SoftwareSpec {
+    /// The payload of each server's `software` command.
+    pub fn change(&self, allow_reboot: bool) -> SoftwareChange {
+        SoftwareChange {
+            action: software::parse_action(&self.action).map_or(0, Into::into),
+            manager: PackageManager::Winget.into(),
+            packages: self
+                .packages
+                .iter()
+                .map(|p| SoftwarePackage {
+                    id: p.id.clone(),
+                    source: p.source.clone(),
+                })
+                .collect(),
+            allow_reboot,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.packages.iter().any(|p| p.manager != "winget") {
+            return Err("software is installed with winget only for now".into());
+        }
+        software::check_change(&self.change(false), None).map_err(|e| e.to_string())
+    }
+}
+
+/// Why a server gets no software command: its agent refuses them, or
+/// predates them (ADR-0188).
+pub fn software_refusal(state: Option<&str>) -> Option<&'static str> {
+    match state {
+        Some("accepted") => None,
+        Some("off") => Some(
+            "software installs are not allowed on this server; an administrator allows them \
+             with `monitorflow-agent.exe software on`",
+        ),
+        Some(_) => Some("this server's system cannot install software from the catalogue yet"),
+        None => Some("this server's agent is too old to install software; it updates by itself"),
     }
 }
 
@@ -661,6 +788,7 @@ pub fn plan_waves(targets: &[Uuid], specs: &[WaveSpec]) -> Result<Vec<Vec<Uuid>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use monitorflow_common::proto::v1::software_change;
     use serde_json::json;
 
     fn ids(n: u128) -> Vec<Uuid> {
@@ -816,8 +944,82 @@ mod tests {
         assert_eq!(
             serde_json::to_value(UpdateSpec::default()).unwrap(),
             json!({"packages": [], "security_only": false, "allow_reboot": false,
-                   "include_os": true, "third_party": []})
+                   "include_os": true, "third_party": [], "classifications": [], "hold": []})
         );
+    }
+
+    #[test]
+    fn software_specs_are_checked_and_encoded() {
+        let spec: SoftwareSpec = serde_json::from_value(json!({
+            "action": "install",
+            "packages": [{"catalog_id": Uuid::nil(), "name": "7-Zip", "manager": "winget",
+                          "id": "7zip.7zip", "source": "winget"}]
+        }))
+        .unwrap();
+        spec.validate().unwrap();
+        let change = spec.change(true);
+        assert_eq!(change.action, i32::from(software_change::Action::Install));
+        assert_eq!(change.packages[0].id, "7zip.7zip");
+        assert!(change.allow_reboot);
+        let remove = SoftwareSpec {
+            action: "remove".into(),
+            ..spec.clone()
+        };
+        assert_eq!(
+            remove.change(false).action,
+            i32::from(software_change::Action::Remove)
+        );
+        for bad in [
+            SoftwareSpec {
+                action: "upgrade".into(),
+                ..spec.clone()
+            },
+            SoftwareSpec {
+                packages: vec![],
+                ..spec.clone()
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
+        assert_eq!(software_refusal(Some("accepted")), None);
+        for state in [Some("off"), Some("unsupported"), None] {
+            assert!(software_refusal(state).is_some());
+        }
+    }
+
+    #[test]
+    fn approvals_are_checked_and_fitted_to_each_server() {
+        let spec: UpdateSpec = serde_json::from_value(json!({
+            "classifications": ["Security Updates", "Critical Updates"],
+            "hold": ["KB5034441"],
+            "third_party": [{"manager": "winget", "hold": ["Mozilla.Firefox"]},
+                            {"manager": "snap"}]
+        }))
+        .unwrap();
+        spec.validate().unwrap();
+        assert!(spec.has_approvals());
+        let windows = spec.for_server("windows", true, true).unwrap();
+        assert_eq!(windows.classifications.len(), 2);
+        assert_eq!(windows.hold, ["KB5034441"]);
+        assert_eq!(windows.third_party[0].hold, ["Mozilla.Firefox"]);
+        // A Windows agent that predates approvals would install what is held.
+        assert_eq!(
+            spec.for_server("windows", true, false),
+            Err(NO_APPROVALS.into())
+        );
+        // Linux has no classifications or KB numbers: left out.
+        let debian = spec.for_server("debian", true, false).unwrap();
+        assert!(debian.classifications.is_empty() && debian.hold.is_empty());
+        assert!(!UpdateSpec::default().has_approvals());
+        for bad in [
+            json!({"classifications": ["Drivers"]}),
+            json!({"hold": ["libc6"]}),
+            json!({"packages": ["KB1"], "hold": ["kb1"]}),
+            json!({"third_party": [{"manager": "snap", "hold": ["firefox"]}]}),
+        ] {
+            let spec: UpdateSpec = serde_json::from_value(bad.clone()).unwrap();
+            assert!(spec.validate().is_err(), "{bad}");
+        }
     }
 
     #[test]
@@ -828,15 +1030,15 @@ mod tests {
         }))
         .unwrap();
         spec.validate().unwrap();
-        let windows = spec.for_server("windows", true).unwrap();
+        let windows = spec.for_server("windows", true, true).unwrap();
         assert!(windows.skip_os);
         assert_eq!(windows.third_party.len(), 1);
         assert_eq!(windows.third_party[0].manager(), PackageManager::Winget);
         assert_eq!(windows.third_party[0].packages, ["7zip.7zip"]);
-        let debian = spec.for_server("debian", true).unwrap();
+        let debian = spec.for_server("debian", true, true).unwrap();
         assert_eq!(debian.third_party[0].manager(), PackageManager::Snap);
         assert_eq!(
-            spec.for_server("windows", false),
+            spec.for_server("windows", false, true),
             Err(NO_THIRD_PARTY.into())
         );
 
@@ -845,23 +1047,28 @@ mod tests {
             third_party: vec![ThirdPartySpec {
                 manager: "flatpak".into(),
                 packages: vec![],
+                hold: vec![],
             }],
             ..UpdateSpec::default()
         };
-        assert!(flatpak_only.for_server("windows", true).is_err());
+        assert!(flatpak_only.for_server("windows", true, true).is_err());
 
         // With the OS kept, an older agent gets the OS part alone.
         let both = UpdateSpec {
             third_party: vec![ThirdPartySpec {
                 manager: "flatpak".into(),
                 packages: vec![],
+                hold: vec![],
             }],
             ..UpdateSpec::default()
         };
-        let older = both.for_server("debian", false).unwrap();
+        let older = both.for_server("debian", false, true).unwrap();
         assert!(!older.skip_os && older.third_party.is_empty());
         assert_eq!(
-            both.for_server("debian", true).unwrap().third_party.len(),
+            both.for_server("debian", true, true)
+                .unwrap()
+                .third_party
+                .len(),
             1
         );
 

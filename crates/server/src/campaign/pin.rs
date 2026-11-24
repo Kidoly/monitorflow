@@ -83,6 +83,10 @@ pub(super) struct Pending {
     pub vm_snapshot_state: Option<String>,
     pub vm_snapshot_at: Option<chrono::DateTime<chrono::Utc>>,
     pub vm_snapshot_error: Option<String>,
+    /// What its agent does with `software` commands, as `Hello` said;
+    /// `None` from an agent that predates them (ADR-0188), which also
+    /// does not know approvals and holds.
+    pub software_state: Option<String>,
 }
 
 /// What a [`Pending`] server of a pinned campaign needs next.
@@ -425,6 +429,7 @@ mod tests {
             vm_snapshot_state: None,
             vm_snapshot_at: None,
             vm_snapshot_error: None,
+            software_state: None,
         }
     }
 

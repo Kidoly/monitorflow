@@ -102,3 +102,24 @@ describe("command steps", () => {
     ]);
   });
 });
+
+describe("software commands (ADR-0188)", () => {
+  it("name the action and the packages", () => {
+    setActiveLocale("en");
+    const install = command({
+      kind: "software",
+      parameters: {
+        action: "install",
+        manager: "winget",
+        packages: [{ id: "7zip.7zip", source: "winget" }, { id: "Mozilla.Firefox", source: "winget" }],
+        allow_reboot: false,
+      },
+    });
+    expect(describeCommand(install)).toEqual({ title: "Install software: 7zip.7zip, Mozilla.Firefox", sub: "2 packages, no reboot" });
+    const remove = command({
+      kind: "software",
+      parameters: { action: "remove", manager: "winget", packages: [{ id: "7zip.7zip", source: "" }], allow_reboot: true },
+    });
+    expect(describeCommand(remove).title).toBe("Remove software: 7zip.7zip");
+  });
+});

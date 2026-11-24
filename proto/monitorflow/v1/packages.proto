@@ -1,5 +1,5 @@
 // MonitorFlow package payloads, version 1. See ADR-0031, ADR-0049, ADR-0086
-// and ADR-0138.
+// ADR-0138 and ADR-0188.
 //
 // Rules: changes are additive only. Never renumber or reuse a field number.
 
@@ -27,6 +27,17 @@ message ApplyUpdates {
   // Third-party managers to update, each at most once, after the OS. A
   // manager not listed is left alone.
   repeated ThirdPartySelection third_party = 5;
+  // Windows only (ADR-0188): the Windows Update classifications approved,
+  // by their English names (`common::command::WINDOWS_CLASSIFICATIONS`).
+  // Empty keeps ADR-0049's meaning: every classification but `Upgrades`.
+  // They narrow `all` and `security`; named updates are installed as
+  // named. Agents before ADR-0188 ignore it, so the server sends it only
+  // to agents that report the `software` command kind.
+  repeated string classifications = 6;
+  // Windows only (ADR-0188): updates never installed by this command, as
+  // KB numbers or update IDs, whatever else selects them. Sent under the
+  // same condition as `classifications`.
+  repeated string hold = 7;
 }
 
 // The third-party package managers (ADR-0138). A later one is a new value.
@@ -46,6 +57,37 @@ message ThirdPartySelection {
   // (`common::third_party::valid_id`); empty updates every
   // pending one.
   repeated string packages = 2;
+  // Package IDs never updated by this command, whatever else selects
+  // them (ADR-0188). Sent only to agents that report the `software`
+  // command kind.
+  repeated string hold = 3;
+}
+
+// Payload of a Command of kind "software" (ADR-0188): install or remove
+// software from the central server's catalogue. Agents refuse it unless
+// the host's administrator allowed it (`commands.software`).
+message SoftwareChange {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_INSTALL = 1;
+    ACTION_REMOVE = 2;
+  }
+  Action action = 1;
+  // The manager that installs or removes them; winget only for now.
+  PackageManager manager = 2;
+  // At least one, at most 100, each ID once.
+  repeated SoftwarePackage packages = 3;
+  // Restart one minute after, when the host then needs it.
+  bool allow_reboot = 4;
+}
+
+// One package of a SoftwareChange.
+message SoftwarePackage {
+  // In the manager's grammar (`common::third_party::valid_id`).
+  string id = 1;
+  // Where to install it from: a winget source name, like `winget`. A
+  // removal takes the app as installed and ignores it.
+  string source = 2;
 }
 
 // The packages installed on an agent's host, sent after every apply_updates

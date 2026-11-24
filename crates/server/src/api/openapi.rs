@@ -70,6 +70,7 @@ pub fn build() -> Document {
     doc.merge(fleet::FleetDoc::openapi());
     doc.merge(super::openapi_remediation::Doc::openapi());
     doc.merge(super::openapi_campaigns::Doc::openapi());
+    doc.merge(super::openapi_software::Doc::openapi());
     doc.merge(super::openapi_auto_update::Doc::openapi());
     doc.merge(super::openapi_checks::Doc::openapi());
     doc.merge(super::openapi_imports::Doc::openapi());
@@ -615,7 +616,15 @@ has no other command running, and the agent may start it until `ttl_s` seconds h
 one hour by default); after that it is `expired`. Poll `GET /api/v1/commands/{id}` for its end.\n\n\
 - `apply_updates` installs package updates: `packages` (up to 1000 names; empty or absent for every \
 update), `security_only` and `allow_reboot`. Package names are letters, digits and `.+_:-`, not starting \
-with `-`; on Windows servers, KB numbers (`KB5034441`) or update IDs.\n\
+with `-`; on Windows servers, KB numbers (`KB5034441`) or update IDs. On Windows servers, \
+`classifications` approves Windows Update classifications by English name (`Security Updates`, \
+`Critical Updates`, `Definition Updates`, `Update Rollups`, `Updates`, `Feature Packs`, `Service Packs`, \
+`Tools`, `Upgrades`; empty: every one but `Upgrades`), `hold` lists updates never installed, and each \
+`third_party` entry may `hold` apps. An agent too old for them gets a 400 rather than an update that \
+ignores them.\n\
+- `software` installs or removes software from the catalogue (`/software`) on a Windows server whose \
+administrator allowed it (`monitorflow-agent.exe software on`): `software` is `{\"action\": \"install\" | \
+\"remove\", \"catalog_ids\": [id]}`, with `allow_reboot`.\n\
 - `self_update` installs another agent version: `version` (like `0.9.3`, required), `allow_downgrade`, and \
 `health_timeout_s` (30 to 3600, 300 by default), how long the new agent has to connect before the old \
 one comes back.\n\n\
@@ -632,6 +641,12 @@ Audited as `command.create`. **Not safe to repeat**: each request queues a comma
             value = json!({"kind": "apply_updates", "packages": ["openssl", "libssl3"], "ttl_s": 3600}))),
         ("self_update" = (summary = "Update the agent",
             value = json!({"kind": "self_update", "version": "0.9.3"}))),
+        ("hold" = (summary = "Install approved Windows updates, holding one",
+            value = json!({"kind": "apply_updates", "classifications": ["Security Updates",
+                "Critical Updates"], "hold": ["KB5034441"], "allow_reboot": true}))),
+        ("software" = (summary = "Install software from the catalogue",
+            value = json!({"kind": "software", "software": {"action": "install",
+                "catalog_ids": ["5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e"]}}))),
     )),
     responses(
         (status = 201, description = "The queued command", body = commands::CommandDetail,
@@ -645,8 +660,9 @@ other kind, or `ttl_s` or `health_timeout_s` out of range: `invalid`", body = Er
 outside the key's areas: `api_key_scope`", body = ErrorBody),
         (status = 404, description = "No such server, or outside the key's reach: `not_found`",
             body = ErrorBody),
-        (status = 409, description = "The server is removed, or has no package manager MonitorFlow \
-can drive (`apply_updates`): `conflict`", body = ErrorBody),
+        (status = 409, description = "The server is removed, has no package manager MonitorFlow \
+can drive (`apply_updates`), or does not take software from the catalogue (`software`: its \
+administrator did not allow it, or its agent is too old): `conflict`", body = ErrorBody),
     ))]
 fn create_command() {}
 

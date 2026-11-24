@@ -1,17 +1,23 @@
 //! The agent's side of Windows Update (ADR-0049) and winget (ADR-0139):
-//! package reports and `apply_updates` through the update service.
+//! package reports, `apply_updates` and `software` (ADR-0188) through the
+//! update service.
 //! Written against [`UpdateService`] so it is tested with a fake; the pipe
 //! client is in `pipe`.
 
 use std::sync::Arc;
 
+use monitorflow_common::proto::v1::software_change::Action;
 use monitorflow_common::proto::v1::{
-    ApplyUpdates, Command, Package, ThirdPartySelection, WindowsUpdateSource,
+    ApplyUpdates, Command, CommandAcceptance, Package, SoftwareChange, ThirdPartySelection,
+    WindowsUpdateSource,
 };
-use monitorflow_common::third_party;
+use monitorflow_common::{software, third_party};
 use prost::Message;
 
-use super::{describe, to_packages, Installed, Reply, Request, Scan, Status, Step};
+use super::{
+    describe, describe_change, to_packages, Installed, Reply, Request, Scan, Status, Step,
+    SOFTWARE_NOT_ALLOWED,
+};
 use crate::commands::{Handler, Output};
 use crate::packages::winget::{self, Apps};
 use crate::packages::{PackageError, PackageManager, Reports, ThirdParty};
@@ -127,35 +133,72 @@ impl WindowsApplyHandler {
     pub fn new(service: Arc<dyn UpdateService>, reports: Reports) -> Self {
         Self { service, reports }
     }
+}
 
-    async fn install(&self, request: &Request) -> Result<Installed, PackageError> {
-        match self.service.call(request).await? {
-            Reply::Installed(installed) => Ok(installed),
-            other => Err(unexpected(other)),
-        }
+async fn install(
+    service: &dyn UpdateService,
+    request: &Request,
+) -> Result<Installed, PackageError> {
+    match service.call(request).await? {
+        Reply::Installed(installed) => Ok(installed),
+        other => Err(unexpected(other)),
     }
 }
 
-/// `install security KB1 KB2`, for the output.
+/// Asks for the signed restart of `command`, after `done` (like
+/// "updates installed"), and says how it went in `output`.
+async fn reboot(service: &dyn UpdateService, command: &Command, done: &str, output: &mut Output) {
+    let reboot = Request::signed(command, Step::Reboot, None);
+    let error = match service.call(&reboot).await {
+        Ok(Reply::Rebooting(())) => {
+            output
+                .stdout
+                .extend_from_slice(b"restarting in one minute\n");
+            return;
+        }
+        Ok(other) => unexpected(other).to_string(),
+        Err(error) => error.to_string(),
+    };
+    output.exit_code = -1;
+    output.error = Some(format!("{done}, reboot failed: {error}"));
+}
+
+/// `install security KB1 KB2`, with what it approves and holds, for the
+/// output.
 fn line(request: &Request) -> String {
-    match request {
-        Request::Install { kind, updates } if updates.is_empty() => {
-            format!("install {}", kind.as_str())
-        }
-        Request::Install { kind, updates } => {
-            format!("install {} {}", kind.as_str(), updates.join(" "))
-        }
-        other => format!("{other:?}"),
+    let Request::Install {
+        kind,
+        updates,
+        classifications,
+        hold,
+    } = request
+    else {
+        return format!("{request:?}");
+    };
+    let mut line = format!("install {}", kind.as_str());
+    if !updates.is_empty() {
+        line.push_str(&format!(" {}", updates.join(" ")));
     }
+    if !classifications.is_empty() {
+        line.push_str(&format!(" approving {}", classifications.join(", ")));
+    }
+    if !hold.is_empty() {
+        line.push_str(&format!(" holding {}", hold.join(" ")));
+    }
+    line
 }
 
-/// `winget upgrade A B`, or `all`, for the output.
+/// `winget upgrade A B`, or `all`, with what it holds, for the output.
 fn winget_line(selection: &ThirdPartySelection) -> String {
-    if selection.packages.is_empty() {
-        "upgrade all".into()
+    let mut line = if selection.packages.is_empty() {
+        "upgrade all".to_owned()
     } else {
         format!("upgrade {}", selection.packages.join(" "))
+    };
+    if !selection.hold.is_empty() {
+        line.push_str(&format!(" holding {}", selection.hold.join(" ")));
     }
+    line
 }
 
 #[async_trait::async_trait]
@@ -174,6 +217,9 @@ impl Handler for WindowsApplyHandler {
         if let Err(error) = third_party::check(&apply, Some("windows")) {
             return Output::rejected(error.to_string());
         }
+        if let Err(error) = software::check_approvals(&apply) {
+            return Output::rejected(error.to_string());
+        }
         let os = (!apply.skip_os).then(|| Request::install(&apply));
         if let Some(Err(error)) = os.as_ref().map(Request::validate) {
             return Output::rejected(error.to_string());
@@ -182,10 +228,12 @@ impl Handler for WindowsApplyHandler {
         let apps = apply.third_party.first();
         let mut steps: Vec<(String, Step)> = Vec::new();
         if let Some(request) = &os {
-            steps.push((format!("windows update {}", line(request)), Step::Install));
+            let step = Step::install_for(&apply);
+            steps.push((format!("windows update {}", line(request)), step));
         }
         if let Some(selection) = apps {
-            steps.push((format!("winget {}", winget_line(selection)), Step::Winget));
+            let step = Step::winget_for(&apply);
+            steps.push((format!("winget {}", winget_line(selection)), step));
         }
         let mut output = Output::default();
         let mut reboot_required = false;
@@ -196,7 +244,8 @@ impl Handler for WindowsApplyHandler {
                 .extend_from_slice(format!("$ {shown}\n").as_bytes());
             // The service checks the signed command and builds the same
             // request from it (ADR-0108).
-            let installed = match self.install(&Request::signed(command, step, None)).await {
+            let signed = Request::signed(command, step, None);
+            let installed = match install(self.service.as_ref(), &signed).await {
                 Ok(installed) => installed,
                 Err(error) => {
                     failure = Some((-1, error.to_string()));
@@ -226,25 +275,103 @@ impl Handler for WindowsApplyHandler {
             return output;
         }
         if apply.allow_reboot && reboot_required {
-            let reboot = Request::signed(command, Step::Reboot, None);
-            match self.service.call(&reboot).await {
-                Ok(Reply::Rebooting(())) => {
-                    output
-                        .stdout
-                        .extend_from_slice(b"restarting in one minute\n");
-                }
-                Ok(other) => {
-                    output.exit_code = -1;
-                    output.error = Some(format!(
-                        "updates installed, reboot failed: {}",
-                        unexpected(other)
-                    ));
-                }
-                Err(error) => {
-                    output.exit_code = -1;
-                    output.error = Some(format!("updates installed, reboot failed: {error}"));
-                }
+            reboot(
+                self.service.as_ref(),
+                command,
+                "updates installed",
+                &mut output,
+            )
+            .await;
+        }
+        output
+    }
+}
+
+/// `software` on Windows (ADR-0188): the update service installs or
+/// removes winget packages as LocalSystem, the agent reports, then asks
+/// for a restart when the command allows it and Windows needs one.
+/// Refused unless the host's administrator set `commands.software`; the
+/// service checks that again in its own copy of `agent.toml`.
+pub struct SoftwareHandler {
+    service: Arc<dyn UpdateService>,
+    reports: Reports,
+    allowed: bool,
+}
+
+impl SoftwareHandler {
+    pub fn new(service: Arc<dyn UpdateService>, reports: Reports, allowed: bool) -> Self {
+        Self {
+            service,
+            reports,
+            allowed,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Handler for SoftwareHandler {
+    fn acceptance(&self) -> CommandAcceptance {
+        if self.allowed {
+            CommandAcceptance::Accepted
+        } else {
+            CommandAcceptance::Disabled
+        }
+    }
+
+    async fn run(&self, _payload: &[u8]) -> Output {
+        Output::rejected("software needs its signed command")
+    }
+
+    async fn run_command(&self, command: &Command) -> Output {
+        if !self.allowed {
+            return Output::rejected(SOFTWARE_NOT_ALLOWED);
+        }
+        let Ok(change) = SoftwareChange::decode(command.payload.as_slice()) else {
+            return Output::rejected("invalid SoftwareChange payload");
+        };
+        if let Err(error) = software::check_change(&change, Some("windows")) {
+            return Output::rejected(error.to_string());
+        }
+        let install_action = change.action == i32::from(Action::Install);
+        let verb = if install_action { "install" } else { "remove" };
+        let ids: Vec<&str> = change.packages.iter().map(|p| p.id.as_str()).collect();
+        let mut output = Output::default();
+        output
+            .stdout
+            .extend_from_slice(format!("$ winget {verb} {}\n", ids.join(" ")).as_bytes());
+        let signed = Request::signed(command, Step::Software, None);
+        let result = install(self.service.as_ref(), &signed).await;
+        // Whatever happened, the server gets the state of the host.
+        self.reports.collect().await;
+        let installed = match result {
+            Ok(installed) => installed,
+            Err(error) => {
+                output.exit_code = -1;
+                output.error = Some(error.to_string());
+                return output;
             }
+        };
+        let (text, error) = describe_change(&installed, install_action);
+        output.stdout.extend_from_slice(text.as_bytes());
+        tracing::info!(
+            action = verb,
+            packages = installed.results.len(),
+            failed = error.is_some(),
+            reboot_required = installed.reboot_required,
+            "software changed"
+        );
+        if let Some(error) = error {
+            output.exit_code = 1;
+            output.error = Some(error);
+            return output;
+        }
+        if change.allow_reboot && installed.reboot_required {
+            let done = if install_action {
+                "software installed"
+            } else {
+                "software removed"
+            };
+            reboot(self.service.as_ref(), command, done, &mut output).await;
         }
         output
     }
@@ -284,16 +411,18 @@ mod tests {
                     reboot_required: true,
                 })),
                 Request::Signed { step, .. } => match step {
-                    Step::Install => self.install.clone(),
+                    Step::Install | Step::InstallApproved | Step::Software => self.install.clone(),
                     Step::Reboot => self.reboot.clone(),
-                    Step::Winget => self.winget.clone(),
+                    Step::Winget | Step::WingetApproved => self.winget.clone(),
                     Step::SelfUpdate => None,
                 },
                 Request::WingetScan => self.apps.clone(),
                 Request::Install { .. }
                 | Request::Reboot
                 | Request::SelfUpdate(_)
-                | Request::WingetUpgrade { .. } => None,
+                | Request::WingetUpgrade { .. }
+                | Request::WingetInstall { .. }
+                | Request::WingetRemove { .. } => None,
             };
             reply.ok_or_else(|| PackageError::Helper("the update service is not running".into()))
         }
@@ -312,6 +441,7 @@ mod tests {
                 .collect(),
             not_pending: Vec::new(),
             reboot_required,
+            ..Installed::default()
         })
     }
 
@@ -546,6 +676,7 @@ mod tests {
             third_party: vec![ThirdPartySelection {
                 manager: monitorflow_common::proto::v1::PackageManager::Winget.into(),
                 packages: ids.iter().map(|s| s.to_string()).collect(),
+                ..ThirdPartySelection::default()
             }],
             ..ApplyUpdates::default()
         }
@@ -674,5 +805,133 @@ mod tests {
             assert!(output.rejected, "{apply:?}");
             assert!(calls.is_empty(), "{apply:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn approvals_use_steps_older_services_refuse() {
+        let apply = ApplyUpdates {
+            classifications: vec!["Security Updates".into()],
+            hold: vec!["KB1".into()],
+            third_party: vec![ThirdPartySelection {
+                manager: monitorflow_common::proto::v1::PackageManager::Winget.into(),
+                hold: vec!["Example.Held".into()],
+                ..ThirdPartySelection::default()
+            }],
+            ..ApplyUpdates::default()
+        };
+        let fake = Fake {
+            install: Some(installed(&[("KB2", Outcome::Succeeded)], false)),
+            winget: Some(installed(&[], false)),
+            apps: Some(Reply::Apps(Apps::absent("none"))),
+            ..Fake::default()
+        };
+        let (output, calls, _) = run(fake, apply).await;
+        assert_eq!((output.exit_code, output.error.as_deref()), (0, None));
+        assert_eq!(
+            signed_steps(&calls),
+            [Step::InstallApproved, Step::WingetApproved]
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            text.starts_with(
+                "$ windows update install all approving Security Updates holding KB1\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("$ winget upgrade all holding Example.Held\n"),
+            "{text}"
+        );
+        // Bad approvals are refused before anything runs.
+        let bad = ApplyUpdates {
+            classifications: vec!["Drivers".into()],
+            ..ApplyUpdates::default()
+        };
+        let (output, calls, _) = run(Fake::default(), bad).await;
+        assert!(output.rejected && calls.is_empty());
+    }
+
+    fn change(action: Action, allow_reboot: bool) -> SoftwareChange {
+        SoftwareChange {
+            action: action.into(),
+            manager: monitorflow_common::proto::v1::PackageManager::Winget.into(),
+            packages: vec![monitorflow_common::proto::v1::SoftwarePackage {
+                id: "Example.App".into(),
+                source: "winget".into(),
+            }],
+            allow_reboot,
+        }
+    }
+
+    async fn run_software(
+        fake: Fake,
+        allowed: bool,
+        change: SoftwareChange,
+    ) -> (Output, Vec<Request>, CommandAcceptance) {
+        let fake = Arc::new(fake);
+        let (reports, _) = Reports::new(Arc::new(WindowsUpdates::new(fake.clone())));
+        let handler = SoftwareHandler::new(fake.clone(), reports, allowed);
+        let command = Command {
+            command_id: "s-1".into(),
+            kind: monitorflow_common::command::SOFTWARE.into(),
+            payload: change.encode_to_vec(),
+            ..Command::default()
+        };
+        let output = handler.run_command(&command).await;
+        let calls = fake.calls.lock().unwrap().clone();
+        (output, calls, handler.acceptance())
+    }
+
+    #[tokio::test]
+    async fn software_needs_consent_then_installs_reports_and_restarts() {
+        let (output, calls, acceptance) =
+            run_software(Fake::default(), false, change(Action::Install, true)).await;
+        assert!(output.rejected);
+        assert_eq!(output.error.as_deref(), Some(SOFTWARE_NOT_ALLOWED));
+        assert!(calls.is_empty());
+        assert_eq!(acceptance, CommandAcceptance::Disabled);
+
+        let fake = || Fake {
+            install: Some(installed(&[("Example.App", Outcome::Succeeded)], true)),
+            reboot: Some(Reply::Rebooting(())),
+            ..Fake::default()
+        };
+        let (output, calls, acceptance) =
+            run_software(fake(), true, change(Action::Install, true)).await;
+        assert_eq!(acceptance, CommandAcceptance::Accepted);
+        assert_eq!((output.exit_code, output.error.as_deref()), (0, None));
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            "$ winget install Example.App\n\
+             Example.App succeeded: Example.App title\n\
+             a restart is required\n\
+             restarting in one minute\n"
+        );
+        assert_eq!(signed_steps(&calls), [Step::Software, Step::Reboot]);
+        // A report follows, between the change and the restart.
+        assert!(calls.contains(&Request::Scan), "{calls:?}");
+
+        let (output, calls, _) = run_software(fake(), true, change(Action::Remove, false)).await;
+        assert_eq!(output.exit_code, 0);
+        assert!(String::from_utf8(output.stdout)
+            .unwrap()
+            .starts_with("$ winget remove Example.App\n"));
+        assert_eq!(signed_steps(&calls), [Step::Software]);
+
+        let failed = Fake {
+            install: Some(installed(&[("Example.App", Outcome::Failed)], false)),
+            ..Fake::default()
+        };
+        let (output, _, _) = run_software(failed, true, change(Action::Install, true)).await;
+        assert_eq!(output.exit_code, 1);
+        assert!(output
+            .error
+            .unwrap()
+            .starts_with("1 of 1 packages did not install"));
+
+        let mut bad = change(Action::Install, false);
+        bad.packages[0].source = "msstore".into();
+        let (output, calls, _) = run_software(Fake::default(), true, bad).await;
+        assert!(output.rejected && calls.is_empty());
     }
 }

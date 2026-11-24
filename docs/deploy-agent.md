@@ -296,6 +296,7 @@ msiexec /i monitorflow-agent-0.11.0-x64.msi /qn /l*v install.log `
 | `AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page, on a new install or an upgrade: sets `[commands] from_web = true` in `agent.toml`, as `ai-commands from-web on` does[^0098] |
 | `ALLOW_SCRIPTS=1` | Let the agent run scripts of the script library, on a new install or an upgrade: sets `[commands] scripts = true` in `agent.toml`, as `scripts on` does[^0179] |
 | `REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page, on a new install or an upgrade: sets `[remote] terminal = true` in `agent.toml`, as `remote-access terminal on` does; `REMOTE_TERMINAL=0` refuses it[^0178] |
+| `SOFTWARE_FROM_WEB=1` | Let administrators install and remove software of the catalogue on this server, on a new install or an upgrade: sets `[commands] software = true` in `agent.toml`, as `software on` does. "Allow installing and removing software from the web interface" on the Add servers page, off by default, adds it to the command[^0188] |
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
 
@@ -433,6 +434,17 @@ Restart-Service MonitorFlowAgent
 
 Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SERVICE\MonitorFlowAgent`, from `C:\`, with the system `PATH`, and is stopped with everything it started at the time limit. That account is not an administrator: it reads services, processes, the System and Application event logs, disks and network state, but cannot restart most services. To let AI restart one service after approval, grant the account that right on that service, for example with `sc.exe sdshow` and `sc.exe sdset`, adding `(A;;RPWPLCRC;;;S-1-5-80-546755567-1596817566-60379001-3258130523-3598288828)` (the service SID of `MonitorFlowAgent`). Without it, the command fails with "access denied" and the incident goes to a person.
 
+### Software from the catalogue on Windows
+
+Campaigns and the API install and remove software of the catalogue (winget packages) on Windows servers whose administrator allowed it[^0188]. The update service installs them as LocalSystem, with PowerShell 7 and the `Microsoft.WinGet.Client` module, as for third-party updates[^0139]. In an elevated PowerShell:
+
+```powershell
+& "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" software on
+Restart-Service MonitorFlowAgent
+```
+
+It sets `[commands] software = true` in `agent.toml`; `software off` takes it back. The update service reads the file at each request, so `software off` stops installs at once, and the agent reports the change after the restart. Nothing on the central server can change this setting. The MSI's `SOFTWARE_FROM_WEB=1` does the same at install.
+
 [^0007]: [ADR-0007: Enrollment bootstrap](adr/0007-enrollment-bootstrap.md)
 [^0025]: [ADR-0025: Relay forwarding model](adr/0025-relay-forwarding.md)
 [^0031]: [ADR-0031: Command channel, package updates and package reports](adr/0031-command-channel-and-updates.md)
@@ -462,6 +474,7 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0175]: [ADR-0175: A diagnosis for every alert, commands where allowed](adr/0175-diagnosis-for-every-alert.md)
 [^0181]: [ADR-0181: AI root actions, and the diagnosis in the reader's language](adr/0181-ai-root-actions.md)
 [^0179]: [ADR-0179: Script library and automation rules](adr/0179-script-library-and-automation-rules.md)
+[^0188]: [ADR-0188: Software deployment and update approvals](adr/0188-software-deployment.md)
 [^0103]: [ADR-0103: Plugins](adr/0103-plugins.md)
 [^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)
 [^0111]: [ADR-0111: Agent-side limit on where port checks connect](adr/0111-port-check-targets.md)

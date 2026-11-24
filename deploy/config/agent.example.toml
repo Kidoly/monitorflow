@@ -121,6 +121,11 @@ upstream_url = "https://relay.example.com:7443"
 # the web interface cannot turn it on. The installer's MF_ALLOW_SCRIPTS
 # sets it.
 # scripts = false
+# Let the central server install and remove software from its catalogue
+# (ADR-0188). Windows only for now: `monitorflow-agent.exe software on`
+# or the MSI property SOFTWARE_FROM_WEB=1 sets it. The update service,
+# which installs as LocalSystem, reads it here too.
+# software = false
 
 [remote]
 # Let people of the roles the central server allows open a terminal on

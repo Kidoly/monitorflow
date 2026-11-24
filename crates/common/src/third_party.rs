@@ -144,6 +144,8 @@ pub enum SelectionError {
     InvalidId(&'static str, String),
     #[error("more than {MAX_IDS} third-party package IDs")]
     TooMany,
+    #[error("{0} `{1}` is both selected and held")]
+    HeldAndNamed(&'static str, String),
 }
 
 /// Checks the third-party part of `apply`: known managers, each once,
@@ -170,12 +172,21 @@ pub fn check(apply: &ApplyUpdates, os_family: Option<&str>) -> Result<(), Select
                 return Err(SelectionError::WrongPlatform(name, family.to_owned()));
             }
         }
-        ids += selection.packages.len();
+        ids += selection.packages.len() + selection.hold.len();
         if ids > MAX_IDS {
             return Err(SelectionError::TooMany);
         }
-        if let Some(bad) = selection.packages.iter().find(|id| !valid_id(manager, id)) {
+        let all = selection.packages.iter().chain(&selection.hold);
+        if let Some(bad) = all.clone().find(|id| !valid_id(manager, id)) {
             return Err(SelectionError::InvalidId(name, bad.clone()));
+        }
+        // IDs compare without case, as winget does (ADR-0188).
+        if let Some(both) = selection
+            .hold
+            .iter()
+            .find(|h| selection.packages.iter().any(|p| p.eq_ignore_ascii_case(h)))
+        {
+            return Err(SelectionError::HeldAndNamed(name, both.clone()));
         }
     }
     Ok(())
@@ -314,6 +325,7 @@ mod tests {
         ThirdPartySelection {
             manager: manager.into(),
             packages: packages.iter().map(|p| p.to_string()).collect(),
+            ..ThirdPartySelection::default()
         }
     }
 
@@ -370,7 +382,7 @@ mod tests {
             let unknown = ApplyUpdates {
                 third_party: vec![ThirdPartySelection {
                     manager,
-                    packages: vec![],
+                    ..ThirdPartySelection::default()
                 }],
                 ..ApplyUpdates::default()
             };
@@ -390,9 +402,34 @@ mod tests {
             third_party: vec![ThirdPartySelection {
                 manager: PackageManager::Snap.into(),
                 packages: ids,
+                ..ThirdPartySelection::default()
             }],
             ..ApplyUpdates::default()
         };
         assert_eq!(ok(&many, None), Err(SelectionError::TooMany));
+    }
+
+    #[test]
+    fn holds_are_checked() {
+        let with_hold = |packages: &[&str], hold: &[&str]| ApplyUpdates {
+            third_party: vec![ThirdPartySelection {
+                manager: PackageManager::Winget.into(),
+                packages: packages.iter().map(|p| p.to_string()).collect(),
+                hold: hold.iter().map(|p| p.to_string()).collect(),
+            }],
+            ..ApplyUpdates::default()
+        };
+        assert_eq!(check(&with_hold(&[], &["Mozilla.Firefox"]), None), Ok(()));
+        assert_eq!(
+            check(&with_hold(&[], &["-x"]), None),
+            Err(SelectionError::InvalidId("winget", "-x".into()))
+        );
+        assert_eq!(
+            check(&with_hold(&["Mozilla.Firefox"], &["mozilla.firefox"]), None),
+            Err(SelectionError::HeldAndNamed(
+                "winget",
+                "mozilla.firefox".into()
+            ))
+        );
     }
 }

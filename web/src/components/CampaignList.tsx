@@ -27,7 +27,7 @@ import {
 } from "@/lib/campaigns";
 import { administersCustomer, multiCustomer, readsCustomers, useMe } from "@/lib/me";
 import { shortTime } from "@/lib/mirrors";
-import { NEW_CAMPAIGN_PATH, campaignHref, serverHref } from "@/lib/routes";
+import { NEW_CAMPAIGN_PATH, SOFTWARE_CATALOG_PATH, campaignHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -158,7 +158,12 @@ function CampaignList() {
     <PageHeader
       title={t("campaigns.title")}
       meta={updatedAt !== null || error !== null ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : undefined}
-      actions={newCampaign}
+      actions={
+        <>
+          <ButtonLink href={SOFTWARE_CATALOG_PATH}>{t("campaigns.software.link")}</ButtonLink>
+          {newCampaign}
+        </>
+      }
     />
   );
   if (!data || !updatedAt) {

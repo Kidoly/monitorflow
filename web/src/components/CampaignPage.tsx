@@ -23,6 +23,7 @@ import {
   canRelaunch,
   describeSources,
   describeThreshold,
+  classificationName,
   describeUpdate,
   majorConfirmText,
   upgradeStepText,
@@ -109,7 +110,11 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
   const { progress } = campaign;
   const facts = [
     ...(multiCustomer(me) ? [{ label: t("campaigns.fact.customer"), value: campaign.customer_name }] : []),
-    { label: t("campaigns.fact.update"), value: describeUpdate(campaign.spec, campaign.agent_version, campaign.major_upgrade ?? null) },
+    {
+      label: t("campaigns.fact.update"),
+      value: describeUpdate(campaign.spec, campaign.agent_version, campaign.major_upgrade ?? null, campaign.software ?? null),
+    },
+    ...approvalFacts(campaign),
     { label: t("campaigns.fact.stopsAt"), value: describeThreshold(campaign.failure_threshold) },
     {
       label: t("campaigns.fact.windows"),
@@ -233,7 +238,13 @@ function Run({ run }: { run: CampaignRun }) {
       </summary>
       <div className={own.runBody}>
         <p className={own.dim}>
-          {run.settings.name} · {describeUpdate(run.settings.spec, run.settings.agent_version, run.settings.major_upgrade ?? null)}
+          {run.settings.name} ·{" "}
+          {describeUpdate(
+            run.settings.spec,
+            run.settings.agent_version,
+            run.settings.major_upgrade ?? null,
+            run.settings.software ?? null,
+          )}
         </p>
         {run.error && <p className={own.dim}>{run.error}</p>}
         {run.waves.map((wave) => (
@@ -426,4 +437,28 @@ function Wave({ wave, current, several }: { wave: CampaignWave; current: boolean
       </details>
     </section>
   );
+}
+
+/**
+ * The software of a software campaign, or the approved classifications and held updates and apps
+ * of an update (ADR-0188), each only when set.
+ */
+function approvalFacts(campaign: CampaignDetail): { label: string; value: string }[] {
+  const { spec, software } = campaign;
+  if (software) {
+    return [
+      {
+        label: t("campaigns.fact.software"),
+        value: software.packages.map((p) => `${p.name} (${p.id}, ${p.source || p.manager})`).join(", "),
+      },
+    ];
+  }
+  const appHold = (spec.third_party ?? []).flatMap((s) => s.hold ?? []);
+  return [
+    ...(spec.classifications?.length
+      ? [{ label: t("campaigns.fact.classifications"), value: spec.classifications.map(classificationName).join(", ") }]
+      : []),
+    ...(spec.hold?.length ? [{ label: t("campaigns.fact.hold"), value: spec.hold.join(", ") }] : []),
+    ...(appHold.length > 0 ? [{ label: t("campaigns.fact.appHold"), value: appHold.join(", ") }] : []),
+  ];
 }

@@ -25,11 +25,13 @@ use super::commands::{DEFAULT_LIMIT, DEFAULT_TTL_S, MAX_LIMIT, MAX_TTL_S, MIN_TT
 use super::customers::validate_name;
 use super::sensors::{body, parse_id};
 use super::servers::{decode_cursor, encode_cursor, page_limit};
+use super::software::{resolve, SoftwareRequest};
 use super::{ApiError, ApiState};
 use crate::campaign::query::{self, ListFilter, Listed, TargetRow, WaveCounts, WaveRow};
 use crate::campaign::{
     Action, CampaignError, CampaignState, CampaignStore, FailureThreshold, MajorUpgradeSpec,
-    NewCampaign, RunSettings, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
+    NewCampaign, RunSettings, SoftwareSpec, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec,
+    Window,
 };
 use crate::commands::sources::{self, KeyLookupError};
 
@@ -89,6 +91,22 @@ pub struct CreateRequest {
     /// snapshot first and `parallel` servers of a batch at once (1 by
     /// default). Takes no package options, `sources` nor `agent_version`.
     pub major_upgrade: Option<MajorUpgradeSpec>,
+    /// Windows Update classifications approved, by English name: `Security
+    /// Updates`, `Critical Updates`, `Definition Updates`, `Update
+    /// Rollups`, `Updates`, `Feature Packs`, `Service Packs`, `Tools`,
+    /// `Upgrades`. Empty approves every one but `Upgrades`. Windows
+    /// servers only (ADR-0188).
+    #[serde(default)]
+    pub classifications: Vec<String>,
+    /// Windows updates never installed, as KB numbers or update IDs.
+    /// Windows servers only (ADR-0188). Held apps go in `third_party` as
+    /// `hold`.
+    #[serde(default)]
+    pub hold: Vec<String>,
+    /// Install or remove software from the catalogue instead of updating
+    /// (ADR-0188): Windows servers whose administrator allowed it, with
+    /// `allow_reboot`; takes no other package option nor `sources`.
+    pub software: Option<SoftwareRequest>,
 }
 
 /// Servers by status; `failed` includes expired commands and skipped
@@ -141,6 +159,9 @@ pub struct CampaignView {
     pub agent_version: Option<String>,
     /// Set for a major upgrade campaign (ADR-0182).
     pub major_upgrade: Option<MajorUpgradeSpec>,
+    /// Set for a software campaign: what it installs or removes, as the
+    /// catalogue held it when the campaign was saved (ADR-0188).
+    pub software: Option<SoftwareSpec>,
     /// The `server_ids` of the request, as last written; `null` for a
     /// campaign made before they were kept (ADR-0179).
     pub server_ids: Option<Vec<Uuid>>,
@@ -315,6 +336,7 @@ async fn views(state: &ApiState, rows: Vec<Listed>) -> Result<Vec<CampaignView>,
                         mode,
                         mirrors: pins.remove(&c.id).unwrap_or_default(),
                     }),
+                    software: c.software().cloned(),
                     agent_version: c.agent_version,
                     major_upgrade: c.major_upgrade.map(|m| m.0),
                     server_ids: c.requested_server_ids,
@@ -469,6 +491,10 @@ async fn new_campaign(
         .map(str::parse::<Version>)
         .transpose()
         .map_err(|_| ApiError::Invalid("agent_version must be like 0.2.0".into()))?;
+    let software = match &request.software {
+        Some(software) => Some(resolve(&state.pool, request.customer_id, software).await?),
+        None => None,
+    };
     Ok(NewCampaign {
         customer_id: request.customer_id,
         name: request.name,
@@ -481,6 +507,8 @@ async fn new_campaign(
             allow_reboot: request.allow_reboot,
             include_os: request.include_os.unwrap_or(true),
             third_party: request.third_party,
+            classifications: request.classifications,
+            hold: request.hold,
         },
         command_ttl: Duration::from_secs(ttl),
         failure_threshold: request.failure_threshold,
@@ -488,6 +516,7 @@ async fn new_campaign(
         sources: request.sources,
         agent_version,
         major_upgrade: request.major_upgrade,
+        software,
         created_by: Some(user.id),
     })
 }

@@ -12,6 +12,7 @@ const KINDS = [
   "self_update",
   "root_action",
   "run_script",
+  "software",
 ] as const;
 
 /** `word` as the API gave it; anything else, or nothing, is unknown. */

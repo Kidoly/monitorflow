@@ -204,6 +204,8 @@ export function relayHref(id: string): string {
 /** Update campaigns (ADR-0033). */
 export const CAMPAIGNS_PATH = "/campaigns/";
 export const NEW_CAMPAIGN_PATH = "/campaigns/new/";
+/** The software catalogue software campaigns install from (ADR-0188). */
+export const SOFTWARE_CATALOG_PATH = "/campaigns/software/";
 
 /** The campaign form for a major upgrade of the server `id` (ADR-0182). */
 export function majorUpgradeHref(id: string): string {

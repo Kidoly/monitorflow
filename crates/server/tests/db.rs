@@ -264,6 +264,7 @@ db_tests! {
                 "snmp_lookups",
                 "snmp_mib_objects",
                 "snmp_mibs",
+                "software_catalog",
                 "thresholds",
                 "user_contacts",
                 "user_preferences",

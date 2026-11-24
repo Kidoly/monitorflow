@@ -8,12 +8,13 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use monitorflow_common::proto::v1::{
-    ApplyUpdates, CommandResult, CommandStatus, PackageManager, SelfUpdate,
+    software_change, ApplyUpdates, CommandResult, CommandStatus, PackageManager, SelfUpdate,
+    SoftwareChange,
 };
 use monitorflow_server::campaign::{
     Action, CampaignState, CampaignStore, FailureThreshold, FailureUnit, NewCampaign, PinnedMirror,
-    Runner, SourcesMode, SourcesPin, Step, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
-    NO_THIRD_PARTY,
+    Runner, SoftwareItem, SoftwareSpec, SourcesMode, SourcesPin, Step, ThirdPartySpec, UpdateSpec,
+    WaveSpec, Window, NO_APPROVALS, NO_THIRD_PARTY,
 };
 use monitorflow_server::commands::{CommandStore, NewCommand, State};
 use prost::Message;
@@ -101,6 +102,7 @@ impl Fleet {
             sources: None,
             agent_version: None,
             major_upgrade: None,
+            software: None,
             created_by: None,
         }
     }
@@ -178,6 +180,9 @@ impl Fleet {
     }
 }
 
+/// A target's hostname, command kind and payload, and error.
+type Outcome = (String, Option<String>, Option<Vec<u8>>, Option<String>);
+
 fn at(s: &str) -> DateTime<Utc> {
     s.parse().unwrap()
 }
@@ -190,6 +195,97 @@ fn queued(step: Step) -> Vec<String> {
 }
 
 db_tests! {
+    #[sqlx::test]
+    async fn software_and_approvals_reach_only_agents_that_take_them(pool: PgPool) {
+        let f = Fleet::new(&pool, 4).await;
+        // web-1 is Linux. Of the Windows servers, web-2 allowed software,
+        // web-3 did not, and web-4's agent predates ADR-0188.
+        for (i, kinds) in [
+            (1, Some(r#"{"software": "accepted"}"#)),
+            (2, Some(r#"{"software": "off"}"#)),
+            (3, None),
+        ] {
+            sqlx::query(
+                "UPDATE servers SET os_family = 'windows', command_kinds = $2::jsonb WHERE id = $1",
+            )
+            .bind(f.servers[i].0)
+            .bind(kinds)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let runner = Runner::new(pool.clone());
+        let outcome = |campaign: Uuid| {
+            let pool = pool.clone();
+            async move {
+                let rows: Vec<Outcome> =
+                    sqlx::query_as(
+                        "SELECT s.hostname, c.kind, c.payload, t.error FROM campaign_targets t
+                         JOIN servers s ON s.id = t.server_id
+                         LEFT JOIN commands c ON c.id = t.command_id
+                         WHERE t.campaign_id = $1 ORDER BY s.hostname",
+                    )
+                    .bind(campaign)
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+                rows
+            }
+        };
+
+        // Software: Windows servers only, and only where it was allowed.
+        let mut install = f.campaign(Vec::new());
+        install.spec = UpdateSpec { allow_reboot: true, ..UpdateSpec::default() };
+        install.software = Some(SoftwareSpec {
+            action: "install".into(),
+            packages: vec![SoftwareItem {
+                catalog_id: Uuid::nil(),
+                name: "7-Zip".into(),
+                manager: "winget".into(),
+                id: "7zip.7zip".into(),
+                source: "winget".into(),
+            }],
+        });
+        let id = f.start(&install).await;
+        runner.advance(id, Utc::now()).await.unwrap();
+        let rows = outcome(id).await;
+        assert_eq!(
+            rows.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(),
+            ["web-2", "web-3", "web-4"]
+        );
+        assert_eq!(rows[0].1.as_deref(), Some("software"));
+        let change = SoftwareChange::decode(rows[0].2.as_deref().unwrap()).unwrap();
+        assert_eq!(change.action(), software_change::Action::Install);
+        assert_eq!(change.packages[0].id, "7zip.7zip");
+        assert!(change.allow_reboot);
+        assert!(rows[1].3.as_deref().unwrap().contains("software on"), "{rows:?}");
+        assert!(rows[2].3.as_deref().unwrap().contains("too old"), "{rows:?}");
+        let row = f.store.get(id).await.unwrap().unwrap();
+        assert_eq!(row.software(), install.software.as_ref());
+
+        // A software campaign takes no update options.
+        let mut mixed = install.clone();
+        mixed.spec.hold = vec!["KB1".into()];
+        assert!(f.store.create(&mixed, USER).await.is_err());
+
+        // Approvals: Linux servers get the update without them, an agent
+        // that predates them none at all.
+        let mut approved = f.campaign(Vec::new());
+        approved.spec = UpdateSpec {
+            classifications: vec!["Security Updates".into()],
+            hold: vec!["KB5034441".into()],
+            ..UpdateSpec::default()
+        };
+        let id = f.start(&approved).await;
+        runner.advance(id, Utc::now()).await.unwrap();
+        let rows = outcome(id).await;
+        let apply = |i: usize| ApplyUpdates::decode(rows[i].2.as_deref().unwrap()).unwrap();
+        assert!(apply(0).hold.is_empty() && apply(0).classifications.is_empty());
+        assert_eq!(apply(1).hold, ["KB5034441"]);
+        assert_eq!(apply(2).classifications, ["Security Updates"]);
+        assert_eq!(rows[3].3.as_deref(), Some(NO_APPROVALS));
+    }
+
     #[sqlx::test]
     async fn third_party_selections_fit_each_server(pool: PgPool) {
         let f = Fleet::new(&pool, 4).await;
@@ -212,7 +308,11 @@ db_tests! {
             .unwrap();
         }
         let runner = Runner::new(pool.clone());
-        let select = |manager: &str| ThirdPartySpec { manager: manager.into(), packages: Vec::new() };
+        let select = |manager: &str| ThirdPartySpec {
+            manager: manager.into(),
+            packages: Vec::new(),
+            hold: Vec::new(),
+        };
         let payloads = |campaign: Uuid| {
             let pool = pool.clone();
             async move {

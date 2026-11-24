@@ -148,12 +148,16 @@ fn command() -> ApplyUpdates {
             ThirdPartySelection {
                 manager: PackageManager::Winget.into(),
                 packages: vec!["7zip.7zip".into()],
+                hold: vec!["Mozilla.Firefox".into()],
             },
             ThirdPartySelection {
                 manager: PackageManager::Snap.into(),
                 packages: Vec::new(),
+                hold: Vec::new(),
             },
         ],
+        classifications: vec!["Security Updates".into()],
+        hold: vec!["KB5034441".into()],
     }
 }
 

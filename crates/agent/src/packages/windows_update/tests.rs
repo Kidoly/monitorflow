@@ -8,6 +8,8 @@ fn install(kind: Kind, updates: &[&str]) -> Request {
     Request::Install {
         kind,
         updates: names(updates),
+        classifications: vec![],
+        hold: vec![],
     }
 }
 
@@ -26,8 +28,44 @@ fn requests_round_trip_as_json() {
         (
             Request::WingetUpgrade {
                 ids: names(&["Example.App"]),
+                hold: vec![],
             },
             r#"{"op":"winget_upgrade","ids":["Example.App"]}"#,
+        ),
+        (
+            Request::Install {
+                kind: Kind::All,
+                updates: vec![],
+                classifications: names(&["Updates"]),
+                hold: names(&["KB1"]),
+            },
+            r#"{"op":"install","kind":"all","classifications":["Updates"],"hold":["KB1"]}"#,
+        ),
+        (
+            Request::WingetInstall {
+                packages: vec![WingetPackage {
+                    id: "Example.App".into(),
+                    source: "winget".into(),
+                }],
+            },
+            r#"{"op":"winget_install","packages":[{"id":"Example.App","source":"winget"}]}"#,
+        ),
+        (
+            Request::WingetRemove {
+                packages: vec![WingetPackage {
+                    id: "Example.App".into(),
+                    source: String::new(),
+                }],
+            },
+            r#"{"op":"winget_remove","packages":[{"id":"Example.App"}]}"#,
+        ),
+        (
+            Request::signed(&Command::default(), Step::Software, None),
+            r#"{"op":"signed","command":"CgA=","step":"software"}"#,
+        ),
+        (
+            Request::signed(&Command::default(), Step::InstallApproved, None),
+            r#"{"op":"signed","command":"CgA=","step":"install_approved"}"#,
         ),
         (
             Request::signed(&Command::default(), Step::Winget, None),
@@ -63,7 +101,10 @@ fn requests_round_trip_as_json() {
 
 #[test]
 fn winget_ids_are_checked() {
-    let upgrade = |ids: &[&str]| Request::WingetUpgrade { ids: names(ids) };
+    let upgrade = |ids: &[&str]| Request::WingetUpgrade {
+        ids: names(ids),
+        hold: vec![],
+    };
     assert_eq!(upgrade(&[]).validate(), Ok(()));
     assert_eq!(
         upgrade(&["Example.App", "Example.Other"]).validate(),
@@ -79,7 +120,11 @@ fn winget_ids_are_checked() {
     }
     let many: Vec<String> = (0..=MAX_NAMES).map(|i| format!("Example.App{i}")).collect();
     assert_eq!(
-        Request::WingetUpgrade { ids: many }.validate(),
+        Request::WingetUpgrade {
+            ids: many,
+            hold: vec![]
+        }
+        .validate(),
         Err(RequestError::TooManyNames)
     );
 }
@@ -152,6 +197,8 @@ fn requests_are_checked() {
     let many = Request::Install {
         kind: Kind::Named,
         updates: many,
+        classifications: vec![],
+        hold: vec![],
     };
     assert_eq!(many.validate(), Err(RequestError::TooManyNames));
 }
@@ -245,7 +292,20 @@ fn selection_follows_the_kind() {
         found("4", SECURITY_UPDATES, true),
         found("5", SECURITY_UPDATES, false),
     ];
-    let pick = |kind, n: &[&str]| select(kind, &names(n), &updates);
+    let pick = |kind, n: &[&str]| {
+        let names = names(n);
+        let (picked, not_pending, held) = select(
+            Selection {
+                kind,
+                names: &names,
+                classifications: &[],
+                hold: &[],
+            },
+            &updates,
+        );
+        assert!(held.is_empty());
+        (picked, not_pending)
+    };
     assert_eq!(pick(Kind::All, &[]), (vec![0, 1, 4], vec![]));
     assert_eq!(pick(Kind::Security, &[]), (vec![0, 4], vec![]));
     assert_eq!(
@@ -257,6 +317,151 @@ fn selection_follows_the_kind() {
         pick(Kind::Named, &["KB3", "KB4"]),
         (vec![2], names(&["KB4"]))
     );
+}
+
+#[test]
+fn approvals_and_holds_narrow_the_selection() {
+    let rollup = "28bc880e-0592-4cbf-8f95-c79b17911d5f";
+    let updates = [
+        found("1", SECURITY_UPDATES, false),
+        found("2", rollup, false),
+        found("3", UPGRADES, false),
+        found("5", SECURITY_UPDATES, false),
+    ];
+    let pick = |kind, n: &[&str], classifications: &[&str], hold: &[&str]| {
+        let (n, c, h) = (names(n), names(classifications), names(hold));
+        select(
+            Selection {
+                kind,
+                names: &n,
+                classifications: &c,
+                hold: &h,
+            },
+            &updates,
+        )
+    };
+    // Approved classifications only; Upgrades only when approved.
+    assert_eq!(
+        pick(Kind::All, &[], &["Update Rollups"], &[]),
+        (vec![1], vec![], vec![])
+    );
+    assert_eq!(
+        pick(Kind::All, &[], &["Upgrades", "Security Updates"], &[]),
+        (vec![0, 2, 3], vec![], vec![])
+    );
+    // Held updates are left out whatever selects them, named ones too.
+    assert_eq!(
+        pick(Kind::All, &[], &[], &["kb5"]),
+        (vec![0, 1], vec![], names(&["KB5"]))
+    );
+    assert_eq!(
+        pick(Kind::Named, &["KB1"], &[], &["KB1"]),
+        (vec![], vec![], names(&["KB1"]))
+    );
+    assert_eq!(
+        pick(Kind::Security, &[], &["Update Rollups"], &[]),
+        (vec![], vec![], vec![])
+    );
+}
+
+#[test]
+fn approvals_are_checked_on_the_pipe() {
+    let request = |classifications: &[&str], hold: &[&str]| Request::Install {
+        kind: Kind::All,
+        updates: vec![],
+        classifications: names(classifications),
+        hold: names(hold),
+    };
+    assert_eq!(request(&["Updates"], &["KB1"]).validate(), Ok(()));
+    assert!(matches!(
+        request(&["Drivers"], &[]).validate(),
+        Err(RequestError::Approval(_))
+    ));
+    assert!(matches!(
+        request(&[], &["openssl"]).validate(),
+        Err(RequestError::Approval(_))
+    ));
+}
+
+#[test]
+fn software_requests_follow_the_command() {
+    use monitorflow_common::proto::v1::SoftwarePackage;
+
+    let change = |action: Action, source: &str| SoftwareChange {
+        action: action.into(),
+        manager: PackageManager::Winget.into(),
+        packages: vec![SoftwarePackage {
+            id: "Example.App".into(),
+            source: source.into(),
+        }],
+        allow_reboot: false,
+    };
+    let install = Request::software(&change(Action::Install, "winget"));
+    assert!(
+        matches!(&install, Request::WingetInstall { packages } if packages[0].source == "winget")
+    );
+    assert_eq!(install.validate(), Ok(()));
+    let remove = Request::software(&change(Action::Remove, ""));
+    assert!(matches!(&remove, Request::WingetRemove { .. }));
+    assert_eq!(remove.validate(), Ok(()));
+    assert!(matches!(
+        Request::software(&change(Action::Install, "msstore")).validate(),
+        Err(RequestError::Software(_))
+    ));
+    // Software needs the host's consent; nothing else does.
+    assert_eq!(consented(&install, true), Ok(()));
+    assert_eq!(consented(&install, false), Err(SOFTWARE_NOT_ALLOWED.into()));
+    assert_eq!(consented(&remove, false), Err(SOFTWARE_NOT_ALLOWED.into()));
+    assert_eq!(consented(&Request::Scan, false), Ok(()));
+}
+
+#[test]
+fn changes_are_described() {
+    let installed = Installed {
+        results: vec![
+            InstallResult {
+                name: "Example.App".into(),
+                title: "Example.App".into(),
+                result: Outcome::Succeeded,
+                hresult: 0,
+            },
+            InstallResult {
+                name: "Example.Bad".into(),
+                title: "Example.Bad: hash mismatch".into(),
+                result: Outcome::Failed,
+                hresult: -1978335215,
+            },
+        ],
+        unchanged: names(&["Example.There"]),
+        reboot_required: true,
+        ..Installed::default()
+    };
+    let (out, error) = describe_change(&installed, true);
+    assert_eq!(
+        out,
+        "Example.App succeeded: Example.App\n\
+         Example.Bad failed (0x8a150011): Example.Bad: hash mismatch\n\
+         Example.There is installed already\n\
+         a restart is required\n"
+    );
+    assert_eq!(
+        error.as_deref(),
+        Some("1 of 2 packages did not install: Example.Bad (0x8a150011)")
+    );
+    let (out, error) = describe_change(
+        &Installed {
+            unchanged: names(&["Example.Gone"]),
+            ..Installed::default()
+        },
+        false,
+    );
+    assert_eq!(out, "Example.Gone is not installed\n");
+    assert_eq!(error, None);
+    let held = Installed {
+        held: names(&["KB1"]),
+        ..Installed::default()
+    };
+    assert!(describe(&held).0.contains("KB1 is held\n"));
 }
 
 #[test]
@@ -318,6 +523,7 @@ fn install_output_names_failures() {
         ],
         not_pending: names(&["KB9"]),
         reboot_required: true,
+        ..Installed::default()
     };
     let (text, error) = describe(&installed);
     assert_eq!(
@@ -501,10 +707,97 @@ mod signed {
             third_party: vec![ThirdPartySelection {
                 manager: PackageManager::Winget.into(),
                 packages: names(ids),
+                ..ThirdPartySelection::default()
             }],
             ..ApplyUpdates::default()
         }
         .encode_to_vec()
+    }
+
+    #[test]
+    fn approvals_and_holds_come_from_the_signed_command() {
+        let ca = Ca::new();
+        let host = Host::pinned(&ca);
+        let check = |request: &Request| authorized(request, &host.place, &configured(), unix_ms());
+        let payload = ApplyUpdates {
+            classifications: names(&["Security Updates"]),
+            hold: names(&["KB5034441"]),
+            third_party: vec![ThirdPartySelection {
+                manager: PackageManager::Winget.into(),
+                hold: names(&["Example.Held"]),
+                ..ThirdPartySelection::default()
+            }],
+            ..ApplyUpdates::default()
+        };
+        let signed = command(&ca, "a-1", APPLY_UPDATES, &payload.encode_to_vec());
+        assert_eq!(Step::install_for(&payload), Step::InstallApproved);
+        assert_eq!(Step::winget_for(&payload), Step::WingetApproved);
+        assert_eq!(
+            check(&Request::signed(&signed, Step::InstallApproved, None)),
+            Ok(Request::Install {
+                kind: Kind::All,
+                updates: vec![],
+                classifications: names(&["Security Updates"]),
+                hold: names(&["KB5034441"]),
+            })
+        );
+        assert_eq!(
+            check(&Request::signed(&signed, Step::WingetApproved, None)),
+            Ok(Request::WingetUpgrade {
+                ids: vec![],
+                hold: names(&["Example.Held"]),
+            })
+        );
+        assert_eq!(Step::install_for(&ApplyUpdates::default()), Step::Install);
+        assert_eq!(Step::winget_for(&ApplyUpdates::default()), Step::Winget);
+    }
+
+    fn software(action: Action, allow_reboot: bool) -> Vec<u8> {
+        SoftwareChange {
+            action: action.into(),
+            manager: PackageManager::Winget.into(),
+            packages: vec![monitorflow_common::proto::v1::SoftwarePackage {
+                id: "Example.App".into(),
+                source: "winget".into(),
+            }],
+            allow_reboot,
+        }
+        .encode_to_vec()
+    }
+
+    #[test]
+    fn software_takes_its_packages_from_the_signed_command_once() {
+        let ca = Ca::new();
+        let host = Host::pinned(&ca);
+        let check = |request: &Request| authorized(request, &host.place, &configured(), unix_ms());
+        let bare = Request::WingetInstall {
+            packages: vec![WingetPackage {
+                id: "Example.App".into(),
+                source: "winget".into(),
+            }],
+        };
+        assert!(check(&bare).unwrap_err().contains("signed"));
+
+        let install = command(&ca, "s-1", SOFTWARE, &software(Action::Install, true));
+        let step = |step| Request::signed(&install, step, None);
+        assert_eq!(check(&step(Step::Software)), Ok(bare.clone()));
+        assert!(check(&step(Step::Software))
+            .unwrap_err()
+            .contains("already run"));
+        assert_eq!(check(&step(Step::Reboot)), Ok(Request::Reboot));
+        // A software command is no update.
+        assert!(check(&step(Step::Install)).is_err());
+
+        let remove = command(&ca, "s-2", SOFTWARE, &software(Action::Remove, false));
+        assert!(matches!(
+            check(&Request::signed(&remove, Step::Software, None)),
+            Ok(Request::WingetRemove { .. })
+        ));
+        let error = check(&Request::signed(&remove, Step::Reboot, None)).unwrap_err();
+        assert!(error.contains("does not allow"), "{error}");
+        // An update is no software command.
+        let update = command(&ca, "s-3", APPLY_UPDATES, &apply(&[], false));
+        assert!(check(&Request::signed(&update, Step::Software, None)).is_err());
     }
 
     #[test]
@@ -515,6 +808,7 @@ mod signed {
         assert_eq!(check(&Request::WingetScan), Ok(Request::WingetScan));
         let bare = Request::WingetUpgrade {
             ids: names(&["Example.App"]),
+            hold: vec![],
         };
         assert!(check(&bare).unwrap_err().contains("signed"));
 
@@ -524,7 +818,8 @@ mod signed {
         assert_eq!(
             check(&step(Step::Winget)),
             Ok(Request::WingetUpgrade {
-                ids: names(&["Example.App"])
+                ids: names(&["Example.App"]),
+                hold: vec![],
             })
         );
         assert!(check(&step(Step::Winget))
@@ -539,7 +834,10 @@ mod signed {
         assert!(error.contains("skips Windows updates"), "{error}");
         assert_eq!(
             check(&Request::signed(&only, Step::Winget, None)),
-            Ok(Request::WingetUpgrade { ids: vec![] })
+            Ok(Request::WingetUpgrade {
+                ids: vec![],
+                hold: vec![]
+            })
         );
 
         // An OS-only command selects no app; a bad ID or another
@@ -553,7 +851,7 @@ mod signed {
             skip_os: true,
             third_party: vec![ThirdPartySelection {
                 manager: PackageManager::Snap.into(),
-                packages: vec![],
+                ..ThirdPartySelection::default()
             }],
             ..ApplyUpdates::default()
         };

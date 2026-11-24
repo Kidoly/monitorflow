@@ -589,6 +589,9 @@ pub struct AgentCommandsConfig {
     /// library, as the agent's user (ADR-0179). Off unless enabled here:
     /// the server cannot turn it on.
     pub scripts: bool,
+    /// Lets the central server install and remove software from its
+    /// catalogue (ADR-0188). Off unless enabled here.
+    pub software: bool,
 }
 
 /// Package reports and updates (ADR-0031).
@@ -767,6 +770,7 @@ impl LoadConfig for AgentConfig {
         env.set("commands.shell", &mut self.commands.shell)?;
         env.set("commands.from_web", &mut self.commands.from_web)?;
         env.set("commands.scripts", &mut self.commands.scripts)?;
+        env.set("commands.software", &mut self.commands.software)?;
         if let Some(dirs) = env.list("sensors.log_dirs") {
             self.sensors.log_dirs = dirs.into_iter().map(PathBuf::from).collect();
         }

@@ -54,6 +54,21 @@ export function describeCommand(command: Command): { title: string; sub: string;
         note: t("server.commands.rollsBack", { seconds: String(timeout) }),
       };
     }
+    case "software": {
+      // Install or remove catalogue software with winget (ADR-0188).
+      const ids = Array.isArray(p.packages)
+        ? p.packages.flatMap((pkg: unknown) =>
+            pkg && typeof pkg === "object" && typeof (pkg as { id?: unknown }).id === "string" ? [(pkg as { id: string }).id] : [],
+          )
+        : [];
+      const more = ids.length - SHOWN_PACKAGES;
+      const title = t(p.action === "remove" ? "server.commands.softwareRemove" : "server.commands.softwareInstall", {
+        names: ids.slice(0, SHOWN_PACKAGES).join(", "),
+        more: more > 0 ? t("server.commands.more", { count: more }) : "",
+      });
+      const reboot = p.allow_reboot === true ? t("server.commands.allowReboot") : t("server.commands.noReboot");
+      return { title, sub: `${t("server.commands.packages", { count: ids.length })}${reboot}` };
+    }
     case "ai_commands":
       return p.on === true
         ? { title: t("server.commands.aiOn"), sub: t("server.commands.fromWeb") }

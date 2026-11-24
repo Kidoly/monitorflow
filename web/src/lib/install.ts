@@ -297,6 +297,7 @@ export function windowsInstallCommand(
   aiFromWeb = false,
   scripts = false,
   remoteTerminal = false,
+  softwareFromWeb = false,
 ): Command {
   const files = base(target.install, source, origin);
   if ("unavailable" in files) return files;
@@ -308,6 +309,8 @@ export function windowsInstallCommand(
     aiFromWeb && "AI_COMMANDS_FROM_WEB=1",
     scripts && "ALLOW_SCRIPTS=1",
     remoteTerminal && "REMOTE_TERMINAL=1",
+    // Software from the catalogue (ADR-0188): Windows only for now.
+    softwareFromWeb && "SOFTWARE_FROM_WEB=1",
   ].filter(Boolean);
   const msiexec = `msiexec /i monitorflow-agent.msi /qn /l*v install.log \``;
   const central = target.install.central;

@@ -1,7 +1,7 @@
 # ADR-0139: Third-party updates on Windows through winget
 
 Date: 2026-11-16
-Status: accepted; the Windows side of ADR-0138
+Status: accepted; the Windows side of ADR-0138; held apps, installs and removals since ADR-0188
 
 ## Context
 

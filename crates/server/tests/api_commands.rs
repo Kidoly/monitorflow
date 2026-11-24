@@ -188,7 +188,8 @@ db_tests! {
         assert_eq!(created["kind"], "apply_updates");
         assert_eq!(
             created["parameters"],
-            json!({"packages": ["libc6"], "security_only": true, "allow_reboot": false, "include_os": true, "third_party": []})
+            json!({"packages": ["libc6"], "security_only": true, "allow_reboot": false, "include_os": true,
+                   "third_party": [], "classifications": [], "hold": []})
         );
         assert!(created["requested_by"].as_str().is_some());
         let id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
@@ -410,7 +411,8 @@ db_tests! {
         assert_eq!(
             created["parameters"],
             json!({"packages": [], "security_only": false, "allow_reboot": false, "include_os": false,
-                   "third_party": [{"manager": "snap", "packages": ["firefox"]}]})
+                   "third_party": [{"manager": "snap", "packages": ["firefox"], "hold": []}],
+                   "classifications": [], "hold": []})
         );
         let id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
         let payload: Vec<u8> = sqlx::query_scalar("SELECT payload FROM commands WHERE id = $1")

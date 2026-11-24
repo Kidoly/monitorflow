@@ -634,6 +634,8 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   const [majorFromWeb, setMajorFromWeb] = useState(false);
   // Unticked (ADR-0178): a terminal runs whatever is typed, so each host opts in.
   const [remoteTerminal, setRemoteTerminal] = useState(false);
+  // Off by default (ADR-0188): software from the catalogue, on Windows only.
+  const [softwareFromWeb, setSoftwareFromWeb] = useState(false);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
   const origin = pageOrigin();
@@ -646,7 +648,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
     {
       name: "Windows",
       note: t("install.windows.note"),
-      command: windowsInstallCommand(token, source, origin, through, aiFromWeb, scripts, remoteTerminal),
+      command: windowsInstallCommand(token, source, origin, through, aiFromWeb, scripts, remoteTerminal, softwareFromWeb),
     },
   ];
   // One note when both commands are missing for the same reason.
@@ -699,6 +701,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
         onChange={setRemoteTerminal}
         label={t("install.agent.remoteTerminal")}
         note={t("install.agent.remoteTerminalNote")}
+      />
+      <Switch
+        checked={softwareFromWeb}
+        onChange={setSoftwareFromWeb}
+        label={t("install.agent.softwareFromWeb")}
+        note={t("install.agent.softwareFromWebNote")}
       />
       {shared ? (
         <Banner tone="warn">{shared}</Banner>

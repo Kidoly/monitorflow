@@ -172,6 +172,16 @@ describe("install commands", () => {
     expect(WINDOWS_ALLOW_TERMINAL).toContain("Restart-Service MonitorFlowAgent");
   });
 
+  it("lets the web interface install software on Windows when asked (ADR-0188)", () => {
+    expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", true, false, false, true))).toContain(
+      `ENROLLMENT_TOKEN=${SECRET} AI_COMMANDS_FROM_WEB=1 SOFTWARE_FROM_WEB=1`,
+    );
+    expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", false, false, false, true))).toContain(
+      `ENROLLMENT_TOKEN=${SECRET} SOFTWARE_FROM_WEB=1`,
+    );
+    expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", true))).not.toContain("SOFTWARE");
+  });
+
   it("accepts only addresses and URLs that are safe in a shell command", () => {
     for (const ok of ["relay1", "relay1.paris.example:7443", "10.0.0.5", "[2001:db8::5]:7443"]) {
       expect(isServerAddress(ok), ok).toBe(true);

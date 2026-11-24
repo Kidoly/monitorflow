@@ -5,7 +5,7 @@
 import { compareVersions } from "./agentVersion";
 import { browserTimeZone, localToIso, toLocalInput } from "./clock";
 import type { Tone } from "@/components/ui/tone";
-import { t } from "@/i18n";
+import { type PlainKey, t } from "@/i18n";
 import { activeLocale } from "@/i18n/locale";
 
 import type {
@@ -15,11 +15,13 @@ import type {
   CampaignServer,
   CampaignServerStatus,
   CampaignRequest,
+  CampaignSoftware,
   CampaignState,
   CampaignWindow,
   FailureThreshold,
   MajorUpgradeSpec,
   Server,
+  SoftwareAction,
   SourcesPin,
   ThirdPartyManagerName,
   UpdateSpec,
@@ -38,6 +40,22 @@ export const MAX_WINDOWS = 32;
 export const MAX_PACKAGES = 1000;
 export const MIN_TTL_S = 60;
 export const MAX_TTL_S = 7 * 86_400;
+/** Of `crates/common/src/software.rs` (ADR-0188). */
+export const MAX_HOLDS = 1024;
+export const MAX_SOFTWARE = 100;
+
+/** The Windows Update classifications an update can approve, by the names Windows reports (ADR-0188). */
+export const WINDOWS_CLASSIFICATIONS = [
+  "Security Updates",
+  "Critical Updates",
+  "Definition Updates",
+  "Update Rollups",
+  "Updates",
+  "Feature Packs",
+  "Service Packs",
+  "Tools",
+  "Upgrades",
+] as const;
 
 /** ISO weekdays, Monday 1 to Sunday 7. */
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
@@ -94,8 +112,6 @@ export interface WindowDraft {
   endsAt: string;
 }
 
-/** `agent` updates the agents themselves (ADR-0053); `major` moves servers to the next release (ADR-0182). */
-export type UpdateKind = "all" | "security" | "packages" | "agent" | "major";
 
 /** The major upgrades this version knows, one release at a time (ADR-0182). */
 const DEBIAN_13 = { from: "debian 12", to: "debian 13", fromLabel: "Debian 12 (bookworm)", toLabel: "Debian 13 (trixie)" };
@@ -116,6 +132,31 @@ export const runsRelease = (osVersion: string | null | undefined, release: strin
 export function majorConfirmText(spec: MajorUpgradeSpec, servers: number): string {
   return t("campaigns.major.confirm", { count: servers, from: releaseLabel(spec.from), to: releaseLabel(spec.to) });
 }
+
+/** The words of each Windows Update classification (ADR-0188). */
+export const CLASSIFICATION_KEYS: Record<(typeof WINDOWS_CLASSIFICATIONS)[number], PlainKey> = {
+  "Security Updates": "campaigns.classification.security",
+  "Critical Updates": "campaigns.classification.critical",
+  "Definition Updates": "campaigns.classification.definition",
+  "Update Rollups": "campaigns.classification.rollups",
+  Updates: "campaigns.classification.updates",
+  "Feature Packs": "campaigns.classification.featurePacks",
+  "Service Packs": "campaigns.classification.servicePacks",
+  Tools: "campaigns.classification.tools",
+  Upgrades: "campaigns.classification.upgrades",
+};
+
+/** A classification in the active language; a name the interface does not know as Windows gave it. */
+export function classificationName(name: string): string {
+  const key = CLASSIFICATION_KEYS[name as keyof typeof CLASSIFICATION_KEYS];
+  return key ? t(key) : name;
+}
+
+/**
+ * `agent` updates the agents themselves (ADR-0053); `major` moves servers to the next release (ADR-0182);
+ * `software` installs or removes catalogue entries (ADR-0188).
+ */
+export type UpdateKind = "all" | "security" | "packages" | "agent" | "major" | "software";
 
 /** Which updates a package campaign installs (ADR-0138): the OS's, third-party apps', both, or not yet chosen. */
 export type UpdateSources = "os" | "apps" | "both" | "none";
@@ -159,6 +200,15 @@ export interface CampaignDraft {
   majorFrom: string;
   acceptLimited: boolean;
   parallel: string;
+  /** For `software`: install or remove, and the catalogue entries. */
+  softwareAction: SoftwareAction;
+  softwareIds: string[];
+  /** Windows Update classifications approved; empty is every one but Upgrades. */
+  classifications: string[];
+  /** Windows updates held back, KB numbers or update IDs, as typed. */
+  hold: string;
+  /** winget apps held back, as typed. */
+  appHold: string;
   allowReboot: boolean;
   ttl: number;
   thresholdValue: string;
@@ -234,6 +284,11 @@ export function emptyDraft(customerId = ""): CampaignDraft {
     majorFrom: DEBIAN_13.from,
     acceptLimited: false,
     parallel: "1",
+    softwareAction: "install",
+    softwareIds: [],
+    classifications: [],
+    hold: "",
+    appHold: "",
     allowReboot: false,
     ttl: 3600,
     thresholdValue: "0",
@@ -241,6 +296,9 @@ export function emptyDraft(customerId = ""): CampaignDraft {
     windows: [],
   };
 }
+
+/** Names typed separated by spaces, commas or lines. */
+export const splitNames = (text: string): string[] => text.split(/[\s,]+/).filter(Boolean);
 
 export function toRequest(draft: CampaignDraft): CampaignRequest {
   const waves: WaveSpec[] = draft.waves.map((wave) =>
@@ -251,18 +309,43 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
         : { percent: Number(wave.value) },
   );
   const windows = draft.windows.map(windowRequest);
-  const major = draft.update === "major";
-  const agent = draft.update === "agent" || major;
-  const os = agent || includesOs(draft.sources);
-  const apps = !agent && includesApps(draft.sources);
-  const upgrade = MAJOR_UPGRADES.find((u) => u.from === draft.majorFrom) ?? DEBIAN_13;
-  return {
+  const common = {
     customer_id: draft.customerId,
     name: draft.name,
     ...(draft.siteId && { site_id: draft.siteId }),
     server_ids: draft.serverIds,
     waves,
-    packages: os && draft.update === "packages" ? draft.packages.split(/[\s,]+/).filter(Boolean) : [],
+  };
+  const timing = {
+    command_ttl_s: draft.ttl,
+    failure_threshold: { value: Number(draft.thresholdValue), unit: draft.thresholdUnit },
+    windows,
+  };
+  if (draft.update === "software") {
+    // A software campaign takes no packages, apps, approvals nor snapshots (ADR-0188).
+    return {
+      ...common,
+      packages: [],
+      security_only: false,
+      allow_reboot: draft.allowReboot,
+      software: { action: draft.softwareAction, catalog_ids: draft.softwareIds },
+      ...timing,
+    };
+  }
+  const major = draft.update === "major";
+  const agent = draft.update === "agent" || major;
+  const os = agent || includesOs(draft.sources);
+  const apps = !agent && includesApps(draft.sources);
+  const upgrade = MAJOR_UPGRADES.find((u) => u.from === draft.majorFrom) ?? DEBIAN_13;
+  // Approvals and holds narrow the OS's Windows updates; classifications only all or security ones.
+  const approvals = os && !agent;
+  const classifications =
+    approvals && draft.update !== "packages" ? WINDOWS_CLASSIFICATIONS.filter((c) => draft.classifications.includes(c)) : [];
+  const hold = approvals ? splitNames(draft.hold) : [];
+  const appHold = splitNames(draft.appHold);
+  return {
+    ...common,
+    packages: os && draft.update === "packages" ? splitNames(draft.packages) : [],
     security_only: os && draft.update === "security",
     allow_reboot: !agent && draft.allowReboot,
     ...(draft.update === "agent" && { agent_version: draft.agentVersion }),
@@ -275,10 +358,16 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
       },
     }),
     ...(!os && { include_os: false }),
-    ...(apps && { third_party: draft.managers.map((manager) => ({ manager, packages: [] })) }),
-    command_ttl_s: draft.ttl,
-    failure_threshold: { value: Number(draft.thresholdValue), unit: draft.thresholdUnit },
-    windows,
+    ...(apps && {
+      third_party: draft.managers.map((manager) => ({
+        manager,
+        packages: [],
+        ...(manager === "winget" && appHold.length > 0 && { hold: appHold }),
+      })),
+    }),
+    ...(classifications.length > 0 && { classifications }),
+    ...(hold.length > 0 && { hold }),
+    ...timing,
     ...(draft.pin && os && !agent && { sources: draft.pin }),
   };
 }
@@ -331,7 +420,15 @@ export function requestFromCampaign(campaign: CampaignDetail, draft: CampaignDra
     failure_threshold: campaign.failure_threshold,
     windows: campaign.windows,
     ...(campaign.sources && { sources: campaign.sources }),
+    ...(spec.classifications?.length && { classifications: spec.classifications }),
+    ...(spec.hold?.length && { hold: spec.hold }),
+    ...(campaign.software && { software: softwareSelection(campaign.software) }),
   };
+}
+
+/** The request's `software` of a saved software campaign: its entries by catalogue ID. */
+export function softwareSelection(software: CampaignSoftware): { action: SoftwareAction; catalog_ids: string[] } {
+  return { action: software.action, catalog_ids: software.packages.map((p) => p.catalog_id) };
 }
 
 /** Whether the API may delete `campaign`: a draft or a finished one, once its commands ended. */
@@ -358,6 +455,7 @@ export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {
   const specs: WaveSpec[] =
     campaign.wave_specs ?? campaign.waves.slice(0, -1).map((w) => ({ size: w.servers.length }));
   const third = spec.third_party ?? [];
+  const software = campaign.software ?? null;
   return {
     customerId: campaign.customer_id,
     name: campaign.name,
@@ -372,13 +470,15 @@ export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {
     ),
     update: campaign.major_upgrade
       ? "major"
-      : campaign.agent_version
-        ? "agent"
-        : spec.packages.length > 0
-        ? "packages"
-        : spec.security_only
-          ? "security"
-          : "all",
+      : software
+        ? "software"
+        : campaign.agent_version
+          ? "agent"
+          : spec.packages.length > 0
+            ? "packages"
+            : spec.security_only
+              ? "security"
+              : "all",
     packages: spec.packages.join(" "),
     sources: spec.include_os === false ? "apps" : third.length > 0 ? "both" : "os",
     managers:
@@ -389,6 +489,11 @@ export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {
     majorFrom: campaign.major_upgrade?.from ?? DEBIAN_13.from,
     acceptLimited: campaign.major_upgrade?.accept_limited_rollback ?? false,
     parallel: String(campaign.major_upgrade?.parallel ?? 1),
+    softwareAction: software?.action ?? "install",
+    softwareIds: software ? softwareSelection(software).catalog_ids : [],
+    classifications: spec.classifications ?? [],
+    hold: (spec.hold ?? []).join(" "),
+    appHold: (third.find((s) => s.manager === "winget")?.hold ?? []).join(" "),
     allowReboot: spec.allow_reboot,
     ttl: campaign.command_ttl_s,
     thresholdValue: String(campaign.failure_threshold.value),
@@ -407,7 +512,8 @@ export function copyName(name: string): string {
  * The servers a campaign would target, in the API's order: hostname, then
  * peer ID. Only an agent update reaches hosts that take no package updates.
  * Without OS updates (`appsOnly`, the managers chosen), only servers of a
- * platform one of them is for.
+ * platform one of them is for. A software campaign (`software`) targets
+ * Windows servers only, whether they take package updates or not.
  */
 export function campaignTargets(
   servers: Server[],
@@ -416,6 +522,7 @@ export function campaignTargets(
   serverIds: string[],
   agentUpdate = false,
   appsOnly: ThirdPartyManagerName[] | null = null,
+  software = false,
 ): Server[] {
   const named = new Set(serverIds);
   return servers
@@ -423,7 +530,9 @@ export function campaignTargets(
       (s) =>
         s.customer_id === customerId &&
         s.revoked_at === null &&
-        (appsOnly
+        (software
+          ? s.os_family === "windows"
+          : appsOnly
           ? appsOnly.some((m) => managerFits(m, s.os_family))
           : agentUpdate || s.package_updates !== false) &&
         ((siteId && s.site_id === siteId) || named.has(s.id)),
@@ -482,6 +591,22 @@ export function planWaves(targets: string[], specs: WaveSpec[]): { waves: string
 
 // As `valid_package_name` on the server: a trailing `-` would make apt remove the package.
 const PACKAGE = /^[A-Za-z0-9](?:[A-Za-z0-9._+:-]*[A-Za-z0-9])?\+*$/;
+// As `valid_windows_update_name`: a KB number or an update ID.
+const WINDOWS_UPDATE = /^KB\d{1,10}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// As `valid_winget_id`: 2 to 8 segments joined by `.`, at most 128 bytes.
+const WINGET_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_+-]{0,31}$/;
+
+/** Whether `id` is a winget package ID the API takes. */
+export function validWingetId(id: string): boolean {
+  const segments = id.split(".");
+  return (
+    new TextEncoder().encode(id).length <= 128 &&
+    segments.length >= 2 &&
+    segments.length <= 8 &&
+    segments.every((s) => WINGET_SEGMENT.test(s))
+  );
+}
+
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 
 function isCount(n: number, max: number): boolean {
@@ -519,8 +644,24 @@ export function validateCampaign(request: CampaignRequest, targets: string[]): s
   if (request.include_os === false && request.third_party === undefined) errors.push(t("campaigns.check.sources"));
   if (request.third_party?.length === 0) errors.push(t("campaigns.check.managers"));
   if (request.packages.length > MAX_PACKAGES) errors.push(t("campaigns.check.packageCount", { max: String(MAX_PACKAGES) }));
+  // On Windows servers, named packages are KB numbers, which follow the same grammar as these.
   const badPackage = request.packages.find((p) => p.length > 128 || !PACKAGE.test(p));
   if (badPackage !== undefined) errors.push(t("campaigns.check.packageName", { name: badPackage }));
+  const hold = request.hold ?? [];
+  if (hold.length > MAX_HOLDS) errors.push(t("campaigns.check.holdCount", { max: String(MAX_HOLDS) }));
+  const badHold = hold.find((h) => !WINDOWS_UPDATE.test(h));
+  if (badHold !== undefined) errors.push(t("campaigns.check.holdName", { name: badHold }));
+  const heldAndNamed = hold.find((h) => request.packages.some((p) => p.toLowerCase() === h.toLowerCase()));
+  if (heldAndNamed !== undefined) errors.push(t("campaigns.check.heldAndNamed", { name: heldAndNamed }));
+  const appHold = (request.third_party ?? []).flatMap((s) => s.hold ?? []);
+  const badApp = appHold.find((id) => !validWingetId(id));
+  if (badApp !== undefined) errors.push(t("campaigns.check.appHoldName", { name: badApp }));
+  if (request.software) {
+    if (request.software.catalog_ids.length === 0) errors.push(t("campaigns.check.software"));
+    else if (request.software.catalog_ids.length > MAX_SOFTWARE) {
+      errors.push(t("campaigns.check.softwareCount", { max: String(MAX_SOFTWARE) }));
+    }
+  }
   const { value, unit } = request.failure_threshold;
   if (!isCount(value, unit === "percent" ? 100 : MAX_TARGETS)) {
     errors.push(
@@ -596,13 +737,25 @@ export function describeManagers(spec: UpdateSpec): string {
   return (spec.third_party ?? []).map((s) => MANAGER_NAMES[s.manager] ?? s.manager).join(", ");
 }
 
+/** "7-Zip, Firefox": the software of a software campaign. */
+export function describeSoftware(software: CampaignSoftware): string {
+  return software.packages.map((p) => p.name).join(", ");
+}
+
 export function describeUpdate(
   spec: UpdateSpec,
   agentVersion: string | null = null,
   major: MajorUpgradeSpec | null = null,
+  software: CampaignSoftware | null = null,
 ): string {
   if (major) return t("campaigns.update.major", { from: releaseLabel(major.from), to: releaseLabel(major.to) });
   if (agentVersion) return t("campaigns.update.agent", { version: agentVersion });
+  if (software) {
+    const what = t(software.action === "install" ? "campaigns.update.install" : "campaigns.update.remove", {
+      software: describeSoftware(software),
+    });
+    return spec.allow_reboot ? t("campaigns.update.reboot", { update: what }) : what;
+  }
   const os =
     spec.packages.length > 0
       ? t("campaigns.update.packages", { packages: spec.packages.join(", ") })
@@ -708,7 +861,7 @@ export function describeSources(pin: SourcesPin): string {
 
 /** The grey line under a campaign's name: "2 batches · snapshot debian-12/s1 · security only · reboot allowed". */
 export function campaignSubline(
-  campaign: Pick<Campaign, "wave_count" | "sources" | "spec" | "agent_version" | "major_upgrade">,
+  campaign: Pick<Campaign, "wave_count" | "sources" | "spec" | "agent_version" | "major_upgrade" | "software">,
 ): string {
   const { spec } = campaign;
   const batches = t("campaigns.batches", { count: campaign.wave_count });
@@ -718,6 +871,16 @@ export function campaignSubline(
   }
   if (campaign.agent_version) {
     return `${batches} · ${t("campaigns.subline.agent", { version: campaign.agent_version })}`;
+  }
+  if (campaign.software) {
+    const count = campaign.software.packages.length;
+    return [
+      batches,
+      t(campaign.software.action === "install" ? "campaigns.subline.install" : "campaigns.subline.remove", { count }),
+      spec.allow_reboot && t("campaigns.subline.reboot"),
+    ]
+      .filter(Boolean)
+      .join(" · ");
   }
   return [
     batches,

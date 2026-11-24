@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::{
-    APPLY_UPDATES, CONFIGURE_SOURCES, MAJOR_UPGRADE, SELF_UPDATE, TAKE_SNAPSHOT,
+    APPLY_UPDATES, CONFIGURE_SOURCES, MAJOR_UPGRADE, SELF_UPDATE, SOFTWARE, TAKE_SNAPSHOT,
 };
 use monitorflow_common::config::ServerConfig;
 use monitorflow_common::proto::v1::TakeSnapshot;
@@ -39,7 +39,7 @@ use sqlx::{PgConnection, PgPool};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use super::model::{MajorUpgradeSpec, SourcesMode};
+use super::model::{software_refusal, MajorUpgradeSpec, SourcesMode};
 use super::pin::{self, Configurer, Next, Pending, PinSources};
 use super::store::{cancel_queued, close_waves, Actor, CampaignRow, COLUMNS};
 use crate::agent_releases;
@@ -451,7 +451,8 @@ async fn queue(
              st.report AS storage,
              EXISTS (SELECT 1 FROM server_package_managers m WHERE m.server_id = t.server_id)
                  AS reports_third_party,
-             t.vm_snapshot_state, t.vm_snapshot_at, t.vm_snapshot_error
+             t.vm_snapshot_state, t.vm_snapshot_at, t.vm_snapshot_error,
+             s.command_kinds->>'software' AS software_state
          FROM campaign_targets t JOIN servers s ON s.id = t.server_id
          LEFT JOIN commands cfg ON cfg.id = t.sources_command_id
          LEFT JOIN commands r ON r.id = t.restore_command_id
@@ -484,6 +485,7 @@ async fn queue(
         None => i64::MAX,
     };
     let spec = row.spec();
+    let software = row.software();
     let mut configurer = None;
     let mut peers = Vec::new();
     let (mut skipped, mut configured, mut snapshots, mut vm_snapshots) = (0, 0, 0, 0);
@@ -502,6 +504,7 @@ async fn queue(
             _ if !target.package_updates
                 && spec.include_os
                 && agent_version.is_none()
+                && software.is_none()
                 && target.configure_state.is_none() =>
             {
                 Next::Skip
@@ -553,18 +556,30 @@ async fn queue(
                 MAJOR_UPGRADE,
                 major.map(MajorUpgradeSpec::payload).unwrap_or_default(),
             )),
-            Next::Update => match &agent_version {
-                None => spec
-                    .for_server(&target.os_family, target.reports_third_party)
+            Next::Update => match (&agent_version, software) {
+                // Software from the catalogue (ADR-0188), where the host
+                // allowed it.
+                (None, Some(software)) => {
+                    match software_refusal(target.software_state.as_deref()) {
+                        Some(error) => Err(error.to_owned()),
+                        None => Ok((SOFTWARE, software.change(spec.allow_reboot).encode_to_vec())),
+                    }
+                }
+                (None, None) => spec
+                    .for_server(
+                        &target.os_family,
+                        target.reports_third_party,
+                        target.software_state.is_some(),
+                    )
                     .map(|apply| (APPLY_UPDATES, apply.encode_to_vec())),
-                Some(Ok(version)) => {
+                (Some(Ok(version)), _) => {
                     let relay = relays::url_for_server(&mut *conn, target.server_id).await?;
                     Ok((
                         SELF_UPDATE,
                         agents.payload(version, relay.as_deref(), false, 0),
                     ))
                 }
-                Some(Err(_)) => Err("invalid agent version".to_owned()),
+                (Some(Err(_)), _) => Err("invalid agent version".to_owned()),
             },
             Next::Configure | Next::Restart => {
                 let configurer = match configurer {

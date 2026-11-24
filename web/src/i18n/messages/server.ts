@@ -458,6 +458,9 @@ export const en = {
   "websites.cert.name": "For another name",
   "websites.cert.revoked": "Revoked",
   "websites.cert.other": "Not valid",
+  "commands.softwareInstall": "Install software: {names}{more}",
+  "commands.softwareRemove": "Remove software: {names}{more}",
+  "kinds.software": "software from the catalogue",
 } as const satisfies Catalog;
 
 export const fr: Translation<typeof en> = {
@@ -917,4 +920,7 @@ export const fr: Translation<typeof en> = {
   "websites.cert.name": "Pour un autre nom",
   "websites.cert.revoked": "Révoqué",
   "websites.cert.other": "Non valide",
+  "commands.softwareInstall": "Installer des logiciels : {names}{more}",
+  "commands.softwareRemove": "Supprimer des logiciels : {names}{more}",
+  "kinds.software": "les logiciels du catalogue",
 };

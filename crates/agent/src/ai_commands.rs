@@ -2,12 +2,14 @@
 //! on or off in the configuration file, the Windows counterpart of the
 //! Linux installer's `MF_ALLOW_COMMANDS` (ADR-0064). `ai-commands from-web
 //! on|off` lets the web interface turn them on, or stops it, the
-//! counterpart of `MF_AI_COMMANDS_FROM_WEB` (ADR-0098).
+//! counterpart of `MF_AI_COMMANDS_FROM_WEB` (ADR-0098). `software on|off`
+//! lets the central server install and remove software (ADR-0188).
 //!
 //! On Linux, `ai-commands root-actions on|off` allows or refuses the AI
 //! root actions of ADR-0181, the counterpart of `MF_AI_ROOT_ACTIONS`.
 //!
-//! It sets `[commands] shell`, `from_web` or `root_actions` and leaves every other line,
+//! It sets `[commands] shell`, `from_web`, `root_actions`, `scripts` or
+//! `software` and leaves every other line,
 //! comments included, as it was. The file is rewritten in place, so it keeps its
 //! access list, and only when the result still loads. The agent reads it
 //! at start, so the service must restart for it to apply.
@@ -60,6 +62,9 @@ pub enum Key {
     /// `scripts`: library scripts (ADR-0179), `monitorflow-agent.exe
     /// scripts on|off`.
     Scripts,
+    /// `software`: whether the central server may install and remove
+    /// software (ADR-0188).
+    Software,
 }
 
 impl Key {
@@ -69,6 +74,7 @@ impl Key {
             Self::FromWeb => "from_web",
             Self::RootActions => "root_actions",
             Self::Scripts => "scripts",
+            Self::Software => "software",
         }
     }
 
@@ -78,6 +84,7 @@ impl Key {
             Self::FromWeb => config.commands.from_web,
             Self::RootActions => config.commands.root_actions,
             Self::Scripts => config.commands.scripts,
+            Self::Software => config.commands.software,
         }
     }
 }
@@ -203,6 +210,20 @@ mod tests {
                 .commands
                 .scripts
         );
+    }
+
+    #[test]
+    fn allows_software_and_takes_it_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.toml");
+        std::fs::write(&path, WRITTEN).unwrap();
+        let (outcome, config) = set(&path, Key::Software, true).unwrap();
+        assert_eq!(outcome, Outcome::Changed);
+        assert!(config.commands.software && !config.commands.shell);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("software = true"), "{text}");
+        let (_, config) = set(&path, Key::Software, false).unwrap();
+        assert!(!config.commands.software);
     }
 
     #[test]
