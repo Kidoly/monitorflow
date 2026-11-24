@@ -117,6 +117,16 @@ const PICTURES: Record<PanelKind, ReactNode> = {
       <line x1="6" y1="22" x2="36" y2="22" />
     </>
   ),
+  map: (
+    <>
+      <line x1="24" y1="7" x2="11" y2="24" />
+      <line x1="24" y1="7" x2="37" y2="24" />
+      <line x1="11" y1="24" x2="37" y2="24" className={styles.badLine} />
+      <circle cx="24" cy="7" r="3.5" className={styles.dot} />
+      <circle cx="11" cy="24" r="3.5" className={styles.dot} />
+      <circle cx="37" cy="24" r="3.5" className={styles.dot} />
+    </>
+  ),
 };
 
 /** The picture of `kind`, for tiles and empty states. */

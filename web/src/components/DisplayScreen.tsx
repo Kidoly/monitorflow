@@ -276,7 +276,13 @@ export function DisplayScreen() {
             style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`, fontSize: `${textScale(rows)}em` }}
           >
             {panels.map((panel) => (
-              <ScreenPanel key={panel.id} panel={panel} data={byId.get(panel.id)} window={data} />
+              <ScreenPanel
+                key={panel.id}
+                panel={panel}
+                data={byId.get(panel.id)}
+                window={data}
+                loadBackground={link && current ? (live) => api.displayMapBackground(current.id, live.id) : undefined}
+              />
             ))}
           </main>
         </>

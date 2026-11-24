@@ -5,6 +5,7 @@ import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 import {
   type Combine,
   type DashboardData,
+  type MapSummary,
   type Panel,
   type PanelServers,
   type PanelUnit,
@@ -91,7 +92,7 @@ function usePreview(panel: Panel, range: TimeRangeLabel, within: Within, ready: 
   // Title is not data: a blank one while typing still previews.
   const key = JSON.stringify({ range, within, panel: { ...panel, title: panel.title.trim() || suggestedTitle(panel) } });
   useEffect(() => {
-    if (!ready || panel.kind === "text") return;
+    if (!ready || panel.kind === "text" || (panel.kind === "map" && !panel.map_id)) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       const body = JSON.parse(key) as { range: TimeRangeLabel; within: Within; panel: Panel };
@@ -106,8 +107,25 @@ function usePreview(panel: Panel, range: TimeRangeLabel, within: Within, ready: 
       clearTimeout(timer);
       controller.abort();
     };
-  }, [key, ready, panel.kind]);
+  }, [key, ready, panel.kind, panel.map_id]);
   return result;
+}
+
+/** The network maps the user sees, read once a map panel is chosen (ADR-0185). */
+function useMaps(wanted: boolean): MapSummary[] | null {
+  const [maps, setMaps] = useState<MapSummary[] | null>(null);
+  useEffect(() => {
+    if (!wanted || maps) return;
+    const controller = new AbortController();
+    api.maps(controller.signal).then(
+      (answer) => setMaps(answer.maps),
+      () => {
+        if (!controller.signal.aborted) setMaps([]);
+      },
+    );
+    return () => controller.abort();
+  }, [wanted, maps]);
+  return maps;
 }
 
 type ServersChoice = PanelServers["kind"];
@@ -166,6 +184,7 @@ export function PanelForm({
   const watched = auto ? { ...draft, instance: auto } : draft;
   const panel = auto && !titleTyped ? { ...watched, title: suggestedTitle(watched) } : watched;
   const source = sourceOf(panel);
+  const maps = useMaps(source === "map");
 
   function change(next: Panel) {
     setDraft(titleTyped ? next : { ...next, title: suggestedTitle(next) });
@@ -219,6 +238,7 @@ export function PanelForm({
       );
     }
     if (panel.kind === "text" && !panel.text?.trim()) return setError(t("dashboards.form.textRequired"));
+    if (panel.kind === "map" && !panel.map_id) return setError(t("dashboards.form.mapRequired"));
     if (!panel.title.trim()) return setError(t("dashboards.form.titleRequired"));
     onDone({ ...panel, title: panel.title.trim() });
   }
@@ -253,6 +273,7 @@ export function PanelForm({
                   <option value="states">{t("dashboards.form.showStates")}</option>
                   <option value="alerts">{t("dashboards.form.showAlerts")}</option>
                   <option value="text">{t("dashboards.form.showText")}</option>
+                  <option value="map">{t("dashboards.form.showMap")}</option>
                 </optgroup>
                 {common.length > 0 && (
                   <optgroup label={t("dashboards.form.common")}>
@@ -274,7 +295,21 @@ export function PanelForm({
               {catalogError && <span className={admin.fieldNote}>{t("dashboards.form.metricsFailed", { error: catalogError })}</span>}
               {metrics && metrics.length === 0 && <span className={admin.fieldNote}>{t("dashboards.form.noMetrics")}</span>}
             </label>
-            {source !== "text" && (
+            {source === "map" && (
+              <label className={admin.field}>
+                {t("dashboards.form.map")}
+                <select className={fieldClass} value={panel.map_id ?? ""} onChange={(e) => change({ ...panel, map_id: e.target.value || undefined })}>
+                  <option value="">{t("dashboards.form.chooseMap")}</option>
+                  {(maps ?? []).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.place.name})
+                    </option>
+                  ))}
+                </select>
+                {maps && maps.length === 0 && <span className={admin.fieldNote}>{t("dashboards.form.noMaps")}</span>}
+              </label>
+            )}
+            {source !== "text" && source !== "map" && (
               <label className={admin.field}>
                 {t("dashboards.form.servers")}
                 <select className={fieldClass} value={panel.servers.kind} onChange={(e) => setServersKind(e.target.value as ServersChoice)}>

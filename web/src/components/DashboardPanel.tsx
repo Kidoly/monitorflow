@@ -36,6 +36,8 @@ import { type Threshold, TimeChart } from "@/components/ui/TimeChart";
 import { formatClock, formatDay, formatSince } from "@/components/ui/time";
 
 import styles from "./Dashboards.module.css";
+import { LiveMap } from "./MapCanvas";
+import mapStyles from "./Maps.module.css";
 
 /**
  * A chart line's name: the server (the API's label), or for servers
@@ -148,7 +150,7 @@ export function columnTitle(column: { metric: string; instance?: string }): stri
 }
 
 export function emptyReason(panel: Panel, data: PanelData): string | null {
-  if (data.servers > 0 || data.kind === "text") return null;
+  if (data.servers > 0 || data.kind === "text" || data.kind === "map") return null;
   if (data.unavailable > 0 || panel.servers.kind !== "all") {
     return t("display.panel.unavailable");
   }
@@ -383,6 +385,14 @@ export function DashboardPanel({
     }
     case "text":
       return null;
+    case "map":
+      return (
+        <Frame panel={panel}>
+          <div className={mapStyles.panel}>
+            <LiveMap live={data.map} mode="panel" />
+          </div>
+        </Frame>
+      );
     case "states": {
       const { squares, legend } = stateSquares(panel, data, (id) => scopedHref(serverHref(id), scope));
       return (

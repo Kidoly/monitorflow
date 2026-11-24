@@ -7,6 +7,7 @@ import {
   AUTO_UPDATE_PATH,
   CAMPAIGNS_PATH,
   DASHBOARDS_PATH,
+  MAPS_PATH,
   MIRRORS_PATH,
   ON_CALL_PATH,
   REPORTS_PATH,
@@ -49,6 +50,7 @@ export const NAVIGATION: NavSection[] = [
     items: [
       { id: "fleet", label: "shell.nav.fleet", href: "/", icon: "fleet", alsoCurrent: ["/servers/"] },
       { id: "dashboards", label: "shell.nav.dashboards", href: DASHBOARDS_PATH, icon: "dashboards" },
+      { id: "maps", label: "shell.nav.maps", href: MAPS_PATH, icon: "maps" },
       { id: "incidents", label: "shell.nav.incidents", href: "/incidents/", icon: "incidents", incidentCount: true },
       { id: "onCall", label: "shell.nav.onCall", href: ON_CALL_PATH, icon: "users" },
       { id: "reports", label: "shell.nav.reports", href: REPORTS_PATH, icon: "reports" },

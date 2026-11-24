@@ -51,6 +51,7 @@ export const PANEL_KINDS: readonly PanelKind[] = [
   "timeline",
   "alerts",
   "text",
+  "map",
 ];
 
 /** The colour of a server's state on dashboards: alarming ones loud, quiet ones grey. */
@@ -79,7 +80,7 @@ export const MAX_TABLE_COLUMNS = 6;
 export const MAX_TEXT = 4000;
 
 /** The kind whose data a panel draws: area and columns a chart's, a gauge a figure's, bars a top list's. */
-export function baseKind(kind: PanelKind): "chart" | "figure" | "top" | "alerts" | "table" | "text" | "states" | "pie" | "timeline" {
+export function baseKind(kind: PanelKind): "chart" | "figure" | "top" | "alerts" | "table" | "text" | "states" | "pie" | "timeline" | "map" {
   switch (kind) {
     case "area":
     case "columns":
@@ -238,6 +239,7 @@ export function defaultInstance(instances: string[]): string | undefined {
 export function suggestedTitle(panel: Panel): string {
   if (baseKind(panel.kind) === "alerts") return t("dashboards.title.alerts");
   if (panel.kind === "text") return t("dashboards.title.text");
+  if (panel.kind === "map") return t("dashboards.title.map");
   if (panel.kind === "table") return t("dashboards.title.table");
   if (panel.kind === "timeline") return t("dashboards.title.timeline");
   if (panel.kind === "states" && !panel.metric) return t("dashboards.title.states");
@@ -270,7 +272,7 @@ export function withKind(panel: Panel, kind: PanelKind): Panel {
   const instance = panel.instance !== undefined ? { instance: panel.instance } : {};
   // Display options follow the panel, except a legend, which only charts over time have.
   const options: Partial<Panel> =
-    kind === "alerts" || kind === "table" || kind === "text" || kind === "timeline" || (!panel.metric && (kind === "states" || kind === "pie"))
+    kind === "alerts" || kind === "table" || kind === "text" || kind === "timeline" || kind === "map" || (!panel.metric && (kind === "states" || kind === "pie"))
       ? {}
       : {
           ...(panel.unit && { unit: panel.unit }),
@@ -321,6 +323,8 @@ export function withKind(panel: Panel, kind: PanelKind): Panel {
       };
     case "text":
       return { ...base, servers: { kind: "all" }, text: panel.text ?? t("dashboards.text.example") };
+    case "map":
+      return { ...base, servers: { kind: "all" }, ...(panel.map_id && { map_id: panel.map_id }) };
     // Handled above.
     case "states":
     case "pie":
@@ -568,10 +572,11 @@ export function readyMade(id: string | null): ReadyMade | undefined {
 }
 
 /** What a panel shows, the first choice of the panel form (ADR-0178). */
-export type PanelSource = "metric" | "states" | "alerts" | "text";
+export type PanelSource = "metric" | "states" | "alerts" | "text" | "map";
 
 export function sourceOf(panel: Panel): PanelSource {
   if (panel.kind === "text") return "text";
+  if (panel.kind === "map") return "map";
   if (panel.kind === "alerts" || panel.kind === "timeline") return "alerts";
   if ((panel.kind === "states" || panel.kind === "pie") && !panel.metric) return "states";
   return "metric";
@@ -583,6 +588,7 @@ export const KINDS_FOR: Record<PanelSource, readonly PanelKind[]> = {
   states: ["states", "pie"],
   alerts: ["alerts", "timeline"],
   text: ["text"],
+  map: ["map"],
 };
 
 /** The metrics most dashboards show, offered first. */
