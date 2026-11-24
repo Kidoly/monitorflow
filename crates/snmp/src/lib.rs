@@ -8,7 +8,7 @@
 //! | `what` | MIB | Metrics, by instance |
 //! | --- | --- | --- |
 //! | `system` | SNMPv2-MIB | `up`, `uptime_seconds` |
-//! | `interfaces` | IF-MIB, 64-bit counters when there are | per interface: `oper_up`, `admin_up`, `in_bytes_per_second`, `out_bytes_per_second`, `in_errors_per_second`, `out_errors_per_second`, `in_discards_per_second`, `out_discards_per_second`, `speed_bits_per_second`, `in_utilization_ratio`, `out_utilization_ratio` |
+//! | `interfaces` | IF-MIB, 64-bit counters when there are | per interface: `oper_up`, `admin_up`, `if_index` (its ifIndex, which names it in traffic flows), `in_bytes_per_second`, `out_bytes_per_second`, `in_errors_per_second`, `out_errors_per_second`, `in_discards_per_second`, `out_discards_per_second`, `speed_bits_per_second`, `in_utilization_ratio`, `out_utilization_ratio` |
 //! | `host` | HOST-RESOURCES-MIB | `cpu_usage_ratio`, `memory_used_ratio`; per storage: `storage_used_ratio`, `storage_used_bytes`, `storage_size_bytes` |
 //! | `ups` | UPS-MIB | `battery_charge_ratio`, `runtime_seconds`, `on_battery`, `battery_low` |
 //! | `temperature` | ENTITY-SENSOR-MIB | per sensor: `celsius` |

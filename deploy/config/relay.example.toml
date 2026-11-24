@@ -86,6 +86,17 @@ upstream_url = "https://monitorflow.example.com:7443"
 # cert = "/var/lib/monitorflow/relay/tls/cert.pem"
 # key = "/var/lib/monitorflow/relay/tls/key.pem"
 
+[flows]
+# NetFlow, sFlow and IPFIX from devices (ADR-0184). The UDP ports open only
+# while the web interface names devices whose flows this relay receives, and take
+# datagrams only from their addresses. Every port takes every format; 0
+# turns one off. MONITORFLOW_FLOWS_NETFLOW_PORT and the others override them.
+# Address to listen on; unset listens on every address, IPv6 and IPv4.
+# listen = "192.0.2.10"
+# netflow_port = 2055
+# sflow_port = 6343
+# ipfix_port = 4739
+
 [log]
 # trace, debug, info, warn or error.
 # level = "info"

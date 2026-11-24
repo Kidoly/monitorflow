@@ -915,6 +915,25 @@ fn relay_buffer_limits_are_checked() {
 }
 
 #[test]
+fn flow_ports_default_and_override() {
+    let relay: RelayConfig = parse(AGENT_MIN).unwrap();
+    assert_eq!(relay.flows, FlowConfig::default());
+    assert_eq!(relay.flows.ports(), [2055, 4739, 6343]);
+    let text = format!("{AGENT_MIN}\n[flows]\nlisten = \"192.0.2.10\"\nsflow_port = 0\n");
+    let vars = [("MONITORFLOW_FLOWS_IPFIX_PORT", "2055")];
+    let relay: RelayConfig = parse_with_env(&text, path(), &env(&vars)).unwrap();
+    assert_eq!(relay.flows.listen, Some("192.0.2.10".parse().unwrap()));
+    assert_eq!(relay.flows.ports(), [2055], "off, and one port once");
+    let server: ServerConfig = parse_with_env(
+        SERVER_MIN,
+        path(),
+        &env(&[("MONITORFLOW_FLOWS_NETFLOW_PORT", "9995")]),
+    )
+    .unwrap();
+    assert_eq!(server.flows.netflow_port, 9995);
+}
+
+#[test]
 fn relay_mirror_defaults_and_overrides() {
     let relay: RelayConfig = parse(AGENT_MIN).unwrap();
     assert_eq!(relay.mirror, RelayMirrorConfig::default());

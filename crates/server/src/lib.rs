@@ -17,6 +17,7 @@ pub mod dependencies;
 pub mod discovery;
 pub mod edition;
 pub mod enroll;
+pub mod flows;
 pub mod grpc;
 pub mod import;
 pub mod ingest;

@@ -47,6 +47,8 @@ pub enum Family {
     /// A database MonitorFlow has no ready-made check for: Microsoft SQL,
     /// Oracle, ADO.
     OtherDatabase,
+    /// NetFlow, jFlow, sFlow or IPFIX received from the device.
+    Flow,
     Other,
 }
 
@@ -91,7 +93,10 @@ pub fn family(sensor_type: &str) -> Family {
         None => t,
     };
     let has = |s: &str| t.contains(s);
-    if t.starts_with("ping") {
+    if has("netflow") || has("jflow") || has("sflow") || has("ipfix") {
+        // Before `traffic`: PRTG's custom flow sensors are named so too.
+        Family::Flow
+    } else if t.starts_with("ping") {
         Family::Ping
     } else if t.starts_with("dns") {
         Family::Dns
@@ -152,7 +157,9 @@ pub fn wanted(sensor_type: &str) -> (&'static [&'static str], bool) {
         Family::Vmware => (&[], true),
         Family::App(AppKind::Docker) => (DOCKER_SETTINGS, true),
         Family::App(_) => (&["port", "database"], true),
-        Family::Ping | Family::Traffic | Family::OtherDatabase | Family::Other => (&[], false),
+        Family::Ping | Family::Traffic | Family::Flow | Family::OtherDatabase | Family::Other => {
+            (&[], false)
+        }
     }
 }
 
@@ -311,6 +318,10 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
         }
         Family::App(kind) => app(sensor, kind, host),
         Family::OtherDatabase => Mapped::Not(Note::plain("app_other_database")),
+        // Flows are not a check: the device's Flows tab turns their
+        // reception on, once per device, from the probe it sends to
+        // (ADR-0184).
+        Family::Flow => Mapped::Not(Note::plain("flow_sensor")),
         Family::Other => Mapped::Not(Note::new("prtg_sensor_type", args! {"type" => sensor_type})),
     }
 }
@@ -881,6 +892,20 @@ mod tests {
     fn families_by_type() {
         assert_eq!(family("ping"), Family::Ping);
         assert_eq!(family("snmptraffic"), Family::Traffic);
+        for flow in [
+            "netflow5",
+            "netflow9custom",
+            "jflowv5",
+            "sflow",
+            "sflowcustom",
+            "ipfix",
+            "paessler.flow.ipfix_v2.1",
+        ] {
+            assert_eq!(family(flow), Family::Flow, "{flow}");
+        }
+        let mut flow = Object::new(1, Kind::Sensor, "NetFlow", Some(0));
+        flow.sensor_type = Some("netflow9".into());
+        assert_eq!(map(&flow, None), Mapped::Not(Note::plain("flow_sensor")));
         assert_eq!(family("wmiservice"), Family::Service);
         assert_eq!(family("snmpcpu"), Family::Cpu);
         assert_eq!(family("wmivolume"), Family::Disk);

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -787,6 +787,9 @@ pub struct RelayConfig {
     /// [`Self::mirror_dir`].
     pub mirror_dir: Option<PathBuf>,
     pub mirror: RelayMirrorConfig,
+    /// UDP listeners of traffic flows (ADR-0184), open only while the
+    /// server names exporters for this relay.
+    pub flows: FlowConfig,
 }
 
 impl Default for RelayConfig {
@@ -804,7 +807,51 @@ impl Default for RelayConfig {
             mirror_listen_addr: SocketAddr::from(([0, 0, 0, 0], DEFAULT_MIRROR_PORT)),
             mirror_dir: None,
             mirror: RelayMirrorConfig::default(),
+            flows: FlowConfig::default(),
         }
+    }
+}
+
+/// Where a probe receives NetFlow, sFlow and IPFIX (ADR-0184). Every
+/// port takes every format; 0 turns one off.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FlowConfig {
+    /// Address the listeners bind; unset: every address, IPv6 and IPv4.
+    pub listen: Option<IpAddr>,
+    pub netflow_port: u16,
+    pub sflow_port: u16,
+    pub ipfix_port: u16,
+}
+
+impl Default for FlowConfig {
+    fn default() -> Self {
+        Self {
+            listen: None,
+            netflow_port: 2055,
+            sflow_port: 6343,
+            ipfix_port: 4739,
+        }
+    }
+}
+
+impl FlowConfig {
+    /// The ports turned on, each once.
+    pub fn ports(&self) -> Vec<u16> {
+        let mut ports: Vec<u16> = [self.netflow_port, self.sflow_port, self.ipfix_port]
+            .into_iter()
+            .filter(|p| *p != 0)
+            .collect();
+        ports.sort_unstable();
+        ports.dedup();
+        ports
+    }
+
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set_opt("flows.listen", &mut self.listen)?;
+        env.set("flows.netflow_port", &mut self.netflow_port)?;
+        env.set("flows.sflow_port", &mut self.sflow_port)?;
+        env.set("flows.ipfix_port", &mut self.ipfix_port)
     }
 }
 
@@ -1041,6 +1088,7 @@ impl LoadConfig for RelayConfig {
         env.set("mirror_listen_addr", &mut self.mirror_listen_addr)?;
         env.set_opt("mirror_dir", &mut self.mirror_dir)?;
         self.mirror.apply_env(env)?;
+        self.flows.apply_env(env)?;
         self.log.apply_env(env)
     }
 
@@ -1167,6 +1215,9 @@ pub struct ServerConfig {
     pub remediation: RemediationConfig,
     /// Automatic agent and relay updates (ADR-0055).
     pub auto_update: AutoUpdateConfig,
+    /// UDP listeners of traffic flows from devices without a relay
+    /// (ADR-0184), open only while some are set.
+    pub flows: FlowConfig,
 }
 
 /// Automatic updates (ADR-0055). The setting lives in the database and the
@@ -1266,6 +1317,7 @@ impl Default for ServerConfig {
             proxmox: ProxmoxConfig::default(),
             remediation: RemediationConfig::default(),
             auto_update: AutoUpdateConfig::default(),
+            flows: FlowConfig::default(),
         }
     }
 }
@@ -1796,6 +1848,7 @@ impl LoadConfig for ServerConfig {
         self.proxmox.apply_env(env)?;
         self.remediation.apply_env(env)?;
         self.auto_update.apply_env(env)?;
+        self.flows.apply_env(env)?;
         self.log.apply_env(env)
     }
 

@@ -205,6 +205,10 @@ pub fn interfaces(
         if let Some(admin) = number(if_table, 7, index) {
             samples.push(sample("admin_up", f64::from(u8::from(admin == 1.0))));
         }
+        // Traffic flows name interfaces by ifIndex (ADR-0184).
+        if let Ok(if_index) = index.parse::<u32>() {
+            samples.push(sample("if_index", f64::from(if_index)));
+        }
         // ifHighSpeed is in Mbit/s; ifSpeed in bit/s, capped at 2^32-1.
         let speed = number(ifx_table, 15, index)
             .filter(|s| *s > 0.0)

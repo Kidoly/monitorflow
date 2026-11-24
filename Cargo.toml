@@ -4,6 +4,7 @@ members = [
     "crates/common",
     "crates/sensors",
     "crates/probe",
+    "crates/flow",
     "crates/snmp",
     "crates/vmware",
     "crates/webcheck",
@@ -35,6 +36,7 @@ if-addrs = "0.15"
 monitorflow-common = { path = "crates/common" }
 monitorflow-sensors = { path = "crates/sensors" }
 monitorflow-probe = { path = "crates/probe" }
+monitorflow-flow = { path = "crates/flow" }
 monitorflow-snmp = { path = "crates/snmp" }
 monitorflow-vmware = { path = "crates/vmware" }
 monitorflow-ai = { path = "crates/ai" }

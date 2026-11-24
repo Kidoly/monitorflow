@@ -33,7 +33,7 @@ Retyping hundreds of devices, sensors and limits is the hardest part of switchin
 | Notification template sending email | Email channel | Approximated: it gets every incident, where PRTG used it only where a trigger named it. Its mail server is not in PRTG's API: add an email channel with yours if the preview says so |
 | Notification template calling a URL | Slack, Teams, Discord or webhook channel, by the URL | Approximated: MonitorFlow sends its own message |
 
-What cannot be moved is listed too, with the reason: SNMP traffic sensors, devices watched only over SNMP (switches, printers), sensors of a kind MonitorFlow has no check for (Microsoft SQL and Oracle among them), limits on channels MonitorFlow has no threshold for, sensors paused by a schedule or a dependency, a single paused sensor (MonitorFlow silences whole servers), and SMS or push notifications.
+What cannot be moved is listed too, with the reason: SNMP traffic sensors, devices watched only over SNMP (switches, printers), sensors of a kind MonitorFlow has no check for (Microsoft SQL and Oracle among them), limits on channels MonitorFlow has no threshold for, sensors paused by a schedule or a dependency, a single paused sensor (MonitorFlow silences whole servers), and SMS or push notifications. NetFlow, sFlow and IPFIX sensors are listed with what to do instead: turn on the device's **Flows** tab ([traffic flows](monitor-traffic-flows.md)).
 
 ## Before you start
 

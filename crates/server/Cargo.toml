@@ -25,6 +25,9 @@ monitorflow-server-ee = { workspace = true, optional = true }
 # server-update: checks and requests of server updates (ADR-0056).
 monitorflow-common = { workspace = true, features = ["mirror", "server-update", "openapi"] }
 monitorflow-probe.workspace = true
+# Traffic flows (ADR-0184): the central server's own listeners, and
+# application names.
+monitorflow-flow.workspace = true
 monitorflow-snmp.workspace = true
 monitorflow-vmware.workspace = true
 # Website checks among the probe kinds (ADR-0150).

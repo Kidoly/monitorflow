@@ -1818,6 +1818,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "monitorflow-flow"
+version = "0.11.0"
+dependencies = [
+ "monitorflow-common",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "monitorflow-import"
 version = "0.11.0"
 dependencies = [
@@ -1916,6 +1926,7 @@ dependencies = [
  "lzma-rust2",
  "monitorflow-agent",
  "monitorflow-common",
+ "monitorflow-flow",
  "monitorflow-probe",
  "monitorflow-server",
  "monitorflow-webcheck",
@@ -1975,6 +1986,7 @@ dependencies = [
  "monitorflow-ai",
  "monitorflow-apps",
  "monitorflow-common",
+ "monitorflow-flow",
  "monitorflow-import",
  "monitorflow-plugin",
  "monitorflow-probe",

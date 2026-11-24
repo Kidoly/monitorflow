@@ -583,7 +583,17 @@ async fn main() -> anyhow::Result<()> {
             virt: Some(virt),
         },
         Some(alerts),
+    )
+    // Traffic flows of devices (ADR-0184).
+    .with_flows(
+        monitorflow_server::flows::FlowWriter::start(pool.clone()),
+        monitorflow_flow::collector::Settings {
+            bind: config.flows.listen,
+            ports: config.flows.ports(),
+            ..Default::default()
+        },
     );
+    let flows_pool = pool.clone();
     let service = service.with_probes(probes.clone());
     let probe_registry = registry.clone();
     // Network scans run on the instance that reaches their probe
@@ -790,6 +800,14 @@ async fn main() -> anyhow::Result<()> {
                 probes
                     .clone()
                     .run_central(Arc::new(monitorflow_webcheck::CentralProbeKinds), until)
+            })
+            .await;
+            Ok(())
+        },
+        // Old traffic flows summed into hours, then dropped (ADR-0184).
+        async {
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                monitorflow_server::flows::maintain(flows_pool.clone(), until)
             })
             .await;
             Ok(())

@@ -13,6 +13,10 @@
 //!
 //! A relay is believed only for the devices of the last configuration it
 //! was sent: what it says about others is dropped and counted.
+//!
+//! The same configuration names the devices whose traffic flows each
+//! probe receives (ADR-0184). Their reports go to [`crate::flows`], and
+//! the series thresholds watch to the same place as checks' samples.
 
 mod store;
 
@@ -24,16 +28,18 @@ use std::time::Duration;
 use chrono::Utc;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    ProbeConfig, ProbeConfigAck, ProbeResults, ProbeTest, ProbeTestResult, Sample as ProtoSample,
-    SampleBatch,
+    FlowExporter, FlowReport, FlowReports, ProbeConfig, ProbeConfigAck, ProbeResults, ProbeTest,
+    ProbeTestResult, Sample as ProtoSample, SampleBatch,
 };
 use monitorflow_common::tls::PeerRole;
+use monitorflow_flow::collector::{self, Exporter};
 use monitorflow_probe::{Check, ProbeFactory, Runner, CENTRAL};
 use tokio::time::{interval, timeout, MissedTickBehavior};
 
 pub use store::ProbeStore;
 
 use crate::alerting::Alerts;
+use crate::flows::{FlowWriter, Seen};
 use crate::grpc::Registry;
 use crate::ingest::{self, Identity, Ingest};
 
@@ -50,6 +56,8 @@ pub struct ProbeSet {
     pub checks: Vec<Check>,
     /// Device ID to site name, for the series' `site` label.
     pub sites: BTreeMap<String, String>,
+    /// Devices whose traffic flows the probe receives (ADR-0184).
+    pub exporters: Vec<Exporter>,
 }
 
 impl ProbeSet {
@@ -65,6 +73,10 @@ impl ProbeSet {
             check.config.timeout.hash(&mut hasher);
             check.config.params.hash(&mut hasher);
         }
+        for exporter in &self.exporters {
+            exporter.device.hash(&mut hasher);
+            exporter.addresses.hash(&mut hasher);
+        }
         // Never 0, which reads as "nothing sent".
         hasher.finish().max(1)
     }
@@ -73,6 +85,14 @@ impl ProbeSet {
         ProbeConfig {
             revision: self.revision(),
             checks: self.checks.iter().map(Check::to_proto).collect(),
+            flow_exporters: self
+                .exporters
+                .iter()
+                .map(|e| FlowExporter {
+                    device: e.device.clone(),
+                    addresses: e.addresses.clone(),
+                })
+                .collect(),
         }
     }
 }
@@ -81,6 +101,8 @@ impl ProbeSet {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ProbeStats {
     pub samples: u64,
+    /// Flow reports taken (ADR-0184).
+    pub flow_reports: u64,
     /// About a device the probe was not given.
     pub unknown_device: u64,
     pub invalid: u64,
@@ -92,6 +114,8 @@ struct Shared {
     /// and their sites.
     relays: HashMap<String, BTreeMap<String, String>>,
     stats: ProbeStats,
+    /// Addresses of each exporter's last flow report.
+    seen: Seen,
 }
 
 /// Shared handle; clones see the same state.
@@ -107,6 +131,9 @@ pub struct Probes {
     factory: Arc<dyn ProbeFactory>,
     /// Tests sent to relays, by ID: the relay, and who waits.
     tests: Arc<std::sync::Mutex<HashMap<String, Waiting>>>,
+    /// Where traffic flows go, and how the central server receives its
+    /// own (ADR-0184); without it, flow reports are dropped.
+    flows: Option<(FlowWriter, collector::Settings)>,
 }
 
 /// A test sent to a relay: the relay, and who waits for its answer.
@@ -141,7 +168,15 @@ impl Probes {
             opened: Arc::default(),
             factory: Arc::new(monitorflow_probe::Builtin),
             tests: Arc::default(),
+            flows: None,
         }
+    }
+
+    /// Writes traffic flows with `writer`; the central server listens for
+    /// its own exporters as `settings` say.
+    pub fn with_flows(mut self, writer: FlowWriter, settings: collector::Settings) -> Self {
+        self.flows = Some((writer, settings));
+        self
     }
 
     /// Builds the central server's tests with `factory` instead of the
@@ -270,6 +305,41 @@ impl Probes {
         }
     }
 
+    /// Flow reports a relay sent on its own stream; devices it was not
+    /// given are dropped.
+    pub fn flow_reports(&self, relay: &str, reports: FlowReports) {
+        let sites = {
+            let shared = self.shared.read().unwrap_or_else(|e| e.into_inner());
+            shared.relays.get(relay).cloned().unwrap_or_default()
+        };
+        self.take_flows(relay, &sites, reports.reports);
+    }
+
+    /// Writes the flow `reports` of `probe` about devices of `sites`, and
+    /// the series thresholds watch.
+    fn take_flows(&self, probe: &str, sites: &BTreeMap<String, String>, reports: Vec<FlowReport>) {
+        let Some((writer, _)) = &self.flows else {
+            return;
+        };
+        let mut kept = Vec::with_capacity(reports.len());
+        for report in reports {
+            let Some(site) = sites.get(&report.device) else {
+                let mut shared = self.shared.write().unwrap_or_else(|e| e.into_inner());
+                shared.stats.unknown_device += 1;
+                tracing::debug!(probe, device = %report.device.escape_debug(), "flows about a device this probe was not given; dropped");
+                continue;
+            };
+            let samples = {
+                let mut shared = self.shared.write().unwrap_or_else(|e| e.into_inner());
+                shared.stats.flow_reports += 1;
+                crate::flows::alert_samples(&report, &mut shared.seen)
+            };
+            self.write(probe, &report.device, site, samples);
+            kept.push(report);
+        }
+        writer.submit(kept);
+    }
+
     /// Logs the checks a relay could not start.
     pub fn acknowledged(&self, relay: &str, ack: &ProbeConfigAck) {
         if let Some(first) = ack.errors.first() {
@@ -375,9 +445,25 @@ impl Probes {
         let mut tick = interval(POLL);
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut current: Option<ProbeSet> = None;
+        // The central server's own flow listeners (ADR-0184), open while
+        // some device sends it flows.
+        let (exporters, exporters_rx) = tokio::sync::watch::channel(Vec::new());
+        let (reports_tx, mut reports) = tokio::sync::mpsc::channel::<FlowReports>(4);
+        let collector = self.flows.as_ref().map(|(_, settings)| {
+            tokio::spawn(collector::run(
+                settings.clone(),
+                exporters_rx,
+                reports_tx,
+                Arc::default(),
+            ))
+        });
         loop {
             tokio::select! {
                 () = &mut until => break,
+                Some(batch) = reports.recv() => {
+                    let sites = current.as_ref().map(|s| s.sites.clone()).unwrap_or_default();
+                    self.take_flows(CENTRAL, &sites, batch.reports);
+                }
                 batch = monitorflow_probe::next_batch(&mut samples) => {
                     let Some(batch) = batch else { break };
                     let sites = current.as_ref().map(|s| &s.sites);
@@ -402,6 +488,14 @@ impl Probes {
                     if current.as_ref() == Some(&set) {
                         continue;
                     }
+                    exporters.send_if_modified(|now| {
+                        let changed = *now != set.exporters;
+                        if changed {
+                            tracing::info!(exporters = set.exporters.len(), "central flow exporters applied");
+                            now.clone_from(&set.exporters);
+                        }
+                        changed
+                    });
                     let errors = runner.apply(set.checks.clone()).await;
                     for error in &errors {
                         tracing::warn!(device = %error.device, check = %error.name, error = %error.message, "probe check could not start");
@@ -410,6 +504,9 @@ impl Probes {
                     current = Some(set);
                 }
             }
+        }
+        if let Some(collector) = collector {
+            collector.abort();
         }
         runner.shutdown().await;
     }

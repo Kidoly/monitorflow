@@ -28,6 +28,7 @@ Guides are also available [in French](fr/README.md).
 - [How to find what is on your network](scan-the-network.md): Scan a range of addresses from the central server or a relay, see which machines can take the agent and which devices to watch, and add them in one click. Scans can run every day and say what is new.
 - [How to run scripts on your servers and automate fixes](run-scripts-and-automate-fixes.md): Keep shell and PowerShell scripts in MonitorFlow, run them on a server, a business service or a whole site, now or tonight, read each server's output, and run them by themselves when an incident opens.
 - [How to draw a live map of your network](draw-network-maps.md): Get a map of a site or a customer drawn from your relays, dependencies and switches' LLDP and CDP neighbours, coloured by incidents, arranged by hand on your floor plan, and shown on a wall screen.
+- [How to see which addresses and applications use your bandwidth (NetFlow, sFlow, IPFIX)](monitor-traffic-flows.md): Receive NetFlow, sFlow or IPFIX from your routers, firewalls and switches on a relay or the central server, see the largest addresses, applications and interfaces over time, and get alerted when one address uses too much.
 
 ## Databases
 

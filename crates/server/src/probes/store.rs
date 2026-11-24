@@ -75,6 +75,12 @@ impl ProbeStore {
         let mut conn = self.pool.acquire().await?;
         let stored = crate::snmp_custom::load_lookups(&mut conn, &wanted).await?;
         add_lookups(&mut sets, &stored);
+        // Devices whose traffic flows each probe receives (ADR-0184).
+        for (probe, (exporters, sites)) in crate::flows::store::exporters(&self.pool).await? {
+            let set = sets.entry(probe).or_default();
+            set.exporters = exporters;
+            set.sites.extend(sites);
+        }
         Ok(sets)
     }
 

@@ -204,7 +204,7 @@ What established monitoring tools still do better once Phase 17 is done: alerts 
 - [ ] Java (JMX) check (ADR-0183): heap, non-heap, garbage collection and threads, then Tomcat and Kafka groups, read through Jolokia from the agent or a probe.
 - [ ] Kubernetes check (ADR-0183): a cluster as a device read through its API with a read-only token: nodes and their conditions, pods not running or restarting, deployments short of ready replicas, pending volume claims.
 - [ ] Cloud providers (ADR-0183): state and basic metrics of AWS, Azure and Google Cloud virtual machines through their APIs with read-only credentials, matched to the servers already monitored.
-- [ ] Traffic flows: NetFlow, sFlow and IPFIX received by a relay, to say which addresses and applications use the bandwidth.
+- [x] Traffic flows (ADR-0184): NetFlow v5 and v9, IPFIX and sFlow v5 received by a relay of the site or the central server, added up each minute on the probe (largest addresses, applications, protocols, interfaces and conversations), kept 48 hours by minute and 31 days by hour. A Flows tab on the device's page with the period, a stacked chart and a click on an address to filter, an alert on any address above a rate for some minutes, and PRTG's flow sensors recognized by the importer.
 - [x] Network maps: drawn from discovery and dependencies, with live states, editable by hand and usable on a wall screen.
 - [ ] A mobile application with push notifications, to acknowledge and silence from a phone.
 

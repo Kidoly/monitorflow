@@ -21,7 +21,7 @@ The rest of this page is reference. The server runs with Docker Compose: the ser
 ## Requirements
 
 - 2 vCPU and 4 GB of RAM for up to about 8,000 agents of 10 sensors each, as measured in the [load test](load-test.md) (more memory first beyond that), and disk for metrics and logs, kept 90 and 30 days by default (Administration › Settings changes that).
-- Inbound ports: 443 and 80 for browsers, 7443 and 7445 for agents and relays (7445 for their first connection), 7480 (package mirrors) for servers that update from the central server. The installer stops and names a port that is taken.
+- Inbound ports: 443 and 80 for browsers, 7443 and 7445 for agents and relays (7445 for their first connection), 7480 (package mirrors) for servers that update from the central server, and UDP 2055, 6343 and 4739 for devices that send their traffic flows to the central server rather than to a relay (open only while one does, ADR-0184). The installer stops and names a port that is taken.
 - For updates from the web interface: outbound HTTPS to `github.com` and `ghcr.io`, or to your own copy of the releases (see [Offline servers](#offline-servers)), and disk for the backups taken before each update.
 - The `updater` service mounts the Docker socket, `/var/run/docker.sock`, which gives it root on the machine. It has no listener and only installs releases signed by the project's key. With rootless Docker, set `DOCKER_SOCKET` in `deploy/.env` to your socket.
 - OpenSSL 3, which the installer needs to check the release signature: Debian 12, Ubuntu 22.04, RHEL 9 and later have it[^0127].
