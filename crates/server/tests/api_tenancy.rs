@@ -185,6 +185,8 @@ struct Tenant {
     customer_dashboard: Uuid,
     /// A network scan of the site with a finished run (ADR-0154).
     scan: Uuid,
+    /// A network map of the site with a background image (ADR-0185).
+    map: Uuid,
     /// A lookup and an uploaded MIB of the customer (ADR-0157), whose one
     /// object is `obja` or `objb`.
     lookup: Uuid,
@@ -517,7 +519,23 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .execute(pool)
     .await
     .unwrap();
+    let map = one("INSERT INTO network_maps (name, site_id, document)
+         VALUES ($1, $2, '{\"version\": 1}') RETURNING id")
+    .bind(format!("Map {name}"))
+    .bind(site)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO network_map_backgrounds (map_id, content_type, image)
+         VALUES ($1, 'image/png', '\\x89504e470d0a1a0a')",
+    )
+    .bind(map)
+    .execute(pool)
+    .await
+    .unwrap();
     Tenant {
+        map,
         lookup,
         mib,
         object,
@@ -2875,6 +2893,83 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 .execute(&ctx.pool)
                 .await
                 .unwrap();
+        }
+        // Network maps (ADR-0185): B's are neither listed, read, drawn,
+        // changed nor asked for neighbours, and none is made for B.
+        ("GET", "/api/maps") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.map), "{body}");
+            assert!(!Ctx::mentions(&body, b.map), "{body}");
+            for query in [
+                format!("site_id={}", b.site),
+                format!("customer_id={}", b.customer),
+            ] {
+                let (status, body) = ctx.call(method, &format!("{path}?{query}"), None).await;
+                assert!(
+                    status == not_found || !Ctx::mentions(&body, b.map),
+                    "{query}: {body}"
+                );
+            }
+        }
+        ("POST", "/api/maps") => {
+            for place in [
+                json!({"kind": "site", "id": b.site}),
+                json!({"kind": "customer", "id": b.customer}),
+            ] {
+                let body = json!({"name": "Theirs", "place": place});
+                assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            }
+            // B's server as the interface of a link on A's map.
+            let body = json!({"name": "Mine", "place": {"kind": "site", "id": a.site},
+                "document": {"version": 1, "links": [{"id": "l", "from": format!("server:{}", a.server),
+                    "to": format!("server:{}", b.server),
+                    "interface": {"server_id": b.server, "instance": "eth0"}}]}});
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        ("GET", "/api/maps/{id}")
+        | ("PUT", "/api/maps/{id}")
+        | ("DELETE", "/api/maps/{id}")
+        | ("GET", "/api/maps/{id}/background")
+        | ("PUT", "/api/maps/{id}/background")
+        | ("DELETE", "/api/maps/{id}/background")
+        | ("POST", "/api/maps/{id}/neighbors") => {
+            let uri = path.replace("{id}", &b.map.to_string());
+            let body = json!({"name": "Mine now", "place": {"kind": "site", "id": a.site},
+                              "revision": 1});
+            let body = match (method, path.ends_with("background")) {
+                ("PUT", true) => json!({"image": "iVBORw0KGgo="}),
+                ("PUT", false) => body,
+                _ => Value::Null,
+            };
+            let body = (!body.is_null()).then_some(body);
+            assert_eq!(
+                ctx.status(method, &uri, body).await,
+                not_found,
+                "{method} {uri}"
+            );
+        }
+        ("GET", "/api/maps/{id}/live") => {
+            let uri = path.replace("{id}", &b.map.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let uri = path.replace("{id}", &a.map.to_string());
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert!(Ctx::mentions(&body, a.server), "{body}");
+            assert!(
+                !Ctx::mentions(&body, b.server) && !Ctx::mentions(&body, b.relay),
+                "{body}"
+            );
+        }
+        ("POST", "/api/display/map-background") => {
+            // A user's session is not a screen's.
+            let body = json!({ "dashboard_id": b.site_dashboard, "map_id": b.map });
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::UNAUTHORIZED
+            );
         }
         ("POST", "/api/display/start")
         | ("GET", "/api/display")

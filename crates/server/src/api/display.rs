@@ -271,6 +271,14 @@ pub struct ScreenDataRequest {
     pub dashboard_id: Uuid,
 }
 
+/// Body of `POST /api/display/map-background`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScreenMapRequest {
+    pub dashboard_id: Uuid,
+    pub map_id: Uuid,
+}
+
 /// The dashboard rows `ids`, in that order, skipping missing ones.
 async fn dashboard_rows(db: impl PgExecutor<'_>, ids: &[Uuid]) -> Result<Vec<Row>, ApiError> {
     // SQL-safe: interpolates only the constant SELECT.
@@ -802,6 +810,33 @@ pub async fn data(
     let answer = dashboard_data::compute(&state, &reader, &data).await?;
     touch(&state.pool, link.id).await?;
     Ok(Json(answer))
+}
+
+/// `POST /api/display/map-background`: the background image of a map
+/// that a map panel of one of the link's dashboards shows (ADR-0185),
+/// read as the link's maker, as the panel's data is.
+pub async fn map_background(
+    State(state): State<ApiState>,
+    peer: Peer,
+    headers: HeaderMap,
+    request: Result<Json<ScreenMapRequest>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let request = body(request)?;
+    let link = session_link(&state, &peer, &headers).await?;
+    let (maker, shown) = screen(&state, &link).await?;
+    let (row, spec) = shown
+        .into_iter()
+        .find(|(row, _)| row.id == request.dashboard_id)
+        .ok_or(ApiError::NotFound)?;
+    if !super::maps::spec_shows_map(&spec, request.map_id) {
+        return Err(ApiError::NotFound);
+    }
+    let reader = match row.sharing() {
+        Sharing::Personal => maker.administering(),
+        Sharing::Site { .. } | Sharing::Customer { .. } => maker,
+    };
+    super::maps::visible_row(&state.pool, &reader, request.map_id).await?;
+    super::maps::background_response(&state.pool, request.map_id).await
 }
 
 #[cfg(test)]

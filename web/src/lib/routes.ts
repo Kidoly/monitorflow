@@ -66,6 +66,14 @@ export function readyMadeHref(id: string): string {
   return `/dashboards/view/?ready=${encodeURIComponent(id)}`;
 }
 
+/** Network maps (ADR-0185). */
+export const MAPS_PATH = "/maps/";
+
+/** Link to the network map `id`. */
+export function mapHref(id: string): string {
+  return `/maps/view/?id=${encodeURIComponent(id)}`;
+}
+
 /** Active and upcoming silences (ADR-0079). */
 export const SILENCES_PATH = "/silences/";
 /** Availability reports (ADR-0155). */

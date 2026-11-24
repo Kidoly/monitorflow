@@ -335,7 +335,8 @@ export type PanelKind =
   | "text"
   | "states"
   | "pie"
-  | "timeline";
+  | "timeline"
+  | "map";
 
 /** How a panel writes values when the metric's name does not say it well. */
 export type PanelUnit = "ratio" | "bytes" | "bytes_per_second" | "bits_per_second" | "per_second" | "seconds" | "celsius" | "number";
@@ -369,6 +370,8 @@ export interface Panel {
   columns?: { metric: string; instance?: string }[];
   /** A text panel's Markdown. */
   text?: string;
+  /** The network map a map panel shows (ADR-0185). */
+  map_id?: string;
 }
 
 export interface DashboardSpec {
@@ -455,8 +458,165 @@ export type PanelData = { id: string; servers: number; unavailable: number } & (
   | { kind: "timeline"; rows: { server_id: string; hostname: string; spans: { start: number; end: number; severity: "warning" | "critical" }[] }[] }
   /** `unreachable`: its servers behind a parent that is down (ADR-0152); absent before it. */
   | { kind: "alerts"; alerts: PanelAlert[]; unreachable?: (Unreachable & { server_id: string; hostname: string })[] }
+  | { kind: "map"; map: MapLive }
   | { kind: "error"; error: string }
 );
+
+/** Where a network map belongs (ADR-0185). */
+export type MapPlace = { kind: "site"; id: string } | { kind: "customer"; id: string };
+
+/** What draws a map besides what people placed by hand. */
+export interface MapSources {
+  relays: boolean;
+  dependencies: boolean;
+  neighbors: boolean;
+  discovered: boolean;
+}
+
+/** A node placed by hand: `central`, `server:<id>`, `relay:<id>`, `host:<address>` or `neighbor:<name>`. */
+export interface MapPlacement {
+  key: string;
+  x: number;
+  y: number;
+  hidden?: boolean;
+}
+
+export interface MapZone {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** 1 to 8, a colour of the palette. */
+  color: number;
+}
+
+export interface MapInterface {
+  server_id: string;
+  instance: string;
+}
+
+export interface MapManualLink {
+  id: string;
+  from: string;
+  to: string;
+  label?: string;
+  interface?: MapInterface;
+}
+
+export interface MapLabel {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  size: "small" | "medium" | "large";
+}
+
+export interface MapBackgroundPlacement {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity?: number;
+}
+
+/** What people set on a map; the rest is laid out by the browser. */
+export interface MapDocument {
+  version: 1;
+  sources: MapSources;
+  group_by_site: boolean;
+  nodes: MapPlacement[];
+  zones: MapZone[];
+  links: MapManualLink[];
+  labels: MapLabel[];
+  background?: MapBackgroundPlacement;
+}
+
+export interface MapSummary {
+  id: string;
+  name: string;
+  place: MapPlace & { name: string };
+  updated_at: string;
+  updated_by_username: string | null;
+  background_updated_at: string | null;
+  can_edit: boolean;
+}
+
+export interface NetworkMap extends MapSummary {
+  document: MapDocument;
+  revision: number;
+}
+
+export interface MapRequest {
+  name: string;
+  place: MapPlace;
+  document?: MapDocument;
+  revision?: number;
+}
+
+export type MapNodeKind = "central" | "server" | "device" | "relay" | "host" | "neighbor";
+export type MapNodeState = ServerState | "unknown";
+export type MapLinkState = "unknown" | "ok" | "warning" | "critical";
+
+export interface MapNode {
+  key: string;
+  kind: MapNodeKind;
+  name: string;
+  site_id: string | null;
+  state: MapNodeState;
+  server_id: string | null;
+  relay_id: string | null;
+  address: string | null;
+  template: string | null;
+  os_family: string | null;
+  /** Null lets the browser lay it out. */
+  x: number | null;
+  y: number | null;
+  hidden: boolean;
+}
+
+export interface MapTraffic {
+  in_bytes_per_second: number | null;
+  out_bytes_per_second: number | null;
+  utilization: number | null;
+  up: boolean | null;
+}
+
+export interface MapLink {
+  id: string;
+  from: string;
+  to: string;
+  source: "relay" | "dependency" | "neighbor" | "manual";
+  state: MapLinkState;
+  label: string | null;
+  from_port: string | null;
+  to_port: string | null;
+  interface: MapInterface | null;
+  traffic: MapTraffic | null;
+}
+
+/** `GET /api/maps/{id}/live`: everything needed to draw a map now. */
+export interface MapLive {
+  id: string;
+  name: string;
+  group_by_site: boolean;
+  sites: { id: string; name: string }[];
+  nodes: MapNode[];
+  links: MapLink[];
+  zones: MapZone[];
+  labels: MapLabel[];
+  background: { updated_at: string; placement: MapBackgroundPlacement | null } | null;
+  neighbors_read_at: string | null;
+  truncated: boolean;
+  now: number;
+}
+
+export interface NeighborRead {
+  devices: number;
+  neighbors: number;
+  failed: { server_id: string; name: string; error: string }[];
+}
 
 /** `POST /api/dashboard-data`. */
 export interface DashboardData {
@@ -5712,6 +5872,34 @@ export const api = {
   dashboardData: (body: { range: TimeRangeLabel; within: Within; panels: Panel[] }, signal?: AbortSignal) =>
     request<DashboardData>("/api/dashboard-data", { method: "POST", body, signal }),
 
+  /** Network maps the user sees, by name (ADR-0185). */
+  maps: (signal?: AbortSignal) => request<{ maps: MapSummary[] }>("/api/maps", { signal }),
+
+  map: (id: string, signal?: AbortSignal) => request<NetworkMap>(`/api/maps/${encodeURIComponent(id)}`, { signal }),
+
+  createMap: (body: MapRequest) => request<NetworkMap>("/api/maps", { method: "POST", body }),
+
+  /** 409 when someone saved since `body.revision`. */
+  updateMap: (id: string, body: MapRequest) =>
+    request<NetworkMap>(`/api/maps/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteMap: (id: string) => request<void>(`/api/maps/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** The map now: nodes and links with their states and traffic. */
+  mapLive: (id: string, signal?: AbortSignal) =>
+    request<MapLive>(`/api/maps/${encodeURIComponent(id)}/live`, { signal }),
+
+  /** A PNG, JPEG or WebP image of at most 1 MiB, in base64. */
+  setMapBackground: (id: string, image: string) =>
+    request<void>(`/api/maps/${encodeURIComponent(id)}/background`, { method: "PUT", body: { image } }),
+
+  removeMapBackground: (id: string) =>
+    request<void>(`/api/maps/${encodeURIComponent(id)}/background`, { method: "DELETE" }),
+
+  /** Asks the SNMP devices of the map's place for their LLDP and CDP neighbours. */
+  readMapNeighbors: (id: string) =>
+    request<NeighborRead>(`/api/maps/${encodeURIComponent(id)}/neighbors`, { method: "POST" }),
+
   /** The display links showing the dashboard `id` (ADR-0099). */
   displayLinks: (id: string, signal?: AbortSignal) =>
     request<{ links: DisplayLink[] }>(`/api/dashboards/${encodeURIComponent(id)}/display-links`, { signal }),
@@ -5752,6 +5940,25 @@ export const api = {
       signal,
       redirectOn401: false,
     }),
+
+  /** A map's background for a screen, as a data URL (the page allows no other image sources); null without one. */
+  displayMapBackground: async (dashboardId: string, mapId: string): Promise<string | null> => {
+    const response = await fetch("/api/display/map-background", {
+      method: "POST",
+      headers: { [CSRF_HEADER]: "1", "Content-Type": "application/json" },
+      body: JSON.stringify({ dashboard_id: dashboardId, map_id: mapId }),
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  },
 
   dashboardCatalog: (query: { siteId?: string; customerId?: string; metric?: string }, signal?: AbortSignal) => {
     const params = new URLSearchParams();

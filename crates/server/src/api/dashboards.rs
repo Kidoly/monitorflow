@@ -148,6 +148,8 @@ pub enum PanelKind {
     Pie,
     /// When each server had open alerts over the range, from its incidents.
     Timeline,
+    /// A network map (ADR-0185), live: `map_id` names it.
+    Map,
 }
 
 impl PanelKind {
@@ -290,6 +292,9 @@ pub struct Panel {
     /// A text panel's Markdown, up to 4000 characters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// The network map a map panel shows (ADR-0185).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_id: Option<Uuid>,
 }
 
 fn one() -> u8 {
@@ -382,7 +387,26 @@ fn check_panel(panel: &Panel) -> Result<(), String> {
     if panel.text.is_some() && panel.kind != PanelKind::Text {
         return Err("only a text panel has text.".into());
     }
+    if panel.map_id.is_some() && panel.kind != PanelKind::Map {
+        return Err("only a map panel shows a map.".into());
+    }
     match panel.kind {
+        PanelKind::Map => {
+            if panel.map_id.is_none() {
+                return Err("choose a map.".into());
+            }
+            if panel.servers != Servers::All
+                || panel.metric.is_some()
+                || panel.instance.is_some()
+                || panel.combine.is_some()
+                || panel.order.is_some()
+                || panel.count.is_some()
+                || has_options(panel)
+            {
+                return Err("a map panel takes its map only.".into());
+            }
+            return Ok(());
+        }
         PanelKind::States | PanelKind::Pie => {
             if panel.combine.is_some() || panel.order.is_some() || panel.count.is_some() {
                 return Err("it takes servers and, if you like, a metric.".into());
@@ -813,13 +837,44 @@ async fn check_targets(
             Sharing::Site { .. } => false,
             Sharing::Customer { id } => c == id,
         });
-    if ok {
-        Ok(())
-    } else {
-        Err(ApiError::Invalid(
+    if !ok {
+        return Err(ApiError::Invalid(
             "A panel names a site, customer or server that does not exist, or that this dashboard's sharing does not cover.".into(),
-        ))
+        ));
     }
+    check_maps(db, user, sharing, spec).await
+}
+
+/// Refuses a map panel of a map the editor cannot see or that lies
+/// outside the dashboard's sharing (ADR-0185), with one message for both.
+async fn check_maps(
+    db: &sqlx::PgPool,
+    user: &CurrentUser,
+    sharing: Sharing,
+    spec: &Spec,
+) -> Result<(), ApiError> {
+    use super::maps::Place;
+    let maps: BTreeSet<Uuid> = spec.panels.iter().filter_map(|p| p.map_id).collect();
+    for map in maps {
+        let ok = match super::maps::place_of(db, map).await? {
+            None => false,
+            Some((place, customer)) => {
+                super::maps::may_see(user, place)
+                    && match (sharing, place) {
+                        (Sharing::Personal, _) => true,
+                        (Sharing::Site { id }, Place::Site { id: site }) => site == id,
+                        (Sharing::Site { .. }, Place::Customer { .. }) => false,
+                        (Sharing::Customer { id }, _) => customer == id,
+                    }
+            }
+        };
+        if !ok {
+            return Err(ApiError::Invalid(
+                "A panel shows a map that does not exist, or that this dashboard's sharing does not cover.".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The name trimmed and the spec, or why not.

@@ -48,14 +48,14 @@ describe("arrangedNavigation", () => {
   it("hides the items the person does not use, and sections left empty", () => {
     const sections = ids(as(null), { hidden: ["silences", "approvals", "audit"] });
     expect(sections).toEqual([
-      ["fleet", "dashboards", "incidents", "onCall", "reports"],
+      ["fleet", "dashboards", "maps", "incidents", "onCall", "reports"],
       ["mirrors", "automaticUpdates", "campaigns"],
     ]);
   });
 
   it("orders items within their section", () => {
     const sections = ids(as(null), { order: ["incidents", "fleet", "audit", "approvals"] });
-    expect(sections[0]).toEqual(["incidents", "dashboards", "fleet", "onCall", "reports"]);
+    expect(sections[0]).toEqual(["incidents", "dashboards", "maps", "fleet", "onCall", "reports"]);
     expect(sections[2]).toEqual(["audit", "approvals"]);
   });
 

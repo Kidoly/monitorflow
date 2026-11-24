@@ -282,6 +282,10 @@ pub enum PanelResult {
         /// no incident of their own meanwhile.
         unreachable: Vec<UnreachableServer>,
     },
+    /// A network map as it is now (ADR-0185).
+    Map {
+        map: Box<super::maps::MapLive>,
+    },
     /// A sentence for the panel; other panels still show.
     Error {
         error: String,
@@ -530,9 +534,11 @@ pub fn build(panel: &Panel, selector: &str, range: TimeRange) -> Option<Call> {
             ))
         }
         PanelKind::Pie => Call::Instant(format!("topk({PIE_SLICES}, sum by (peer) ({selector}))")),
-        PanelKind::Alerts | PanelKind::Table | PanelKind::Text | PanelKind::Timeline => {
-            return None
-        }
+        PanelKind::Alerts
+        | PanelKind::Table
+        | PanelKind::Text
+        | PanelKind::Timeline
+        | PanelKind::Map => return None,
     })
 }
 
@@ -596,7 +602,7 @@ fn failure(error: &QueryError) -> String {
 }
 
 /// GETs `path` from `vm` through `cache`.
-async fn cached(
+pub(super) async fn cached(
     vm: &VmQuery,
     cache: &Cache,
     path: &str,
@@ -942,6 +948,10 @@ fn convert(panel: &Panel, servers: &[&Visible], data: Value) -> Result<PanelResu
         PanelKind::States => PanelResult::States { cells: Vec::new() },
         PanelKind::Pie => PanelResult::Pie { slices: Vec::new() },
         PanelKind::Timeline => PanelResult::Timeline { rows: Vec::new() },
+        // Read by `maps::panel`.
+        PanelKind::Map => PanelResult::Error {
+            error: "This map could not be read.".into(),
+        },
     })
 }
 
@@ -1063,6 +1073,18 @@ pub(super) async fn compute(
     let mut answers: Vec<Vec<Option<Value>>> = Vec::new();
     for (index, (panel, (servers, _))) in request.panels.iter().zip(&resolved).enumerate() {
         answers.push(Vec::new());
+        // A map reads its own nodes, within the dashboard (ADR-0185).
+        if let (PanelKind::Map, Some(map)) = (panel.kind, panel.map_id) {
+            results.push(Some(
+                match super::maps::panel(state, user, map, request.within).await? {
+                    Ok(live) => PanelResult::Map {
+                        map: Box::new(live),
+                    },
+                    Err(error) => PanelResult::Error { error },
+                },
+            ));
+            continue;
+        }
         let selection = Selection::new(
             servers,
             &visible,
@@ -1101,6 +1123,9 @@ pub(super) async fn compute(
             PanelKind::States => PanelResult::States { cells: Vec::new() },
             PanelKind::Pie => PanelResult::Pie { slices: Vec::new() },
             PanelKind::Timeline => PanelResult::Timeline { rows: Vec::new() },
+            PanelKind::Map => PanelResult::Error {
+                error: "This map could not be read.".into(),
+            },
             PanelKind::Alerts => PanelResult::Alerts {
                 alerts: Vec::new(),
                 unreachable: Vec::new(),

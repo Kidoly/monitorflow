@@ -878,7 +878,7 @@ fn read_rows(
 }
 
 /// Runs a `snmp_read` of `params` on `id`'s probe, with its credentials.
-async fn read_on(
+pub(super) async fn read_on(
     state: &ApiState,
     user: &CurrentUser,
     id: Uuid,
