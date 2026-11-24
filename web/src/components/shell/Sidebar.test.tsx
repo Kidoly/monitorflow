@@ -158,7 +158,7 @@ describe("sidebar preferences", () => {
       await user.keyboard("{Enter}");
       expect(links().slice(0, 3)).toEqual(["Dashboards", "Fleet", "Network maps"]);
       expect(main.getByRole("button", { name: "Move Fleet down" })).toHaveFocus();
-      expect(screen.getByRole("status")).toHaveTextContent("Fleet moved to position 2 of 6.");
+      expect(screen.getByRole("status")).toHaveTextContent("Fleet moved to position 2 of 7.");
       const sidebar = await saved(fetchMock);
       expect(sidebar?.order?.slice(0, 3)).toEqual(["dashboards", "fleet", "maps"]);
       // At the top, focus moves to the button that still works.
