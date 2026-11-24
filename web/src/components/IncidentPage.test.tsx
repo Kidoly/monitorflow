@@ -381,6 +381,27 @@ describe("IncidentPage", () => {
       expect(within(region).getAllByRole("link", { name: "See what the AI did" })).toHaveLength(1);
     });
 
+    it("draws the AI's Markdown as bold, code and lists, never as HTML (ADR-0181)", async () => {
+      const handed = {
+        ...attempt("r1", "escalated", "2026-10-19T11:00:20Z"),
+        diagnosis: "The root disk is at **91 %**: 4.6 GB of `.deb` files in `/var/cache/apt/archives`.",
+        ai_advice: "- Run `monitorflow-root clean-package-cache`\n- Then <b>check</b> /var/log/*.gz",
+        close_code: "ai_escalated",
+        close_detail: "x",
+        close_reason: "the AI escalated: x",
+      };
+      stubIncident(open(), { status: 200, body: { incidents: [handed], next_cursor: null } }, status({}));
+      render(<IncidentPage id={ID} />);
+      const region = await screen.findByRole("region", { name: "AI remediation" });
+      expect((await within(region).findByText("91 %")).tagName).toBe("STRONG");
+      expect(within(region).getByText("/var/cache/apt/archives").tagName).toBe("CODE");
+      expect(within(region).getByText("monitorflow-root clean-package-cache").closest("li")).not.toBeNull();
+      expect(region).toHaveTextContent("Next:");
+      expect(region).not.toHaveTextContent("**");
+      expect(region).toHaveTextContent("Then <b>check</b> /var/log/*.gz");
+      expect(region.querySelector("b")).toBeNull();
+    });
+
     it("words it in French", async () => {
       setActiveLocale("fr");
       try {

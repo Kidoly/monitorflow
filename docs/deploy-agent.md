@@ -37,6 +37,7 @@ One command serves every server of a site, for 30 days by default[^0073]. Each s
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
 | `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. Either value also undoes what the web interface last set. Each server shows whether it accepts AI commands[^0064]. An open alert whose AI remediation stopped because they were off gets a new attempt by itself once they are allowed[^0165] |
 | `MF_AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page (`commands.from_web`), through a systemd drop-in. Without it, the web interface can only turn them off. Works on an installed agent too; `MF_AI_COMMANDS_FROM_WEB=0` takes it back. "Allow AI commands to be turned on from the web interface" on the Add servers page, ticked by default, adds it to the command; AI commands stay off until an administrator turns them on there[^0098][^0175] |
+| `MF_AI_ROOT_ACTIONS=0` | Refuse the AI root actions (clearing the package cache, vacuuming the journal, pruning unused Docker images, restarting a service), which a new install allows (`commands.root_actions` in `agent.toml`). `MF_AI_ROOT_ACTIONS=1` allows them, also on an installed agent; without the variable an installed agent keeps its choice. They run only while AI commands are on ([AI root actions](#ai-root-actions))[^0181] |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
@@ -138,10 +139,10 @@ What the rules allow:
 | --- | --- |
 | `monitorflow-agent packages update` | `apply_updates`: every kind, all packages, security only or named packages, and Flatpak and Snap apps |
 | `shutdown -r +1` | `apply_updates` with `allow_reboot` |
-| `monitorflow-agent sources apply`, `… sources revert` | Third-party apps | winget apps installed machine-wide, listed with every report and updated after Windows updates when a command or campaign selects them. Needs PowerShell 7 and the winget module ([above](#third-party-apps-through-winget)) |
-| `configure_sources`, `revert_sources` |
+| `monitorflow-agent sources apply`, `… sources revert` | `configure_sources`, `revert_sources` |
 | `monitorflow-agent self-update` | `self_update`: installs a signed agent release (below) |
 | `monitorflow-agent snapshots inspect`, `… snapshots take`, `… snapshots delete` | The storage part of each package report, `take_snapshot` and `delete_snapshot`: local snapshots before a change (below) |
+| `monitorflow-agent root-action` | `root_action`: one AI root action of a fixed catalog ([below](#ai-root-actions)) |
 
 There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself[^0036]. Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite. Flatpak and Snap apps go through the same helper, which runs `flatpak update --system` or `snap refresh` with the app IDs it checked and found installed[^0140]; the agent reads their inventory as its own user, so they need no sudo line of their own.
 
@@ -165,6 +166,30 @@ The `snapshots` helper reads only a snapshot name on stdin and decides the rest 
 Snapshots are deleted automatically: classic LVM snapshots after a day, as they slow every write and become invalid once full, the others after 7 days, and only the newest 3 are kept. Rolling back is manual, as it needs a reboot: the server's Updates tab lists the snapshots with the commands for each.
 
 Hosts installed before snapshots have sudo rules without the `snapshots` lines, and self-update does not change them: run the install command again to get them. The Rollback line says so.
+
+## AI root actions
+
+Some fixes need root, and AI commands run as the agent's user. Instead of `sudo`, which the risk rules refuse, the AI may ask for one action of a fixed catalog, which the agent's root helper runs[^0181]:
+
+| The AI writes | The helper runs, as root | Runs |
+| --- | --- | --- |
+| `monitorflow-root clean-package-cache` | `apt-get clean`, `dnf clean packages` or `zypper --non-interactive clean`, whichever is installed | At once |
+| `monitorflow-root vacuum-journal 500M` | `journalctl --vacuum-size=500M`; the size is between 100M and 64G | At once |
+| `monitorflow-root prune-docker` | `docker image prune --all --force`, then `docker builder prune --all --force`, where Docker is installed | After approval |
+| `monitorflow-root restart-service nginx` | `systemctl restart nginx.service`; never ssh, systemd, D-Bus, networking or MonitorFlow's own services | After approval |
+
+Nothing else reaches root. The helper reads the action from the command the central server signed for this server, checks it with its own trust anchor[^0108] and checks its parameters again, then runs those programs by their full path with fixed options.
+
+Root actions run only where AI commands are on, and where the server's administrator allowed them with `root_actions = true` under `[commands]` in `/etc/monitorflow/agent.toml`. A new install sets it; `MF_AI_ROOT_ACTIONS=0` with the installer refuses them. On an installed server:
+
+```sh
+sudo monitorflow-agent ai-commands root-actions on    # or off
+sudo systemctl restart monitorflow-agent
+```
+
+The helper reads the key from the file at each action, never from the environment, so `off` applies at once and the web interface cannot change it; the restart makes the server's page show it. Turning AI commands off turns root actions off too.
+
+Servers installed before root actions have neither the key nor the `root-action` sudo line, and self-update changes neither: run the install command again. Until then the server's page says it refuses AI root actions, and an incident that needs one says "the sudo rules on this server predate AI root actions; run the install command again". Root actions are Linux only.
 
 ## Self-update
 
@@ -340,6 +365,8 @@ Without them the server's Updates tab shows winget as not installed, with the re
 | `apply_updates`, update campaigns | Through the update service. All pending updates except feature upgrades, `security_only` for the Security Updates classification, or named KB numbers or update IDs (`KB5034441`). Restarts only with `allow_reboot`, one minute after the result. Windows servers may join any campaign: pinned mirror snapshots do not apply to them |
 | `configure_sources`, `revert_sources` | Refused by the API for Windows servers, and by the agent with "package sources are not supported on Windows yet" |
 | `shell` (AI remediation) | Off until turned on ([below](#ai-commands-on-windows)). Commands run in Windows PowerShell 5.1 as the agent's account, and the server classifies them by rules written for PowerShell[^0084] |
+| `root_action` (AI root actions) | Refused: Linux only[^0181] |
+| Third-party apps | winget apps installed machine-wide, listed with every report and updated after Windows updates when a command or campaign selects them. Needs PowerShell 7 and the winget module ([above](#third-party-apps-through-winget)) |
 
 There are no sudo rules on Windows. The only privileged part is the update service, which accepts typed requests from the agent alone.
 
@@ -383,6 +410,7 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
 [^0175]: [ADR-0175: A diagnosis for every alert, commands where allowed](adr/0175-diagnosis-for-every-alert.md)
+[^0181]: [ADR-0181: AI root actions, and the diagnosis in the reader's language](adr/0181-ai-root-actions.md)
 [^0103]: [ADR-0103: Plugins](adr/0103-plugins.md)
 [^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)
 [^0111]: [ADR-0111: Agent-side limit on where port checks connect](adr/0111-port-check-targets.md)

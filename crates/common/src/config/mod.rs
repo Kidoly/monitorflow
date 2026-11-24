@@ -551,6 +551,11 @@ pub struct AgentCommandsConfig {
     /// Lets the central server turn `shell` on and off (ADR-0098). It
     /// can always turn it off; without this, never on.
     pub from_web: bool,
+    /// Runs the AI root actions of ADR-0181 (`root_action`) through the
+    /// root helper, while AI commands are on. Off unless enabled here; the
+    /// Linux installer enables it on a new install. The root helper reads
+    /// it from the file itself, never from the environment.
+    pub root_actions: bool,
 }
 
 /// Package reports and updates (ADR-0031).

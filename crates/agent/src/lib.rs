@@ -25,6 +25,8 @@ pub mod os;
 pub mod packages;
 pub mod plugins;
 pub mod renew;
+#[cfg(unix)]
+pub mod root_actions;
 pub mod self_update;
 pub mod sensor_config;
 pub mod sensors;

@@ -183,7 +183,73 @@ async fn audit_details(pool: &PgPool) -> Vec<Value> {
         .unwrap()
 }
 
+/// Stores `language` as the web interface preference of a new user.
+async fn prefers(pool: &PgPool, name: &str, language: &str) {
+    login(pool, name, Role::Viewer, GrantScope::Global).await;
+    sqlx::query(
+        "INSERT INTO user_preferences (user_id, document)
+         SELECT id, jsonb_build_object('language', $2::text) FROM users WHERE username = $1",
+    )
+    .bind(name)
+    .bind(language)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 db_tests! {
+    /// The language of AI diagnoses (ADR-0181): the people's by default,
+    /// the administrators' choice when they make one.
+    #[sqlx::test]
+    async fn the_diagnosis_language_follows_the_people_unless_chosen(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let root = admin(&pool).await;
+        let get = || call(&pool, ApiSettings::default(), "GET", AI, Some(&root), None);
+        let (_, view, _) = get().await;
+        assert_eq!((view["language"].clone(), view["effective_language"].clone()), (Value::Null, json!("en")));
+
+        prefers(&pool, "ana", "fr").await;
+        prefers(&pool, "bea", "fr").await;
+        prefers(&pool, "carl", "en").await;
+        let (_, view, _) = get().await;
+        assert_eq!(view["effective_language"], "fr");
+
+        let pool = &pool;
+        let put = |cookie: String, body: Value| async move {
+            call(pool, ApiSettings::default(), "PUT", "/api/settings/ai/language", Some(&cookie), Some(body)).await
+        };
+        let viewer = login(pool, "viewer", Role::Viewer, GrantScope::Global).await;
+        let (status, _, _) = put(viewer, json!({ "language": "en" })).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _, _) = put(root.clone(), json!({ "language": "de" })).await;
+        assert!(status.is_client_error(), "{status}");
+
+        let (status, view, _) = put(root.clone(), json!({ "language": "en" })).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!((view["language"].clone(), view["effective_language"].clone()), (json!("en"), json!("en")));
+        let (status, view, _) = put(root.clone(), json!({ "language": null })).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!((view["language"].clone(), view["effective_language"].clone()), (Value::Null, json!("fr")));
+
+        let audited: Vec<Value> = sqlx::query_scalar(
+            "SELECT details FROM audit_log WHERE action = 'settings.ai_language' ORDER BY id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(audited, [
+            json!({ "old": null, "new": "en" }),
+            json!({ "old": "en", "new": null }),
+        ]);
+        // A disabled user's choice no longer counts.
+        sqlx::query("UPDATE users SET disabled_at = now() WHERE username IN ('ana', 'bea')")
+            .execute(pool)
+            .await
+            .unwrap();
+        let (_, view, _) = get().await;
+        assert_eq!(view["effective_language"], "en");
+    }
+
     #[sqlx::test]
     async fn off_by_default_and_readable_by_every_user(pool: PgPool) {
         monitorflow_server::secrets::install_for_tests();

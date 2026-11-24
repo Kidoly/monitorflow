@@ -1038,6 +1038,19 @@ fn agent_shell_commands_are_off_unless_enabled() {
     assert!(agent.commands.shell);
 }
 
+/// Root actions follow the file only: the root helper reads it under
+/// sudo, without the service's environment (ADR-0181).
+#[test]
+fn agent_root_actions_come_from_the_file_only() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert!(!agent.commands.root_actions);
+    let text = format!("{AGENT_MIN}\n[commands]\nroot_actions = true\n");
+    assert!(parse::<AgentConfig>(&text).unwrap().commands.root_actions);
+    let vars = [("MONITORFLOW_COMMANDS_ROOT_ACTIONS", "true")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert!(!agent.commands.root_actions);
+}
+
 #[test]
 fn agent_switch_from_web_is_off_unless_allowed() {
     let agent: AgentConfig = parse(AGENT_MIN).unwrap();

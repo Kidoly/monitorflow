@@ -47,6 +47,7 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { type Column, DataTable } from "@/components/ui/DataTable";
 import { FactsBox } from "@/components/ui/FactsBox";
+import { Markdown } from "@/components/ui/Markdown";
 import { Page } from "@/components/ui/Page";
 import { Banner, ErrorState, LoadingBlock, NotFound, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
@@ -608,7 +609,10 @@ function Remediation({
   );
 }
 
-/** The AI's latest diagnosis and what it advises, as its own words (untrusted text, shown as text). */
+/**
+ * The AI's latest diagnosis and what it advises, as its own words: untrusted text, of which only
+ * bold, inline code, lists and paragraphs are drawn, from React elements (ADR-0181).
+ */
 function Diagnosis({ attempt }: { attempt: RemediationIncident }) {
   const notRun = Boolean(attempt.diagnosis_only);
   return (
@@ -617,11 +621,14 @@ function Diagnosis({ attempt }: { attempt: RemediationIncident }) {
         <strong>{t("incidents.ai.diagnosis")}</strong>
         {attempt.diagnosed_at && <span className={styles.muted}> · {minutes(attempt.diagnosed_at)}</span>}
       </p>
-      <p className={styles.diagnosisText}>{attempt.diagnosis}</p>
+      <Markdown text={attempt.diagnosis ?? ""} variant="ai" className={styles.diagnosisMarkdown} />
       {attempt.ai_advice && (
-        <p className={styles.diagnosisText}>
-          <strong>{t("incidents.ai.advice")}</strong> {attempt.ai_advice}
-        </p>
+        <Markdown
+          text={attempt.ai_advice}
+          variant="ai"
+          lead={<strong>{t("incidents.ai.advice")}</strong>}
+          className={styles.diagnosisMarkdown}
+        />
       )}
       {attempt.ai_command && (
         <p className={styles.diagnosisText}>

@@ -4007,6 +4007,10 @@ export interface AiSettings {
   model: string;
   /** Anthropic's short list. */
   models: AiModel[];
+  /** The language administrators chose for the AI's diagnoses; null follows the people (ADR-0181). Absent from older servers. */
+  language?: "en" | "fr" | null;
+  /** The language of the next diagnosis. */
+  effective_language?: "en" | "fr";
 }
 
 /** What the AI form holds; an empty key or address uses the stored one of the same provider. */
@@ -4781,6 +4785,10 @@ export const api = {
   /** Forgets the API key, which turns AI off; global administrators only, audited. */
   removeAiKey: () =>
     request<AiSettings>("/api/settings/ai", { method: "DELETE" }),
+
+  /** Sets the language of AI diagnoses, null to follow the people's; global administrators only, audited (ADR-0181). */
+  setAiLanguage: (language: "en" | "fr" | null) =>
+    request<AiSettings>("/api/settings/ai/language", { method: "PUT", body: { language } }),
 
   /** Tests a key and model without saving; an empty key tests the stored one. */
   testAiSettings: (body: AiForm) =>

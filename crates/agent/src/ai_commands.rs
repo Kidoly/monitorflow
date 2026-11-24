@@ -4,7 +4,10 @@
 //! on|off` lets the web interface turn them on, or stops it, the
 //! counterpart of `MF_AI_COMMANDS_FROM_WEB` (ADR-0098).
 //!
-//! It sets `[commands] shell` or `from_web` and leaves every other line,
+//! On Linux, `ai-commands root-actions on|off` allows or refuses the AI
+//! root actions of ADR-0181, the counterpart of `MF_AI_ROOT_ACTIONS`.
+//!
+//! It sets `[commands] shell`, `from_web` or `root_actions` and leaves every other line,
 //! comments included, as it was. The file is rewritten in place, so it keeps its
 //! access list, and only when the result still loads. The agent reads it
 //! at start, so the service must restart for it to apply.
@@ -52,6 +55,8 @@ pub enum Key {
     Shell,
     /// `from_web`: whether the web interface may turn them on.
     FromWeb,
+    /// `root_actions`: whether AI commands may ask for root actions.
+    RootActions,
 }
 
 impl Key {
@@ -59,6 +64,7 @@ impl Key {
         match self {
             Self::Shell => "shell",
             Self::FromWeb => "from_web",
+            Self::RootActions => "root_actions",
         }
     }
 
@@ -66,6 +72,7 @@ impl Key {
         match self {
             Self::Shell => config.commands.shell,
             Self::FromWeb => config.commands.from_web,
+            Self::RootActions => config.commands.root_actions,
         }
     }
 }
@@ -149,6 +156,31 @@ mod tests {
             !load(&std::fs::read_to_string(&path).unwrap())
                 .commands
                 .from_web
+        );
+    }
+
+    #[test]
+    fn allows_root_actions_and_takes_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.toml");
+        std::fs::write(&path, WRITTEN).unwrap();
+        let (outcome, config) = set(&path, Key::RootActions, true).unwrap();
+        assert_eq!(outcome, Outcome::Changed);
+        assert!(config.commands.root_actions && !config.commands.shell);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("root_actions = true"), "{text}");
+        assert_eq!(
+            set(&path, Key::RootActions, true).unwrap().0,
+            Outcome::Unchanged
+        );
+        assert_eq!(
+            set(&path, Key::RootActions, false).unwrap().0,
+            Outcome::Changed
+        );
+        assert!(
+            !load(&std::fs::read_to_string(&path).unwrap())
+                .commands
+                .root_actions
         );
     }
 
