@@ -229,6 +229,9 @@ async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result
         None => {
             let offered =
                 scripts::ai::offered(&shared.pool, incident.customer_id, incident.shell()).await?;
+            let reported =
+                acceptance::reported(&shared.pool, incident.server_id, ROOT_ACTION).await?;
+            let root_actions = reported.as_deref() == Some("accepted");
             prompt::system(
                 prompt::Limits {
                     max_commands: incident.max_commands(),
@@ -237,10 +240,7 @@ async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result
                         .saturating_sub(progress.commands_queued),
                     command_timeout: shared.settings.command_timeout,
                     shell: incident.shell(),
-                    root_actions: acceptance::reported(&shared.pool, incident.server_id, ROOT_ACTION)
-                        .await?
-                        .as_deref()
-                        == Some("accepted"),
+                    root_actions,
                     language,
                 },
                 &scripts::ai::describe(&offered),
