@@ -248,12 +248,81 @@ pub enum Watch {
     /// The virtual machines of a Hyper-V host, read by its Windows agent
     /// (ADR-0156).
     HyperV,
+    /// A ready-made application check (ADR-0183): a database, Redis, or
+    /// the containers of the host's Docker engine.
+    App(Box<App>),
 }
 
 impl Watch {
     /// The website check of `site`.
     pub fn web(site: Website) -> Self {
         Self::Web(Box::new(site))
+    }
+
+    /// The application check `app`.
+    pub fn app(app: App) -> Self {
+        Self::App(Box::new(app))
+    }
+}
+
+/// The kinds of ready-made application checks (ADR-0183).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppKind {
+    Postgresql,
+    /// MySQL and MariaDB.
+    Mysql,
+    Redis,
+    /// The containers of the host's Docker or Podman engine, read by its
+    /// agent.
+    Docker,
+}
+
+impl AppKind {
+    /// The check's kind in MonitorFlow.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Postgresql => "postgresql",
+            Self::Mysql => "mysql",
+            Self::Redis => "redis",
+            Self::Docker => "docker",
+        }
+    }
+}
+
+/// A ready-made application check, as the source has it. Its password is
+/// never read into the inventory: the person enters it on the check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct App {
+    pub kind: AppKind,
+    /// Where it connects; the host itself when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    /// The kind's default port when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// PostgreSQL: the database to connect to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+    /// The account, when the source names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    /// Docker: a regular expression the container names must match.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub containers: Option<String>,
+}
+
+impl App {
+    /// A check of `kind` on the host itself, with the kind's defaults.
+    pub fn new(kind: AppKind) -> Self {
+        Self {
+            kind,
+            address: None,
+            port: None,
+            database: None,
+            user: None,
+            containers: None,
+        }
     }
 }
 

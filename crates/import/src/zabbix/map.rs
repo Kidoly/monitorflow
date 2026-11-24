@@ -12,9 +12,9 @@ use chrono::{DateTime, NaiveTime, TimeZone, Utc};
 
 use crate::args;
 use crate::model::{
-    Alert, Check, Dependency, DependencyEnd, Fidelity, Host, Inventory, Origin, Os, Repeat, Rule,
-    Severity, Silence, SilenceScope, Threshold, Unmovable, Watch, Window, EVERY_MONTH,
-    MAX_WINDOW_MINUTES,
+    Alert, App, AppKind, Check, Dependency, DependencyEnd, Fidelity, Host, Inventory, Origin, Os,
+    Repeat, Rule, Severity, Silence, SilenceScope, Threshold, Unmovable, Watch, Window,
+    EVERY_MONTH, MAX_WINDOW_MINUTES,
 };
 use crate::notes::Note;
 
@@ -363,7 +363,13 @@ fn map_host(
                 .iter()
                 .any(|(item, _)| item.kind == config::ItemKind::Agent),
     });
-    for name in &view.missing {
+    // Database, Redis and Docker templates: one ready-made check each,
+    // in place of their items and triggers (ADR-0183).
+    let apps = app_templates(&view);
+    let covered = |owner: &Owner| {
+        owner.origin.kind == "template" && apps.iter().any(|(_, t)| *t == owner.origin.name)
+    };
+    for name in view.missing.iter().filter(|n| app_template(n).is_none()) {
         out.unmovable.push(Unmovable {
             hosts: vec![key.clone()],
             origin: Origin::new("template", name),
@@ -378,6 +384,9 @@ fn map_host(
     // of the check that carry only them.
     let mut silent: Vec<Check> = Vec::new();
     for (item, owner) in &view.items {
+        if covered(owner) || app_item(&item.key, &apps) {
+            continue;
+        }
         let origin = Origin::new("item", &item.name).with_detail(&item.key);
         match items::map(item, &view.macros) {
             Mapped::Builtin(watch) => {
@@ -477,11 +486,11 @@ fn map_host(
     for (trigger, _) in view
         .triggers
         .iter()
-        .filter(|(t, _)| !t.dependencies.is_empty())
+        .filter(|(t, owner)| !t.dependencies.is_empty() && !covered(owner))
     {
         mapped.wanting.push((key.clone(), trigger.clone()));
     }
-    for (trigger, owner) in &view.triggers {
+    for (trigger, owner) in view.triggers.iter().filter(|(_, o)| !covered(o)) {
         let origin = Origin::new("trigger", &trigger.name).with_detail(&trigger.expression);
         let (severity, severity_note) = severity(trigger.priority);
         match triggers::map(trigger, &view) {
@@ -580,6 +589,133 @@ fn map_host(
     out.checks
         .extend(builtins.into_iter().chain(pending).map(|p| p.check));
     out.checks.extend(silent);
+    for (kind, template) in apps {
+        let code = if kind == AppKind::Docker {
+            "app_docker_template"
+        } else {
+            "app_template"
+        };
+        out.checks.push(Check {
+            host: key.clone(),
+            watch: Watch::app(app_of(kind, &view.macros)),
+            interval_s: None,
+            alert: None,
+            origin: Origin::new("template", &template),
+            fidelity: Fidelity::Approximated(Note::new(code, args! {"template" => template})),
+        });
+    }
+}
+
+/// The ready-made check a template of Zabbix's stands for: its database,
+/// Redis and Docker templates read by the agent, by their names since
+/// Zabbix 5.0 ("PostgreSQL by Zabbix agent 2", "Template DB MySQL").
+/// Those through ODBC query from the Zabbix server with a driver: not
+/// these.
+fn app_template(name: &str) -> Option<AppKind> {
+    let name = name.to_ascii_lowercase();
+    let agent = name.contains("zabbix agent")
+        || name.starts_with("template db ")
+        || name.starts_with("template app ");
+    if !agent || name.contains("odbc") {
+        return None;
+    }
+    if name.contains("postgres") {
+        Some(AppKind::Postgresql)
+    } else if name.contains("mysql") || name.contains("mariadb") {
+        Some(AppKind::Mysql)
+    } else if name.contains("redis") {
+        Some(AppKind::Redis)
+    } else if name.contains("docker") {
+        Some(AppKind::Docker)
+    } else {
+        None
+    }
+}
+
+/// The application templates of a host, one per kind, linked ones and
+/// missing ones alike: the check needs only their name.
+fn app_templates(view: &View) -> Vec<(AppKind, String)> {
+    let mut apps: Vec<(AppKind, String)> = Vec::new();
+    for name in view.template_names.iter().chain(&view.missing) {
+        if let Some(kind) = app_template(name) {
+            if !apps.iter().any(|(k, _)| *k == kind) {
+                apps.push((kind, name.clone()));
+            }
+        }
+    }
+    apps
+}
+
+/// Whether `key` is an item of the agent plugin of one of `apps`, which
+/// the check measures already: `pgsql.ping[...]`, `docker.info`.
+fn app_item(key: &str, apps: &[(AppKind, String)]) -> bool {
+    let (name, _) = items::split_key(key);
+    let root = name.split('.').next().unwrap_or_default();
+    apps.iter().any(|(kind, _)| {
+        root == match kind {
+            AppKind::Postgresql => "pgsql",
+            AppKind::Mysql => "mysql",
+            AppKind::Redis => "redis",
+            AppKind::Docker => "docker",
+        }
+    })
+}
+
+/// The check of `kind`, where the template's macros say it connects:
+/// `{$PG.CONNSTRING.AGENT2}`, `{$MYSQL.DSN}` or `{$REDIS.CONN.URI}` of
+/// agent 2 (`tcp://localhost:5432`), host and port macros of agent 1.
+/// Its password, a secret macro, is never read.
+fn app_of(kind: AppKind, macros: &Macros) -> App {
+    let get = |name: &str| {
+        macros
+            .expand(name)
+            .ok()
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty() && !v.contains('{'))
+    };
+    let first = |names: &[&str]| names.iter().find_map(|n| get(n));
+    let mut app = App::new(kind);
+    let (uri, host, port, user) = match kind {
+        AppKind::Postgresql => (
+            first(&["{$PG.CONNSTRING.AGENT2}", "{$PG.URI}", "{$PG.CONNSTRING}"]),
+            "{$PG.HOST}",
+            "{$PG.PORT}",
+            "{$PG.USER}",
+        ),
+        AppKind::Mysql => (
+            first(&["{$MYSQL.DSN}"]),
+            "{$MYSQL.HOST}",
+            "{$MYSQL.PORT}",
+            "{$MYSQL.USER}",
+        ),
+        AppKind::Redis => (first(&["{$REDIS.CONN.URI}"]), "", "", ""),
+        AppKind::Docker => return app,
+    };
+    // A URI with an address; a socket or a named session says none.
+    if let Some(uri) = uri.filter(|u| u.contains("://") && !u.starts_with("unix")) {
+        app.address = Some(crate::text::host_of(&uri)).filter(|h| !h.is_empty());
+        app.port = crate::text::port_of(&uri);
+    }
+    if app.address.is_none() && !host.is_empty() {
+        app.address = get(host);
+    }
+    if app.port.is_none() && !port.is_empty() {
+        app.port = get(port).and_then(|p| p.parse().ok()).filter(|p| *p > 0);
+    }
+    // The host itself, however the macro writes it.
+    app.address = app.address.filter(|a| {
+        !matches!(
+            a.to_ascii_lowercase().as_str(),
+            "localhost" | "127.0.0.1" | "::1"
+        )
+    });
+    if !user.is_empty() {
+        app.user = get(user);
+    }
+    if kind == AppKind::Postgresql {
+        app.database = first(&["{$PG.DATABASE}", "{$PG.DB}"]);
+    }
+    app
 }
 
 /// The host of `https://vcenter.example.com/sdk`, without its port.

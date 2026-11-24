@@ -24,6 +24,15 @@ const MAX_REPLICAS: i64 = 20;
 /// Longest database name, the most PostgreSQL allows.
 const MAX_NAME: usize = 63;
 
+/// Five sums of `pg_stat_database`, `NULL` without databases.
+type Five = (
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+);
+
 #[derive(Debug)]
 pub struct Postgresql {
     target: Target,
@@ -145,7 +154,10 @@ impl Postgresql {
             Sample::metric("connections_active", active as f64),
             Sample::metric("connections_idle_in_transaction", idle_tx as f64),
             Sample::metric("slow_queries", slow as f64),
-            Sample::metric("longest_query_seconds", longest_query.unwrap_or(0.0).max(0.0)),
+            Sample::metric(
+                "longest_query_seconds",
+                longest_query.unwrap_or(0.0).max(0.0),
+            ),
             Sample::metric(
                 "longest_transaction_seconds",
                 longest_tx.unwrap_or(0.0).max(0.0),
@@ -162,13 +174,7 @@ impl Postgresql {
             .map_err(fail)?;
         out.push(Sample::metric("locks_waiting", waiting as f64));
 
-        let (hit, read, commits, rollbacks, deadlocks): (
-            Option<f64>,
-            Option<f64>,
-            Option<f64>,
-            Option<f64>,
-            Option<f64>,
-        ) = sqlx::query_as(
+        let (hit, read, commits, rollbacks, deadlocks): Five = sqlx::query_as(
             "SELECT sum(blks_hit)::float8, sum(blks_read)::float8, sum(xact_commit)::float8,
                     sum(xact_rollback)::float8, sum(deadlocks)::float8
              FROM pg_stat_database",
@@ -205,7 +211,9 @@ impl Postgresql {
         .await
         .map_err(fail)?;
         for (name, size) in sizes {
-            out.push(Sample::metric("database_size_bytes", size as f64).with_instance(label(&name, 128)));
+            out.push(
+                Sample::metric("database_size_bytes", size as f64).with_instance(label(&name, 128)),
+            );
         }
 
         if in_recovery {
@@ -233,7 +241,9 @@ async fn primary(conn: &mut PgConnection) -> Result<Vec<Sample>, sqlx::Error> {
     let mut out = vec![Sample::metric("replicas", rows.len() as f64)];
     for (name, bytes, seconds) in rows {
         let name = label(&name, 128);
-        out.extend(bytes.map(|b| Sample::metric("replica_lag_bytes", b.max(0.0)).with_instance(&name)));
+        out.extend(
+            bytes.map(|b| Sample::metric("replica_lag_bytes", b.max(0.0)).with_instance(&name)),
+        );
         out.extend(
             seconds.map(|s| Sample::metric("replica_lag_seconds", s.max(0.0)).with_instance(&name)),
         );

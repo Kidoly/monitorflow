@@ -892,6 +892,9 @@ async fn probe(
     let build = |kind: &str| {
         if kind == monitorflow_webcheck::KIND {
             monitorflow_webcheck::build(&params, local.port_targets.as_ref())
+        } else if monitorflow_apps::is_kind(kind) {
+            let place = monitorflow_apps::Place::Agent(local.port_targets.as_ref());
+            monitorflow_apps::build(kind, &params, place)
         } else {
             registry::build_local(kind, &params, local)
         }

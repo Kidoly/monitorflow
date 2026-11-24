@@ -72,6 +72,15 @@ pub struct EntryRequest {
     /// `password` and `ip` (`any`, `4` or `6`). `password` is accepted
     /// with an `https://` URL only, kept sealed and never returned: absent
     /// from an update, the stored one is kept; `""` removes it.
+    ///
+    /// The ready-made application checks (ADR-0183) take `host`
+    /// (`127.0.0.1` from the agent; the device's address from a probe),
+    /// `port`, `user` and `password` (kept sealed as above), and `tls`
+    /// (`prefer`, `verify` or `off`): `postgresql` also `database` and
+    /// `slow_after`, `mysql` (MySQL and MariaDB) and `redis` nothing more.
+    /// `docker`, run by the agent only, takes `engine` (`docker` or
+    /// `podman`), `containers` (a regular expression on names) and
+    /// `stats`. `GET /api/check-templates` lists what each measures.
     #[serde(default)]
     #[schema(value_type = Object)]
     pub params: Map<String, Value>,
@@ -87,13 +96,20 @@ pub struct EntryRequest {
     /// the relay's name.
     #[serde(default)]
     pub probe: Option<String>,
+    /// On a create of a ready-made application check (ADR-0183): `true`
+    /// also adds the alerts of its template (`GET /api/check-templates`),
+    /// named after the check, where the server or site has none on that
+    /// metric. Ignored on an update.
+    #[serde(default)]
+    pub default_alerts: bool,
 }
 
 fn enabled_by_default() -> bool {
     true
 }
 
-/// What a request does with the stored secret of a website check.
+/// What a request does with the stored secret of a website or
+/// application check.
 #[derive(Clone, PartialEq, Eq)]
 pub enum SecretChange {
     /// Keeps it: the request named no `password`.
@@ -136,17 +152,35 @@ impl ValidEntry {
             SecretChange::Set(secret) => secrets::seal(Column::SensorConfigs, secret)
                 .map(Some)
                 .map_err(|error| {
-                    ApiError::Internal(format!(
-                        "cannot seal the password of a website check: {error}"
-                    ))
+                    ApiError::Internal(format!("cannot seal the password of a check: {error}"))
                 }),
             SecretChange::Keep | SecretChange::Clear => Ok(None),
         }
     }
 }
 
+/// Whether a kept password still goes where it was meant for: the same
+/// kind, and the same scheme, host and port of a website check's `url`,
+/// or the same `host` and `port` of an application check.
+fn same_destination(kind_before: &str, before: &Value, after: &ValidEntry) -> bool {
+    if kind_before != after.kind {
+        return false;
+    }
+    if monitorflow_apps::takes_secret(&after.kind) {
+        let text = |params: &Value, key: &str| match &params[key] {
+            Value::String(s) => Some(s.trim().to_owned()),
+            Value::Null => None,
+            other => Some(other.to_string()),
+        };
+        return ["host", "port"]
+            .iter()
+            .all(|key| text(before, key) == text(&after.params, key));
+    }
+    same_origin(before, &after.params)
+}
+
 /// Whether the `url` params of two website checks have the same scheme,
-/// host and port: a kept password goes only where it was meant for.
+/// host and port.
 fn same_origin(before: &Value, after: &Value) -> bool {
     let origin = |params: &Value| {
         params["url"]
@@ -198,8 +232,10 @@ pub fn validate_full(
     stored_secret: bool,
 ) -> Result<ValidEntry, String> {
     let website = request.kind == monitorflow_webcheck::KIND;
+    let app = monitorflow_apps::is_kind(&request.kind);
+    let takes_secret = website || monitorflow_apps::takes_secret(&request.kind);
     let secret = match request.params.remove(monitorflow_webcheck::SECRET_PARAM) {
-        _ if !website => SecretChange::Clear,
+        _ if !takes_secret => SecretChange::Clear,
         None if stored_secret => SecretChange::Keep,
         None => SecretChange::Clear,
         Some(Value::String(secret)) if secret.is_empty() => SecretChange::Clear,
@@ -274,6 +310,25 @@ pub fn validate_full(
             SecretChange::Clear => {}
         }
         monitorflow_webcheck::build(&check, None).map_err(|e| e.to_string())?;
+    } else if app {
+        // Checked with the address and secret it will run with (ADR-0183).
+        let mut check = config.params.clone();
+        if let Some(address) = address {
+            check
+                .entry("host".into())
+                .or_insert_with(|| address.to_owned());
+        }
+        match &secret {
+            SecretChange::Set(secret) => {
+                check.insert(monitorflow_apps::SECRET_PARAM.into(), secret.clone());
+            }
+            SecretChange::Keep => {
+                check.insert(monitorflow_apps::SECRET_PARAM.into(), "kept".into());
+            }
+            SecretChange::Clear => {}
+        }
+        monitorflow_apps::build(&request.kind, &check, monitorflow_apps::Place::Check)
+            .map_err(|e| e.to_string())?;
     } else if request.kind == monitorflow_snmp::KIND {
         // Credentials belong to the device, not to a row (ADR-0149), and
         // go to its address only.
@@ -840,7 +895,8 @@ pub fn probe_kind(kind: &str) -> bool {
     monitorflow_probe::PROBE_RUNS.contains(&kind) || kind == monitorflow_webcheck::KIND
 }
 
-const PROBE_KINDS_TEXT: &str = "`ping`, `port`, `snmp`, `snmp_custom`, `vmware` and `http`";
+const PROBE_KINDS_TEXT: &str =
+    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql` and `redis`";
 
 async fn create(
     state: &ApiState,
@@ -851,6 +907,7 @@ async fn create(
     let site = owner.site(&state.pool).await?;
     authorize(user, site, true)?;
     let request = body(request)?;
+    let default_alerts = request.default_alerts;
     let mut tx = state.pool.begin().await?;
     let by = run_by(&mut tx, owner, request.probe.as_deref()).await?;
     let mut valid =
@@ -883,14 +940,20 @@ async fn create(
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| write_error(e, &valid))?;
-    record(
-        &mut tx,
-        user,
-        "sensor_config.create",
-        &entry,
-        audit_summary(&entry),
-    )
-    .await?;
+    let mut details = audit_summary(&entry);
+    if default_alerts && monitorflow_apps::is_kind(&entry.kind) {
+        // The template's alerts, in the same transaction (ADR-0183).
+        let added = super::check_templates::add_alerts(
+            &mut tx,
+            site_id,
+            server_id,
+            &entry.kind,
+            &entry.name,
+        )
+        .await?;
+        details["alerts_added"] = json!(added);
+    }
+    record(&mut tx, user, "sensor_config.create", &entry, details).await?;
     tx.commit().await?;
     tracing::info!(user = %user.id, entry = %entry.id, name = %entry.name, "sensor config created");
     Ok((StatusCode::CREATED, Json(entry)))
@@ -966,7 +1029,8 @@ pub async fn update(
     let by = run_by(&mut tx, owner, request.probe.as_deref()).await?;
     let mut valid = validate_full(request, by.address.as_deref(), before.secret_set)
         .map_err(ApiError::Invalid)?;
-    if valid.secret == SecretChange::Keep && !same_origin(&before.params, &valid.params) {
+    if valid.secret == SecretChange::Keep && !same_destination(&before.kind, &before.params, &valid)
+    {
         return Err(ApiError::Invalid(format!(
             "param `{}` must be given again when the address of the check changes",
             monitorflow_webcheck::SECRET_PARAM

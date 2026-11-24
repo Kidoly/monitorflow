@@ -23,12 +23,15 @@ const MAX_SCHEMAS: usize = 50;
 /// costs more than the rest on a server with many tables.
 const SIZES_EVERY: Duration = Duration::from_secs(10 * 60);
 
+/// Schema names and sizes in bytes.
+type Sizes = Vec<(String, f64)>;
+
 #[derive(Debug)]
 pub struct Mysql {
     target: Target,
     rates: Rates,
     /// The last schema sizes and when they were read.
-    sizes: std::sync::Mutex<Option<(Instant, Vec<(String, f64)>)>>,
+    sizes: std::sync::Mutex<Option<(Instant, Sizes)>>,
 }
 
 impl Mysql {
@@ -94,7 +97,10 @@ impl Mysql {
 
         let version = variables.get("version").map_or("", String::as_str);
         let comment = variables.get("version_comment").map_or("", String::as_str);
-        let flavor = if format!("{version} {comment}").to_ascii_lowercase().contains("mariadb") {
+        let flavor = if format!("{version} {comment}")
+            .to_ascii_lowercase()
+            .contains("mariadb")
+        {
             "mariadb"
         } else {
             "mysql"
@@ -103,7 +109,14 @@ impl Mysql {
             Sample::metric("up", 1.0)
                 .with_label("version", label(version, 64))
                 .with_label("flavor", flavor)
-                .with_label("role", if replica.is_some() { "replica" } else { "primary" }),
+                .with_label(
+                    "role",
+                    if replica.is_some() {
+                        "replica"
+                    } else {
+                        "primary"
+                    },
+                ),
             Sample::metric("response_seconds", response),
         ];
         let connections = num("Threads_connected");
@@ -151,7 +164,10 @@ impl Mysql {
 
         if let Some(replica) = replica {
             let running = |keys: [&str; 2]| {
-                let value = keys.iter().find_map(|k| replica.get(*k)).map_or("", String::as_str);
+                let value = keys
+                    .iter()
+                    .find_map(|k| replica.get(*k))
+                    .map_or("", String::as_str);
                 f64::from(u8::from(value.eq_ignore_ascii_case("yes")))
             };
             out.push(Sample::metric(
@@ -198,14 +214,17 @@ impl Mysql {
             })
             .take(MAX_SCHEMAS)
             .collect();
-        *self.sizes.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), sizes.clone()));
+        *self.sizes.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((Instant::now(), sizes.clone()));
         Ok(sizes)
     }
 }
 
 /// Column `index` of a text-protocol row as text; `None` for NULL.
 fn text(row: &MySqlRow, index: usize) -> Option<String> {
-    row.try_get_unchecked::<Option<String>, _>(index).ok().flatten()
+    row.try_get_unchecked::<Option<String>, _>(index)
+        .ok()
+        .flatten()
 }
 
 /// The name and value rows of a `SHOW` statement.
@@ -226,11 +245,17 @@ async fn pairs(
 async fn replica_status(
     conn: &mut MySqlConnection,
 ) -> Result<Option<HashMap<String, String>>, sqlx::Error> {
-    let rows = match sqlx::raw_sql("SHOW REPLICA STATUS").fetch_all(&mut *conn).await {
+    let rows = match sqlx::raw_sql("SHOW REPLICA STATUS")
+        .fetch_all(&mut *conn)
+        .await
+    {
         Ok(rows) => rows,
         // ER_PARSE_ERROR on an older server, or a missing privilege.
         Err(sqlx::Error::Database(_)) => {
-            match sqlx::raw_sql("SHOW SLAVE STATUS").fetch_all(&mut *conn).await {
+            match sqlx::raw_sql("SHOW SLAVE STATUS")
+                .fetch_all(&mut *conn)
+                .await
+            {
                 Ok(rows) => rows,
                 // Without REPLICATION CLIENT, the rest still says a lot:
                 // replication is left out rather than the whole check.

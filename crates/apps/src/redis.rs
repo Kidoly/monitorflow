@@ -59,7 +59,12 @@ impl Redis {
             match resp::read(&mut stream).await.map_err(io)? {
                 Reply::Simple(_) => {}
                 Reply::Error(e) => return Err(Failure::new(Reason::Login, e)),
-                _ => return Err(Failure::new(Reason::Protocol, "an unexpected reply to AUTH")),
+                _ => {
+                    return Err(Failure::new(
+                        Reason::Protocol,
+                        "an unexpected reply to AUTH",
+                    ))
+                }
             }
         }
         resp::send(&mut stream, &["INFO"]).await.map_err(io)?;
@@ -72,7 +77,12 @@ impl Redis {
                 return Err(Failure::new(Reason::Permission, e))
             }
             Reply::Error(e) => return Err(Failure::new(Reason::Protocol, e)),
-            _ => return Err(Failure::new(Reason::Protocol, "an unexpected reply to INFO")),
+            _ => {
+                return Err(Failure::new(
+                    Reason::Protocol,
+                    "an unexpected reply to INFO",
+                ))
+            }
         };
         let response = started.elapsed().as_secs_f64();
         let _ = stream.get_mut().shutdown().await;
@@ -95,7 +105,11 @@ fn fields(value: &str) -> HashMap<&str, &str> {
 }
 
 /// The samples of one `INFO`.
-pub(crate) fn samples(info: &HashMap<String, String>, response: f64, round: &mut Round) -> Vec<Sample> {
+pub(crate) fn samples(
+    info: &HashMap<String, String>,
+    response: f64,
+    round: &mut Round,
+) -> Vec<Sample> {
     let num = |key: &str| info.get(key).and_then(|v| v.parse::<f64>().ok());
     let role = info.get("role").map_or("", String::as_str);
     let mut out = vec![
@@ -104,7 +118,14 @@ pub(crate) fn samples(info: &HashMap<String, String>, response: f64, round: &mut
                 "version",
                 label(info.get("redis_version").map_or("", String::as_str), 64),
             )
-            .with_label("role", if role == "slave" { "replica" } else { "primary" }),
+            .with_label(
+                "role",
+                if role == "slave" {
+                    "replica"
+                } else {
+                    "primary"
+                },
+            ),
         Sample::metric("response_seconds", response),
     ];
     out.extend(num("connected_clients").and_then(|v| gauge("clients", v)));
@@ -122,9 +143,7 @@ pub(crate) fn samples(info: &HashMap<String, String>, response: f64, round: &mut
     if let (Some(used), Some(max)) = (used, max) {
         out.extend(ratio(used, max).map(|r| Sample::metric("memory_usage_ratio", r)));
     }
-    out.extend(
-        num("mem_fragmentation_ratio").and_then(|v| gauge("memory_fragmentation_ratio", v)),
-    );
+    out.extend(num("mem_fragmentation_ratio").and_then(|v| gauge("memory_fragmentation_ratio", v)));
     out.extend(
         num("evicted_keys")
             .and_then(|v| round.delta("evicted", v))
@@ -139,17 +158,26 @@ pub(crate) fn samples(info: &HashMap<String, String>, response: f64, round: &mut
     }
     let keys: f64 = info
         .iter()
-        .filter(|(k, _)| k.strip_prefix("db").is_some_and(|n| n.parse::<u32>().is_ok()))
+        .filter(|(k, _)| {
+            k.strip_prefix("db")
+                .is_some_and(|n| n.parse::<u32>().is_ok())
+        })
         .filter_map(|(_, v)| fields(v).get("keys").and_then(|k| k.parse::<f64>().ok()))
         .sum();
     out.push(Sample::metric("keys", keys));
 
     if let Some(status) = info.get("rdb_last_bgsave_status") {
-        out.push(Sample::metric("last_save_ok", f64::from(u8::from(status == "ok"))));
+        out.push(Sample::metric(
+            "last_save_ok",
+            f64::from(u8::from(status == "ok")),
+        ));
     }
     if info.get("aof_enabled").map(String::as_str) == Some("1") {
         if let Some(status) = info.get("aof_last_write_status") {
-            out.push(Sample::metric("aof_write_ok", f64::from(u8::from(status == "ok"))));
+            out.push(Sample::metric(
+                "aof_write_ok",
+                f64::from(u8::from(status == "ok")),
+            ));
         }
     }
 
@@ -166,7 +194,10 @@ pub(crate) fn samples(info: &HashMap<String, String>, response: f64, round: &mut
         let offset = num("master_repl_offset");
         let mut replicas: Vec<(&String, &String)> = info
             .iter()
-            .filter(|(k, _)| k.strip_prefix("slave").is_some_and(|n| n.parse::<u32>().is_ok()))
+            .filter(|(k, _)| {
+                k.strip_prefix("slave")
+                    .is_some_and(|n| n.parse::<u32>().is_ok())
+            })
             .collect();
         replicas.sort();
         for (_, value) in replicas.into_iter().take(MAX_REPLICAS) {

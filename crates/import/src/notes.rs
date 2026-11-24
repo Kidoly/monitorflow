@@ -315,6 +315,42 @@ pub const NOTES: &[(&str, &str)] = &[
         "Hyper-V is read by the agent of a Windows server.",
     ),
     (
+        "app_password",
+        "The password is not moved: enter it on the check, which then starts with the alerts that come with it.",
+    ),
+    (
+        "app_query",
+        "PRTG ran a query of its own, which MonitorFlow does not: its check measures the connection, the response time and the usual measures of the database. Enter the password on the check.",
+    ),
+    (
+        "app_template",
+        "The template {template} becomes MonitorFlow's ready-made check, with its own measures and alerts in place of the template's items and triggers. Enter the password on the check.",
+    ),
+    (
+        "app_docker_template",
+        "The template {template} becomes the agent's Docker check, with its own measures and alerts in place of the template's items and triggers.",
+    ),
+    (
+        "app_exporter",
+        "MonitorFlow connects to the database itself instead of reading {exporter}, on the exporter's machine and the default port: enter the password on the check. The exporter's other metrics are not moved.",
+    ),
+    (
+        "app_cadvisor",
+        "The agent's Docker check reads the containers instead of cAdvisor; cAdvisor's other metrics are not moved.",
+    ),
+    (
+        "app_docker_all",
+        "PRTG watched one container, whose name was not read: the Docker check watches every container; name it on the check to watch only that one.",
+    ),
+    (
+        "app_docker_agent",
+        "Docker is read by the agent of the server that runs it, and this host becomes a device.",
+    ),
+    (
+        "app_other_database",
+        "MonitorFlow has ready-made checks for PostgreSQL, MySQL, MariaDB and Redis, not for this database yet.",
+    ),
+    (
         "virtual_partial",
         "MonitorFlow reads the state, processor, memory, storage and snapshots of each virtual machine; traffic per network adapter and storage latency are not measured.",
     ),

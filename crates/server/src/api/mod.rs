@@ -70,6 +70,7 @@
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
 //! | POST | `/api/servers/{id}/recommendations/restore` | modify | body [`recommendations::KeyRequest`], a dismissed one; 204 |
 //! | GET | `/api/servers/{id}/website-checks` | read | [`website_checks::WebsiteChecks`]: each website check with its last status, time, final URL and certificate (ADR-0150) |
+//! | GET | `/api/check-templates` | read | [`check_templates::CheckTemplates`]: what each ready-made application check measures and its default alerts (ADR-0183) |
 //! | GET | `/api/checks/usage` | read | [`checks::UsageList`]: servers running each check, over the sites read, for the catalogue's "Most used" |
 //! | GET | `/api/sites/{id}/sensors` | read | [`sensors::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | PUT | `/api/sites/{id}/check-interval` | modify | body and answer [`check_interval::CheckInterval`] `{"interval_ms"}`, 10 s to 24 h or `null` for the built-in one: how often the site's built-in checks run; audited (ADR-0097) |
@@ -756,6 +757,7 @@ pub mod business_services;
 pub mod campaigns;
 pub mod certificate_authority;
 pub mod check_interval;
+pub mod check_templates;
 pub mod checks;
 pub mod client_addr;
 pub mod commands;
@@ -1446,6 +1448,7 @@ pub fn router(state: ApiState) -> Router {
             post(recommendations::restore),
         )
         .route("/api/checks/usage", get(checks::usage))
+        .route("/api/check-templates", get(check_templates::list))
         .route("/api/sites/{id}/sensors", get(sensors::effective_site))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
         .route(

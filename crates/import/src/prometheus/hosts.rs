@@ -4,12 +4,14 @@
 //! checks of the host that runs the exporter. Any other exporter is a port
 //! check on the host that runs it, when that host is known: MonitorFlow
 //! does not collect other tools' metrics, but it can say when the
-//! exporter's port stops answering.
+//! exporter's port stops answering. The exporters of PostgreSQL, MySQL
+//! and Redis, and cAdvisor, become the ready-made check of what they
+//! read instead (ADR-0183).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::args;
-use crate::model::{Check, Fidelity, Host, Inventory, Origin, Os, Unmovable, Watch};
+use crate::model::{App, AppKind, Check, Fidelity, Host, Inventory, Origin, Os, Unmovable, Watch};
 use crate::notes::Note;
 use crate::text::{host_of, port_of};
 
@@ -487,17 +489,38 @@ impl Fleet {
             target,
             target.instance(),
         );
+        let (watch, note) = match app_exporter(target) {
+            Some((kind, exporter)) => {
+                let mut app = App::new(kind);
+                let loopback = address.eq_ignore_ascii_case("localhost")
+                    || address.starts_with("127.")
+                    || address == "::1";
+                let note = if kind == AppKind::Docker {
+                    Note::plain("app_cadvisor")
+                } else {
+                    // The database on the exporter's machine, at its
+                    // default port.
+                    app.address = Some(address).filter(|a| !a.is_empty() && !loopback);
+                    Note::new("app_exporter", args! {"exporter" => exporter})
+                };
+                (Watch::app(app), note)
+            }
+            None => (
+                Watch::Port {
+                    address: Some(address),
+                    port,
+                },
+                Note::new("scrape_as_port", args! {"port" => port}),
+            ),
+        };
         let check = Check {
             host: host.clone(),
-            watch: Watch::Port {
-                address: Some(address),
-                port,
-            },
+            watch,
             interval_s: collected.intervals.get(&target.job).copied(),
             alert: None,
             origin: Origin::new("scrape_target", target.instance())
                 .with_detail(format!("job: {}", target.job)),
-            fidelity: Fidelity::Approximated(Note::new("scrape_as_port", args! {"port" => port})),
+            fidelity: Fidelity::Approximated(note),
         };
         let index = self.add_check(check);
         self.exporters.push(Member {
@@ -506,6 +529,22 @@ impl Fleet {
             host,
             check: Some(index),
         });
+    }
+}
+
+/// The ready-made check an exporter stands for, and its name: by the
+/// default port of postgres_exporter, mysqld_exporter and
+/// redis_exporter; cAdvisor by its job's name, as 8080 is any web
+/// server's port.
+fn app_exporter(target: &Target) -> Option<(AppKind, &'static str)> {
+    if target.job.to_ascii_lowercase().contains("cadvisor") {
+        return Some((AppKind::Docker, "cAdvisor"));
+    }
+    match port_of(&target.address)? {
+        9187 => Some((AppKind::Postgresql, "postgres_exporter")),
+        9104 => Some((AppKind::Mysql, "mysqld_exporter")),
+        9121 => Some((AppKind::Redis, "redis_exporter")),
+        _ => None,
     }
 }
 
@@ -640,25 +679,67 @@ mod tests {
         assert_eq!(db.addresses, vec!["10.0.0.6"]);
         assert_eq!(db.groups, vec!["node", "env=production", "mysql"]);
         assert_eq!(db.os, Os::Linux);
+        // mysqld_exporter: MySQL's own check, on the exporter's machine.
         let check = &fleet.inventory.checks[0];
         assert_eq!(check.host, "db-01");
-        assert_eq!(
-            check.watch,
-            Watch::Port {
-                address: Some("10.0.0.6".into()),
-                port: 9104
-            }
-        );
+        let mut mysql = App::new(AppKind::Mysql);
+        mysql.address = Some("10.0.0.6".into());
+        assert_eq!(check.watch, Watch::app(mysql));
         assert_eq!(check.interval_s, Some(30));
         assert_eq!(
             check.fidelity,
-            Fidelity::Approximated(Note::new("scrape_as_port", args! {"port" => 9104}))
+            Fidelity::Approximated(Note::new(
+                "app_exporter",
+                args! {"exporter" => "mysqld_exporter"}
+            ))
         );
         assert_eq!(fleet.inventory.unmovable.len(), 1);
         assert_eq!(fleet.inventory.unmovable[0].why.code, "unknown_host");
         assert_eq!(
             fleet.inventory.unmovable[0].origin.name,
             "push.example.com:9091"
+        );
+    }
+
+    /// Exporters of databases and Redis, and cAdvisor, become the
+    /// ready-made check of their host (ADR-0183); any other exporter stays
+    /// a port check.
+    #[test]
+    fn application_exporters_become_their_checks() {
+        let mut collected = Collected::default();
+        collected
+            .targets
+            .push(target("node", "10.0.0.7:9100", &[("hostname", "app-01")]));
+        for (job, address) in [
+            ("postgres", "10.0.0.7:9187"),
+            ("redis", "10.0.0.7:9121"),
+            ("cadvisor", "10.0.0.7:8080"),
+            ("web", "10.0.0.7:8080"),
+        ] {
+            collected.targets.push(target(job, address, &[]));
+        }
+        let fleet = Fleet::new(&collected);
+        let watches: Vec<&Watch> = fleet.inventory.checks.iter().map(|c| &c.watch).collect();
+        let mut pg = App::new(AppKind::Postgresql);
+        pg.address = Some("10.0.0.7".into());
+        let mut redis = App::new(AppKind::Redis);
+        redis.address = Some("10.0.0.7".into());
+        assert_eq!(
+            watches,
+            [
+                &Watch::app(pg),
+                &Watch::app(redis),
+                &Watch::app(App::new(AppKind::Docker)),
+                &Watch::Port {
+                    address: Some("10.0.0.7".into()),
+                    port: 8080
+                },
+            ]
+        );
+        assert!(fleet.inventory.checks.iter().all(|c| c.host == "app-01"));
+        assert_eq!(
+            fleet.inventory.checks[2].fidelity,
+            Fidelity::Approximated(Note::plain("app_cadvisor"))
         );
     }
 }

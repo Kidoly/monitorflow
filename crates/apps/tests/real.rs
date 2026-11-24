@@ -57,7 +57,10 @@ async fn check(kind: &str, var: &str, wanted: &[&str]) {
     assert_eq!(up.value, 1.0, "{kind}: {up:?}");
     assert!(!up.labels["version"].is_empty());
     for metric in wanted {
-        assert!(find(&samples, metric).is_some(), "{kind}: no {metric} in {samples:#?}");
+        assert!(
+            find(&samples, metric).is_some(),
+            "{kind}: no {metric} in {samples:#?}"
+        );
     }
     for sample in &samples {
         assert!(sample.value.is_finite(), "{sample:?}");
@@ -107,7 +110,12 @@ async fn mysql() {
 
 #[tokio::test]
 async fn mariadb() {
-    let wanted = ["connections", "connections_ratio", "queries_per_second", "lock_waits"];
+    let wanted = [
+        "connections",
+        "connections_ratio",
+        "queries_per_second",
+        "lock_waits",
+    ];
     check("mysql", "MF_APPS_TEST_MARIADB", &wanted).await;
     if let Some((host, port)) = target("MF_APPS_TEST_MARIADB") {
         let password = std::env::var("MF_APPS_TEST_PASSWORD").unwrap_or_default();
@@ -121,7 +129,14 @@ async fn redis() {
     check(
         "redis",
         "MF_APPS_TEST_REDIS",
-        &["clients", "memory_used_bytes", "keys", "evicted_keys", "last_save_ok", "replicas"],
+        &[
+            "clients",
+            "memory_used_bytes",
+            "keys",
+            "evicted_keys",
+            "last_save_ok",
+            "replicas",
+        ],
     )
     .await;
 }

@@ -900,6 +900,7 @@ function CheckForm({
     const owner = scope === "site" ? siteOwner(target) : ownerOf(target);
     const { sensor, threshold, more } = checkRequests(type, values, intervalMs);
     if ((type.probe || type.anyRunner) && probe) sensor.probe = probe;
+    if (type.template) sensor.default_alerts = alert;
     setBusy(true);
     setFailure(null);
     try {
@@ -968,9 +969,16 @@ function CheckForm({
           <Switch
             checked={alert}
             onChange={setAlert}
-            label={type.severity === "critical" ? t("monitoring.raiseCritical") : t("monitoring.raiseWarning")}
+            label={
+              type.template
+                ? t("monitoring.templateAlerts")
+                : type.severity === "critical"
+                  ? t("monitoring.raiseCritical")
+                  : t("monitoring.raiseWarning")
+            }
           />
-          {alert && <SlowNote durationS={type.duration_s} intervalS={intervalMs / 1000} />}
+          {alert && type.template && <p className={admin.fieldNote}>{t("monitoring.templateAlertsNote")}</p>}
+          {alert && !type.template && <SlowNote durationS={type.duration_s} intervalS={intervalMs / 1000} />}
         </>
       )}
       {type.probe && target.kind === "server" && (

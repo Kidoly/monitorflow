@@ -58,7 +58,9 @@ impl Docker {
                 regex::RegexBuilder::new(pattern)
                     .size_limit(1 << 20)
                     .build()
-                    .map_err(|e| p.bad("containers", format!("is not a regular expression: {e}")))?,
+                    .map_err(|e| {
+                        p.bad("containers", format!("is not a regular expression: {e}"))
+                    })?,
             ),
         };
         let stats = match p.get("stats") {
@@ -73,7 +75,9 @@ impl Docker {
             }
         }
         if !cfg!(unix) && !matches!(place, Place::Check) {
-            return Err(monitorflow_sensors::BuildError::Unsupported { kind: crate::DOCKER });
+            return Err(monitorflow_sensors::BuildError::Unsupported {
+                kind: crate::DOCKER,
+            });
         }
         Ok(Self {
             socket: socket.into(),
@@ -100,7 +104,10 @@ impl Docker {
 
     #[cfg(not(unix))]
     async fn get(&self, _path: &str) -> Result<Value, Failure> {
-        Err(Failure::new(Reason::Connect, "Docker is read on Linux only"))
+        Err(Failure::new(
+            Reason::Connect,
+            "Docker is read on Linux only",
+        ))
     }
 
     fn io_failure(&self, e: &std::io::Error) -> Failure {
@@ -158,11 +165,23 @@ impl Docker {
             let name = label(name, 128);
             let image = label(listed["Image"].as_str().unwrap_or(""), 128);
             let stats = if self.stats && state.running {
-                Some(self.get(&format!("/containers/{id}/stats?stream=false&one-shot=true")).await?)
+                Some(
+                    self.get(&format!(
+                        "/containers/{id}/stats?stream=false&one-shot=true"
+                    ))
+                    .await?,
+                )
             } else {
                 None
             };
-            out.extend(container_samples(&name, &image, id, &state, stats.as_ref(), round));
+            out.extend(container_samples(
+                &name,
+                &image,
+                id,
+                &state,
+                stats.as_ref(),
+                round,
+            ));
         }
         out.push(Sample::metric("containers_running", f64::from(running)));
         out.push(Sample::metric("containers_stopped", f64::from(stopped)));
@@ -257,7 +276,8 @@ pub(crate) fn container_samples(
             out.extend(gauge("container_memory_bytes", used).map(|s| s.with_instance(name)));
             if let Some(limit) = memory["limit"].as_f64() {
                 out.extend(
-                    ratio(used, limit).map(|r| Sample::metric("container_memory_ratio", r).with_instance(name)),
+                    ratio(used, limit)
+                        .map(|r| Sample::metric("container_memory_ratio", r).with_instance(name)),
                 );
             }
         }
@@ -272,7 +292,8 @@ pub(crate) fn container_samples(
                 // A share of the whole machine, like the server's own
                 // `cpu_usage_ratio`.
                 out.extend(
-                    ratio(used, system).map(|r| Sample::metric("container_cpu_ratio", r).with_instance(name)),
+                    ratio(used, system)
+                        .map(|r| Sample::metric("container_cpu_ratio", r).with_instance(name)),
                 );
             }
         }

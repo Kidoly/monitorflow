@@ -1466,6 +1466,16 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             };
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // The templates of application checks: the same for everyone.
+        ("GET", "/api/check-templates") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(
+                body["templates"].as_array().map(Vec::len),
+                Some(4),
+                "{body}"
+            );
+        }
         // Servers running each check: A's site and server rows, not B's.
         ("GET", "/api/checks/usage") => {
             let (status, body) = ctx.call(method, path, None).await;

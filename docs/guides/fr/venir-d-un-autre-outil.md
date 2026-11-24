@@ -46,6 +46,7 @@ Ce qui correspond à quoi :
 - `net.tcp.service` et `net.tcp.port` deviennent des vérifications de port TCP ; `systemd.unit.*` et les `service.*` Windows des vérifications de service ; `log[]` et `logrt[]` des vérifications de journal.
 - Les scénarios web et `web.page.*` deviennent des vérifications du port du site ; `proc.num` une vérification du service systemd de ce nom.
 - Les déclencheurs de disponibilité de l’agent et `agent.ping` correspondent à l’alerte hors ligne de MonitorFlow, présente sur chaque serveur.
+- Un hôte lié à un modèle PostgreSQL, MySQL, MariaDB, Redis ou Docker de l’agent Zabbix ou de l’agent 2 reçoit le contrôle prêt à l’emploi de MonitorFlow de ce type, avec ses alertes par défaut, connecté là où le disent les macros du modèle ; les éléments et déclencheurs du modèle ne sont pas listés en plus. Les mots de passe ne sont pas importés : saisissez-les sur le contrôle. Les modèles ODBC ne peuvent pas être repris.
 - Le trafic des interfaces réseau, le SNMP, `system.run` et les UserParameters ne peuvent pas encore être repris.
 
 ## Importer depuis Prometheus
@@ -58,6 +59,7 @@ Ce qui correspond à quoi :
 
 - Les cibles node exporter deviennent des serveurs. Les sondes TCP d’un blackbox exporter deviennent des vérifications de port, ses sondes HTTP des vérifications du port du site, sur le serveur qui fait tourner l’exporter.
 - Les règles node habituelles (cible injoignable, processeur, charge, mémoire, espace disque, latence disque, unités systemd) deviennent des alertes avec leurs niveaux et leur durée `for:`, et `probe_success == 0` l’alerte de chaque sonde.
+- Les cibles postgres_exporter (port 9187), mysqld_exporter (9104) et redis_exporter (9121) deviennent le contrôle PostgreSQL, MySQL ou Redis du serveur de l’exporter, au port par défaut de la base, et un job `cadvisor` le contrôle Docker de son serveur, chacun avec ses alertes par défaut. Les autres métriques de l’exporter ne sont pas reprises ; saisissez le mot de passe de la base sur le contrôle.
 - Toute autre expression est listée comme ne pouvant pas être reprise, avec l’expression.
 - Les destinataires deviennent des canaux : e-mail, webhook, Slack, Microsoft Teams et Discord. Les routes d’Alertmanager ne sont pas reprises : dans MonitorFlow, un canal couvre tout ou un site.
 - Les silences actifs deviennent des silences des serveurs que leurs filtres désignent.

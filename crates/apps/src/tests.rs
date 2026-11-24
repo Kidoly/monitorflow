@@ -14,13 +14,19 @@ fn params(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 }
 
 fn error(kind: &str, pairs: &[(&str, &str)], place: Place<'_>) -> String {
-    build(kind, &params(pairs), place).err().unwrap().to_string()
+    build(kind, &params(pairs), place)
+        .err()
+        .unwrap()
+        .to_string()
 }
 
 #[test]
 fn kinds_build_with_their_defaults() {
     for kind in KINDS {
-        assert!(build(kind, &BTreeMap::new(), Place::Check).is_ok(), "{kind}");
+        assert!(
+            build(kind, &BTreeMap::new(), Place::Check).is_ok(),
+            "{kind}"
+        );
         assert!(is_kind(kind));
     }
     assert!(!is_kind("cpu"));
@@ -44,15 +50,25 @@ fn parameters_are_checked() {
     ];
     assert!(build(POSTGRESQL, &params(&all), Place::Relay).is_ok());
     assert!(error(POSTGRESQL, &[("port", "0")], Place::Check).contains("between 1 and 65535"));
-    assert!(error(POSTGRESQL, &[("tls", "maybe")], Place::Check).contains("`off`, `prefer` or `verify`"));
+    assert!(error(POSTGRESQL, &[("tls", "maybe")], Place::Check)
+        .contains("`off`, `prefer` or `verify`"));
     assert!(error(POSTGRESQL, &[("slow_after", "0")], Place::Check).contains("from 1 to 86400"));
-    assert!(error(MYSQL, &[("database", "app")], Place::Check).contains("unknown parameter `database`"));
+    assert!(
+        error(MYSQL, &[("database", "app")], Place::Check).contains("unknown parameter `database`")
+    );
     assert!(error(MYSQL, &[("host", "a b")], Place::Check).contains("neither an IP address"));
     assert!(error(REDIS, &[("tls", "verify")], Place::Check).contains("not checked yet"));
     assert!(error(REDIS, &[("password", "a\nb")], Place::Check).contains("line breaks"));
-    assert!(error(DOCKER, &[("engine", "/tmp/sock")], Place::Check).contains("`docker` or `podman`"));
+    assert!(
+        error(DOCKER, &[("engine", "/tmp/sock")], Place::Check).contains("`docker` or `podman`")
+    );
     assert!(error(DOCKER, &[("containers", "(")], Place::Check).contains("regular expression"));
-    assert!(build(DOCKER, &params(&[("containers", "^web-"), ("stats", "false")]), Place::Check).is_ok());
+    assert!(build(
+        DOCKER,
+        &params(&[("containers", "^web-"), ("stats", "false")]),
+        Place::Check
+    )
+    .is_ok());
 }
 
 #[test]
@@ -157,7 +173,10 @@ fn redis_info_becomes_samples() {
     assert_eq!(value(&first, "last_save_ok"), Some(0.0));
     assert_eq!(value(&first, "aof_write_ok"), None);
     assert_eq!(value(&first, "replicas"), Some(1.0));
-    let lag = first.iter().find(|s| s.sensor == "replica_lag_bytes").unwrap();
+    let lag = first
+        .iter()
+        .find(|s| s.sensor == "replica_lag_bytes")
+        .unwrap();
     assert_eq!((lag.instance.as_str(), lag.value), ("10.0.0.2:6379", 600.0));
     // Changes need a second collection.
     assert_eq!(value(&first, "evicted_keys"), None);
@@ -194,7 +213,14 @@ fn docker_containers_become_samples() {
     };
     let rates = Rates::default();
     let mut round = rates.round();
-    let first = docker::container_samples("web", "nginx:1", "abc", &state, Some(&stats(10.0, 100.0)), &mut round);
+    let first = docker::container_samples(
+        "web",
+        "nginx:1",
+        "abc",
+        &state,
+        Some(&stats(10.0, 100.0)),
+        &mut round,
+    );
     rates.finish(round);
     assert_eq!(value(&first, "container_running"), Some(1.0));
     assert_eq!(value(&first, "container_health"), Some(2.0));
@@ -202,7 +228,10 @@ fn docker_containers_become_samples() {
     assert_eq!(value(&first, "container_memory_ratio"), Some(0.5));
     assert_eq!(value(&first, "container_restarts"), None);
     assert_eq!(value(&first, "container_cpu_ratio"), None);
-    let running = first.iter().find(|s| s.sensor == "container_running").unwrap();
+    let running = first
+        .iter()
+        .find(|s| s.sensor == "container_running")
+        .unwrap();
     assert_eq!(running.instance, "web");
     assert_eq!(running.labels["image"], "nginx:1");
 
@@ -211,7 +240,14 @@ fn docker_containers_become_samples() {
         ..state.clone()
     };
     let mut round = rates.round();
-    let second = docker::container_samples("web", "nginx:1", "abc", &again, Some(&stats(30.0, 200.0)), &mut round);
+    let second = docker::container_samples(
+        "web",
+        "nginx:1",
+        "abc",
+        &again,
+        Some(&stats(30.0, 200.0)),
+        &mut round,
+    );
     assert_eq!(value(&second, "container_restarts"), Some(1.0));
     assert_eq!(value(&second, "container_cpu_ratio"), Some(0.2));
 

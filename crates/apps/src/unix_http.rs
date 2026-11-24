@@ -35,7 +35,11 @@ pub fn parse(raw: &[u8]) -> Result<Answer, String> {
         })
     });
     let body = &raw[end + 4..];
-    let body = if chunked { unchunk(body)? } else { body.to_vec() };
+    let body = if chunked {
+        unchunk(body)?
+    } else {
+        body.to_vec()
+    };
     Ok(Answer { status, body })
 }
 

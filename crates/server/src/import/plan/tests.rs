@@ -2253,3 +2253,103 @@ fn dependencies_and_services_leave_out_servers_of_other_sites() {
     assert_eq!(members.len(), 1);
     assert_eq!(members[0].server, "mine");
 }
+
+/// Ready-made application checks (ADR-0183): on the server itself its
+/// agent runs them, elsewhere a probe does; they wait for their password
+/// and come with their template's alerts, which the source's own alert
+/// on `up` does not repeat. Docker needs an agent.
+#[test]
+fn application_checks_come_with_their_alerts() {
+    use monitorflow_import::model::{App, AppKind};
+    let device = Host {
+        agentless: true,
+        addresses: vec!["10.0.0.9".into()],
+        ..host("3", "db-device", Os::Unknown)
+    };
+    let mut own = App::new(AppKind::Postgresql);
+    // The server's own address: its agent connects to 127.0.0.1.
+    own.address = Some("10.0.0.5".into());
+    own.database = Some("shop".into());
+    let mut remote = App::new(AppKind::Mysql);
+    remote.address = Some("10.0.0.20".into());
+    remote.port = Some(3307);
+    let mut docker = App::new(AppKind::Docker);
+    docker.containers = Some("^shop$".into());
+    let inventory = Inventory {
+        hosts: vec![host("1", "db-01", Os::Debian), device],
+        checks: vec![
+            check("1", Watch::app(own), Some(Severity::Critical)),
+            check("1", Watch::app(remote), None),
+            check("1", Watch::app(docker.clone()), None),
+            check("3", Watch::app(App::new(AppKind::Redis)), None),
+            check("3", Watch::app(docker), None),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let create = |id: &str| {
+        let item = by_id(&planned, id);
+        let Some(Create::Check {
+            kind,
+            probe,
+            params,
+            ..
+        }) = &item.create
+        else {
+            panic!("{item:?}")
+        };
+        (item, kind.clone(), *probe, Value::Object(params.clone()))
+    };
+    let (item, kind, probe, params) = create("check:db-01:postgresql");
+    assert_eq!((kind.as_str(), probe), ("postgresql", false));
+    assert_eq!(params, json!({"database": "shop"}));
+    assert_eq!(item.list, List::Approximated);
+    assert_eq!(item.note.as_ref().unwrap().code, "app_password");
+
+    let (_, kind, probe, params) = create("check:db-01:mysql_10_0_0_20");
+    assert_eq!((kind.as_str(), probe), ("mysql", true));
+    assert_eq!(params, json!({"host": "10.0.0.20", "port": "3307"}));
+
+    let (item, kind, probe, params) = create("check:db-01:docker_shop");
+    assert_eq!((kind.as_str(), probe), ("docker", false));
+    assert_eq!(params, json!({"containers": "^shop$"}));
+    assert_eq!(item.list, List::Exact);
+
+    // A device's Redis from a probe, at the device's address.
+    let (_, kind, probe, params) = create("check:db-device:redis");
+    assert_eq!((kind.as_str(), probe), ("redis", true));
+    assert_eq!(params, json!({}));
+
+    // Every alert of the template, once, the source's critical on `up`
+    // included.
+    let alerts: Vec<&Item> = planned
+        .items
+        .iter()
+        .filter(|i| i.id.starts_with("threshold:db-01:monitorflow_postgresql_"))
+        .collect();
+    assert_eq!(
+        alerts.len(),
+        monitorflow_apps::templates::POSTGRESQL_TEMPLATE
+            .alerts
+            .len()
+    );
+    let up = by_id(&planned, "threshold:db-01:monitorflow_postgresql_up");
+    assert_eq!(up.needs, ["check:db-01:postgresql", "server:db-01"]);
+    assert!(matches!(
+        &up.create,
+        Some(Create::Threshold { comparison, warning: None, critical: Some(c), duration_s: 120, .. })
+            if comparison == "<" && *c == 1.0
+    ));
+    by_id(
+        &planned,
+        "threshold:db-device:monitorflow_redis_memory_usage_ratio",
+    );
+
+    let refused = planned
+        .items
+        .iter()
+        .find(|i| i.list == List::NotMovable)
+        .unwrap();
+    assert_eq!(refused.hosts, ["db-device"]);
+    assert_eq!(refused.note.as_ref().unwrap().code, "app_docker_agent");
+}

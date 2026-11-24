@@ -448,6 +448,7 @@ async fn save(
         params: valid.params.clone(),
         enabled: request.enabled,
         probe: request.probe.clone(),
+        default_alerts: false,
     };
     let mut row = super::sensors::validate_with_host(entry, by.address.as_deref())
         .map_err(ApiError::Invalid)?;

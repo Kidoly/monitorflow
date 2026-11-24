@@ -69,7 +69,9 @@ pub async fn read<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Reply, RespError
                 return Err(RespError::Protocol("a bulk reply without its end".into()));
             }
             body.truncate(len);
-            Ok(Reply::Bulk(Some(String::from_utf8_lossy(&body).into_owned())))
+            Ok(Reply::Bulk(Some(
+                String::from_utf8_lossy(&body).into_owned(),
+            )))
         }
         _ => Err(RespError::Protocol(
             "the server does not speak the Redis protocol".into(),

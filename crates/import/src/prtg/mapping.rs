@@ -70,9 +70,13 @@ fn network_device(tree: &Indexed, device: &Object) -> bool {
             .unwrap_or("")
             .to_ascii_lowercase();
         match sensors::family(&t) {
-            Family::Service | Family::EventLog | Family::HyperV => false,
+            // Docker is read by the agent of the machine that runs it.
+            Family::Service
+            | Family::EventLog
+            | Family::HyperV
+            | Family::App(crate::model::AppKind::Docker) => false,
             Family::Cpu | Family::Memory | Family::Disk | Family::Traffic => t.starts_with("snmp"),
-            Family::Other => {
+            Family::Other | Family::OtherDatabase => {
                 !(t.starts_with("wmi") || t.starts_with("ssh") || t.starts_with("exe"))
             }
             _ => true,
@@ -1198,5 +1202,26 @@ mod tests {
         assert!(period_list("mu:00:00-mo:01:00").is_none());
         assert!(period_list("mo:00:00").is_none());
         assert!(period_list("").is_none());
+    }
+
+    /// A database PRTG reaches over the network is a device checked from a
+    /// probe; Docker needs the agent of its machine (ADR-0183).
+    #[test]
+    fn databases_are_devices_and_docker_needs_an_agent() {
+        let mut tree = Tree::default();
+        tree.objects
+            .push(Object::new(1, Kind::Probe, "probe", None));
+        for (id, name) in [(20, "db"), (21, "docker")] {
+            let mut device = Object::new(id, Kind::Device, name, Some(1));
+            device.host = Some(format!("192.0.2.{id}"));
+            tree.objects.push(device);
+        }
+        tree.objects.push(sensor(30, 20, "mysqlv2"));
+        tree.objects.push(sensor(31, 21, "dockercontainerstatus"));
+        let inv = inventory(&tree, now());
+        assert!(inv.host("device:20").unwrap().agentless);
+        assert!(!inv.host("device:21").unwrap().agentless);
+        assert_eq!(inv.checks.len(), 2, "{:#?}", inv.checks);
+        assert!(inv.checks.iter().all(|c| matches!(c.watch, Watch::App(_))));
     }
 }

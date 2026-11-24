@@ -218,18 +218,13 @@ impl Target {
 
 /// Refuses an address `place` may not reach: outside an agent's
 /// `sensors.port_targets`, or link-local from the central server.
-fn check_place(
-    p: &Params<'_>,
-    place: Place<'_>,
-    host: &Host,
-    port: u16,
-) -> Result<(), BuildError> {
+fn check_place(p: &Params<'_>, place: Place<'_>, host: &Host, port: u16) -> Result<(), BuildError> {
     match place {
         Place::Agent(Some(targets)) => {
             if targets.is_empty() {
-                return Err(p.refused(
-                    "this agent connects nowhere: its sensors.port_targets is empty",
-                ));
+                return Err(
+                    p.refused("this agent connects nowhere: its sensors.port_targets is empty")
+                );
             }
             let allowed = match host {
                 Host::Ip(ip) => targets.allows_ip(*ip, port),
@@ -244,9 +239,9 @@ fn check_place(
             Ok(())
         }
         Place::Central => match host {
-            Host::Ip(ip) if link_local(*ip) => Err(p.refused(
-                "the central server does not connect to link-local addresses",
-            )),
+            Host::Ip(ip) if link_local(*ip) => {
+                Err(p.refused("the central server does not connect to link-local addresses"))
+            }
             _ => Ok(()),
         },
         Place::Agent(None) | Place::Relay | Place::Check => Ok(()),
