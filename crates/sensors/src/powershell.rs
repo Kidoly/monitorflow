@@ -165,3 +165,78 @@ impl Drop for Job {
         }
     }
 }
+
+/// Most output [`run_script`] reads.
+const MAX_SCRIPT_OUTPUT: u64 = 16 << 20;
+
+/// `script` as `-EncodedCommand` takes it: base64 of its UTF-16LE.
+fn encoded(script: &str) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut out = String::with_capacity(bytes.len() * 4 / 3 + 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(TABLE[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// Runs a script built into the agent, like the Hyper-V sensor's
+/// (ADR-0156) or the inventory's (ADR-0187), and returns what it printed
+/// on stdout. `what` names it in errors.
+pub async fn run_script(
+    script: &str,
+    deadline: tokio::time::Instant,
+    what: &str,
+) -> Result<String, String> {
+    use tokio::io::AsyncReadExt;
+
+    let system = system_dir().map_err(|e| e.to_string())?;
+    let job = Job::new().map_err(|e| format!("job object: {e}"))?;
+    let mut child = command(exe(&system))
+        .and_then(|mut command| {
+            command
+                .args(OPTIONS)
+                .arg("-EncodedCommand")
+                .arg(encoded(script))
+                .stdout(Stdio::piped())
+                .spawn()
+        })
+        .map_err(|e| format!("starting powershell.exe: {e}"))?;
+    job.assign(&mut child)
+        .map_err(|e| format!("job object: {e}"))?;
+    let mut stdout = child.stdout.take().expect("piped").take(MAX_SCRIPT_OUTPUT);
+    let mut text = String::new();
+    let read = tokio::time::timeout_at(deadline, async {
+        stdout.read_to_string(&mut text).await?;
+        child.wait().await
+    })
+    .await;
+    drop(job);
+    match read {
+        Ok(Ok(_)) => Ok(text),
+        Ok(Err(error)) => Err(format!("reading the output of {what}: {error}")),
+        Err(_) => Err(format!("{what} did not finish in time")),
+    }
+}
+
+#[cfg(test)]
+mod script_tests {
+    #[test]
+    fn base64_matches_known_values() {
+        // "a" in UTF-16LE is 61 00.
+        assert_eq!(super::encoded("a"), "YQA=");
+        assert_eq!(super::encoded("ab"), "YQBiAA==");
+    }
+}

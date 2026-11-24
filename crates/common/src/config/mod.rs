@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -517,6 +517,35 @@ pub struct AgentConfig {
     pub packages: AgentPackagesConfig,
     pub commands: AgentCommandsConfig,
     pub plugins: AgentPluginsConfig,
+    pub remote: AgentRemoteConfig,
+}
+
+/// Remote sessions opened from the web interface on this host
+/// (ADR-0190). Only the host's administrator sets these, in this file:
+/// the installer and `remote-access` edit it, and the agent's user cannot.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentRemoteConfig {
+    /// Opens terminals. Off unless enabled here.
+    pub terminal: bool,
+    /// The account terminals run as, on Linux: the agent's own user when
+    /// unset, never root unless named here. A root helper checks the
+    /// signed command before it starts the shell as that account.
+    pub terminal_user: Option<String>,
+}
+
+/// A local account name the remote terminal may run as: letters, digits
+/// and `_.-`, starting with a letter or `_`, at most 32 characters, as
+/// `useradd` takes them, so it never reads as an option.
+pub fn valid_terminal_user(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '-'))
 }
 
 /// Check plugins on this host (ADR-0103). Only the host's administrator
@@ -551,6 +580,15 @@ pub struct AgentCommandsConfig {
     /// Lets the central server turn `shell` on and off (ADR-0098). It
     /// can always turn it off; without this, never on.
     pub from_web: bool,
+    /// Runs the AI root actions of ADR-0181 (`root_action`) through the
+    /// root helper, while AI commands are on. Off unless enabled here; the
+    /// Linux installer enables it on a new install. The root helper reads
+    /// it from the file itself, never from the environment.
+    pub root_actions: bool,
+    /// Runs `run_script` commands, scripts of the central server's
+    /// library, as the agent's user (ADR-0189). Off unless enabled here:
+    /// the server cannot turn it on.
+    pub scripts: bool,
     /// Lets the central server install and remove software from its
     /// catalogue (ADR-0188). Off unless enabled here.
     pub software: bool,
@@ -563,12 +601,18 @@ pub struct AgentPackagesConfig {
     /// Seconds between two package reports; one is also sent at start and
     /// after every update.
     pub report_interval: u64,
+    /// "Allow major upgrades from the web interface" (ADR-0182): lets the
+    /// central server start a major upgrade of the distribution. Off unless
+    /// enabled here; the root helper reads it from the file itself, never
+    /// from the environment.
+    pub major_upgrades: bool,
 }
 
 impl Default for AgentPackagesConfig {
     fn default() -> Self {
         Self {
             report_interval: 6 * 60 * 60,
+            major_upgrades: false,
         }
     }
 }
@@ -680,6 +724,7 @@ impl Default for AgentConfig {
             packages: AgentPackagesConfig::default(),
             commands: AgentCommandsConfig::default(),
             plugins: AgentPluginsConfig::default(),
+            remote: AgentRemoteConfig::default(),
         }
     }
 }
@@ -724,6 +769,7 @@ impl LoadConfig for AgentConfig {
         )?;
         env.set("commands.shell", &mut self.commands.shell)?;
         env.set("commands.from_web", &mut self.commands.from_web)?;
+        env.set("commands.scripts", &mut self.commands.scripts)?;
         env.set("commands.software", &mut self.commands.software)?;
         if let Some(dirs) = env.list("sensors.log_dirs") {
             self.sensors.log_dirs = dirs.into_iter().map(PathBuf::from).collect();
@@ -745,6 +791,14 @@ impl LoadConfig for AgentConfig {
         }
         check.positive("heartbeat_interval", self.heartbeat_interval)?;
         check.positive("packages.report_interval", self.packages.report_interval)?;
+        if let Some(user) = &self.remote.terminal_user {
+            if !valid_terminal_user(user) {
+                return Err(check.fail(
+                    "remote.terminal_user",
+                    "must be a local account name: lowercase letters, digits and _.-",
+                ));
+            }
+        }
         self.sensors.validate(check)
     }
 }
@@ -775,6 +829,9 @@ pub struct RelayConfig {
     /// [`Self::mirror_dir`].
     pub mirror_dir: Option<PathBuf>,
     pub mirror: RelayMirrorConfig,
+    /// UDP listeners of traffic flows (ADR-0184), open only while the
+    /// server names exporters for this relay.
+    pub flows: FlowConfig,
 }
 
 impl Default for RelayConfig {
@@ -792,7 +849,51 @@ impl Default for RelayConfig {
             mirror_listen_addr: SocketAddr::from(([0, 0, 0, 0], DEFAULT_MIRROR_PORT)),
             mirror_dir: None,
             mirror: RelayMirrorConfig::default(),
+            flows: FlowConfig::default(),
         }
+    }
+}
+
+/// Where a probe receives NetFlow, sFlow and IPFIX (ADR-0184). Every
+/// port takes every format; 0 turns one off.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FlowConfig {
+    /// Address the listeners bind; unset: every address, IPv6 and IPv4.
+    pub listen: Option<IpAddr>,
+    pub netflow_port: u16,
+    pub sflow_port: u16,
+    pub ipfix_port: u16,
+}
+
+impl Default for FlowConfig {
+    fn default() -> Self {
+        Self {
+            listen: None,
+            netflow_port: 2055,
+            sflow_port: 6343,
+            ipfix_port: 4739,
+        }
+    }
+}
+
+impl FlowConfig {
+    /// The ports turned on, each once.
+    pub fn ports(&self) -> Vec<u16> {
+        let mut ports: Vec<u16> = [self.netflow_port, self.sflow_port, self.ipfix_port]
+            .into_iter()
+            .filter(|p| *p != 0)
+            .collect();
+        ports.sort_unstable();
+        ports.dedup();
+        ports
+    }
+
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set_opt("flows.listen", &mut self.listen)?;
+        env.set("flows.netflow_port", &mut self.netflow_port)?;
+        env.set("flows.sflow_port", &mut self.sflow_port)?;
+        env.set("flows.ipfix_port", &mut self.ipfix_port)
     }
 }
 
@@ -1029,6 +1130,7 @@ impl LoadConfig for RelayConfig {
         env.set("mirror_listen_addr", &mut self.mirror_listen_addr)?;
         env.set_opt("mirror_dir", &mut self.mirror_dir)?;
         self.mirror.apply_env(env)?;
+        self.flows.apply_env(env)?;
         self.log.apply_env(env)
     }
 
@@ -1155,6 +1257,9 @@ pub struct ServerConfig {
     pub remediation: RemediationConfig,
     /// Automatic agent and relay updates (ADR-0055).
     pub auto_update: AutoUpdateConfig,
+    /// UDP listeners of traffic flows from devices without a relay
+    /// (ADR-0184), open only while some are set.
+    pub flows: FlowConfig,
 }
 
 /// Automatic updates (ADR-0055). The setting lives in the database and the
@@ -1254,6 +1359,7 @@ impl Default for ServerConfig {
             proxmox: ProxmoxConfig::default(),
             remediation: RemediationConfig::default(),
             auto_update: AutoUpdateConfig::default(),
+            flows: FlowConfig::default(),
         }
     }
 }
@@ -1784,6 +1890,7 @@ impl LoadConfig for ServerConfig {
         self.proxmox.apply_env(env)?;
         self.remediation.apply_env(env)?;
         self.auto_update.apply_env(env)?;
+        self.flows.apply_env(env)?;
         self.log.apply_env(env)
     }
 

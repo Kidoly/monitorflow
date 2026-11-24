@@ -71,6 +71,11 @@ script_dir = 'C:\ProgramData\MonitorFlow\scripts.d'
 # the web interface (ADR-0098). Without it the web interface can only turn
 # it off. `monitorflow-agent.exe ai-commands from-web on|off` sets it.
 # from_web = false
+# Run scripts of the central server's script library in Windows
+# PowerShell 5.1 as the agent's account (ADR-0189). Off unless enabled
+# here; the web interface cannot turn it on. `monitorflow-agent.exe
+# scripts on|off` and the MSI property ALLOW_SCRIPTS=1 set it.
+# scripts = false
 
 [plugins]
 # Run the check plugins the central server gives this machine (ADR-0103):

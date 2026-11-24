@@ -37,6 +37,29 @@ fn encoded(line: &str) -> String {
 }
 
 pub(super) async fn run(line: &str, timeout: Duration) -> Output {
+    spawn(&encoded(line), None, &[], timeout).await
+}
+
+/// Reads the script from stdin as UTF-8 and runs it as one script block,
+/// so its size is not bound by the command line's (ADR-0189).
+const FROM_STDIN: &str = "[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)\n\
+     $__mfScript = [Console]::In.ReadToEnd()\n\
+     & ([scriptblock]::Create($__mfScript))";
+
+/// A library script: `body` goes on stdin, `env` is added to the
+/// environment.
+pub(crate) async fn run_script(body: &str, env: &[(String, String)], timeout: Duration) -> Output {
+    spawn(&encoded(FROM_STDIN), Some(body.as_bytes()), env, timeout).await
+}
+
+async fn spawn(
+    encoded: &str,
+    stdin: Option<&[u8]>,
+    env: &[(String, String)],
+    timeout: Duration,
+) -> Output {
+    use tokio::io::AsyncWriteExt;
+
     let exe = match powershell::system_dir() {
         Ok(system) => powershell::exe(&system),
         Err(error) => return not_started("powershell.exe", error),
@@ -49,9 +72,13 @@ pub(super) async fn run(line: &str, timeout: Duration) -> Output {
         command
             .args(powershell::OPTIONS)
             .arg("-EncodedCommand")
-            .arg(encoded(line))
-            .stderr(Stdio::piped())
-            .spawn()
+            .arg(encoded)
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .stderr(Stdio::piped());
+        if stdin.is_some() {
+            command.stdin(Stdio::piped());
+        }
+        command.spawn()
     });
     let mut child = match spawned {
         Ok(child) => child,
@@ -59,6 +86,13 @@ pub(super) async fn run(line: &str, timeout: Duration) -> Output {
     };
     if let Err(error) = job.assign(&mut child) {
         return not_started("powershell.exe (job object)", error);
+    }
+    if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        // Written then closed, so ReadToEnd returns.
+        if let Err(error) = pipe.write_all(bytes).await {
+            return not_started("powershell.exe (script input)", error);
+        }
+        drop(pipe);
     }
     let stdout = child.stdout.take().expect("piped");
     let stderr = child.stderr.take().expect("piped");

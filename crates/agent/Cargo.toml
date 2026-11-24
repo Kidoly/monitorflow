@@ -33,6 +33,8 @@ thiserror.workspace = true
 monitorflow-sensors.workspace = true
 # Website checks (ADR-0150).
 monitorflow-webcheck.workspace = true
+# Ready-made application checks (ADR-0183).
+monitorflow-apps.workspace = true
 # Check plugins in their sandbox (ADR-0103).
 monitorflow-plugin.workspace = true
 prost.workspace = true
@@ -43,7 +45,8 @@ base64.workspace = true
 reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["process"] }
+# Pseudo-terminals of remote terminals (ADR-0190).
+rustix = { workspace = true, features = ["process", "pty", "termios", "stdio"] }
 
 [target.'cfg(windows)'.dependencies]
 # Service control manager and OS version (ADR-0047); the service's
@@ -52,7 +55,8 @@ windows-service.workspace = true
 windows-registry.workspace = true
 # Windows Update calls and the update service's pipe (ADR-0049).
 windows.workspace = true
-windows-sys = { workspace = true, features = ["Win32_System_EventLog", "Win32_System_Pipes"] }
+# Pseudo consoles of remote terminals (ADR-0190).
+windows-sys = { workspace = true, features = ["Win32_System_EventLog", "Win32_System_Pipes", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
 rcgen.workspace = true

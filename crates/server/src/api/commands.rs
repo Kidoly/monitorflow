@@ -16,7 +16,8 @@ use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command;
 use monitorflow_common::proto::v1::{
-    AiCommandsSwitch, ApplyUpdates, ConfigureSources, SelfUpdate, ShellCommand, SoftwareChange,
+    AiCommandsSwitch, ApplyUpdates, ConfigureSources, MajorUpgrade, SelfUpdate, ShellCommand,
+    SoftwareChange,
 };
 use monitorflow_common::release::Version;
 use monitorflow_common::{software, third_party};
@@ -98,7 +99,7 @@ pub struct CommandView {
     /// `apply_updates`, `self_update`, `configure_sources`,
     /// `revert_sources`, `shell` (AI remediation), `ai_commands`, or
     /// `take_snapshot` and `delete_snapshot` (local snapshots before AI
-    /// changes).
+    /// changes), or `major_upgrade` (from a major upgrade campaign).
     pub kind: String,
     /// What it asks, as JSON, by kind: `{"packages", "security_only",
     /// "allow_reboot", "include_os", "third_party", "classifications",
@@ -108,7 +109,9 @@ pub struct CommandView {
     /// `{"mirror_base_url", "family", "mode", "repositories",
     /// "key_fingerprints"}` for `configure_sources`, `{}` for
     /// `revert_sources`, `{"command", "timeout_seconds"}` for `shell`,
-    /// `{"on"}` for `ai_commands`; `null` for a kind this version does not
+    /// `{"on"}` for `ai_commands`, `{"action", "command"}` for
+    /// `root_action` (ADR-0181), `{"from", "to", "impact"}` for
+    /// `major_upgrade` (ADR-0182); `null` for a kind this version does not
     /// know.
     pub parameters: Value,
     pub state: CommandState,
@@ -232,6 +235,19 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
         // Queued by `POST .../ai-commands` only (ADR-0098).
         command::AI_COMMANDS => match AiCommandsSwitch::decode(payload) {
             Ok(p) => json!({"on": p.on}),
+            Err(_) => Value::Null,
+        },
+        // Queued by the remediation loop only (ADR-0181).
+        command::ROOT_ACTION => match monitorflow_common::proto::v1::RootAction::decode(payload)
+            .ok()
+            .and_then(|p| monitorflow_common::root_action::RootAction::from_proto(&p).ok())
+        {
+            Some(action) => json!({"action": action.name(), "command": action.to_string()}),
+            None => Value::Null,
+        },
+        // Only campaigns send it; high impact, like a reboot (ADR-0182).
+        command::MAJOR_UPGRADE => match MajorUpgrade::decode(payload) {
+            Ok(p) => json!({"from": p.from, "to": p.to, "impact": "high_impact"}),
             Err(_) => Value::Null,
         },
         _ => Value::Null,
@@ -707,6 +723,14 @@ mod tests {
             parameters("shell", &shell.encode_to_vec()),
             json!({"command": "df -h", "timeout_seconds": 120})
         );
+
+        let root =
+            monitorflow_common::root_action::RootAction::VacuumJournal { max_megabytes: 500 };
+        assert_eq!(
+            parameters("root_action", &root.to_proto().encode_to_vec()),
+            json!({"action": "vacuum-journal", "command": "monitorflow-root vacuum-journal 500M"})
+        );
+        assert_eq!(parameters("root_action", b"\xff"), Value::Null);
 
         for bad in [
             json!({"kind": "shell"}),

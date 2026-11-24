@@ -28,6 +28,10 @@ const PATHS = {
   autoUpdate: <path d="M13.5 6A5.7 5.7 0 0 0 3 4.5M2.5 2v3h3M2.5 10a5.7 5.7 0 0 0 10.5 1.5M13.5 14v-3h-3" />,
   approvals: <path d="M3 8l3 3 7-7" />,
   audit: <path d="M4 3h8v10H4zM6 6h4M6 9h4" />,
+  // A prompt and a line: a script of the library.
+  scripts: <path d="M2 3h12v10H2zM4.5 6l2 2-2 2M8 10h3.5" />,
+  // A lightning bolt: something happens, a script runs.
+  automation: <path d="M9 2L4 9h4l-1 5 5-7H8z" />,
   relays: (
     <>
       <circle cx="4" cy="8" r="2" />
@@ -54,6 +58,7 @@ const PATHS = {
   ai: <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />,
   bell: <path d="M4 11V7a4 4 0 0 1 8 0v4l1 1H3zM7 14h2" />,
   reports: <path d="M3 2h7l3 3v9H3zM6 11V8M8 11V6M10 11V9" />,
+  inventory: <path d="M2 5l6-3 6 3v6l-6 3-6-3zM2 5l6 3 6-3M8 8v6" />,
   dashboards: <path d="M2 2h5v6H2zM9 2h5v3H9zM9 7h5v7H9zM2 10h5v4H2z" />,
   maps: <path d="M8 2.5v4M8 6.5L3.5 11M8 6.5l4.5 4.5M3.5 13h9M8 1a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM3.5 11.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM12.5 11.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />,
   backups: <path d="M3 4h10v3H3zM4 7v6h8V7M7 10h2" />,

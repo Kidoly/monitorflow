@@ -193,6 +193,11 @@ struct Tenant {
     mib: Uuid,
     object: &'static str,
     object_oid: &'static str,
+    /// A library script of the customer, a run of it on the server waiting
+    /// for approval, and a rule running it (ADR-0189).
+    script: Uuid,
+    script_run: Uuid,
+    automation_rule: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -519,6 +524,46 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .execute(pool)
     .await
     .unwrap();
+    let script = one(
+        "INSERT INTO scripts (customer_id, name, interpreter, run_role)
+         VALUES ($1, 'disk', 'sh', 'operator') RETURNING id",
+    )
+    .bind(customer)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO script_versions (script_id, version, body) VALUES ($1, 1, 'df -h')")
+        .bind(script)
+        .execute(pool)
+        .await
+        .unwrap();
+    let script_run = one(
+        "INSERT INTO script_runs (script_id, version, customer_id, target, state, tier, rule, reason)
+         VALUES ($1, 1, $2, jsonb_build_object('kind', 'site', 'site_id', $3),
+                 'awaiting_approval', 'read_only', '{}', 'x')
+         RETURNING id",
+    )
+    .bind(script)
+    .bind(customer)
+    .bind(site)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO script_run_targets (run_id, server_id) VALUES ($1, $2)")
+        .bind(script_run)
+        .bind(server)
+        .execute(pool)
+        .await
+        .unwrap();
+    let automation_rule = one(
+        "INSERT INTO automation_rules (name, customer_id, event, script_id)
+         VALUES ('r', $1, 'server_joined', $2) RETURNING id",
+    )
+    .bind(customer)
+    .bind(script)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     let map = one("INSERT INTO network_maps (name, site_id, document)
          VALUES ($1, $2, '{\"version\": 1}') RETURNING id")
     .bind(format!("Map {name}"))
@@ -535,6 +580,9 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .await
     .unwrap();
     Tenant {
+        script,
+        script_run,
+        automation_rule,
         map,
         lookup,
         mib,
@@ -874,6 +922,47 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::BAD_REQUEST);
             assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
         }
+        // Personal (ADR-0186): one's own phones only. B's phone is not
+        // found, whatever is asked of it, and stays as it was.
+        ("GET", "/api/me/phones") | ("POST", "/api/me/phones") => {
+            let body = (method == "POST").then(|| json!({ "name": "A's phone" }));
+            let (status, body) = ctx.call(method, path, body).await;
+            assert!(status.is_success(), "{status} {body}");
+            assert!(!body.to_string().contains("member-b"), "{body}");
+        }
+        ("PUT", "/api/me/phones/{id}")
+        | ("DELETE", "/api/me/phones/{id}")
+        | ("PUT", "/api/me/phones/{id}/push")
+        | ("DELETE", "/api/me/phones/{id}/push")
+        | ("POST", "/api/me/phones/{id}/test") => {
+            let theirs: Uuid = sqlx::query_scalar(
+                "INSERT INTO phones (user_id, name) VALUES ($1, 'member-b phone') RETURNING id",
+            )
+            .bind(b.member)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            let uri = path.replace("{id}", &theirs.to_string());
+            let body = match (method, path.ends_with("/push")) {
+                ("PUT", true) => Some(json!({
+                    "endpoint": "https://push.example.net/x",
+                    "keys": {
+                        "p256dh": "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
+                        "auth": "BTBZMqHH6r4Tts7J_aSIgg",
+                    },
+                })),
+                ("PUT", false) => Some(json!({ "name": "renamed" })),
+                _ => None,
+            };
+            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::NOT_FOUND);
+            let (name, endpoint): (String, Option<String>) =
+                sqlx::query_as("SELECT name, push_endpoint FROM phones WHERE id = $1")
+                    .bind(theirs)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!((name.as_str(), endpoint), ("member-b phone", None));
+        }
         // Global: the agent releases the server holds (ADR-0053).
         ("GET", "/api/agent-releases") => {
             let (status, body) = ctx.call(method, path, None).await;
@@ -927,6 +1016,12 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 .await;
             assert_eq!(status, StatusCode::OK);
             assert_eq!(body["servers"], json!([]), "{body}");
+            // As they were: the test compares everything before and after.
+            sqlx::query("UPDATE servers SET os_version = NULL WHERE id = ANY($1)")
+                .bind(vec![a.server, b.server])
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
         }
         ("GET", "/api/servers/summary") => {
             // Counts A's servers only, whatever place it asks for.
@@ -979,6 +1074,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             );
         }
         ("GET", "/api/servers/{id}/packages")
+        | ("GET", "/api/servers/{id}/inventory")
+        | ("GET", "/api/servers/{id}/inventory/changes")
         | ("GET", "/api/servers/{id}/third-party")
         | ("GET", "/api/servers/{id}/commands")
         | ("GET", "/api/servers/{id}/rollback") => {
@@ -988,6 +1085,25 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let (status, body) = ctx.call(method, &uri, None).await;
             assert_eq!(status, StatusCode::OK, "{uri}");
             assert!(!Ctx::mentions(&body, b.command), "{body}");
+        }
+        // Major upgrades (ADR-0182): both servers run Debian 12, and A sees
+        // only its own, even when it names B's.
+        ("GET", "/api/major-upgrades") => {
+            sqlx::query("UPDATE servers SET os_version = 'debian 12' WHERE id = ANY($1)")
+                .bind(vec![a.server, b.server])
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert!(
+                Ctx::mentions(&body, a.server) && !Ctx::mentions(&body, b.server),
+                "{body}"
+            );
+            let uri = format!("{path}?server_id={}", b.server);
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["servers"], json!([]), "{body}");
         }
         // Recommendations: B's server does not exist for A.
         ("GET", "/api/servers/{id}/recommendations") => {
@@ -1034,6 +1150,53 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .await
                     .unwrap();
             assert_eq!(queued, 1, "only B's own fixture command");
+        }
+        // Remote terminals (ADR-0190): B's server and sessions do not exist
+        // for A.
+        ("POST", "/api/servers/{id}/remote-sessions")
+        | ("GET", "/api/servers/{id}/remote-sessions") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = method.eq("POST").then(|| json!({ "kind": "terminal" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+            let started: i64 = sqlx::query_scalar(
+                // Other cases insert B's own sessions, as `bob`.
+                "SELECT count(*) FROM remote_sessions WHERE username <> 'bob'",
+            )
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            assert_eq!(started, 0);
+        }
+        ("GET", "/api/remote-sessions/{id}")
+        | ("POST", "/api/remote-sessions/{id}/close")
+        | ("GET", "/api/remote-sessions/{id}/recording") => {
+            let session = uuid::Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO remote_sessions (id, server_id, kind, username, token_sha256,
+                     token_expires_at, recorded, idle_timeout_seconds)
+                 VALUES ($1, $2, 'terminal', 'bob', sha256('t'::bytea), now() + interval '1 minute',
+                         true, 900)",
+            )
+            .bind(session)
+            .bind(b.server)
+            .execute(&ctx.pool)
+            .await
+            .unwrap();
+            let uri = path.replace("{id}", &session.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            let closed: Option<chrono::DateTime<chrono::Utc>> =
+                sqlx::query_scalar("SELECT closed_at FROM remote_sessions WHERE id = $1")
+                    .bind(session)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(closed, None, "A cannot close B's session");
+        }
+        // Not a WebSocket request: refused before any session is touched.
+        ("GET", "/api/remote-sessions/{id}/socket") => {
+            let uri = path.replace("{id}", &uuid::Uuid::new_v4().to_string());
+            let status = ctx.status(method, &uri, None).await;
+            assert!(status.is_client_error(), "{uri}: {status}");
         }
         ("POST", "/api/remediation/ai-commands") => {
             // A's administrator switches A's servers, never B's.
@@ -1532,6 +1695,16 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             };
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // The templates of application checks: the same for everyone.
+        ("GET", "/api/check-templates") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(
+                body["templates"].as_array().map(Vec::len),
+                Some(4),
+                "{body}"
+            );
+        }
         // Servers running each check: A's site and server rows, not B's.
         ("GET", "/api/checks/usage") => {
             let (status, body) = ctx.call(method, path, None).await;
@@ -1584,6 +1757,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("GET", "/api/settings/server")
         | ("PUT", "/api/settings/server")
         | ("PUT", "/api/settings/retention")
+        | ("GET", "/api/settings/remote-access")
+        | ("PUT", "/api/settings/remote-access")
         | ("GET", "/api/auto-update/{kind}/peers")
         | ("GET", "/api/auto-update/{kind}/versions/peers")
         | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
@@ -1632,6 +1807,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 "POST" => Some(json!({})),
                 _ => None,
             };
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
+        // The language of AI diagnoses (ADR-0181): global administrators.
+        ("PUT", "/api/settings/ai/language") => {
+            let body = Some(json!({ "language": "fr" }));
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
         // Channels (ADR-0078): those of other customers do not exist for
@@ -1906,6 +2086,116 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .await
                     .unwrap();
             assert_eq!(state, "pending");
+        }
+        // The script library (ADR-0189): B's scripts, runs and rules do
+        // not exist for A, and nothing of A's runs on B's servers.
+        ("GET", "/api/remediation/scripts")
+        | ("GET", "/api/remediation/script-runs")
+        | ("GET", "/api/remediation/automation-rules") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            for id in [b.script, b.script_run, b.automation_rule] {
+                assert!(!Ctx::mentions(&body, id), "{body}");
+            }
+            let query = if path.ends_with("script-runs") {
+                format!("?server_id={}", b.server)
+            } else {
+                format!("?customer_id={}", b.customer)
+            };
+            let uri = format!("{path}{query}");
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+        }
+        ("POST", "/api/remediation/scripts") => {
+            let body = json!({ "customer_id": b.customer, "name": "x", "interpreter": "sh",
+                               "run_role": "operator", "body": "df -h" });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("GET", "/api/remediation/scripts/{id}")
+        | ("PUT", "/api/remediation/scripts/{id}")
+        | ("DELETE", "/api/remediation/scripts/{id}")
+        | ("POST", "/api/remediation/scripts/{id}/runs") => {
+            let body = json!({ "customer_id": b.customer, "name": "disk", "interpreter": "sh",
+                               "run_role": "operator", "body": "df -h" });
+            let body = if path.ends_with("runs") {
+                json!({ "target": { "kind": "site", "site_id": b.site } })
+            } else {
+                body
+            };
+            let uri = path.replace("{id}", &b.script.to_string());
+            let send = (method != "GET" && method != "DELETE").then_some(body);
+            assert_eq!(ctx.status(method, &uri, send).await, not_found, "{uri}");
+            // A's script on B's servers: B's site, or B's server.
+            if path.ends_with("runs") {
+                let uri = path.replace("{id}", &a.script.to_string());
+                for target in [
+                    json!({ "kind": "site", "site_id": b.site }),
+                    json!({ "kind": "servers", "server_ids": [b.server] }),
+                    json!({ "kind": "business_service", "business_service_id": b.business_service }),
+                ] {
+                    let body = json!({ "target": target });
+                    assert_eq!(
+                        ctx.status(method, &uri, Some(body)).await,
+                        not_found,
+                        "{target}"
+                    );
+                }
+            }
+            let deleted: Option<chrono::DateTime<chrono::Utc>> =
+                sqlx::query_scalar("SELECT deleted_at FROM scripts WHERE id = $1")
+                    .bind(b.script)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert!(deleted.is_none());
+        }
+        ("GET", "/api/remediation/script-runs/{id}")
+        | ("POST", "/api/remediation/script-runs/{id}/approve")
+        | ("POST", "/api/remediation/script-runs/{id}/reject")
+        | ("POST", "/api/remediation/script-runs/{id}/cancel") => {
+            let uri = path.replace("{id}", &b.script_run.to_string());
+            let body = path.ends_with("reject").then(|| json!({ "reason": "no" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+            let state: String = sqlx::query_scalar("SELECT state FROM script_runs WHERE id = $1")
+                .bind(b.script_run)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            assert_eq!(state, "awaiting_approval");
+        }
+        ("POST", "/api/remediation/automation-rules") => {
+            for (place, script) in [
+                (json!({ "customer_id": b.customer }), b.script),
+                (json!({ "site_id": b.site }), a.script),
+                (json!({ "customer_id": a.customer }), b.script),
+            ] {
+                let mut body =
+                    json!({ "name": "x", "event": "server_joined", "script_id": script });
+                body.as_object_mut()
+                    .unwrap()
+                    .extend(place.as_object().unwrap().clone());
+                assert_eq!(
+                    ctx.status(method, path, Some(body)).await,
+                    not_found,
+                    "{place}"
+                );
+            }
+        }
+        ("GET", "/api/remediation/automation-rules/{id}")
+        | ("PUT", "/api/remediation/automation-rules/{id}")
+        | ("DELETE", "/api/remediation/automation-rules/{id}") => {
+            let uri = path.replace("{id}", &b.automation_rule.to_string());
+            let body = (method == "PUT").then(|| {
+                json!({ "name": "x", "customer_id": a.customer, "event": "server_joined",
+                        "script_id": a.script })
+            });
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+            // A's rule cannot move to B.
+            if method == "PUT" {
+                let uri = path.replace("{id}", &a.automation_rule.to_string());
+                let body = json!({ "name": "x", "customer_id": b.customer, "event": "server_joined",
+                                   "script_id": a.script });
+                assert_eq!(ctx.status(method, &uri, Some(body)).await, not_found);
+            }
         }
         ("GET", "/api/remediation/events") => {
             for query in [
@@ -2550,6 +2840,15 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "version": "v2c", "community": "c" }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        // Traffic flows (ADR-0184): B's device does not exist for A.
+        ("GET", "/api/devices/{id}/flow-exporter")
+        | ("PUT", "/api/devices/{id}/flow-exporter")
+        | ("DELETE", "/api/devices/{id}/flow-exporter")
+        | ("GET", "/api/devices/{id}/flows") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({}));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
         // Custom SNMP checks (ADR-0157): B's device does not exist for A.
         ("GET", "/api/devices/{id}/snmp-checks")
         | ("POST", "/api/devices/{id}/snmp-checks")
@@ -2571,6 +2870,38 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 not_found,
                 "{uri}"
             );
+        }
+        // The inventory (ADR-0187): another customer's servers are not
+        // searched, and their warranty cannot be set.
+        ("GET", "/api/inventory") => {
+            for server in [a.server, b.server] {
+                sqlx::query(
+                    "INSERT INTO server_inventory_items (server_id, kind, key, fields)
+                     VALUES ($1, 'disk', 'sda', '{\"model\": \"TENANCY DISK\"}')
+                     ON CONFLICT DO NOTHING",
+                )
+                .bind(server)
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
+            }
+            let (status, body) = ctx
+                .call(method, &format!("{path}?kind=disk&q=tenancy"), None)
+                .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert!(
+                Ctx::mentions(&body, a.server) && !Ctx::mentions(&body, b.server),
+                "{body}"
+            );
+            let uri = format!("{path}?kind=disk&server_id={}", b.server);
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["hits"], json!([]));
+        }
+        ("PUT", "/api/servers/{id}/warranty") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "ends_on": "2030-01-01", "note": null }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
         // Network scans (ADR-0154): another customer's scans are not
         // listed nor found, and none can be made in its site.

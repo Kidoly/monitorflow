@@ -7,6 +7,7 @@ syntax = "proto3";
 
 package monitorflow.v1;
 
+import "monitorflow/v1/major_upgrade.proto";
 import "monitorflow/v1/snapshots.proto";
 
 // Payload of a Command of kind "apply_updates".
@@ -108,6 +109,9 @@ message PackageReport {
   repeated ThirdPartyPackage third_party = 6;
   // Every third-party manager of the host's platform, present or not.
   repeated PackageManagerStatus managers = 7;
+  // Linux only (ADR-0182): the next release, the checks before upgrading to
+  // it and the last major upgrade. Absent from agents before ADR-0182.
+  MajorUpgradeReport major_upgrade = 8;
 }
 
 // An app a third-party manager installed, identified by manager, id and

@@ -1,0 +1,234 @@
+/*
+ * The phone pages (ADR-0186): one column that never scrolls sideways, no
+ * scrolling box inside the page, and every control at least 44 px tall.
+ */
+.shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  overflow-x: hidden;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.headerTitle {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 16px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.nav {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 4px 6px;
+  color: var(--muted);
+  font-weight: 500;
+  text-decoration: none;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.navItem[aria-current="page"] {
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  color: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+a.card {
+  min-height: 44px;
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 6px 12px;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Full-width actions, one per line, all the same height. */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.actions > * {
+  width: 100%;
+  min-height: 44px;
+  justify-content: center;
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.choices > * {
+  min-height: 44px;
+  justify-content: center;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-height: 44px;
+  font-size: 16px; /* 16 px keeps Safari from zooming in on focus. */
+}
+
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.segmented > button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.segmented > button[aria-pressed="true"] {
+  background: var(--text);
+  color: var(--surface);
+  font-weight: 600;
+}
+
+.mark {
+  font-weight: 600;
+}
+
+/* A link of its own line, as tall as a button. */
+.link {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}

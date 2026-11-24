@@ -25,12 +25,14 @@ import { Button, ButtonLink } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
+import { Markdown } from "@/components/ui/Markdown";
 import { Page } from "@/components/ui/Page";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatExact } from "@/components/ui/time";
 
 import styles from "./Remediation.module.css";
+import { ScriptApprovals } from "./ScriptApprovals";
 
 /** A clock that moves every second, for deadlines counting down between refreshes. */
 function useNow(): Date {
@@ -175,6 +177,7 @@ export function ApprovalQueue() {
           />
         </div>
       )}
+      <ScriptApprovals />
       <p className={styles.note}>
         {t("remediation.queue.note")}
       </p>
@@ -287,10 +290,16 @@ function ApprovalDetail({
     <div className={styles.detail}>
       <dl className={styles.facts}>
         <dt>{t("remediation.detail.diagnosis")}</dt>
-        <dd className={styles.untrusted}>{item.diagnosis}</dd>
+        <dd>
+          <Markdown text={item.diagnosis} variant="ai" className={styles.aiText} />
+        </dd>
         <dt>{t("remediation.detail.reasoning")}</dt>
         <dd>
-          <span className={styles.untrusted}>{item.reasoning}</span>{" "}
+          <Markdown
+            text={item.reasoning}
+            variant="ai"
+            className={styles.aiText}
+          />
           <span className={styles.dim}>{t("remediation.detail.untrusted")}</span>
         </dd>
         <dt>{t("remediation.detail.command")}</dt>

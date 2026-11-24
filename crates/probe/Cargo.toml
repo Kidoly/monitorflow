@@ -17,6 +17,8 @@ monitorflow-snmp.workspace = true
 async-trait.workspace = true
 # vCenter and ESXi checks (ADR-0156).
 monitorflow-vmware.workspace = true
+# Ready-made application checks (ADR-0183).
+monitorflow-apps.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

@@ -382,6 +382,14 @@ describe("TokensAdmin", () => {
     await user.click(fromWeb);
     expect(linux).not.toHaveTextContent("MF_AI_COMMANDS_FROM_WEB");
     expect(within(install).getByLabelText(/^Windows/)).not.toHaveTextContent("AI_COMMANDS_FROM_WEB");
+
+    // Off by default (ADR-0189): scripts need the host's own choice.
+    const scripts = within(install).getByRole("switch", { name: /Allow scripts from the script library/ });
+    expect(scripts).not.toBeChecked();
+    expect(linux).not.toHaveTextContent("MF_ALLOW_SCRIPTS");
+    await user.click(scripts);
+    expect(linux).toHaveTextContent("sudo MF_ALLOW_SCRIPTS=1 MF_SERVER=");
+    expect(within(install).getByLabelText(/^Windows/)).toHaveTextContent("ALLOW_SCRIPTS=1");
   });
 
   it("lets global administrators change the address of every command in one step", async () => {

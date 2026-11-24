@@ -26,13 +26,16 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor anything with your own script (Bash or PowerShell)](monitor-with-your-own-script.md): Turn any shell or PowerShell script into a check with an alert: exit codes for OK, warning and critical, and name=value lines as metrics.
 - [How to monitor switches, printers, UPSs and other network devices](monitor-network-devices.md): Watch what cannot run the agent: ping, TCP and UDP ports, and SNMP v2c or v3 for interfaces, traffic, UPS battery, temperatures and printer supplies, checked from a relay of the site or the central server.
 - [How to find what is on your network](scan-the-network.md): Scan a range of addresses from the central server or a relay, see which machines can take the agent and which devices to watch, and add them in one click. Scans can run every day and say what is new.
+- [How to run scripts on your servers and automate fixes](run-scripts-and-automate-fixes.md): Keep shell and PowerShell scripts in MonitorFlow, run them on a server, a business service or a whole site, now or tonight, read each server's output, and run them by themselves when an incident opens.
 - [How to draw a live map of your network](draw-network-maps.md): Get a map of a site or a customer drawn from your relays, dependencies and switches' LLDP and CDP neighbours, coloured by incidents, arranged by hand on your floor plan, and shown on a wall screen.
+- [How to see which addresses and applications use your bandwidth (NetFlow, sFlow, IPFIX)](monitor-traffic-flows.md): Receive NetFlow, sFlow or IPFIX from your routers, firewalls and switches on a relay or the central server, see the largest addresses, applications and interfaces over time, and get alerted when one address uses too much.
+- [How to know what each server is made of and what it runs](hardware-and-software-inventory.md): See the model, serial number, disks, BIOS, installed software, services and licences of every server, find which servers have an old OpenSSL, follow changes and export them as CSV.
 
 ## Databases
 
-- [How to monitor PostgreSQL](monitor-postgresql.md): Get alerted when PostgreSQL stops or stops accepting connections on a Linux server, with two checks from the MonitorFlow catalogue.
-- [How to monitor MySQL and MariaDB](monitor-mysql-mariadb.md): Get alerted when MySQL or MariaDB stops or stops accepting connections, with the service and port checks of the MonitorFlow catalogue.
-- [How to monitor Redis](monitor-redis.md): Get alerted when Redis stops or stops accepting connections on a Linux server, with the service and port checks of MonitorFlow.
+- [How to monitor PostgreSQL](monitor-postgresql.md): Watch PostgreSQL's connections, long transactions, locks, cache and replication, and get alerted when it stops answering, with MonitorFlow's ready-made PostgreSQL check.
+- [How to monitor MySQL and MariaDB](monitor-mysql-mariadb.md): Watch MySQL and MariaDB connections, slow queries, the InnoDB buffer pool and replication, and get alerted when the database stops answering, with MonitorFlow's ready-made check.
+- [How to monitor Redis](monitor-redis.md): Watch Redis memory, evictions, clients, snapshots and replication, and get alerted when it stops answering, with MonitorFlow's ready-made Redis check.
 - [How to monitor MongoDB](monitor-mongodb.md): Get alerted when MongoDB stops or stops accepting connections on a Linux server, with the mongod service and port 27017 checks of MonitorFlow.
 - [How to monitor SQL Server](monitor-sql-server.md): Get alerted when a SQL Server instance stops or stops accepting connections on Windows, with the MSSQLSERVER service and port 1433 checks.
 
@@ -41,7 +44,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor nginx](monitor-nginx.md): Get alerted when nginx stops, when ports 80 and 443 stop answering, or when its error log reports critical errors, on every Linux server.
 - [How to monitor Apache](monitor-apache.md): Get alerted when the Apache web server stops or ports 80 and 443 stop answering, on Debian, Ubuntu, RHEL and Rocky servers.
 - [How to monitor a website over HTTPS](monitor-website-https.md): Know when your website stops answering as it should: its status code, the text on the page, how long it takes, its redirects and when its certificate expires.
-- [How to monitor Docker](monitor-docker.md): Get alerted when the Docker engine or containerd stops on a Linux server, and when a published container port stops answering.
+- [How to monitor Docker](monitor-docker.md): Watch each Docker or Podman container: whether it runs, its restarts, its health check, its processor and memory, and get alerted when the engine or a container stops.
 - [How to monitor Proxmox VE](monitor-proxmox-ve.md): Watch your Proxmox VE hosts: the web interface on port 8006, the cluster service, and the disk space, CPU and memory every VM depends on.
 - [How to monitor VMware vSphere and Hyper-V](monitor-vmware-hyper-v.md): Watch the hosts, clusters, virtual machines and datastores of a vCenter, an ESXi host or a Hyper-V host, get alerted on disconnected hosts, full datastores and old snapshots, and tie each virtual machine to its server.
 
@@ -64,3 +67,4 @@ Guides are also available [in French](fr/README.md).
 ## Administration
 
 - [How to sign in to MonitorFlow with your own identity provider](sign-in-with-your-identity-provider.md): Let your colleagues sign in with the accounts and second factor they already have: OpenID Connect (Entra ID, Google, Keycloak, authentik) or an LDAP directory over TLS.
+- [How to get MonitorFlow alerts on your phone](alerts-on-your-phone.md): Install MonitorFlow on your phone's home screen, get push notifications when you are on call, and acknowledge or silence an alert in two taps, without a store or an outside service.

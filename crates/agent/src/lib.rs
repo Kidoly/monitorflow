@@ -19,12 +19,19 @@ pub mod hardware;
 pub mod helper_trust;
 pub mod identity;
 pub mod init_config;
+pub mod inventory;
 #[cfg(unix)]
 pub mod journald;
+#[cfg(unix)]
+pub mod major_upgrade;
 pub mod os;
 pub mod packages;
 pub mod plugins;
+pub mod remote;
+pub mod remote_access;
 pub mod renew;
+#[cfg(unix)]
+pub mod root_actions;
 pub mod self_update;
 pub mod sensor_config;
 pub mod sensors;

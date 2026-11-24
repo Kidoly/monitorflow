@@ -5,6 +5,7 @@ import { setActiveLocale } from "@/i18n/locale";
 import type { EffectiveSensor, EffectiveThreshold } from "./api";
 import {
   CHECK_TYPES,
+  DEVICE_CHECK_TYPES,
   checkErrors,
   checkName,
   checkRequests,
@@ -144,9 +145,25 @@ describe("the threshold form", () => {
 });
 
 describe("adding a check", () => {
+  it("adds an application check with its template's alerts (ADR-0183)", () => {
+    const pg = CHECK_TYPES.find((t) => t.kind === "postgresql")!;
+    const values = Object.fromEntries(pg.fields.map((f) => [f.key, f.initial ?? ""]));
+    const { sensor, threshold, more } = checkRequests(pg, { ...values, password: "s3cret" }, 60_000);
+    expect(sensor).toMatchObject({
+      kind: "postgresql",
+      name: "postgresql",
+      default_alerts: true,
+      params: { host: "127.0.0.1", port: "5432", user: "monitorflow", password: "s3cret", database: "postgres", tls: "prefer" },
+    });
+    expect(threshold).toBeNull();
+    expect(more).toEqual([]);
+    expect(CHECK_TYPES.find((t) => t.kind === "docker")).toMatchObject({ os: "linux", anyRunner: false, probe: false });
+    expect(DEVICE_CHECK_TYPES.filter((t) => t.template).map((t) => t.kind)).toEqual(["postgresql", "mysql", "redis"]);
+  });
+
   it("offers what the server's system runs, everything for a site", () => {
-    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script", "http"]);
-    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script", "http"]);
+    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script", "http", "postgresql", "mysql", "redis", "docker"]);
+    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script", "http", "postgresql", "mysql", "redis"]);
     expect(checkTypesFor(null)).toHaveLength(CHECK_TYPES.length);
     const path = (os: string | null) => checkTypesFor(os).find((t) => t.kind === "log")!.fields[0]!;
     expect(path("windows").placeholder).toBe("C:\\Logs\\app.log");

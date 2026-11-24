@@ -669,7 +669,7 @@ describe("ServerPage", () => {
       await heading();
       expect(screen.getByRole("tab", { name: "Sensors · 3" })).toHaveAttribute("aria-selected", "true");
       await vi.waitFor(() => expect(window.location.search).toBe(`?id=${ID}`));
-      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Sensors · 3", "Depends on", "Logs", "Updates", "Commands · 1 running"]);
+      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Sensors · 3", "Depends on", "Logs", "Updates", "Commands · 1 running", "Inventory"]);
       expect(screen.getByRole("button", { name: "Add a check" })).toBeInTheDocument();
       // How often built-in checks run is a site setting, under Settings, Sites.
       expect(screen.queryByText(/Built-in checks run/)).not.toBeInTheDocument();

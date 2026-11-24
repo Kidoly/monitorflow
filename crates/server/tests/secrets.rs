@@ -155,6 +155,7 @@ db_tests! {
                 Column::NetworkScans,
                 Column::VmwareCredentials,
                 Column::PsaConnections,
+                Column::WebPushKeys,
             ]
         );
         let channels = "SELECT secret FROM notification_channels ORDER BY settings->>'url'";
@@ -187,6 +188,7 @@ db_tests! {
                 "snmp_credentials.secret",
                 "user_contacts.secret",
                 "vmware_credentials.secret",
+                "web_push_keys.private_key",
             ]
         );
         let endpoint = stored(&pool, "SELECT secret FROM integration_endpoints").await;

@@ -176,7 +176,7 @@ db_tests! {
             keys(&created),
             [
                 "agent_version", "command_ttl_s", "created_at", "created_by", "current_wave", "customer_id",
-                "customer_name", "error", "failure_threshold", "finished_at", "id", "name", "previous_runs",
+                "customer_name", "error", "failure_threshold", "finished_at", "id", "major_upgrade", "name", "previous_runs",
                 "progress", "server_ids", "site_id", "software", "sources", "spec", "started_at", "state",
                 "wave_count", "wave_specs", "waves", "windows"
             ]
@@ -205,7 +205,7 @@ db_tests! {
             keys(server),
             ["command_id", "error", "exit_code", "finished_at", "hostname", "peer_id",
              "restore_command_id", "server_id", "site_id", "snapshot_command_id",
-             "sources_command_id", "status"]
+             "sources_command_id", "status", "upgrade_phase", "vm_snapshot"]
         );
         assert_eq!(server["hostname"], "web-1");
         assert_eq!(server["status"], "pending");

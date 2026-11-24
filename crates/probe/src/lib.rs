@@ -47,7 +47,9 @@ pub trait ProbeFactory: Send + Sync + 'static {
 /// The kinds of `monitorflow-sensors`, without an agent's local limits:
 /// `ping` and `port` over TCP or UDP, `snmp` of `monitorflow-snmp`,
 /// `snmp_custom` and the `snmp_read` tests of Test and Browse (ADR-0157),
-/// `vmware` of `monitorflow-vmware`, and the scans' `discover` tests.
+/// `vmware` of `monitorflow-vmware`, the scans' `discover` tests, and
+/// the application checks of `monitorflow-apps` that connect over the
+/// network (ADR-0183).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Builtin;
 
@@ -72,6 +74,10 @@ impl ProbeFactory for Builtin {
         if kind == monitorflow_vmware::KIND {
             return monitorflow_vmware::build(params);
         }
+        if monitorflow_apps::NETWORK_KINDS.contains(&kind) {
+            return monitorflow_apps::build(kind, params, monitorflow_apps::Place::Relay)
+                .map_err(|e| e.to_string());
+        }
         if !PROBE_RUNS.contains(&kind) {
             return Err(format!("a probe does not run `{kind}` checks"));
         }
@@ -88,6 +94,9 @@ pub const PROBE_RUNS: &[&str] = &[
     monitorflow_snmp::KIND,
     monitorflow_snmp::CUSTOM_KIND,
     monitorflow_vmware::KIND,
+    monitorflow_apps::POSTGRESQL,
+    monitorflow_apps::MYSQL,
+    monitorflow_apps::REDIS,
 ];
 
 /// One check of a probe.

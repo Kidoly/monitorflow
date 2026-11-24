@@ -184,6 +184,7 @@ impl Fleet {
             agent_version: None,
             software: None,
             created_by: None,
+            major_upgrade: None,
         }
     }
 

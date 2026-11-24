@@ -915,6 +915,25 @@ fn relay_buffer_limits_are_checked() {
 }
 
 #[test]
+fn flow_ports_default_and_override() {
+    let relay: RelayConfig = parse(AGENT_MIN).unwrap();
+    assert_eq!(relay.flows, FlowConfig::default());
+    assert_eq!(relay.flows.ports(), [2055, 4739, 6343]);
+    let text = format!("{AGENT_MIN}\n[flows]\nlisten = \"192.0.2.10\"\nsflow_port = 0\n");
+    let vars = [("MONITORFLOW_FLOWS_IPFIX_PORT", "2055")];
+    let relay: RelayConfig = parse_with_env(&text, path(), &env(&vars)).unwrap();
+    assert_eq!(relay.flows.listen, Some("192.0.2.10".parse().unwrap()));
+    assert_eq!(relay.flows.ports(), [2055], "off, and one port once");
+    let server: ServerConfig = parse_with_env(
+        SERVER_MIN,
+        path(),
+        &env(&[("MONITORFLOW_FLOWS_NETFLOW_PORT", "9995")]),
+    )
+    .unwrap();
+    assert_eq!(server.flows.netflow_port, 9995);
+}
+
+#[test]
 fn relay_mirror_defaults_and_overrides() {
     let relay: RelayConfig = parse(AGENT_MIN).unwrap();
     assert_eq!(relay.mirror, RelayMirrorConfig::default());
@@ -1038,6 +1057,40 @@ fn agent_shell_commands_are_off_unless_enabled() {
     assert!(agent.commands.shell);
 }
 
+/// Root actions follow the file only: the root helper reads it under
+/// sudo, without the service's environment (ADR-0181).
+#[test]
+fn agent_root_actions_come_from_the_file_only() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert!(!agent.commands.root_actions);
+    let text = format!("{AGENT_MIN}\n[commands]\nroot_actions = true\n");
+    assert!(parse::<AgentConfig>(&text).unwrap().commands.root_actions);
+    let vars = [("MONITORFLOW_COMMANDS_ROOT_ACTIONS", "true")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert!(!agent.commands.root_actions);
+}
+
+#[test]
+fn agent_remote_terminals_are_off_unless_the_file_allows_them() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert!(!agent.remote.terminal);
+    let text = format!("{AGENT_MIN}\n[remote]\nterminal = true\n");
+    assert!(parse::<AgentConfig>(&text).unwrap().remote.terminal);
+    // Only the file says so: no environment variable turns them on.
+    let vars = [("MONITORFLOW_REMOTE_TERMINAL", "true")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert!(!agent.remote.terminal);
+    let text = format!("{AGENT_MIN}\n[remote]\nterminal = true\nterminal_user = \"ops\"\n");
+    let agent: AgentConfig = parse(&text).unwrap();
+    assert_eq!(agent.remote.terminal_user.as_deref(), Some("ops"));
+    for bad in ["-oProxy", "Ops", "", "a b", "ops;id"] {
+        let text = format!("{AGENT_MIN}\n[remote]\nterminal_user = {bad:?}\n");
+        assert!(parse::<AgentConfig>(&text).is_err(), "{bad}");
+    }
+    let text = format!("{AGENT_MIN}\n[remote]\ndesktop = true\n");
+    assert!(parse::<AgentConfig>(&text).is_err());
+}
+
 #[test]
 fn agent_switch_from_web_is_off_unless_allowed() {
     let agent: AgentConfig = parse(AGENT_MIN).unwrap();
@@ -1047,6 +1100,17 @@ fn agent_switch_from_web_is_off_unless_allowed() {
     let vars = [("MONITORFLOW_COMMANDS_FROM_WEB", "true")];
     let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
     assert!(agent.commands.from_web);
+}
+
+#[test]
+fn agent_library_scripts_are_off_unless_enabled() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert!(!agent.commands.scripts);
+    let text = format!("{AGENT_MIN}\n[commands]\nscripts = true\n");
+    assert!(parse::<AgentConfig>(&text).unwrap().commands.scripts);
+    let vars = [("MONITORFLOW_COMMANDS_SCRIPTS", "true")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert!(agent.commands.scripts);
 }
 
 #[test]

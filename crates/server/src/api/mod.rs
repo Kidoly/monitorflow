@@ -37,6 +37,13 @@
 //! | GET | `/api/me/preferences` | session | [`preferences::Preferences`]: the signed-in person's own `{"theme", "language", "sidebar": {"collapsed", "hidden", "order"}}`, every key optional, `{}` when never saved (ADR-0137); never through an API key |
 //! | PUT | `/api/me/preferences` | session | body [`preferences::Preferences`], replacing the stored one; 400 for an unknown key or value, a list over 64 items, an item identifier out of form or a body over 16 KiB. Not audited |
 //! | POST | `/api/me/password` | session | body [`own_password::ChangeRequest`] `{"current_password", "new_password"}`; 204, the person's other sessions ended and this one kept; 400 for a short or unchanged new password or a wrong current one, 429 `rate_limited` within the sign-in limits; audited; never through an API key (ADR-0141) |
+//! | GET | `/api/me/phones` | session | [`phones::Phones`]: the person's phones, `push_key` to subscribe with, and how long a phone's session lasts (ADR-0186); never through an API key |
+//! | POST | `/api/me/phones` | session | body [`phones::AddPhone`] `{"name"}`; 201 [`phones::PhoneView`]: this browser is now a phone of the person, its session lasts 90 days (30 unused) and ends with the phone; 409 over 10 phones; audited `user.phone_add` |
+//! | PUT | `/api/me/phones/{id}` | session | body [`phones::Rename`] `{"name"}`; audited `user.phone_rename` |
+//! | DELETE | `/api/me/phones/{id}` | session | 204; the phone is signed out and gets no more notifications; audited `user.phone_remove` |
+//! | PUT | `/api/me/phones/{id}/push` | session | body [`phones::PushRequest`], the browser's `PushSubscription.toJSON()`; only from that phone's own session; 400 for an endpoint that is not https on the internet; audited `user.phone_push_on` |
+//! | DELETE | `/api/me/phones/{id}/push` | session | notifications off; audited `user.phone_push_off` |
+//! | POST | `/api/me/phones/{id}/test` | session | [`phones::TestResult`] `{"ok", "error"}`; 429 beyond 6 tests a minute with the contact's |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
 //! | GET | `/api/servers/summary` | any role | [`servers::ServerSummary`]: how many servers are critical, warning, acknowledged, silenced, offline and ok, out of `total`; `?site_id` or `?customer_id` narrows it (ADR-0130) |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
@@ -56,6 +63,8 @@
 //! | GET, PUT, DELETE | `/api/devices/{id}/vmware` | read, modify | [`crate::vmware::View`] without the password; body [`crate::vmware::CredentialsRequest`]; audited |
 //! | GET, POST | `/api/devices/{id}/snmp-checks` | read, modify | [`snmp_checks::CheckList`]; body [`snmp_checks::CheckRequest`], 201 [`snmp_checks::CheckView`]: a custom SNMP check with its channels' limits (ADR-0157); audited |
 //! | PUT, DELETE | `/api/devices/{id}/snmp-checks/{name}` | modify | the same body; [`snmp_checks::CheckView`]; 204; audited |
+//! | GET, PUT, DELETE | `/api/devices/{id}/flow-exporter` | read, modify | [`flows::ExporterView`]; body [`flows::ExporterRequest`]: who receives its traffic flows (ADR-0184); audited |
+//! | GET | `/api/devices/{id}/flows` | read | [`flows::FlowParams`]; [`crate::flows::query::FlowView`]: tops and chart of a period |
 //! | POST | `/api/devices/{id}/snmp/read` | modify | body [`snmp_checks::ReadRequest`]; [`snmp_checks::ReadResult`]: Test and Browse from the device's probe |
 //! | POST | `/api/devices/{id}/snmp/test` | modify | body [`snmp_checks::CheckRequest`]; [`snmp_checks::Tested`]: what each channel would write |
 //! | GET | `/api/sites/{id}/probes` | read | [`devices::ProbeList`]: the central server and the site's relays, and the default |
@@ -70,6 +79,7 @@
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
 //! | POST | `/api/servers/{id}/recommendations/restore` | modify | body [`recommendations::KeyRequest`], a dismissed one; 204 |
 //! | GET | `/api/servers/{id}/website-checks` | read | [`website_checks::WebsiteChecks`]: each website check with its last status, time, final URL and certificate (ADR-0150) |
+//! | GET | `/api/check-templates` | read | [`check_templates::CheckTemplates`]: what each ready-made application check measures and its default alerts (ADR-0183) |
 //! | GET | `/api/checks/usage` | read | [`checks::UsageList`]: servers running each check, over the sites read, for the catalogue's "Most used" |
 //! | GET | `/api/sites/{id}/sensors` | read | [`sensors::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | PUT | `/api/sites/{id}/check-interval` | modify | body and answer [`check_interval::CheckInterval`] `{"interval_ms"}`, 10 s to 24 h or `null` for the built-in one: how often the site's built-in checks run; audited (ADR-0097) |
@@ -140,6 +150,7 @@
 //! | GET | `/api/settings/ai` | any session | [`ai::AiView`]: whether AI is on, its provider, whether a key is stored, the address, the model and Anthropic's models; never the key |
 //! | PUT | `/api/settings/ai` | global administrator | body [`ai::SetRequest`]; 200 [`ai::AiView`]; 400 with the reason in plain words when the key or model fails its test; 409 while `[ai] enabled = true` in the configuration; audited, without the key |
 //! | DELETE | `/api/settings/ai` | global administrator | forgets the key and turns AI off; 200 [`ai::AiView`]; 409 as above; audited |
+//! | PUT | `/api/settings/ai/language` | global administrator | body [`ai::LanguageRequest`], `{"language": "fr"}` or `null` to follow the users' languages; 200 [`ai::AiView`]; allowed while the configuration sets AI; audited as `settings.ai_language` (ADR-0181) |
 //! | POST | `/api/settings/ai/test` | global administrator | body [`ai::TestRequest`]; 200 [`notifications::TestResult`]; saves nothing |
 //! | POST | `/api/settings/ai/models` | global administrator | body [`ai::TestRequest`] without `model`; 200 [`ai::ModelList`], the models the provider's server offers, or why it could not say |
 //! | GET | `/api/settings/public-address` | customer administrator | [`public_address::PublicAddress`]: the address in install commands, the default, the certificate's names and whether it covers the address |
@@ -173,6 +184,14 @@
 //! | GET | `/api/remediation/approvals` | any role | [`approvals::PendingList`], see below |
 //! | POST | `/api/remediation/approvals/{id}/approve` | approver, see below | body `{"command"?}`; 200 [`approvals::DecisionView`]; 409 once decided, past the deadline, or when the server refuses these commands (ADR-0076) |
 //! | POST | `/api/remediation/approvals/{id}/reject` | approver | body `{"reason"}`; 200 [`approvals::DecisionView`]; 409 as for approve |
+//! | GET | `/api/remediation/scripts` | any role | [`scripts::ScriptList`]: the script library (ADR-0189) |
+//! | POST | `/api/remediation/scripts` | administrator of the customer, or of everything | body [`scripts::ScriptRequest`]; 201 [`scripts::ScriptDetail`] |
+//! | GET, PUT, DELETE | `/api/remediation/scripts/{id}` | read; administrator to change | [`scripts::ScriptDetail`]; a new text makes a new version; 409 on delete while rules run it |
+//! | POST | `/api/remediation/scripts/{id}/runs` | the script's `run_role` on every server's site | body [`scripts::RunRequest`]; 201 [`scripts::RunDetail`], waiting for approval unless the caller may approve its tier |
+//! | GET | `/api/remediation/script-runs`, `/{id}` | reads every server of the run | [`scripts::RunList`], [`scripts::RunDetail`] with each server's output |
+//! | POST | `/api/remediation/script-runs/{id}/approve`, `/reject`, `/cancel` | approver role of its tier; any approver; requester or approver | 200 [`scripts::RunDetail`]; 409 once decided |
+//! | GET, POST | `/api/remediation/automation-rules` | read; administrator of the place | [`automation_rules::RuleList`]; body [`automation_rules::RuleRequest`], 201 |
+//! | GET, PUT, DELETE | `/api/remediation/automation-rules/{id}` | read; administrator of the place | [`automation_rules::RuleDetail`] with its last firings |
 //! | GET | `/api/remediation/events` | any role | [`remediation_events::EventList`], see below |
 //! | GET | `/api/remediation/alerts/{id}` | read | [`remediation_runs::RunStatus`]: the alert's attempts and whether the user may start one now (ADR-0165) |
 //! | POST | `/api/remediation/alerts/{id}/run` | approver | 201 [`remediation_runs::RunStarted`]: a new remediation of the open alert; 409 when the alert is resolved or has no agent, one is in progress, AI is off, or the server refuses AI commands |
@@ -213,6 +232,10 @@
 //! | POST | `/api/maps/{id}/neighbors` | modify the place | [`maps::NeighborRead`]: reads the LLDP and CDP neighbours of its SNMP devices the user may change |
 //! | GET | `/api/servers/{id}/logs` | read | [`logs::LogList`]: the server's system logs, newest first, see below |
 //! | GET | `/api/servers/{id}/packages` | read | [`packages::PackageList`], see below |
+//! | GET | `/api/servers/{id}/inventory` | read | [`inventory::ServerInventory`]: hardware and software inventory, warranty and asset facts (ADR-0187) |
+//! | GET | `/api/servers/{id}/inventory/changes` | read | [`inventory::ChangeList`]: what changed in the inventory and packages, newest first, paginated |
+//! | PUT | `/api/servers/{id}/warranty` | operator | body [`inventory::Warranty`]; both `null` removes it; audited |
+//! | GET | `/api/inventory` | any role | [`inventory::SearchResult`]: the fleet search by kind, text and version, or `format=csv` |
 //! | GET | `/api/servers/{id}/third-party` | read | [`third_party::List`]: third-party package managers and their apps (ADR-0138); `manager`, `pending`, paginated |
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
@@ -277,6 +300,7 @@
 //! | PUT | `/api/servers/{id}/proxmox` | customer administrator | body [`proxmox::MappingRequest`]; 200 [`proxmox::ProxmoxView`] |
 //! | DELETE | `/api/servers/{id}/proxmox` | customer administrator | 204; 404 without a mapping |
 //! | GET | `/api/servers/{id}/proxmox/guests` | customer administrator | [`proxmox::GuestList`], see below |
+//! | GET | `/api/major-upgrades` | read | [`major_upgrades::MajorUpgradeList`]: per server, the next release, the checks before upgrading to it, the rollback and the last upgrade (ADR-0182); `customer_id`, `site_id`, `server_id` |
 //! | GET | `/api/servers/{id}/rollback` | read | [`rollback::RollbackView`]: what a change gets first, a Proxmox, LVM or ZFS snapshot or why none, and the local snapshots with when they are deleted (ADR-0094) |
 //! | GET | `/api/notifications/channels` | any administrator | [`notifications::ChannelList`]: the channels of what the user administers, without secrets, with `has_secret` and the last error (ADR-0060, ADR-0078) |
 //! | POST | `/api/notifications/channels` | administrator of what it covers | body [`notifications::ChannelRequest`]; 201 [`notifications::ChannelView`]; 403 for anything else; audited |
@@ -759,12 +783,14 @@ pub(crate) mod audit;
 pub mod auth;
 pub mod auto_update;
 pub mod auto_update_versions;
+pub mod automation_rules;
 pub mod availability;
 pub mod backups;
 pub mod business_services;
 pub mod campaigns;
 pub mod certificate_authority;
 pub mod check_interval;
+pub mod check_templates;
 pub mod checks;
 pub mod client_addr;
 pub mod commands;
@@ -775,6 +801,7 @@ pub mod dependencies;
 pub mod devices;
 pub mod display;
 mod error;
+pub mod flows;
 pub mod follow_up;
 mod health;
 pub mod idempotency;
@@ -783,10 +810,12 @@ pub mod imports;
 pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
+pub mod inventory;
 pub mod license;
 pub mod login_limit;
 pub mod logs;
 pub mod maintenance_windows;
+pub mod major_upgrades;
 pub mod maps;
 pub mod metrics;
 pub mod mirrors;
@@ -803,14 +832,18 @@ pub mod openapi_core;
 mod openapi_dashboards;
 mod openapi_dependencies;
 mod openapi_devices;
+mod openapi_flows;
 mod openapi_imports;
+mod openapi_inventory;
 mod openapi_maintenance;
 mod openapi_maps;
 mod openapi_network_scans;
 mod openapi_plugins;
 mod openapi_psa;
 pub mod openapi_remediation;
+mod openapi_remote;
 mod openapi_reports;
+mod openapi_scripts;
 mod openapi_settings;
 mod openapi_snmp;
 mod openapi_software;
@@ -822,6 +855,7 @@ pub mod own_password;
 pub mod package_sources;
 pub mod packages;
 pub mod password;
+pub mod phones;
 pub mod plugins;
 pub mod preferences;
 pub mod proxmox;
@@ -834,10 +868,12 @@ pub mod remediation;
 pub mod remediation_events;
 pub mod remediation_incidents;
 pub mod remediation_runs;
+pub mod remote_sessions;
 pub mod report_schedules;
 pub mod revoke;
 pub mod roles;
 pub mod rollback;
+pub mod scripts;
 pub mod sensor_values;
 pub mod sensors;
 pub mod server_settings;
@@ -1034,6 +1070,8 @@ pub struct ApiState {
     /// Runs one-off probe tests, for "Add a device" (ADR-0149); without
     /// it, tests run on this central server only.
     pub probes: Option<crate::probes::Probes>,
+    /// Runs remote terminals (ADR-0190); `None` refuses to start them.
+    pub remote: Option<crate::remote::RemoteHub>,
 }
 
 impl ApiState {
@@ -1059,6 +1097,7 @@ impl ApiState {
             contact_tests: Arc::new(on_call::test_limit()),
             oidc: crate::sso::oidc::Cache::default(),
             probes: None,
+            remote: None,
         }
     }
 
@@ -1096,6 +1135,12 @@ impl ApiState {
     /// Wakes `commands` when a command is queued.
     pub fn with_commands(mut self, commands: Commands) -> Self {
         self.commands = Some(commands);
+        self
+    }
+
+    /// Runs remote terminals (ADR-0190).
+    pub fn with_remote(mut self, remote: crate::remote::RemoteHub) -> Self {
+        self.remote = Some(remote);
         self
     }
 
@@ -1161,6 +1206,16 @@ pub fn router(state: ApiState) -> Router {
             get(identity_providers::groups).put(identity_providers::set_groups),
         )
         .route("/api/me/password", post(own_password::change))
+        .route("/api/me/phones", get(phones::list).post(phones::add))
+        .route(
+            "/api/me/phones/{id}",
+            put(phones::rename).delete(phones::remove),
+        )
+        .route(
+            "/api/me/phones/{id}/push",
+            put(phones::set_push).delete(phones::delete_push),
+        )
+        .route("/api/me/phones/{id}/test", post(phones::test))
         .route(
             "/api/me/preferences",
             get(preferences::get)
@@ -1367,6 +1422,41 @@ pub fn router(state: ApiState) -> Router {
             "/api/remediation/approvals/{id}/reject",
             post(approvals::reject),
         )
+        .route(
+            "/api/remediation/scripts",
+            get(scripts::list).post(scripts::create),
+        )
+        .route(
+            "/api/remediation/scripts/{id}",
+            get(scripts::get)
+                .put(scripts::update)
+                .delete(scripts::delete),
+        )
+        .route("/api/remediation/scripts/{id}/runs", post(scripts::start))
+        .route("/api/remediation/script-runs", get(scripts::runs))
+        .route("/api/remediation/script-runs/{id}", get(scripts::run))
+        .route(
+            "/api/remediation/script-runs/{id}/approve",
+            post(scripts::approve),
+        )
+        .route(
+            "/api/remediation/script-runs/{id}/reject",
+            post(scripts::reject),
+        )
+        .route(
+            "/api/remediation/script-runs/{id}/cancel",
+            post(scripts::cancel),
+        )
+        .route(
+            "/api/remediation/automation-rules",
+            get(automation_rules::list).post(automation_rules::create),
+        )
+        .route(
+            "/api/remediation/automation-rules/{id}",
+            get(automation_rules::get)
+                .put(automation_rules::update)
+                .delete(automation_rules::delete),
+        )
         .route("/api/remediation/events", get(remediation_events::list))
         .route(
             "/api/remediation/alerts/{id}",
@@ -1394,6 +1484,13 @@ pub fn router(state: ApiState) -> Router {
             "/api/devices/{id}/snmp-checks/{name}",
             put(snmp_checks::update).delete(snmp_checks::remove),
         )
+        .route(
+            "/api/devices/{id}/flow-exporter",
+            get(flows::exporter)
+                .put(flows::set_exporter)
+                .delete(flows::delete_exporter),
+        )
+        .route("/api/devices/{id}/flows", get(flows::flows))
         .route("/api/devices/{id}/snmp/read", post(snmp_checks::read))
         .route("/api/devices/{id}/snmp/test", post(snmp_checks::test))
         .route("/api/sites/{id}/probes", get(devices::probes))
@@ -1459,6 +1556,7 @@ pub fn router(state: ApiState) -> Router {
             post(recommendations::restore),
         )
         .route("/api/checks/usage", get(checks::usage))
+        .route("/api/check-templates", get(check_templates::list))
         .route("/api/sites/{id}/sensors", get(sensors::effective_site))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
         .route(
@@ -1547,13 +1645,38 @@ pub fn router(state: ApiState) -> Router {
             post(threshold_preview::site),
         )
         .route("/api/servers/{id}/packages", get(packages::list))
+        .route("/api/servers/{id}/inventory", get(inventory::server))
+        .route(
+            "/api/servers/{id}/inventory/changes",
+            get(inventory::changes),
+        )
+        .route("/api/servers/{id}/warranty", put(inventory::set_warranty))
+        .route("/api/inventory", get(inventory::search))
         .route("/api/servers/{id}/third-party", get(third_party::list))
         .route("/api/servers/{id}/rollback", get(rollback::get))
+        .route("/api/major-upgrades", get(major_upgrades::list))
         .route(
             "/api/servers/{id}/commands",
             get(commands::list).post(commands::create),
         )
         .route("/api/servers/{id}/ai-commands", post(ai_commands::server))
+        .route(
+            "/api/servers/{id}/remote-sessions",
+            get(remote_sessions::list).post(remote_sessions::start),
+        )
+        .route("/api/remote-sessions/{id}", get(remote_sessions::detail))
+        .route(
+            "/api/remote-sessions/{id}/close",
+            post(remote_sessions::close),
+        )
+        .route(
+            "/api/remote-sessions/{id}/recording",
+            get(remote_sessions::recording),
+        )
+        .route(
+            "/api/remote-sessions/{id}/socket",
+            get(remote_sessions::socket),
+        )
         .route("/api/sites/{id}/ai-commands", post(ai_commands::site))
         .route("/api/remediation/ai-commands", post(ai_commands::fleet))
         .route("/api/commands/{id}", get(commands::detail))
@@ -1649,6 +1772,10 @@ pub fn router(state: ApiState) -> Router {
             get(settings::get_agent_install).put(settings::set_agent_install),
         )
         .route(
+            "/api/settings/remote-access",
+            get(remote_sessions::get_settings).put(remote_sessions::set_settings),
+        )
+        .route(
             "/api/settings/public-address",
             get(public_address::get).put(public_address::set),
         )
@@ -1656,6 +1783,7 @@ pub fn router(state: ApiState) -> Router {
             "/api/settings/ai",
             get(ai::get).put(ai::set).delete(ai::remove_key),
         )
+        .route("/api/settings/ai/language", put(ai::set_language))
         .route("/api/settings/ai/test", post(ai::test))
         .route("/api/settings/ai/models", post(ai::models))
         .route(

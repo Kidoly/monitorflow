@@ -110,3 +110,62 @@ fn a_probe_label_from_a_sensor_is_refused() {
     );
     assert_eq!(checked.invalid, 1);
 }
+
+#[tokio::test]
+async fn flow_reports_are_believed_for_given_devices_and_alert_per_address() {
+    let kept = Kept::default();
+    let (probes, writer) = probes(&kept);
+    let (tx, mut written) = tokio::sync::mpsc::channel(8);
+    let probes = probes.with_flows(
+        FlowWriter::from_sender(tx),
+        monitorflow_flow::collector::Settings::default(),
+    );
+    probes.shared.write().unwrap().relays.insert(
+        "relay-1".into(),
+        [("router".to_string(), "paris".to_string())].into(),
+    );
+    let report = |device: &str| FlowReport {
+        device: device.into(),
+        start_unix_ms: Utc::now().timestamp_millis() - 60_000,
+        seconds: 60,
+        bytes: 7_500,
+        packets: 5,
+        tops: vec![monitorflow_common::proto::v1::FlowTop {
+            dimension: "src".into(),
+            key: "192.0.2.15".into(),
+            bytes: 7_500,
+            packets: 5,
+        }],
+        conversations: vec![],
+    };
+    probes.flow_reports(
+        "relay-1",
+        FlowReports {
+            reports: vec![report("router"), report("elsewhere")],
+        },
+    );
+    let stats = probes.stats();
+    assert_eq!((stats.flow_reports, stats.unknown_device), (1, 1));
+    let batch = written.recv().await.unwrap();
+    assert_eq!(batch.len(), 1);
+    assert_eq!(batch[0].device, "router");
+    writer.shutdown(Duration::from_secs(1)).await;
+    let kept = kept.0.lock().unwrap();
+    let address = kept
+        .iter()
+        .find(|s| {
+            s.labels
+                .iter()
+                .any(|(k, v)| k == "instance" && v == "192.0.2.15")
+        })
+        .expect("the address's series");
+    assert_eq!(address.value, 1_000.0, "7.5 kB in a minute");
+    assert!(address
+        .labels
+        .iter()
+        .any(|(k, v)| k == "__name__" && v == "monitorflow_flow_address_bits_per_second"));
+    assert!(address
+        .labels
+        .iter()
+        .any(|(k, v)| k == "probe" && v == "relay-1"));
+}

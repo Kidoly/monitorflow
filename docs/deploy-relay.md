@@ -4,7 +4,7 @@ A relay forwards the streams of the agents of a site to the central server, buff
 
 ## Getting started
 
-You need a machine with systemd, x86_64 or aarch64, that the site's agents reach on port 7443 (and 7480 if it serves mirrors), and that reaches the server on 7443 and 7445.
+You need a machine with systemd, x86_64 or aarch64, that the site's agents reach on port 7443 (and 7480 if it serves mirrors), and that reaches the server on 7443 and 7445. A relay that receives traffic flows from devices of its site also takes UDP 2055, 6343 and 4739 from them, open only while some device sends it flows (`[flows]` in its configuration changes the ports)[^0184].
 
 1. Under Administration › Relays, choose **Add relay**, pick the site and paste the command on the relay's machine. The relay appears on the same page, with the addresses it found.
 2. Tick the names agents reach it at, then **Confirm names**. Within seconds it accepts agents[^0066].
@@ -99,3 +99,4 @@ The relay's page in the web interface does this in one go: "Remove" revokes its 
 [^0053]: [ADR-0053: Signed releases and agent self-update](adr/0053-agent-self-update.md)
 [^0055]: [ADR-0055: Automatic agent and relay updates](adr/0055-automatic-updates.md)
 [^0066]: [ADR-0066: Relay onboarding without typing](adr/0066-relay-onboarding.md)
+[^0184]: [ADR-0184: Traffic flows](adr/0184-traffic-flows.md)

@@ -7,6 +7,7 @@ syntax = "proto3";
 
 package monitorflow.v1;
 
+import "monitorflow/v1/inventory.proto";
 import "monitorflow/v1/packages.proto";
 
 // Long-lived bidirectional stream between an agent (or relay) and its upstream.
@@ -47,6 +48,17 @@ message Envelope {
     ProbeTest probe_test = 24;
     // Relay to server: what that check measured.
     ProbeTestResult probe_test_result = 25;
+    // Relay to server, on its own stream: what the flows its exporters
+    // sent added up to, a window at a time (ADR-0184).
+    FlowReports flow_reports = 26;
+    // Both ways, on an agent's stream: the frames of a remote session
+    // (ADR-0190), sealed end to end between the central server and the
+    // agent, so relays pass them on without reading or changing them.
+    RemoteFrame remote = 27;
+    // Agent to server: what the machine is made of and runs (ADR-0187).
+    InventoryReport inventory = 28;
+    // Server to agent: send the inventory again (ADR-0187).
+    InventoryRequest inventory_request = 29;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -227,6 +239,58 @@ message ProbeConfig {
   // Changes whenever the checks change.
   uint64 revision = 1;
   repeated ProbeCheck checks = 2;
+  // The devices whose NetFlow, IPFIX and sFlow the relay receives
+  // (ADR-0184); none: it opens no flow listener.
+  repeated FlowExporter flow_exporters = 3;
+}
+
+// A device that sends traffic flows to the probe.
+message FlowExporter {
+  // `ProbeCheck.device`: its ID in the inventory.
+  string device = 1;
+  // Addresses its flows come from: IP addresses, or DNS names the relay
+  // resolves. A datagram from another address is dropped.
+  repeated string addresses = 2;
+}
+
+// Flows added up per exporter and window, oldest first.
+message FlowReports {
+  repeated FlowReport reports = 1;
+}
+
+// One exporter's traffic over one window: the totals, the largest keys of
+// each dimension, and the largest conversations. The rest of a dimension
+// is the total minus its keys.
+message FlowReport {
+  // `FlowExporter.device`.
+  string device = 1;
+  // Start of the window, aligned on its length.
+  int64 start_unix_ms = 2;
+  uint32 seconds = 3;
+  // Bytes and packets of the window, sampling already undone.
+  uint64 bytes = 4;
+  uint64 packets = 5;
+  repeated FlowTop tops = 6;
+  repeated FlowConversation conversations = 7;
+}
+
+message FlowTop {
+  // `src`, `dst` (addresses), `app` (`tcp/443`), `protocol` (`tcp`),
+  // `in` or `out` (the exporter's ifIndex).
+  string dimension = 1;
+  string key = 2;
+  uint64 bytes = 3;
+  uint64 packets = 4;
+}
+
+message FlowConversation {
+  string src = 1;
+  string dst = 2;
+  string app = 3;
+  uint32 input = 4;
+  uint32 output = 5;
+  uint64 bytes = 6;
+  uint64 packets = 7;
 }
 
 message ProbeCheck {
@@ -371,4 +435,143 @@ message ShellCommand {
 // `commands.from_web`.
 message AiCommandsSwitch {
   bool on = 1;
+}
+
+// Payload of "root_action" commands (ADR-0181): one action of a fixed
+// catalog the AI may ask for, run as root by the agent's root helper
+// (`sudo -n /usr/bin/monitorflow-agent root-action`), which checks the
+// signed command, the host's consent (`commands.root_actions`) and the
+// parameters before running anything. Never a command line.
+message RootAction {
+  oneof action {
+    // Empty the package manager's download cache (apt-get clean,
+    // dnf clean packages, zypper clean).
+    CleanPackageCache clean_package_cache = 1;
+    // Shrink the systemd journal to at most `max_megabytes`
+    // (journalctl --vacuum-size).
+    VacuumJournal vacuum_journal = 2;
+    // Remove Docker images no container uses and the build cache.
+    PruneDocker prune_docker = 3;
+    // Restart one systemd service.
+    RestartService restart_service = 4;
+  }
+}
+
+message CleanPackageCache {}
+
+message VacuumJournal {
+  // Between 100 and 65536 (64 GiB).
+  uint32 max_megabytes = 1;
+}
+
+message PruneDocker {}
+
+message RestartService {
+  // A unit name ending in `.service`, never a critical one (ADR-0181).
+  string unit = 1;
+}
+
+// Payload of "run_script" commands (ADR-0189): a script of the central
+// server's library, run by the agent as its own user. Agents refuse it
+// unless `commands.scripts` is enabled in their configuration, which only
+// the host's administrator sets.
+message RunScript {
+  // "sh" (`/bin/sh -c`, Linux) or "powershell" (Windows PowerShell 5.1).
+  // An agent refuses an interpreter its system does not have.
+  string interpreter = 1;
+  // The script's text, exactly as the server classified it.
+  string body = 2;
+  // Parameters, given to the script as environment variables
+  // `MF_PARAM_<NAME>` (the name in upper case), never written into its
+  // text.
+  repeated ScriptParameter parameters = 3;
+  // The agent kills the script and what it started after this many
+  // seconds; 0 means the agent's default.
+  uint32 timeout_seconds = 4;
+  // The library script and its version, for the agent's log.
+  string script_id = 5;
+  uint32 version = 6;
+}
+
+message ScriptParameter {
+  // Lower case letters, digits and `_`, starting with a letter.
+  string name = 1;
+  string value = 2;
+}
+
+// Payload of "remote_session" commands (ADR-0190): opens a terminal on the
+// agent, as the user its host allowed, when its administrator turned
+// remote terminals on (`remote.terminal`). The server's key starts the
+// session's end-to-end keys; the command's signature is what makes it the
+// server's.
+message RemoteSessionOpen {
+  // UUID of the session, chosen by the server; every frame names it.
+  string session_id = 1;
+  // "terminal". Other kinds are refused.
+  string kind = 2;
+  // The server's X25519 public key for this session, 32 bytes.
+  bytes server_key = 3;
+  // Initial size of the terminal.
+  uint32 cols = 4;
+  uint32 rows = 5;
+  // Who opened it, as shown on the server's banner.
+  string requested_by = 6;
+  // The agent closes the session after this long without input.
+  uint32 idle_timeout_seconds = 7;
+  // Whether the central server records the session, as the banner says.
+  bool recorded = 8;
+}
+
+// One frame of a remote session. Only `opened` and `closed` travel in the
+// clear; everything else is `sealed`.
+message RemoteFrame {
+  string session_id = 1;
+  oneof body {
+    // Agent to server, once: the agent's half of the keys.
+    RemoteOpened opened = 2;
+    // Both ways: a RemoteData sealed with ChaCha20-Poly1305 under the key
+    // of its direction, with `counter` as its nonce
+    // (`common::remote`). A frame out of order ends the session.
+    bytes sealed = 3;
+    // Both ways: the session ended, or could not start. Unauthenticated,
+    // as dropping frames is something any relay can do anyway.
+    RemoteClosed closed = 4;
+  }
+  // Number of the sealed frame in its direction, from 0.
+  uint64 counter = 5;
+}
+
+message RemoteOpened {
+  // The agent's X25519 public key for this session, 32 bytes.
+  bytes agent_key = 1;
+  // The agent's certificate, DER: the server checks that its CA issued it
+  // to this agent and that it is not revoked.
+  bytes certificate = 2;
+  // ECDSA P-256 signature with the certificate's key over the session ID
+  // and both keys (`common::remote::opened_signed_bytes`), so a relay
+  // cannot stand in for the agent.
+  bytes signature = 3;
+}
+
+// What a sealed frame holds.
+message RemoteData {
+  oneof body {
+    // Server to agent: keystrokes.
+    bytes input = 1;
+    // Agent to server: what the terminal printed.
+    bytes output = 2;
+    // Server to agent: the browser's terminal changed size.
+    RemoteResize resize = 3;
+    // Either way: the session ends, with why.
+    string close = 4;
+  }
+}
+
+message RemoteResize {
+  uint32 cols = 1;
+  uint32 rows = 2;
+}
+
+message RemoteClosed {
+  string reason = 1;
 }

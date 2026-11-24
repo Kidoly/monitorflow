@@ -53,8 +53,13 @@
 }
 
 /* The AI's words keep their line breaks; they are data, not markup. */
-.untrusted {
-  white-space: pre-wrap;
+/* The AI's diagnosis and reasoning, drawn from their Markdown (ADR-0181). */
+.aiText > * {
+  margin: 0 0 4px;
+}
+
+.aiText > :last-child {
+  margin-bottom: 0;
 }
 
 .actions {

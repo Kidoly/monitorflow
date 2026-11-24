@@ -15,6 +15,12 @@
     AI_COMMANDS_FROM_WEB=1  let the web interface turn AI commands on and
                       off (commands.from_web in agent.toml, ADR-0098), on a
                       new install or an upgrade
+    ALLOW_SCRIPTS=1   let the agent run scripts of the script library
+                      (commands.scripts in agent.toml, ADR-0189), on a new
+                      install or an upgrade
+    REMOTE_TERMINAL=1 let people allowed on the central server open a
+                      terminal on this host from its page (remote.terminal
+                      in agent.toml, ADR-0190); REMOTE_TERMINAL=0 refuses it
     SOFTWARE_FROM_WEB=1  let the central server install and remove
                       software from its catalogue (commands.software in
                       agent.toml, ADR-0188), on a new install or an upgrade
@@ -45,6 +51,8 @@
     <Property Id="ENROLLMENT_TOKEN" Secure="yes" Hidden="yes" />
     <Property Id="REMOVE_DATA" Secure="yes" />
     <Property Id="AI_COMMANDS_FROM_WEB" Secure="yes" />
+    <Property Id="ALLOW_SCRIPTS" Secure="yes" />
+    <Property Id="REMOTE_TERMINAL" Secure="yes" />
     <Property Id="SOFTWARE_FROM_WEB" Secure="yes" />
 
     <Feature Id="Agent" Title="MonitorFlow agent">
@@ -179,6 +187,19 @@
     <CustomAction Id="AllowAiCommandsFromWeb" FileRef="AgentExe" Execute="deferred" Impersonate="no"
                   Return="check"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; ai-commands from-web on" />
+    <!-- ALLOW_SCRIPTS=1: lets the agent run scripts of the script library
+         (commands.scripts, ADR-0189), as `scripts on` does. -->
+    <CustomAction Id="AllowScripts" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; scripts on" />
+    <!-- REMOTE_TERMINAL=1 or 0: the agent edits agent.toml itself, as
+         `remote-access terminal on|off` does (ADR-0190). -->
+    <CustomAction Id="AllowRemoteTerminal" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; remote-access terminal on" />
+    <CustomAction Id="RefuseRemoteTerminal" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; remote-access terminal off" />
     <!-- SOFTWARE_FROM_WEB=1: as above, `software on` (ADR-0188). -->
     <CustomAction Id="AllowSoftwareFromWeb" FileRef="AgentExe" Execute="deferred" Impersonate="no"
                   Return="check"
@@ -188,7 +209,13 @@
       <Custom Action="WriteAgentConfig" After="CheckDataFolder" Condition="UPSTREAM_URL AND NOT REMOVE" />
       <Custom Action="AllowAiCommandsFromWeb" After="WriteAgentConfig"
               Condition="AI_COMMANDS_FROM_WEB = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
-      <Custom Action="AllowSoftwareFromWeb" After="AllowAiCommandsFromWeb"
+      <Custom Action="AllowScripts" After="AllowAiCommandsFromWeb"
+              Condition="ALLOW_SCRIPTS = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
+      <Custom Action="AllowRemoteTerminal" After="AllowScripts"
+              Condition="REMOTE_TERMINAL = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
+      <Custom Action="RefuseRemoteTerminal" After="AllowRemoteTerminal"
+              Condition="REMOTE_TERMINAL = &quot;0&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
+      <Custom Action="AllowSoftwareFromWeb" After="RefuseRemoteTerminal"
               Condition="SOFTWARE_FROM_WEB = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
     </InstallExecuteSequence>
   </Package>

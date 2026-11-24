@@ -26,13 +26,16 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment tout surveiller avec votre propre script (Bash ou PowerShell)](surveiller-avec-votre-script.md) : Transformez un script shell ou PowerShell en vérification avec alerte : codes de sortie pour OK, avertissement et critique, lignes nom=valeur en métriques.
 - [Comment surveiller switchs, imprimantes, onduleurs et autres équipements réseau](surveiller-equipements-reseau.md) : Surveillez ce qui ne peut pas faire tourner l’agent : ping, ports TCP et UDP, et SNMP v2c ou v3 pour les interfaces, le trafic, la batterie des onduleurs, les températures et les consommables d’imprimante.
 - [Comment trouver ce qui est sur votre réseau](analyser-le-reseau.md) : Analysez une plage d’adresses depuis le serveur central ou un relais, voyez quelles machines peuvent recevoir l’agent et quels équipements surveiller, et ajoutez-les en un clic.
+- [Comment lancer des scripts sur vos serveurs et automatiser les correctifs](lancer-des-scripts-et-automatiser.md) : Gardez vos scripts shell et PowerShell dans MonitorFlow, lancez-les sur un serveur, un service métier ou un site entier, tout de suite ou cette nuit, lisez la sortie de chaque serveur, et lancez-les tout seuls quand un incident s’ouvre.
 - [Comment dessiner une carte de votre réseau en direct](dessiner-des-cartes-reseau.md) : Obtenez la carte d’un site ou d’un client dessinée à partir de vos relais, de vos dépendances et des voisins LLDP et CDP de vos commutateurs, colorée par les incidents et affichée sur un écran mural.
+- [Comment voir quelles adresses et applications utilisent votre bande passante (NetFlow, sFlow, IPFIX)](surveiller-flux-reseau.md) : Recevez NetFlow, sFlow ou IPFIX de vos routeurs, pare-feu et switchs sur un relais ou le serveur central, voyez les plus grosses adresses, applications et interfaces dans le temps, et soyez alerté quand une adresse en utilise trop.
+- [Comment savoir de quoi est fait chaque serveur et ce qu’il fait tourner](inventaire-materiel-et-logiciel.md) : Voyez le modèle, le numéro de série, les disques, le BIOS, les logiciels installés, les services et les licences de chaque serveur, trouvez les serveurs qui ont un vieil OpenSSL, suivez les changements et exportez-les en CSV.
 
 ## Bases de données
 
-- [Comment surveiller PostgreSQL](surveiller-postgresql.md) : Soyez alerté quand PostgreSQL s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec deux vérifications du catalogue MonitorFlow.
-- [Comment surveiller MySQL et MariaDB](surveiller-mysql-mariadb.md) : Soyez alerté quand MySQL ou MariaDB s'arrête ou n'accepte plus de connexions, avec les vérifications de service et de port du catalogue MonitorFlow.
-- [Comment surveiller Redis](surveiller-redis.md) : Soyez alerté quand Redis s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec les vérifications de service et de port de MonitorFlow.
+- [Comment surveiller PostgreSQL](surveiller-postgresql.md) : Suivez les connexions, transactions longues, verrous, cache et réplication de PostgreSQL, et soyez alerté quand il ne répond plus, avec le contrôle PostgreSQL prêt à l'emploi de MonitorFlow.
+- [Comment surveiller MySQL et MariaDB](surveiller-mysql-mariadb.md) : Suivez les connexions, requêtes lentes, le buffer pool InnoDB et la réplication de MySQL et MariaDB, et soyez alerté quand la base ne répond plus, avec le contrôle prêt à l'emploi de MonitorFlow.
+- [Comment surveiller Redis](surveiller-redis.md) : Suivez la mémoire, les évictions, les clients, les sauvegardes et la réplication de Redis, et soyez alerté quand il ne répond plus, avec le contrôle Redis prêt à l'emploi de MonitorFlow.
 - [Comment surveiller MongoDB](surveiller-mongodb.md) : Soyez alerté quand MongoDB s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec les vérifications du service mongod et du port 27017.
 - [Comment surveiller SQL Server](surveiller-sql-server.md) : Soyez alerté quand une instance SQL Server s'arrête ou refuse les connexions sous Windows, avec les vérifications du service MSSQLSERVER et du port 1433.
 
@@ -41,7 +44,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller nginx](surveiller-nginx.md) : Soyez alerté quand nginx s'arrête, quand les ports 80 et 443 ne répondent plus ou quand son journal signale des erreurs critiques.
 - [Comment surveiller Apache](surveiller-apache.md) : Soyez alerté quand le serveur web Apache s'arrête ou que les ports 80 et 443 ne répondent plus, sous Debian, Ubuntu, RHEL et Rocky.
 - [Comment surveiller un site web en HTTPS](surveiller-site-web-https.md) : Sachez quand votre site ne répond plus comme il le devrait : son code de réponse, le texte de la page, son temps de réponse, ses redirections et l'expiration de son certificat.
-- [Comment surveiller Docker](surveiller-docker.md) : Soyez alerté quand le moteur Docker ou containerd s'arrête sur un serveur Linux, et quand un port publié par un conteneur ne répond plus.
+- [Comment surveiller Docker](surveiller-docker.md) : Suivez chaque conteneur Docker ou Podman : s'il tourne, ses redémarrages, son contrôle de santé, son processeur et sa mémoire, et soyez alerté quand le moteur ou un conteneur s'arrête.
 - [Comment surveiller Proxmox VE](surveiller-proxmox-ve.md) : Surveillez vos hôtes Proxmox VE : l'interface web sur le port 8006, le service de cluster, et l'espace disque, le CPU et la mémoire des VM.
 - [Comment surveiller VMware vSphere et Hyper-V](surveiller-vmware-hyper-v.md) : Surveillez les hôtes, clusters, machines virtuelles et banques de données d'un vCenter, d'un hôte ESXi ou d'un hôte Hyper-V, et reliez chaque machine virtuelle à son serveur.
 
@@ -64,3 +67,4 @@ Les guides existent aussi [en anglais](../README.md).
 ## Administration
 
 - [Comment se connecter à MonitorFlow avec votre propre fournisseur d'identité](connexion-avec-votre-fournisseur.md) : Laissez vos collègues se connecter avec les comptes et le second facteur qu'ils ont déjà : OpenID Connect (Entra ID, Google, Keycloak, authentik) ou un annuaire LDAP en TLS.
+- [Comment recevoir les alertes MonitorFlow sur votre téléphone](alertes-sur-votre-telephone.md) : Installez MonitorFlow sur l’écran d’accueil de votre téléphone, recevez des notifications push pendant l’astreinte, et prenez en charge ou mettez en silence une alerte en deux gestes, sans store ni service extérieur.

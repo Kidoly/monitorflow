@@ -38,7 +38,7 @@ The sync follows the same events as webhooks (ADR-0102), at least once and in or
 These parts of ADR-0164 come later (ADR-0166):
 
 - **Status from HaloPSA to MonitorFlow.** A ticket closed or assigned in HaloPSA does not acknowledge the incident yet; the poller will.
-- **Assets.** Servers are not synced as HaloPSA assets.
+- **Assets.** Servers are not synced as HaloPSA assets yet. What an asset will receive is ready: the inventory (ADR-0187) gives each server's maker, model and serial number, shown as `asset` in `GET /api/v1/servers/{id}/inventory`, and `server_inventories.changed_at` tells which servers changed. The sync still needs its settings (an asset type per system family, the fields that receive each value), the matching of existing assets by serial number then host name with a confirmation, and a check on a trial instance.
 - **Rate limits.** MonitorFlow backs off on a 429 like any failure; Halo's actual limits, and the lengths of summary and details, are to be checked on a trial instance.
 - **Silences** do not hold tickets yet.
 - **Customers.** Only sites are matched; no name suggestions and no default client for unmatched sites.

@@ -153,6 +153,10 @@ impl SensorFactory for Builtin {
             // Website checks within the same limits as port checks
             // (ADR-0111, ADR-0150).
             monitorflow_webcheck::build(&config.params, self.local.port_targets.as_ref())
+        } else if monitorflow_apps::is_kind(kind) {
+            // Application checks within the same limits (ADR-0183).
+            let place = monitorflow_apps::Place::Agent(self.local.port_targets.as_ref());
+            monitorflow_apps::build(kind, &config.params, place)
         } else {
             sensors::registry::build_local(kind, &config.params, &self.local)
         };
@@ -561,6 +565,11 @@ mod tests {
             for (name, value) in pairs.map_or(&[][..], |(_, p)| p) {
                 config.params.insert(name.to_string(), value.to_string());
             }
+            assert!(builtin.build(kind, &config).is_ok(), "{kind}");
+        }
+        // Application checks run here, within the port targets.
+        let here = |k: &&&str| cfg!(unix) || **k != monitorflow_apps::DOCKER;
+        for kind in monitorflow_apps::KINDS.iter().filter(here) {
             assert!(builtin.build(kind, &config).is_ok(), "{kind}");
         }
         let mut ping = config.clone();

@@ -4,9 +4,11 @@ members = [
     "crates/common",
     "crates/sensors",
     "crates/probe",
+    "crates/flow",
     "crates/snmp",
     "crates/vmware",
     "crates/webcheck",
+    "crates/apps",
     "crates/import",
     "crates/ai",
     "crates/agent",
@@ -34,6 +36,7 @@ if-addrs = "0.15"
 monitorflow-common = { path = "crates/common" }
 monitorflow-sensors = { path = "crates/sensors" }
 monitorflow-probe = { path = "crates/probe" }
+monitorflow-flow = { path = "crates/flow" }
 monitorflow-snmp = { path = "crates/snmp" }
 monitorflow-vmware = { path = "crates/vmware" }
 monitorflow-ai = { path = "crates/ai" }
@@ -41,6 +44,7 @@ monitorflow-server-ee = { path = "ee/crates/server-ee" }
 monitorflow-plugin = { path = "crates/plugin" }
 monitorflow-import = { path = "crates/import" }
 monitorflow-webcheck = { path = "crates/webcheck" }
+monitorflow-apps = { path = "crates/apps" }
 
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.14", features = ["tls-ring"] }

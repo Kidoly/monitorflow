@@ -514,7 +514,7 @@ describe("software and update approvals (ADR-0188)", () => {
     const draft = draftFromCampaign(saved);
     expect(draft).toMatchObject({ update: "software", softwareAction: "install", softwareIds: [SEVEN] });
     expect(requestFromCampaign(saved, draft).software).toEqual({ action: "install", catalog_ids: [SEVEN] });
-    expect(describeUpdate(saved.spec, null, software)).toBe("Install software: 7-Zip");
+    expect(describeUpdate(saved.spec, null, null, software)).toBe("Install software: 7-Zip");
     expect(campaignSubline(saved)).toBe("2 batches · installs 1 software");
 
     const approved = detail({

@@ -2,7 +2,7 @@ import { type IncidentFilters, NO_FILTERS, filtersToQuery } from "./incidents";
 import { shortMetric } from "./metrics";
 
 /** Link to the page of the server `id` (a query parameter, ADR-0020), on `tab` when given. */
-export function serverHref(id: string, tab?: "sensors" | "dependencies" | "updates" | "commands" | "logs"): string {
+export function serverHref(id: string, tab?: "sensors" | "dependencies" | "updates" | "commands" | "logs" | "inventory"): string {
   return `/servers/view/?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ""}`;
 }
 
@@ -78,6 +78,9 @@ export function mapHref(id: string): string {
 export const SILENCES_PATH = "/silences/";
 /** Availability reports (ADR-0155). */
 export const REPORTS_PATH = "/reports/";
+
+/** The fleet's inventory search (ADR-0187). */
+export const INVENTORY_PATH = "/inventory/";
 
 /** Who is on call, and one's own contact (ADR-0081). */
 export const ON_CALL_PATH = "/on-call/";
@@ -204,6 +207,11 @@ export const NEW_CAMPAIGN_PATH = "/campaigns/new/";
 /** The software catalogue software campaigns install from (ADR-0188). */
 export const SOFTWARE_CATALOG_PATH = "/campaigns/software/";
 
+/** The campaign form for a major upgrade of the server `id` (ADR-0182). */
+export function majorUpgradeHref(id: string): string {
+  return `${NEW_CAMPAIGN_PATH}?major=${encodeURIComponent(id)}`;
+}
+
 /** The form editing the campaign `id`, which queued nothing yet (ADR-0179). */
 export function editCampaignHref(id: string): string {
   return `${NEW_CAMPAIGN_PATH}?edit=${encodeURIComponent(id)}`;
@@ -222,6 +230,20 @@ export function campaignHref(id: string): string {
 /** The approval queue and the remediation audit log (ADR-0045). */
 export const APPROVALS_PATH = "/remediation/approvals/";
 export const AUDIT_PATH = "/remediation/audit/";
+
+/** The script library and automation rules (ADR-0189). */
+export const SCRIPTS_PATH = "/remediation/scripts/";
+export const AUTOMATION_PATH = "/remediation/automation/";
+
+/** Link to the page of the library script `id`. */
+export function scriptHref(id: string): string {
+  return `/remediation/scripts/view/?id=${encodeURIComponent(id)}`;
+}
+
+/** Link to the page of the script run `id`, with each server's output. */
+export function scriptRunHref(id: string): string {
+  return `/remediation/runs/view/?id=${encodeURIComponent(id)}`;
+}
 
 /** Link to the remediation audit log, filtered to one incident when given. */
 export function auditHref(filters: { incident?: string } = {}): string {

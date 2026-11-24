@@ -17,6 +17,7 @@ import {
   setUnauthorizedHandler,
 } from "@/lib/api";
 import { MeContext, RefreshMeContext } from "@/lib/me";
+import { MOBILE_PATH, opensMobile } from "@/lib/mobile";
 import { startPreferences } from "@/lib/preferences";
 
 import styles from "./AuthGuard.module.css";
@@ -34,6 +35,12 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   const refresh = useCallback(() => {
     api.me().then(setUser, () => {});
   }, []);
+
+  // The installed app on a phone signs in to "/" like a browser, and goes
+  // on to its own pages (ADR-0186).
+  useEffect(() => {
+    if (window.location.pathname === "/" && opensMobile()) router.replace(MOBILE_PATH);
+  }, [router]);
 
   useEffect(() => {
     const restore = setUnauthorizedHandler(() => router.replace(LOGIN_PATH));

@@ -544,6 +544,19 @@ async fn main() -> anyhow::Result<()> {
         .with_sources(api_settings.live.clone(), mirrors.clone())
         .with_agent_releases(api_settings.agent_releases.clone())
         .with_proxmox(config.proxmox.enabled);
+    // The script library: due runs and automation rules (ADR-0189).
+    let script_worker = monitorflow_server::scripts::worker::Worker::new(pool.clone())
+        .with_commands(commands.clone());
+    // Proxmox snapshots before major upgrades (ADR-0182).
+    let campaigns = if config.proxmox.enabled {
+        campaigns.with_snapshotter(Arc::new(
+            ProxmoxSnapshotter::from_config(pool.clone(), &config.proxmox)
+                .await
+                .context("Proxmox snapshots for campaigns")?,
+        ))
+    } else {
+        campaigns
+    };
     // Virtual machines, hosts and datastores from the samples (ADR-0156).
     let virt = monitorflow_server::virt::Sink::spawn(pool.clone());
     let service = AgentStreamService::new(
@@ -570,7 +583,17 @@ async fn main() -> anyhow::Result<()> {
             virt: Some(virt),
         },
         Some(alerts),
+    )
+    // Traffic flows of devices (ADR-0184).
+    .with_flows(
+        monitorflow_server::flows::FlowWriter::start(pool.clone()),
+        monitorflow_flow::collector::Settings {
+            bind: config.flows.listen,
+            ports: config.flows.ports(),
+            ..Default::default()
+        },
     );
+    let flows_pool = pool.clone();
     let service = service.with_probes(probes.clone());
     let probe_registry = registry.clone();
     // Network scans run on the instance that reaches their probe
@@ -585,6 +608,14 @@ async fn main() -> anyhow::Result<()> {
         .with_enabled_override(config.auto_update.enabled)
         .with_registry(registry.clone())
         .with_relay_commands(relay_commands.clone());
+    // Remote terminals (ADR-0190), carried by the agents' streams.
+    let remote = monitorflow_server::remote::RemoteHub::spawn(
+        pool.clone(),
+        registry.clone(),
+        ca.clone(),
+        Some(commands.clone()),
+    );
+    let service = service.with_remote(remote.clone());
     let api_state = ApiState::new(pool.clone(), registry, api_settings)
         .with_probes(probes.clone())
         .with_metrics(
@@ -602,6 +633,7 @@ async fn main() -> anyhow::Result<()> {
         .with_crl(crl.clone())
         .with_ca_rotation(rotator.clone())
         .with_commands(commands.clone())
+        .with_remote(remote)
         .with_relay_commands(relay_commands.clone())
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());
@@ -715,6 +747,14 @@ async fn main() -> anyhow::Result<()> {
             campaigns.clone().run(campaign::POLL, until_stopped()).await;
             Ok(())
         },
+        // Every instance runs it; runs and events are claimed (ADR-0189).
+        async {
+            script_worker
+                .clone()
+                .run(monitorflow_server::scripts::worker::POLL, until_stopped())
+                .await;
+            Ok(())
+        },
         // Every instance sends integration events; claims are leased
         // (ADR-0102).
         async {
@@ -769,6 +809,14 @@ async fn main() -> anyhow::Result<()> {
                 probes
                     .clone()
                     .run_central(Arc::new(monitorflow_webcheck::CentralProbeKinds), until)
+            })
+            .await;
+            Ok(())
+        },
+        // Old traffic flows summed into hours, then dropped (ADR-0184).
+        async {
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                monitorflow_server::flows::maintain(flows_pool.clone(), until)
             })
             .await;
             Ok(())

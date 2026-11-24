@@ -6,6 +6,15 @@
 
 import { t } from "@/i18n";
 
+import {
+  type InventoryChangeList,
+  type InventoryQuery,
+  type InventorySearch,
+  type ServerInventory,
+  type Warranty,
+  inventoryQueryString,
+} from "./inventory";
+
 /** Header the API requires on every state-changing request (ADR-0006). */
 export const CSRF_HEADER = "X-MonitorFlow-CSRF";
 
@@ -286,6 +295,65 @@ export interface ServerDetail extends Server {
   certificate: Certificate | null;
   /** The last time AI commands were turned on or off from the web interface; null if never (ADR-0098). */
   ai_commands_change?: AiCommandsChange | null;
+  /** What this person may do with remote terminals here (ADR-0190); absent from older servers. */
+  remote_terminal?: RemoteTerminalAccess;
+}
+
+/** What `GET /api/servers/{id}` says about remote terminals for the person asking (ADR-0190). */
+export interface RemoteTerminalAccess {
+  /** The role lets them open one; the agent must also accept `remote_session`. */
+  can_open: boolean;
+  /** They may see the server's past sessions. */
+  can_review: boolean;
+  /** New sessions are recorded. */
+  recorded: boolean;
+  idle_timeout_minutes: number;
+}
+
+/** A remote terminal session (ADR-0190). */
+export interface RemoteSession {
+  id: string;
+  server_id: string;
+  hostname: string;
+  kind: "terminal";
+  /** The username of who opened it. */
+  requested_by: string;
+  created_at: string;
+  /** Null if the agent never opened it. */
+  opened_at: string | null;
+  /** Null while it is open. */
+  closed_at: string | null;
+  close_reason: string | null;
+  duration_seconds: number | null;
+  recorded: boolean;
+  bytes_in: number;
+  bytes_out: number;
+}
+
+/** Answer of `POST /api/servers/{id}/remote-sessions`. */
+export interface RemoteSessionStart {
+  session: RemoteSession;
+  /** The WebSocket's first message, once. */
+  token: string;
+  token_expires_at: string;
+  /** The WebSocket's path. */
+  socket: string;
+}
+
+/** What a recorded session printed. */
+export interface RemoteRecording {
+  session: RemoteSession;
+  /** In order; `data` is base64. */
+  chunks: { at_ms: number; data: string }[];
+}
+
+/** `GET /api/settings/remote-access` (ADR-0190). */
+export interface RemoteAccessSettings {
+  /** The lowest role that may open terminals; null lets nobody. */
+  min_role: "operator" | "approver" | "administrator" | null;
+  record: boolean;
+  idle_timeout_minutes: number;
+  retention_days: number;
 }
 
 /** An `ai_commands` command: who asked to turn AI commands on or off, and what came of it (ADR-0098). */
@@ -1416,11 +1484,13 @@ export interface SensorConfigRequest {
   enabled?: boolean;
   /** `central` or a relay's ID: it runs from there instead of the agent (ADR-0148). */
   probe?: string | null;
+  /** On a create of an application check: add its template's alerts too (ADR-0183). */
+  default_alerts?: boolean;
 }
 
 /** One stored row of `sensor_configs`; exactly one of `site_id` and `server_id` is set. */
 export interface SensorConfigEntry extends Required<
-  Omit<SensorConfigRequest, "timeout_ms" | "probe">
+  Omit<SensorConfigRequest, "timeout_ms" | "probe" | "default_alerts">
 > {
   id: string;
   site_id: string | null;
@@ -1469,6 +1539,63 @@ export interface WebsiteCheck {
 
 export interface WebsiteCheckList {
   checks: WebsiteCheck[];
+}
+
+/** Who receives a device's traffic flows (ADR-0184). */
+export interface FlowExporter {
+  /** `central`, or the ID of the relay that receives them. */
+  probe: string;
+  relay_name: string | null;
+  source_address: string | null;
+  /** The address flows are taken from. */
+  address: string | null;
+  created_at: string;
+  updated_at: string;
+  last_flow_at: string | null;
+}
+
+export interface FlowExporterRequest {
+  probe?: string;
+  source_address?: string | null;
+}
+
+export type FlowDimension = "src" | "dst" | "app" | "protocol" | "in" | "out";
+
+export interface FlowKey {
+  key: string;
+  label: string | null;
+  bytes: number;
+  packets: number;
+  bits_per_second: number;
+}
+
+export interface FlowDimensionView {
+  dimension: FlowDimension;
+  keys: FlowKey[];
+  other_bytes: number;
+}
+
+export interface FlowView {
+  from: string;
+  to: string;
+  step_s: number;
+  address: string | null;
+  bytes: number;
+  packets: number;
+  bits_per_second: number;
+  dimensions: FlowDimensionView[];
+  chart: {
+    by: FlowDimension;
+    keys: { key: string; label: string | null }[];
+    points: { at: string; values: number[]; other: number }[];
+  };
+}
+
+export interface FlowQuery {
+  from: string;
+  to: string;
+  by: FlowDimension;
+  address?: string | null;
 }
 
 /** Body of a threshold create or update (ADR-0019); an update replaces every field. */
@@ -3197,6 +3324,8 @@ export interface Campaign {
   sources: SourcesPin | null;
   /** Set for an agent update campaign: the version agents update to (ADR-0053). */
   agent_version: string | null;
+  /** Set for a major upgrade campaign (ADR-0182); absent from older servers. */
+  major_upgrade?: MajorUpgradeSpec | null;
   /** Set for a software campaign (ADR-0188); absent from older servers. */
   software?: CampaignSoftware | null;
   /** The request's `server_ids` and `waves` as last written; null before ADR-0179, absent from older servers. */
@@ -3222,12 +3351,64 @@ export interface CampaignRunSettings {
   wave_specs: WaveSpec[];
   spec: UpdateSpec;
   agent_version: string | null;
+  major_upgrade?: MajorUpgradeSpec | null;
   /** Set for a software campaign (ADR-0188). */
   software?: CampaignSoftware | null;
   command_ttl_s: number;
   failure_threshold: FailureThreshold;
   windows: CampaignWindow[];
   sources: SourcesPin | null;
+}
+
+/** A major upgrade campaign (ADR-0182): every server moves from `from` to the next release, `to`. */
+export interface MajorUpgradeSpec {
+  from: string;
+  to: string;
+  /** Upgrade servers that cannot get a snapshot first. */
+  accept_limited_rollback: boolean;
+  /** Servers of a batch upgrading at once, 1 to 50. */
+  parallel: number;
+}
+
+/** One check before a major upgrade: the central server's (`allowed`, `agent_version`, `mirror`), then the agent's. */
+export interface MajorUpgradeCheck {
+  name: string;
+  /** `warning` never blocks. */
+  state: "ok" | "warning" | "failed";
+  /** What was found, in English. */
+  detail: string;
+  items: string[];
+}
+
+/** The last major upgrade of a server, as its agent tells it. */
+export interface MajorUpgradeProgress {
+  command_id: string;
+  from: string;
+  to: string;
+  phase: "starting" | "sources" | "refreshing" | "upgrading" | "full_upgrade" | "rebooting" | "done" | "failed";
+  error: string | null;
+  sources_restored: boolean;
+  disabled_sources: string[];
+  started_at: string | null;
+  updated_at: string | null;
+}
+
+/** A server of `GET /api/major-upgrades` and its next release (ADR-0182). */
+export interface ServerUpgrade {
+  server_id: string;
+  hostname: string;
+  site_id: string;
+  customer_id: string;
+  release: string;
+  release_label: string | null;
+  target: string | null;
+  target_label: string | null;
+  ready: boolean;
+  checks: MajorUpgradeCheck[];
+  rollback: SnapshotSupport;
+  progress: MajorUpgradeProgress | null;
+  reported_at: string | null;
+  can_upgrade: boolean;
 }
 
 /** A past run of a campaign, as it ended (ADR-0173). */
@@ -3256,7 +3437,9 @@ export type CampaignServerStatus =
   | "failed"
   | "expired"
   | "cancelled"
-  | "skipped";
+  | "skipped"
+  /** A major upgrade started and not judged yet (ADR-0182). */
+  | "upgrading";
 
 export interface CampaignServer {
   server_id: string;
@@ -3273,6 +3456,9 @@ export interface CampaignServer {
   restore_command_id: string | null;
   /** The local snapshot taken before the update, if any (ADR-0094). */
   snapshot_command_id?: string | null;
+  /** In a major upgrade: the agent's phase and the Proxmox snapshot's state (ADR-0182). */
+  upgrade_phase?: MajorUpgradeProgress["phase"] | null;
+  vm_snapshot?: "taking" | "taken" | "limited" | "failed" | null;
 }
 
 export interface CampaignWave {
@@ -3311,6 +3497,8 @@ export interface CampaignRequest {
   windows: CampaignWindow[];
   /** An agent update campaign instead of packages (ADR-0053). */
   agent_version?: string;
+  /** A major upgrade campaign instead (ADR-0182). */
+  major_upgrade?: MajorUpgradeSpec;
   /** False: third-party apps only (ADR-0138). */
   include_os?: boolean;
   third_party?: ThirdPartySelection[];
@@ -4187,6 +4375,34 @@ export interface Contact {
   last_sent_at: string | null;
   last_error: string | null;
   last_error_at: string | null;
+  /** Phones with notifications on, which reach the person too (ADR-0186). */
+  phones?: number;
+}
+
+/** One phone of the signed-in person (ADR-0186). */
+export interface Phone {
+  id: string;
+  name: string;
+  created_at: string;
+  last_seen_at: string;
+  /** Whether notifications are on. */
+  push: boolean;
+  /** The push service its browser uses. */
+  push_host: string | null;
+  push_sent_at: string | null;
+  /** Why the last notification was not taken, in a sentence. */
+  push_error: string | null;
+  /** The phone of this very session. */
+  this_phone: boolean;
+}
+
+/** `GET /api/me/phones`. */
+export interface PhoneList {
+  phones: Phone[];
+  /** The key a browser subscribes with, base64url. */
+  push_key: string;
+  session_days: number;
+  idle_days: number;
 }
 
 export interface ContactRequest {
@@ -4228,6 +4444,10 @@ export interface AiSettings {
   model: string;
   /** Anthropic's short list. */
   models: AiModel[];
+  /** The language administrators chose for the AI's diagnoses; null follows the people (ADR-0181). Absent from older servers. */
+  language?: "en" | "fr" | null;
+  /** The language of the next diagnosis. */
+  effective_language?: "en" | "fr";
 }
 
 /** What the AI form holds; an empty key or address uses the stored one of the same provider. */
@@ -4564,6 +4784,192 @@ export function describeError(error: unknown): string {
   }
 }
 
+/** A library script's interpreter (ADR-0189): `sh` on Linux, `powershell` on Windows. */
+export type ScriptInterpreter = "sh" | "powershell";
+export type ScriptParameterType = "string" | "integer" | "boolean" | "choice";
+
+/** A typed parameter; its value reaches the script as `MF_PARAM_<NAME>`. */
+export interface ScriptParameter {
+  name: string;
+  label: string;
+  type: ScriptParameterType;
+  required: boolean;
+  default: string | null;
+  choices: string[];
+}
+
+export interface LibraryScript {
+  id: string;
+  customer_id: string | null;
+  name: string;
+  description: string;
+  interpreter: ScriptInterpreter;
+  run_role: Role;
+  ai_allowed: boolean;
+  timeout_s: number;
+  version: number;
+  parameters: ScriptParameter[];
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  can_manage: boolean;
+}
+
+export interface ScriptVersion {
+  version: number;
+  body: string;
+  parameters: ScriptParameter[];
+  note: string;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+}
+
+export interface ScriptDetail {
+  script: LibraryScript;
+  body: string;
+  versions: ScriptVersion[];
+}
+
+export interface ScriptRequest {
+  customer_id: string | null;
+  name: string;
+  description: string;
+  interpreter: ScriptInterpreter;
+  run_role: Role;
+  ai_allowed: boolean;
+  timeout_s: number;
+  body: string;
+  parameters: ScriptParameter[];
+  note: string;
+}
+
+export type ScriptTarget =
+  | { kind: "servers"; server_ids: string[] }
+  | { kind: "site"; site_id: string }
+  | { kind: "business_service"; business_service_id: string };
+
+export interface ScriptRunRequest {
+  target: ScriptTarget;
+  parameters: Record<string, string>;
+  version?: number;
+  scheduled_at?: string;
+}
+
+export type ScriptRunState =
+  | "awaiting_approval"
+  | "scheduled"
+  | "dispatched"
+  | "rejected"
+  | "expired"
+  | "cancelled"
+  | "refused";
+
+export interface ScriptRun {
+  id: string;
+  script_id: string;
+  script_name: string;
+  version: number;
+  interpreter: ScriptInterpreter;
+  customer_id: string;
+  parameters: Record<string, string>;
+  target: ScriptTarget;
+  requested_by: string | null;
+  requested_by_name: string | null;
+  rule_id: string | null;
+  rule_name: string | null;
+  trigger: { event?: string; metric?: string | null; incident_id?: string | null } | null;
+  state: ScriptRunState;
+  tier: RiskTier;
+  rule: { source: string; id: string };
+  reason: string;
+  scheduled_at: string;
+  created_at: string;
+  expires_at: string | null;
+  decided_by: string | null;
+  decided_by_name: string | null;
+  decided_at: string | null;
+  decision_reason: string | null;
+  dispatched_at: string | null;
+  counts: { servers: number; pending: number; succeeded: number; failed: number };
+  can_approve: boolean;
+  can_reject: boolean;
+  can_cancel: boolean;
+}
+
+export interface ScriptRunServer {
+  server_id: string;
+  hostname: string;
+  site_id: string;
+  status: string;
+  command_id: string | null;
+  exit_code: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ScriptRunDetail {
+  run: ScriptRun;
+  body: string;
+  servers: ScriptRunServer[];
+}
+
+export interface ScriptRunQuery {
+  script_id?: string;
+  server_id?: string;
+  rule_id?: string;
+  state?: ScriptRunState;
+  limit?: number;
+}
+
+export type AutomationEvent = "incident_opened" | "check_failed" | "server_joined";
+
+export interface AutomationRule {
+  id: string;
+  name: string;
+  customer_id: string | null;
+  site_id: string | null;
+  event: AutomationEvent;
+  metric: string | null;
+  script_id: string;
+  script_name: string;
+  parameters: Record<string, string>;
+  enabled: boolean;
+  cooldown_minutes: number;
+  created_at: string;
+  updated_at: string;
+  can_manage: boolean;
+}
+
+export interface AutomationFiring {
+  event_id: string;
+  server_id: string | null;
+  hostname: string | null;
+  run_id: string | null;
+  skipped: string | null;
+  created_at: string;
+}
+
+export interface AutomationRuleDetail {
+  rule: AutomationRule;
+  firings: AutomationFiring[];
+}
+
+export interface AutomationRuleRequest {
+  name: string;
+  customer_id: string | null;
+  site_id: string | null;
+  event: AutomationEvent;
+  metric: string | null;
+  script_id: string;
+  parameters: Record<string, string>;
+  enabled: boolean;
+  cooldown_minutes: number;
+}
+
 export const api = {
   health: (signal?: AbortSignal) => request<Health>("/api/health", { signal }),
 
@@ -4679,6 +5085,25 @@ export const api = {
     } while (cursor !== undefined);
     return { ...page, packages, next_cursor: null };
   },
+
+  /** The server's hardware and software inventory (ADR-0187). */
+  serverInventory: (serverId: string, signal?: AbortSignal) =>
+    request<ServerInventory>(`/api/servers/${encodeURIComponent(serverId)}/inventory`, { signal }),
+
+  /** What changed in the server's inventory and packages, newest first. */
+  inventoryChanges: (serverId: string, cursor?: string, signal?: AbortSignal) =>
+    request<InventoryChangeList>(
+      `/api/servers/${encodeURIComponent(serverId)}/inventory/changes?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      { signal },
+    ),
+
+  /** Sets the server's warranty; both `null` removes it. */
+  setWarranty: (serverId: string, warranty: { ends_on: string | null; note: string | null }) =>
+    request<Warranty | null>(`/api/servers/${encodeURIComponent(serverId)}/warranty`, { method: "PUT", body: warranty }),
+
+  /** Searches the inventory of the fleet. */
+  searchInventory: (query: InventoryQuery, signal?: AbortSignal) =>
+    request<InventorySearch>(`/api/inventory?${inventoryQueryString(query)}`, { signal }),
 
   /** The server's third-party managers and apps (ADR-0138), following `next_cursor` across pages. */
   serverThirdParty: async (serverId: string, signal?: AbortSignal): Promise<ThirdPartyList> => {
@@ -5003,6 +5428,10 @@ export const api = {
   removeAiKey: () =>
     request<AiSettings>("/api/settings/ai", { method: "DELETE" }),
 
+  /** Sets the language of AI diagnoses, null to follow the people's; global administrators only, audited (ADR-0181). */
+  setAiLanguage: (language: "en" | "fr" | null) =>
+    request<AiSettings>("/api/settings/ai/language", { method: "PUT", body: { language } }),
+
   /** Tests a key and model without saving; an empty key tests the stored one. */
   testAiSettings: (body: AiForm) =>
     request<ChannelTestResult>("/api/settings/ai/test", {
@@ -5252,6 +5681,28 @@ export const api = {
       signal,
     }),
 
+  /** The person's phones and the key to subscribe with (ADR-0186). */
+  phones: (signal?: AbortSignal) => request<PhoneList>("/api/me/phones", { signal }),
+
+  /** Makes this browser a phone of the person: its session lasts longer. */
+  addPhone: (name: string) => request<Phone>("/api/me/phones", { method: "POST", body: { name } }),
+
+  renamePhone: (id: string, name: string) =>
+    request<Phone>(`/api/me/phones/${encodeURIComponent(id)}`, { method: "PUT", body: { name } }),
+
+  /** Signs the phone out and stops its notifications. */
+  removePhone: (id: string) => request<void>(`/api/me/phones/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Turns notifications on with the browser's `PushSubscription.toJSON()`. */
+  setPhonePush: (id: string, subscription: PushSubscriptionJSON) =>
+    request<Phone>(`/api/me/phones/${encodeURIComponent(id)}/push`, { method: "PUT", body: subscription }),
+
+  deletePhonePush: (id: string) =>
+    request<Phone>(`/api/me/phones/${encodeURIComponent(id)}/push`, { method: "DELETE" }),
+
+  testPhone: (id: string) =>
+    request<ChannelTestResult>(`/api/me/phones/${encodeURIComponent(id)}/test`, { method: "POST" }),
+
   /** Says the user is on these incidents, so nobody else is told next (ADR-0082). */
   acknowledgeIncidents: (ids: string[], note: string) =>
     request<{ acknowledged: string[] }>("/api/incidents/acknowledge", {
@@ -5371,6 +5822,21 @@ export const api = {
     request<SnmpCredentials>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "PUT", body }),
 
   deleteDeviceSnmp: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}/snmp`, { method: "DELETE" }),
+
+  deviceFlowExporter: (id: string, signal?: AbortSignal) =>
+    request<FlowExporter>(`/api/devices/${encodeURIComponent(id)}/flow-exporter`, { signal }),
+
+  setDeviceFlowExporter: (id: string, body: FlowExporterRequest) =>
+    request<FlowExporter>(`/api/devices/${encodeURIComponent(id)}/flow-exporter`, { method: "PUT", body }),
+
+  deleteDeviceFlowExporter: (id: string) =>
+    request<void>(`/api/devices/${encodeURIComponent(id)}/flow-exporter`, { method: "DELETE" }),
+
+  deviceFlows: (id: string, query: FlowQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ from: query.from, to: query.to, by: query.by });
+    if (query.address) params.set("address", query.address);
+    return request<FlowView>(`/api/devices/${encodeURIComponent(id)}/flows?${params.toString()}`, { signal });
+  },
 
   /** A device's custom SNMP checks, their channels' limits and last values (ADR-0157). */
   snmpChecks: (id: string, signal?: AbortSignal) =>
@@ -5519,6 +5985,12 @@ export const api = {
   /** The newest 500 campaigns of the customers the user reads as a whole. */
   campaigns: (signal?: AbortSignal) =>
     request<CampaignList>("/api/campaigns?limit=500", { signal }),
+
+  /** Servers that can move to the next release, with their checks (ADR-0182). */
+  majorUpgrades: (filter: { customer_id?: string; site_id?: string; server_id?: string }, signal?: AbortSignal) => {
+    const query = new URLSearchParams(Object.entries(filter).filter(([, v]) => v) as [string, string][]);
+    return request<{ servers: ServerUpgrade[] }>(`/api/major-upgrades?${query}`, { signal });
+  },
 
   campaign: (id: string, signal?: AbortSignal) =>
     request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, {
@@ -5844,6 +6316,31 @@ export const api = {
   switchAllAiCommands: (on: boolean) =>
     request<SiteSourcesChange>("/api/remediation/ai-commands", { method: "POST", body: { on } }),
 
+  /** Starts a remote terminal; the WebSocket at `socket` takes it on (ADR-0190). */
+  startRemoteSession: (serverId: string) =>
+    request<RemoteSessionStart>(`/api/servers/${encodeURIComponent(serverId)}/remote-sessions`, {
+      method: "POST",
+      body: { kind: "terminal" },
+    }),
+
+  /** The server's last remote sessions, newest first. */
+  remoteSessions: (serverId: string, signal?: AbortSignal) =>
+    request<RemoteSession[]>(`/api/servers/${encodeURIComponent(serverId)}/remote-sessions`, { signal }),
+
+  /** Ends a remote session, wherever it runs. */
+  closeRemoteSession: (sessionId: string) =>
+    request<void>(`/api/remote-sessions/${encodeURIComponent(sessionId)}/close`, { method: "POST" }),
+
+  /** What a recorded session printed; site administrators. */
+  remoteRecording: (sessionId: string, signal?: AbortSignal) =>
+    request<RemoteRecording>(`/api/remote-sessions/${encodeURIComponent(sessionId)}/recording`, { signal }),
+
+  remoteAccessSettings: (signal?: AbortSignal) =>
+    request<RemoteAccessSettings>("/api/settings/remote-access", { signal }),
+
+  setRemoteAccessSettings: (body: RemoteAccessSettings) =>
+    request<RemoteAccessSettings>("/api/settings/remote-access", { method: "PUT", body }),
+
   /** The same for every server of a site that can take it. */
   switchSiteAiCommands: (siteId: string, on: boolean) =>
     request<SiteSourcesChange>(`/api/sites/${encodeURIComponent(siteId)}/ai-commands`, {
@@ -5881,6 +6378,62 @@ export const api = {
     request<RemediationRunStarted>(`/api/remediation/alerts/${encodeURIComponent(alertIncidentId)}/run`, {
       method: "POST",
     }),
+
+  /** The script library (ADR-0189): scripts of every customer and of the customers the user reads. */
+  scripts: (signal?: AbortSignal) => request<{ scripts: LibraryScript[] }>("/api/remediation/scripts", { signal }),
+
+  script: (id: string, signal?: AbortSignal) =>
+    request<ScriptDetail>(`/api/remediation/scripts/${encodeURIComponent(id)}`, { signal }),
+
+  createScript: (body: ScriptRequest) => request<ScriptDetail>("/api/remediation/scripts", { method: "POST", body }),
+
+  /** A new text or new parameters make a new version. */
+  updateScript: (id: string, body: ScriptRequest) =>
+    request<ScriptDetail>(`/api/remediation/scripts/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteScript: (id: string) =>
+    request<void>(`/api/remediation/scripts/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Runs a script now or later; it may wait for approval. */
+  runScript: (id: string, body: ScriptRunRequest) =>
+    request<ScriptRunDetail>(`/api/remediation/scripts/${encodeURIComponent(id)}/runs`, { method: "POST", body }),
+
+  scriptRuns: (query: ScriptRunQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
+    const qs = params.toString();
+    return request<{ runs: ScriptRun[] }>(`/api/remediation/script-runs${qs ? `?${qs}` : ""}`, { signal });
+  },
+
+  scriptRun: (id: string, signal?: AbortSignal) =>
+    request<ScriptRunDetail>(`/api/remediation/script-runs/${encodeURIComponent(id)}`, { signal }),
+
+  approveScriptRun: (id: string) =>
+    request<ScriptRunDetail>(`/api/remediation/script-runs/${encodeURIComponent(id)}/approve`, { method: "POST" }),
+
+  rejectScriptRun: (id: string, reason: string) =>
+    request<ScriptRunDetail>(`/api/remediation/script-runs/${encodeURIComponent(id)}/reject`, {
+      method: "POST",
+      body: { reason },
+    }),
+
+  cancelScriptRun: (id: string) =>
+    request<ScriptRunDetail>(`/api/remediation/script-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+
+  automationRules: (signal?: AbortSignal) =>
+    request<{ rules: AutomationRule[] }>("/api/remediation/automation-rules", { signal }),
+
+  automationRule: (id: string, signal?: AbortSignal) =>
+    request<AutomationRuleDetail>(`/api/remediation/automation-rules/${encodeURIComponent(id)}`, { signal }),
+
+  createAutomationRule: (body: AutomationRuleRequest) =>
+    request<AutomationRuleDetail>("/api/remediation/automation-rules", { method: "POST", body }),
+
+  updateAutomationRule: (id: string, body: AutomationRuleRequest) =>
+    request<AutomationRuleDetail>(`/api/remediation/automation-rules/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteAutomationRule: (id: string) =>
+    request<void>(`/api/remediation/automation-rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Every command waiting for approval in the user's sites, nearest deadline first. */
   approvals: (signal?: AbortSignal) =>

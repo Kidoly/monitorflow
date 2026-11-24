@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use monitorflow_ai::{Action, StepRequest, StopOutcome};
-use monitorflow_common::command::SHELL;
+use monitorflow_common::command::{ROOT_ACTION, RUN_SCRIPT, SHELL};
 use monitorflow_common::proto::v1::ShellCommand;
 use prost::Message;
 use serde_json::json;
@@ -24,8 +24,10 @@ use crate::commands::acceptance;
 use crate::commands::{CommandRow, CommandStore, NewCommand, State};
 use crate::remediation::audit::{self, Actor, IncidentState, NewEvent};
 use crate::remediation::context::{self, Trigger};
+use crate::remediation::language;
 use crate::remediation::redact::Redactor;
 use crate::remediation::risk::{self, Decision, RuleSet, Tier};
+use crate::scripts;
 
 /// Longest diagnosis, reasoning or reason of the AI stored, in bytes.
 const AI_TEXT_BYTES: usize = 8 * 1024;
@@ -221,16 +223,29 @@ async fn send_context(shared: &Shared, incident: &Incident) -> Result<Pass, Driv
 
 /// Asks the AI for the next step and records its answer.
 async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result<Pass, DriveError> {
+    let language = language::effective(&shared.pool).await?;
     let system_prompt = match progress.diagnosis_only {
-        Some(why) => prompt::diagnosis_only(why.for_prompt(), incident.shell()),
-        None => prompt::system(prompt::Limits {
-            max_commands: incident.max_commands(),
-            commands_left: incident
-                .max_commands()
-                .saturating_sub(progress.commands_queued),
-            command_timeout: shared.settings.command_timeout,
-            shell: incident.shell(),
-        }),
+        Some(why) => prompt::diagnosis_only(why.for_prompt(), incident.shell(), language),
+        None => {
+            let offered =
+                scripts::ai::offered(&shared.pool, incident.customer_id, incident.shell()).await?;
+            let reported =
+                acceptance::reported(&shared.pool, incident.server_id, ROOT_ACTION).await?;
+            let root_actions = reported.as_deref() == Some("accepted");
+            prompt::system(
+                prompt::Limits {
+                    max_commands: incident.max_commands(),
+                    commands_left: incident
+                        .max_commands()
+                        .saturating_sub(progress.commands_queued),
+                    command_timeout: shared.settings.command_timeout,
+                    shell: incident.shell(),
+                    root_actions,
+                    language,
+                },
+                &scripts::ai::describe(&offered),
+            )
+        }
     };
     let request = StepRequest {
         system_prompt,
@@ -277,6 +292,25 @@ async fn rules(shared: &Shared, incident: &Incident) -> Result<RuleSet, DriveErr
     Ok(risk::store::rule_set(&shared.pool, incident.customer_id, Some(incident.site_id)).await?)
 }
 
+/// The rules' decision on `command`, and the library script it calls, if
+/// it is one (ADR-0189): the script's lines and values are classified,
+/// and a script the AI may not use there is forbidden.
+async fn decide(
+    shared: &Shared,
+    incident: &Incident,
+    command: &str,
+) -> Result<(Decision, Option<scripts::ai::Resolved>), DriveError> {
+    let rules = rules(shared, incident).await?;
+    Ok(scripts::ai::classify_command(
+        &shared.pool,
+        incident.customer_id,
+        incident.shell(),
+        command,
+        &rules,
+    )
+    .await?)
+}
+
 /// Whether `decision` lets a command run without a human.
 async fn automatic(
     shared: &Shared,
@@ -285,6 +319,8 @@ async fn automatic(
 ) -> Result<bool, DriveError> {
     Ok(match decision.tier {
         Tier::ReadOnly => true,
+        // The root actions that lose nothing useful (ADR-0181).
+        Tier::LowImpact if decision.automatic_root_action() => true,
         Tier::LowImpact => {
             risk::store::low_impact_auto(&shared.pool, incident.customer_id, Some(incident.site_id))
                 .await?
@@ -303,7 +339,7 @@ async fn route(
     command: &str,
     reasoning: &str,
 ) -> Result<Pass, DriveError> {
-    let decision = risk::classify_for(incident.shell(), command, &rules(shared, incident).await?);
+    let (decision, _) = decide(shared, incident, command).await?;
     let automatic = automatic(shared, incident, &decision).await?;
     let Some(mut tx) = leased(shared, incident.id).await? else {
         return Ok(Pass::Done);
@@ -376,7 +412,20 @@ async fn run(
     // The rules again, on exactly what is about to run: an edited command
     // is still refused when forbidden, and a system approval needs a tier
     // that runs without one.
-    let decision = risk::classify_for(incident.shell(), command, &rules(shared, incident).await?);
+    let rules = rules(shared, incident).await?;
+    let (decision, script) = scripts::ai::classify_command(
+        &shared.pool,
+        incident.customer_id,
+        incident.shell(),
+        command,
+        &rules,
+    )
+    .await?;
+    // A root action goes to the agent's root helper, never to a shell.
+    let root = match script {
+        Some(_) => None,
+        None => risk::root_action(incident.shell(), command, &rules),
+    };
     if decision.tier == Tier::Forbidden {
         let reason = CloseReason::ApprovedForbidden(decision.reason);
         return finish(shared, incident, IncidentState::Escalated, reason).await;
@@ -386,7 +435,14 @@ async fn run(
         return finish(shared, incident, IncidentState::Escalated, reason).await;
     }
     // Before any snapshot: the agent would refuse the command anyway.
-    if let Some(refusal) = acceptance::shell_refusal(&shared.pool, incident.server_id).await? {
+    if script.is_some() {
+        if let Some(why) = acceptance::script_refusal_of(&shared.pool, incident.server_id).await? {
+            let reason = CloseReason::ScriptsOff(why.to_owned());
+            return finish(shared, incident, IncidentState::Escalated, reason).await;
+        }
+    } else if let Some(refusal) =
+        acceptance::shell_refusal(&shared.pool, incident.server_id).await?
+    {
         return finish(
             shared,
             incident,
@@ -395,7 +451,15 @@ async fn run(
         )
         .await;
     }
-    if decision.tier != Tier::ReadOnly && !snapshot_done {
+    if root.is_some() {
+        if let Some(refusal) = acceptance::root_refusal(&shared.pool, incident.server_id).await? {
+            let reason = CloseReason::RootRefused(refusal);
+            return finish(shared, incident, IncidentState::Escalated, reason).await;
+        }
+    }
+    // Clearing a cache or old journal files is not worth a snapshot.
+    let needs_snapshot = decision.tier != Tier::ReadOnly && !decision.automatic_root_action();
+    if needs_snapshot && !snapshot_done {
         let change = Change {
             incident_id: incident.id,
             server_id: incident.server_id,
@@ -422,11 +486,20 @@ async fn run(
         };
     }
     let timeout = shared.settings.command_timeout;
-    let payload = ShellCommand {
-        command: command.to_owned(),
-        timeout_seconds: u32::try_from(timeout.as_secs()).unwrap_or(u32::MAX),
-    }
-    .encode_to_vec();
+    let (kind, payload) = match (&script, &root) {
+        // The incident's own timeout bounds the script's, as the loop
+        // waits no longer for its result.
+        (Some(resolved), _) => (RUN_SCRIPT, scripts::ai::payload(resolved, timeout)),
+        (None, Some(action)) => (ROOT_ACTION, action.to_proto().encode_to_vec()),
+        (None, None) => (
+            SHELL,
+            ShellCommand {
+                command: command.to_owned(),
+                timeout_seconds: u32::try_from(timeout.as_secs()).unwrap_or(u32::MAX),
+            }
+            .encode_to_vec(),
+        ),
+    };
     let Some(mut tx) = leased(shared, incident.id).await? else {
         return Ok(Pass::Done);
     };
@@ -437,7 +510,7 @@ async fn run(
         &mut *tx,
         &NewCommand {
             server_id: incident.server_id,
-            kind: SHELL.into(),
+            kind: kind.into(),
             payload,
             ttl: timeout,
             requested_by: None,

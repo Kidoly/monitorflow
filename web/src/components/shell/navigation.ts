@@ -5,12 +5,15 @@ import {
   APPROVALS_PATH,
   AUDIT_PATH,
   AUTO_UPDATE_PATH,
+  AUTOMATION_PATH,
   CAMPAIGNS_PATH,
   DASHBOARDS_PATH,
+  INVENTORY_PATH,
   MAPS_PATH,
   MIRRORS_PATH,
   ON_CALL_PATH,
   REPORTS_PATH,
+  SCRIPTS_PATH,
   SETTINGS_PATH,
 } from "@/lib/routes";
 
@@ -53,6 +56,7 @@ export const NAVIGATION: NavSection[] = [
       { id: "maps", label: "shell.nav.maps", href: MAPS_PATH, icon: "maps" },
       { id: "incidents", label: "shell.nav.incidents", href: "/incidents/", icon: "incidents", incidentCount: true },
       { id: "onCall", label: "shell.nav.onCall", href: ON_CALL_PATH, icon: "users" },
+      { id: "inventory", label: "shell.nav.inventory", href: INVENTORY_PATH, icon: "inventory" },
       { id: "reports", label: "shell.nav.reports", href: REPORTS_PATH, icon: "reports" },
     ],
   },
@@ -71,6 +75,8 @@ export const NAVIGATION: NavSection[] = [
     items: [
       { id: "approvals", label: "shell.nav.approvals", href: APPROVALS_PATH, icon: "approvals" },
       { id: "audit", label: "shell.nav.audit", href: AUDIT_PATH, icon: "audit" },
+      { id: "scripts", label: "shell.nav.scripts", href: SCRIPTS_PATH, icon: "scripts", alsoCurrent: ["/remediation/runs/"] },
+      { id: "automation", label: "shell.nav.automation", href: AUTOMATION_PATH, icon: "automation" },
     ],
   },
 ];

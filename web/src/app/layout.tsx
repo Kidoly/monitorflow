@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
 import { LocaleProvider } from "@/i18n/LocaleProvider";
@@ -23,6 +23,16 @@ export const metadata: Metadata = {
     ],
     apple: asset("/brand/apple-touch-icon.png"),
   },
+  // Installable as an app on a phone (ADR-0186).
+  manifest: asset("/manifest.webmanifest"),
+  appleWebApp: { capable: true, title: "MonitorFlow", statusBarStyle: "default" },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#6a2bd6",
 };
 
 /** Set by `npm run build:demo` (docs/demo.md). */

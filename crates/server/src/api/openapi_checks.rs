@@ -11,14 +11,16 @@ use utoipa::OpenApi;
 
 use super::openapi::{Common, ErrorBody};
 use super::openapi_core::ex;
-use super::{checks, recommendations, sensor_values, website_checks};
+use super::{check_templates, checks, recommendations, sensor_values, website_checks};
 use crate::recommend;
 
 #[derive(OpenApi)]
 #[openapi(
     paths(sensor_values, website_checks, recommendations, dismiss_recommendation, restore_recommendation,
-        check_usage),
-    components(schemas(recommend::Recommendation, recommend::Proposed, recommend::Params)),
+        check_usage, list_check_templates),
+    components(schemas(recommend::Recommendation, recommend::Proposed, recommend::Params,
+        check_templates::TemplateView, check_templates::ParamView, check_templates::MetricView,
+        check_templates::AlertView)),
     modifiers(&Common),
 )]
 pub struct Doc;
@@ -183,3 +185,43 @@ The web interface shows the first few as the \"Most used\" checks.\n\n\
 areas: `api_key_scope`", body = ErrorBody),
     ))]
 fn check_usage() {}
+
+#[utoipa::path(get, path = "/api/v1/check-templates", tag = "sensors",
+    summary = "List the ready-made application checks",
+    description = "The templates of the ready-made application checks (ADR-0183): PostgreSQL \
+(`postgresql`), MySQL and MariaDB (`mysql`), Redis (`redis`) and Docker containers (`docker`). Each says who \
+runs it (`agent_or_probe`: the server's agent against `127.0.0.1`, or the central server or a relay against \
+the server's or device's address; `agent`: the server's agent only), its parameters with their defaults, the \
+metrics it writes, and the alerts that come with it. Metrics are named after the check: \
+`monitorflow_<check name>_<suffix>`, shown here for a check of the default name, its kind.\n\n\
+A check is added with `POST /api/v1/servers/{id}/sensor_configs` (or a site's), with its `kind`, its \
+`params` (the `password` is kept sealed and never returned) and `\"default_alerts\": true` to add the \
+template's alerts as ordinary thresholds where the server or site has none on that metric yet. The account \
+should be read-only: the guides list the least privileges per database.\n\n\
+**Who**: any role. **Area**: `alerts`.",
+    responses(
+        (status = 200, description = "The templates", body = check_templates::CheckTemplates,
+            example = json!({"templates": [{
+                "kind": "redis", "title": "Redis", "runs": "agent_or_probe", "default_port": 6379,
+                "params": [
+                    {"name": "host", "default": "127.0.0.1",
+                     "description": "Address or name to connect to; from a probe, the device's address by default"},
+                    {"name": "password", "default": null,
+                     "description": "Kept sealed by the server, never returned; absent from an update, the stored one is kept"}
+                ],
+                "metrics": [
+                    {"metric": "monitorflow_redis_up", "suffix": "up", "unit": "", "per": null,
+                     "description": "1 when it answered and the login worked; 0 with labels `reason` and `error`"},
+                    {"metric": "monitorflow_redis_memory_usage_ratio", "suffix": "memory_usage_ratio",
+                     "unit": "ratio", "per": null, "description": "Used memory against `maxmemory`, when set"}
+                ],
+                "alerts": [
+                    {"metric": "monitorflow_redis_up", "comparison": "<", "warning": null, "critical": 1.0,
+                     "duration_s": 120},
+                    {"metric": "monitorflow_redis_memory_usage_ratio", "comparison": ">", "warning": 0.8,
+                     "critical": 0.95, "duration_s": 300}
+                ]
+            }]})),
+        (status = 403, description = "Outside the key's areas: `api_key_scope`", body = ErrorBody),
+    ))]
+fn list_check_templates() {}

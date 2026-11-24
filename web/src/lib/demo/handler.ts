@@ -54,6 +54,7 @@ import {
   logsOf,
   mirrorDetail,
   onCallSchedule,
+  inventoryOf,
   packagesOf,
 } from "./data";
 import {
@@ -134,6 +135,8 @@ const ROUTES: [RegExp, Handler][] = [
     local_administrators: 1,
   })],
   [/^\/api\/me\/preferences$/, () => preferences],
+  // The phone pages (ADR-0186): no phone yet; adding one is a write the demo refuses.
+  [/^\/api\/me\/phones$/, () => ({ phones: [], push_key: "BA", session_days: 90, idle_days: 30 })],
 
   // Fleet
   [/^\/api\/servers$/, (_, q) => {
@@ -162,6 +165,9 @@ const ROUTES: [RegExp, Handler][] = [
     const s = server(id!);
     return { reboot_required: false, reported_at: ago(2 * HOUR), packages: packagesOf(s), next_cursor: null };
   }],
+  [/^\/api\/servers\/([^/]+)\/inventory$/, ([id]) => inventoryOf(server(id!))],
+  [/^\/api\/servers\/([^/]+)\/inventory\/changes$/, () => ({ changes: [], next_cursor: null })],
+  [/^\/api\/inventory$/, () => ({ hits: [], truncated: false })],
   [/^\/api\/servers\/([^/]+)\/third-party$/, () => ({ reported: false, managers: [], packages: [], next_cursor: null })],
   [/^\/api\/servers\/([^/]+)\/proxmox$/, ([id]) => ({
     server_id: server(id!).id, mapping: null, snapshots: { available: false, reason: "disabled" }, clusters: [], candidates: [],
@@ -274,6 +280,9 @@ const ROUTES: [RegExp, Handler][] = [
 
   // AI remediation and its audit log
   [/^\/api\/remediation\/approvals$/, () => ({ approvals: [APPROVAL] })],
+  [/^\/api\/remediation\/scripts$/, () => ({ scripts: [] })],
+  [/^\/api\/remediation\/script-runs$/, () => ({ runs: [] })],
+  [/^\/api\/remediation\/automation-rules$/, () => ({ rules: [] })],
   [/^\/api\/remediation\/incidents$/, (_, q) => {
     const alert = q.get("alert_incident_id");
     const list = REMEDIATIONS.filter((r) => !alert || r.alert_incident_id === alert);
@@ -327,6 +336,8 @@ const ROUTES: [RegExp, Handler][] = [
   [/^\/api\/mirrors\/([^/]+)$/, ([id]) => mirrorDetail(found(MIRRORS.find((m) => m.id === id)))],
   [/^\/api\/auto-update$/, () => autoUpdate()],
   [/^\/api\/auto-update\/(agent|relay)\/versions\/peers$/, ([kind]) => versionPeers(kind!)],
+  // No server of the demo runs a release with a known next one (ADR-0182).
+  [/^\/api\/major-upgrades$/, () => ({ servers: [] })],
   [/^\/api\/agent-releases$/, () => ({ versions: [AGENT_VERSION, "0.5.2", "0.5.1"], latest: AGENT_VERSION })],
 
   // Alerting

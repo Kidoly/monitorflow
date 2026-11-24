@@ -38,8 +38,8 @@ use std::time::Duration;
 
 use monitorflow_common::command;
 use monitorflow_common::proto::v1::{
-    Package, PackageManagerStatus, PackageReport, StorageReport, ThirdPartyPackage,
-    WindowsUpdateSource,
+    MajorUpgradeReport, Package, PackageManagerStatus, PackageReport, StorageReport,
+    ThirdPartyPackage, WindowsUpdateSource,
 };
 use tokio::sync::watch;
 
@@ -131,6 +131,11 @@ pub trait PackageManager: Send + Sync + 'static {
     async fn third_party(&self) -> ThirdParty {
         ThirdParty::default()
     }
+    /// The next release, the checks before upgrading to it and the last
+    /// major upgrade (ADR-0182); `None` where there are none.
+    async fn major_upgrade(&self, _packages: &[Package]) -> Option<MajorUpgradeReport> {
+        None
+    }
 }
 
 /// The third-party part of a [`PackageReport`] (ADR-0138).
@@ -202,6 +207,7 @@ impl Reports {
         let windows_update_source = self.manager.windows_update_source().await;
         let storage = self.manager.storage().await.map(Box::new);
         let third_party = self.manager.third_party().await;
+        let major_upgrade = self.manager.major_upgrade(&packages).await.map(Box::new);
         self.latest.send_replace(Some(PackageReport {
             packages,
             reboot_required,
@@ -210,8 +216,33 @@ impl Reports {
             storage,
             third_party: third_party.packages,
             managers: third_party.managers,
+            major_upgrade,
         }));
         true
+    }
+
+    /// Sends the last report again with the major upgrade's progress as
+    /// it stands now (ADR-0182), keeping its packages: apt's lists are not
+    /// trustworthy halfway through an upgrade. Nothing before a first
+    /// report.
+    pub async fn refresh_major_upgrade(&self) {
+        let Some(mut report) = self.latest.borrow().clone() else {
+            return;
+        };
+        let fresh = self.manager.major_upgrade(&[]).await;
+        let progress = fresh.and_then(|f| f.progress);
+        match report.major_upgrade.as_deref_mut() {
+            Some(part) => part.progress = progress,
+            None if progress.is_some() => {
+                report.major_upgrade = Some(Box::new(MajorUpgradeReport {
+                    progress,
+                    ..MajorUpgradeReport::default()
+                }));
+            }
+            None => return,
+        }
+        report.collected_at_unix_ms = unix_ms();
+        self.latest.send_replace(Some(report));
     }
 
     /// Collects at once, then every `interval`, or after [`REPORT_RETRY`]

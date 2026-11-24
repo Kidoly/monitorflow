@@ -230,6 +230,10 @@ check "runtime dir monitorflow 0700" mode_is /run/monitorflow-agent "monitorflow
 if sudo test -e /sys/class/dmi/id/product_uuid; then
     check "UUID copy monitorflow:root 0400" mode_is /run/monitorflow-agent/product_uuid "monitorflow:root 400"
 fi
+# The root-only serial number, copied for the inventory (ADR-0187).
+if sudo test -e /sys/class/dmi/id/product_serial; then
+    check "serial copy monitorflow:root 0400" mode_is /run/monitorflow-agent/product_serial "monitorflow:root 400"
+fi
 # The service's user asking the root helper itself, with what the helper
 # read before ADR-0108 and no command the server signed: refused, and
 # nothing replaced.
@@ -242,6 +246,13 @@ unsigned_update() {
     [ "$(sha256sum /usr/bin/monitorflow-agent)" = "$before" ]
 }
 check "root helper refuses an unsigned self-update" unsigned_update
+# AI root actions (ADR-0181): allowed by a new install, and only for a
+# command the server signed.
+check "a new install allows AI root actions" sudo grep -qx 'root_actions = true' /etc/monitorflow/agent.toml
+unsigned_root_action() {
+    ! printf 'clean-package-cache\n' | sudo -u monitorflow sudo -n /usr/bin/monitorflow-agent root-action
+}
+check "root helper refuses an unsigned root action" unsigned_root_action
 check "service runs as monitorflow" test "$(systemctl show -p User --value monitorflow-agent)" = monitorflow
 check "token file deleted after enrollment" absent /etc/monitorflow/agent-enroll.env
 check "token not in agent.toml" bash -c "! sudo grep -qF -- '$token' /etc/monitorflow/agent.toml"
@@ -275,7 +286,18 @@ check "and keeps the consent" test "$(shell_env)" = MONITORFLOW_COMMANDS_FROM_WE
 installer MF_DOWNLOAD_URL="$base" MF_AI_COMMANDS_FROM_WEB=0
 check "MF_AI_COMMANDS_FROM_WEB=0 takes it back" test -z "$(shell_env)"
 check "agent online after the opt-in" online "$PEER"
+sudo systemctl reset-failed monitorflow-agent
+installer MF_DOWNLOAD_URL="$base" MF_MAJOR_UPGRADES_FROM_WEB=1
+check "MF_MAJOR_UPGRADES_FROM_WEB=1 allows major upgrades" sudo grep -q "major_upgrades = true" /etc/monitorflow/agent.toml
+check "the sudo rules know the helper" sudo -u monitorflow sudo -n -l /usr/bin/monitorflow-agent major-upgrade
+installer MF_DOWNLOAD_URL="$base" MF_MAJOR_UPGRADES_FROM_WEB=0
+check "MF_MAJOR_UPGRADES_FROM_WEB=0 takes it back" sudo grep -q "major_upgrades = false" /etc/monitorflow/agent.toml
 # These runs came quickly: systemd allows 5 starts in 10 seconds.
+sudo systemctl reset-failed monitorflow-agent
+installer MF_DOWNLOAD_URL="$base" MF_AI_ROOT_ACTIONS=0
+check "MF_AI_ROOT_ACTIONS=0 refuses root actions" sudo grep -qx 'root_actions = false' /etc/monitorflow/agent.toml
+installer MF_DOWNLOAD_URL="$base"
+check "a later run keeps that choice" sudo grep -qx 'root_actions = false' /etc/monitorflow/agent.toml
 sudo systemctl reset-failed monitorflow-agent
 
 if [ -n "$newer" ]; then

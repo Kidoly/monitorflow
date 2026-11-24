@@ -4,7 +4,7 @@
 //! word it in their own language.
 
 use super::reach::DiagnosisOnly;
-use crate::commands::acceptance::Refusal;
+use crate::commands::acceptance::{Refusal, RootRefusal};
 
 /// Why an incident closes; [`Self::code`] never changes for a variant.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +30,11 @@ pub(super) enum CloseReason {
     NeedsApproval(String),
     /// The agent would refuse the command.
     Refused(Refusal),
+    /// The agent would refuse the root action (ADR-0181).
+    RootRefused(RootRefusal),
+    /// The agent would refuse a library script the AI proposed (ADR-0189),
+    /// with the way to allow them.
+    ScriptsOff(String),
     SnapshotFailed(String),
     CommandGone,
     /// No result in time for the command.
@@ -60,6 +65,8 @@ impl CloseReason {
             Self::ApprovedForbidden(_) => "approved_forbidden",
             Self::NeedsApproval(_) => "needs_approval",
             Self::Refused(refusal) => refusal.code(),
+            Self::RootRefused(refusal) => refusal.code(),
+            Self::ScriptsOff(_) => "scripts_off",
             Self::SnapshotFailed(_) => "snapshot_failed",
             Self::CommandGone => "command_gone",
             Self::TimedOut(_) => "timed_out",
@@ -88,6 +95,8 @@ impl CloseReason {
                 format!("the command now needs approval ({r}); the rules changed")
             }
             Self::Refused(refusal) => refusal.message().into(),
+            Self::RootRefused(refusal) => refusal.message().into(),
+            Self::ScriptsOff(why) => why.clone(),
             Self::SnapshotFailed(e) => format!("the snapshot before the change failed: {e}"),
             Self::CommandGone => "the queued command is gone".into(),
             Self::TimedOut(command) => format!("the command timed out: {command}"),
@@ -112,6 +121,7 @@ impl CloseReason {
             | Self::ApprovedForbidden(s)
             | Self::NeedsApproval(s)
             | Self::SnapshotFailed(s)
+            | Self::ScriptsOff(s)
             | Self::TimedOut(s) => Some(s),
             _ => None,
         }
@@ -182,6 +192,13 @@ mod tests {
                 CloseReason::Refused(Refusal::Off { windows: true }),
                 "commands_off_windows",
                 Refusal::Off { windows: true }.message(),
+                None,
+                None,
+            ),
+            (
+                CloseReason::RootRefused(RootRefusal::SudoRules),
+                "root_actions_sudo_rules",
+                RootRefusal::SudoRules.message(),
                 None,
                 None,
             ),

@@ -6,8 +6,8 @@ use chrono::{DateTime, SubsecRound, TimeDelta, Utc};
 use chrono_tz::Tz;
 use monitorflow_import::args;
 use monitorflow_import::model::{
-    Alert, Check, Direction, Fidelity, Inventory, Judged, Measure, Os, Repeat, Rule, Severity,
-    SilenceScope, Target, Watch, WindowFunction,
+    Alert, AppKind, Check, Direction, Fidelity, Inventory, Judged, Measure, Os, Repeat, Rule,
+    Severity, SilenceScope, Target, Watch, WindowFunction,
 };
 use monitorflow_import::Note;
 use serde_json::{json, Map, Value};
@@ -21,6 +21,8 @@ use crate::enroll::install_key::peer_id_from_hostname;
 use crate::notify::maintenance::{self, Schedule};
 use crate::sensor_config::{MAX_CHECK_INTERVAL_MS, MIN_CHECK_INTERVAL_MS};
 
+/// Longest name of an imported application check (ADR-0183).
+const APP_MAX_NAME: usize = 32;
 /// Interval of a check whose source says none.
 const DEFAULT_INTERVAL_MS: u64 = 60_000;
 /// Longest silence (ADR-0079).
@@ -397,7 +399,8 @@ fn watch_spec(watch: &Watch, os: Os) -> Spec {
         | Watch::SnmpCustom(_)
         | Watch::Traffic
         | Watch::Vmware
-        | Watch::HyperV => return Spec::NoPort,
+        | Watch::HyperV
+        | Watch::App(_) => return Spec::NoPort,
         Watch::Service { name } => {
             let (kind, key) = if os == Os::Windows {
                 ("windows_service", "services")
@@ -773,6 +776,75 @@ impl Planner<'_> {
                 }
                 ("hyperv", Map::new(), ("hyperv".into(), String::new()))
             }
+            // A ready-made application check (ADR-0183): Docker by the
+            // server's agent; a database or Redis by the agent when it is
+            // on the server itself, else from a probe, as other network
+            // checks.
+            Watch::App(app) => {
+                let kind = app.kind.as_str();
+                let mut params = Map::new();
+                if app.kind == AppKind::Docker {
+                    if server.device.is_some() {
+                        self.not_movable(
+                            "check",
+                            origin,
+                            vec![server.name.clone()],
+                            note("app_docker_agent", args! {}),
+                        );
+                        return;
+                    }
+                    if let Some(containers) = &app.containers {
+                        params.insert("containers".into(), json!(containers));
+                    }
+                    let text = app.containers.as_deref().map_or(String::new(), |c| {
+                        c.trim_start_matches('^').trim_end_matches('$').to_owned()
+                    });
+                    (kind, params, (kind.into(), text))
+                } else {
+                    let host = self.inventory.host(&check.host);
+                    // The server itself, however the source wrote it.
+                    let elsewhere = app.address.as_deref().map(str::trim).filter(|a| {
+                        let own = matches!(
+                            a.to_ascii_lowercase().as_str(),
+                            "127.0.0.1" | "localhost" | "::1" | "[::1]" | ""
+                        ) || host.is_some_and(|h| {
+                            h.name.trim().eq_ignore_ascii_case(a)
+                                || h.addresses.iter().any(|x| x.trim().eq_ignore_ascii_case(a))
+                        }) || server.address.as_deref() == Some(*a);
+                        !own
+                    });
+                    let text = match (elsewhere, &server.device) {
+                        // The agent, at 127.0.0.1 by default.
+                        (None, None) => String::new(),
+                        // The device's own address, which the check
+                        // takes by default.
+                        (None, Some(_)) => {
+                            probe = true;
+                            String::new()
+                        }
+                        (Some(address), _) => {
+                            probe = true;
+                            params.insert("host".into(), json!(address));
+                            address.to_owned()
+                        }
+                    };
+                    if let Some(port) = app.port {
+                        params.insert("port".into(), json!(port.to_string()));
+                    }
+                    if let Some(database) = &app.database {
+                        params.insert("database".into(), json!(database));
+                    }
+                    if let Some(user) = &app.user {
+                        params.insert("user".into(), json!(user));
+                    }
+                    // The password is never exported: the person enters it.
+                    if list == List::Exact {
+                        list = List::Approximated;
+                        why = note("app_password", args! {});
+                    }
+                    (kind, params, (kind.into(), text))
+                }
+            }
             Watch::Cpu | Watch::Memory | Watch::Disk | Watch::DiskIo => {
                 self.builtin(origin, &server, &check.fidelity, "builtin", args! {});
                 return;
@@ -942,10 +1014,17 @@ impl Planner<'_> {
             return;
         }
         let mut name = check_name(&prefix_text.0, &prefix_text.1);
-        if snmp_custom.is_some() {
+        // An application check's metrics end in suffixes of up to 31
+        // characters, within the 64 a threshold's metric may have.
+        let max_name = if monitorflow_apps::is_kind(kind) {
+            Some(APP_MAX_NAME)
+        } else {
+            snmp_custom.is_some().then_some(snmp::MAX_NAME)
+        };
+        if let Some(max_name) = max_name {
             name = name
                 .chars()
-                .take(snmp::MAX_NAME)
+                .take(max_name)
                 .collect::<String>()
                 .trim_end_matches('_')
                 .to_owned();
@@ -970,6 +1049,7 @@ impl Planner<'_> {
                 params: params.clone(),
                 enabled: true,
                 probe: None,
+                default_alerts: false,
             },
             server.device.as_deref(),
         );
@@ -1005,6 +1085,11 @@ impl Planner<'_> {
         });
         if let Some(custom) = snmp_custom {
             self.snmp_rules(&server, &name, &params, custom, &id, origin.clone());
+        }
+        // The alerts of its template, as the API adds them with
+        // `default_alerts` (ADR-0183).
+        if let Some(template) = monitorflow_apps::templates::of(kind) {
+            self.app_rules(&server, template, &name, &id, origin.clone());
         }
         self.checks.insert(same, name.clone());
         self.watch_names
@@ -1084,6 +1169,59 @@ impl Planner<'_> {
         }
     }
 
+    /// The default alerts of an application check `name` (ADR-0183), each
+    /// one the source's own alert on the same metric replaces.
+    fn app_rules(
+        &mut self,
+        server: &Server,
+        template: &monitorflow_apps::templates::Template,
+        name: &str,
+        check: &str,
+        origin: OriginView,
+    ) {
+        let lower = server.peer_id.to_ascii_lowercase();
+        for rule in template.alerts {
+            let metric = monitorflow_apps::templates::metric_name(name, rule.suffix);
+            let key = format!("{lower}:{metric}:value");
+            if self.alerts.contains_key(&key) {
+                continue;
+            }
+            let id = self.unique_id(format!("threshold:{lower}:{metric}"));
+            let present = self.existing.thresholds.contains(&(
+                lower.clone(),
+                metric.clone(),
+                None,
+                "value".to_owned(),
+            ));
+            let mut needs = vec![check.to_owned()];
+            needs.extend(Self::needs(server));
+            self.alerts.insert(key, self.out.items.len());
+            self.push(Item {
+                id,
+                kind: "threshold".into(),
+                list: List::Exact,
+                note: None,
+                origin: origin.clone(),
+                hosts: vec![server.name.clone()],
+                present,
+                needs,
+                create: Some(Create::Threshold {
+                    server: server.peer_id.clone(),
+                    metric,
+                    instance: None,
+                    comparison: rule.comparison.into(),
+                    warning: rule.warning,
+                    critical: rule.critical,
+                    duration_s: u32::try_from(rule.minutes * 60)
+                        .unwrap_or(0)
+                        .min(thresholds::MAX_DURATION_S),
+                    hysteresis: 0.0,
+                    richer: Richer::default(),
+                }),
+            });
+        }
+    }
+
     /// The alert that comes with the check `name`, as the web interface
     /// adds it; once per check.
     fn alert(
@@ -1102,6 +1240,7 @@ impl Planner<'_> {
         let id = format!("check:{lower}:{name}");
         let (suffix, comparison, value) = match kind {
             "port" | "ping" | "snmp" | "http" => ("up", "<", 1.0),
+            k if monitorflow_apps::is_kind(k) => ("up", "<", 1.0),
             "systemd" | "windows_service" => ("active", "<", 1.0),
             _ => ("matches", ">", 0.0),
         };

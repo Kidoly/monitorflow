@@ -7,7 +7,9 @@
 //! thing the agent checks, with a note.
 
 use crate::args;
-use crate::model::{Alert, Direction, Fidelity, Measure, Severity, Watch, WebMethod, Website};
+use crate::model::{
+    Alert, App, AppKind, Direction, Fidelity, Measure, Severity, Watch, WebMethod, Website,
+};
 use crate::notes::Note;
 
 use super::tree::{Channel, Limits, Object};
@@ -39,6 +41,14 @@ pub enum Family {
     Vmware,
     /// A Hyper-V sensor of a Windows host.
     HyperV,
+    /// A database, Redis or Docker sensor: a ready-made application
+    /// check (ADR-0183).
+    App(AppKind),
+    /// A database MonitorFlow has no ready-made check for: Microsoft SQL,
+    /// Oracle, ADO.
+    OtherDatabase,
+    /// NetFlow, jFlow, sFlow or IPFIX received from the device.
+    Flow,
     Other,
 }
 
@@ -53,6 +63,26 @@ pub fn family(sensor_type: &str) -> Family {
     if has("hyperv") || has("hyper-v") {
         return Family::HyperV;
     }
+    // `postgresql`, `mysqlv2`, `mysql`, `dockercontainerstatus`, and the
+    // names PRTG shows: "PostgreSQL", "MySQL v2", "Docker Container
+    // Status".
+    if has("postgres") {
+        return Family::App(AppKind::Postgresql);
+    }
+    if has("mysql") || has("mariadb") {
+        return Family::App(AppKind::Mysql);
+    }
+    if has("redis") {
+        return Family::App(AppKind::Redis);
+    }
+    if has("docker") {
+        return Family::App(AppKind::Docker);
+    }
+    // `mssqlv2`, `oraclev2`, `adosqlv2`, "Microsoft SQL v2", "Oracle
+    // Tablespace".
+    if has("sql") || has("oracle") {
+        return Family::OtherDatabase;
+    }
     if t.starts_with("snmpcustom") || t == "snmplibrary" || t.starts_with("paessler.snmp.custom") {
         return Family::SnmpCustom;
     }
@@ -63,7 +93,10 @@ pub fn family(sensor_type: &str) -> Family {
         None => t,
     };
     let has = |s: &str| t.contains(s);
-    if t.starts_with("ping") {
+    if has("netflow") || has("jflow") || has("sflow") || has("ipfix") {
+        // Before `traffic`: PRTG's custom flow sensors are named so too.
+        Family::Flow
+    } else if t.starts_with("ping") {
         Family::Ping
     } else if t.starts_with("dns") {
         Family::Dns
@@ -122,7 +155,11 @@ pub fn wanted(sensor_type: &str) -> (&'static [&'static str], bool) {
         Family::Dns | Family::Ntp | Family::Snmp | Family::HyperV => (&[], false),
         Family::SnmpCustom => (super::snmp::settings(), true),
         Family::Vmware => (&[], true),
-        Family::Ping | Family::Traffic | Family::Other => (&[], false),
+        Family::App(AppKind::Docker) => (DOCKER_SETTINGS, true),
+        Family::App(_) => (&["port", "database"], true),
+        Family::Ping | Family::Traffic | Family::Flow | Family::OtherDatabase | Family::Other => {
+            (&[], false)
+        }
     }
 }
 
@@ -279,7 +316,61 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
                 lost: lost(sensor, &[]),
             }
         }
+        Family::App(kind) => app(sensor, kind, host),
+        Family::OtherDatabase => Mapped::Not(Note::plain("app_other_database")),
+        // Flows are not a check: the device's Flows tab turns their
+        // reception on, once per device, from the probe it sends to
+        // (ADR-0184).
+        Family::Flow => Mapped::Not(Note::plain("flow_sensor")),
         Family::Other => Mapped::Not(Note::new("prtg_sensor_type", args! {"type" => sensor_type})),
+    }
+}
+
+/// The settings naming the container of a Docker Container Status
+/// sensor, as PRTG may call it.
+const DOCKER_SETTINGS: &[&str] = &["container", "containername"];
+
+/// A database, Redis or Docker sensor: the ready-made check of its kind
+/// (ADR-0183). PRTG's database sensors run a query of their own, which
+/// the check does not; a Docker sensor watches one container, which the
+/// check is limited to when its name is read.
+fn app(sensor: &Object, kind: AppKind, host: Option<&str>) -> Mapped {
+    let setting = |name: &str| {
+        sensor
+            .setting(name)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    };
+    let mut app = App::new(kind);
+    let fidelity = match kind {
+        AppKind::Docker => match DOCKER_SETTINGS.iter().find_map(|name| setting(name)) {
+            Some(name) => {
+                app.containers = Some(format!("^{}$", regex::escape(name)));
+                exact()
+            }
+            None => approximated("app_docker_all", args! {}),
+        },
+        _ => {
+            app.address = host.map(str::to_owned);
+            app.port = setting("port")
+                .and_then(|p| p.parse::<u16>().ok())
+                .filter(|p| *p > 0);
+            if kind == AppKind::Postgresql {
+                app.database = setting("database").map(str::to_owned);
+            }
+            if kind == AppKind::Redis {
+                approximated("app_password", args! {})
+            } else {
+                approximated("app_query", args! {})
+            }
+        }
+    };
+    Mapped::Watch {
+        watch: Watch::app(app),
+        alert: None,
+        fidelity,
+        limits: Vec::new(),
+        lost: lost(sensor, &[]),
     }
 }
 
@@ -801,6 +892,20 @@ mod tests {
     fn families_by_type() {
         assert_eq!(family("ping"), Family::Ping);
         assert_eq!(family("snmptraffic"), Family::Traffic);
+        for flow in [
+            "netflow5",
+            "netflow9custom",
+            "jflowv5",
+            "sflow",
+            "sflowcustom",
+            "ipfix",
+            "paessler.flow.ipfix_v2.1",
+        ] {
+            assert_eq!(family(flow), Family::Flow, "{flow}");
+        }
+        let mut flow = Object::new(1, Kind::Sensor, "NetFlow", Some(0));
+        flow.sensor_type = Some("netflow9".into());
+        assert_eq!(map(&flow, None), Mapped::Not(Note::plain("flow_sensor")));
         assert_eq!(family("wmiservice"), Family::Service);
         assert_eq!(family("snmpcpu"), Family::Cpu);
         assert_eq!(family("wmivolume"), Family::Disk);
@@ -1097,6 +1202,84 @@ mod tests {
         assert_eq!(
             map(&sensor, None),
             Mapped::Not(Note::plain("prtg_no_setting"))
+        );
+    }
+
+    /// Database, Redis and Docker sensors become ready-made application
+    /// checks (ADR-0183); other databases cannot be moved.
+    #[test]
+    fn application_sensors() {
+        for (t, kind) in [
+            ("postgresql", AppKind::Postgresql),
+            ("PostgreSQL", AppKind::Postgresql),
+            ("mysqlv2", AppKind::Mysql),
+            ("MySQL v2", AppKind::Mysql),
+            ("mysql", AppKind::Mysql),
+            ("redis", AppKind::Redis),
+            ("dockercontainerstatus", AppKind::Docker),
+            ("Docker Container Status", AppKind::Docker),
+        ] {
+            assert_eq!(family(t), Family::App(kind), "{t}");
+        }
+        for t in ["mssqlv2", "oraclev2", "Microsoft SQL v2", "adosqlv2"] {
+            assert_eq!(family(t), Family::OtherDatabase, "{t}");
+        }
+        let sensor = |t: &str| {
+            let mut s = Object::new(1, Kind::Sensor, "Database", Some(0));
+            s.sensor_type = Some(t.into());
+            s
+        };
+        let mut pg = sensor("postgresql");
+        pg.settings.insert("port".into(), "5433".into());
+        pg.settings.insert("database".into(), "shop".into());
+        let Mapped::Watch {
+            watch, fidelity, ..
+        } = map(&pg, Some("192.0.2.40"))
+        else {
+            panic!()
+        };
+        let mut expected = App::new(AppKind::Postgresql);
+        expected.address = Some("192.0.2.40".into());
+        expected.port = Some(5433);
+        expected.database = Some("shop".into());
+        assert_eq!(watch, Watch::app(expected));
+        assert_eq!(fidelity, approximated("app_query", args! {}));
+
+        let Mapped::Watch {
+            watch, fidelity, ..
+        } = map(&sensor("redis"), Some("192.0.2.41"))
+        else {
+            panic!()
+        };
+        let mut expected = App::new(AppKind::Redis);
+        expected.address = Some("192.0.2.41".into());
+        assert_eq!(watch, Watch::app(expected));
+        assert_eq!(fidelity, approximated("app_password", args! {}));
+
+        // One container by name: exactly that one.
+        let mut docker = sensor("dockercontainerstatus");
+        docker
+            .settings
+            .insert("container".into(), "shop.web".into());
+        let Mapped::Watch {
+            watch, fidelity, ..
+        } = map(&docker, Some("192.0.2.42"))
+        else {
+            panic!()
+        };
+        let mut expected = App::new(AppKind::Docker);
+        expected.containers = Some("^shop\\.web$".into());
+        assert_eq!(watch, Watch::app(expected));
+        assert_eq!(fidelity, Fidelity::Exact);
+        docker.settings.clear();
+        let Mapped::Watch { fidelity, .. } = map(&docker, None) else {
+            panic!()
+        };
+        assert_eq!(fidelity, approximated("app_docker_all", args! {}));
+
+        assert_eq!(
+            map(&sensor("mssqlv2"), Some("192.0.2.43")),
+            Mapped::Not(Note::plain("app_other_database"))
         );
     }
 }

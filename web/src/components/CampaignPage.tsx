@@ -25,6 +25,8 @@ import {
   describeThreshold,
   classificationName,
   describeUpdate,
+  majorConfirmText,
+  upgradeStepText,
   describeWindow,
   failedServers,
   isFinal,
@@ -108,7 +110,10 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
   const { progress } = campaign;
   const facts = [
     ...(multiCustomer(me) ? [{ label: t("campaigns.fact.customer"), value: campaign.customer_name }] : []),
-    { label: t("campaigns.fact.update"), value: describeUpdate(campaign.spec, campaign.agent_version, campaign.software) },
+    {
+      label: t("campaigns.fact.update"),
+      value: describeUpdate(campaign.spec, campaign.agent_version, campaign.major_upgrade ?? null, campaign.software ?? null),
+    },
     ...approvalFacts(campaign),
     { label: t("campaigns.fact.stopsAt"), value: describeThreshold(campaign.failure_threshold) },
     {
@@ -233,7 +238,13 @@ function Run({ run }: { run: CampaignRun }) {
       </summary>
       <div className={own.runBody}>
         <p className={own.dim}>
-          {run.settings.name} · {describeUpdate(run.settings.spec, run.settings.agent_version, run.settings.software)}
+          {run.settings.name} ·{" "}
+          {describeUpdate(
+            run.settings.spec,
+            run.settings.agent_version,
+            run.settings.major_upgrade ?? null,
+            run.settings.software ?? null,
+          )}
         </p>
         {run.error && <p className={own.dim}>{run.error}</p>}
         {run.waves.map((wave) => (
@@ -265,8 +276,21 @@ function Actions({ campaign, onChange }: { campaign: CampaignDetail; onChange: (
 
   return (
     <div className={own.actions}>
+      {/* A major upgrade starts after a confirmation naming the releases and the servers (ADR-0182). */}
+      {campaign.major_upgrade && canAct("start", campaign.state) && (
+        <InlineConfirm
+          trigger={actionLabel("start")}
+          title={majorConfirmText(campaign.major_upgrade, campaign.progress.total)}
+          consequence={t("campaigns.major.confirmNote")}
+          confirmLabel={actionLabel("start")}
+          triggerVariant="k"
+          confirmVariant="k"
+          onConfirm={async () => onChange(await api.campaignAction(campaign.id, "start"))}
+          describeError={(e) => t("campaigns.failed", { action: actionLabel("start"), error: describeError(e) })}
+        />
+      )}
       {(["start", "pause", "resume"] as const)
-        .filter((action) => canAct(action, campaign.state))
+        .filter((action) => canAct(action, campaign.state) && !(action === "start" && campaign.major_upgrade))
         .map((action) => (
           <Button
             key={action}
@@ -351,7 +375,19 @@ const serverColumns = (): Column<CampaignServer>[] => [
       </Link>
     ),
   },
-  { key: "status", header: t("campaigns.column.state"), cell: (s) => <ServerStatusLabel status={s.status} /> },
+  {
+    key: "status",
+    header: t("campaigns.column.state"),
+    cell: (s) => {
+      const step = upgradeStepText(s);
+      return (
+        <>
+          <ServerStatusLabel status={s.status} />
+          {step && <span className={own.dim}> {step}</span>}
+        </>
+      );
+    },
+  },
   { key: "exit", header: t("campaigns.column.exitCode"), cell: (s) => s.exit_code },
   {
     key: "finished",

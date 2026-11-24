@@ -14,6 +14,11 @@
 //! update is preceded by a local snapshot of the server where one is
 //! possible and it has no Proxmox VM (ADR-0094).
 //!
+//! A major upgrade campaign (ADR-0182) sends `major_upgrade` instead,
+//! after a Proxmox or local snapshot, to as many servers of a batch at
+//! once as it allows; a server is done once it came back on the new
+//! release with its checks as they were ([`follow`]).
+//!
 //! A step only reads `commands` and the campaign's tables, so running it
 //! twice, or again after a restart, queues nothing twice.
 
@@ -23,7 +28,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::{
-    APPLY_UPDATES, CONFIGURE_SOURCES, SELF_UPDATE, SOFTWARE, TAKE_SNAPSHOT,
+    APPLY_UPDATES, CONFIGURE_SOURCES, MAJOR_UPGRADE, SELF_UPDATE, SOFTWARE, TAKE_SNAPSHOT,
 };
 use monitorflow_common::config::ServerConfig;
 use monitorflow_common::proto::v1::TakeSnapshot;
@@ -34,15 +39,18 @@ use sqlx::{PgConnection, PgPool};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use super::model::{software_refusal, SourcesMode};
+use super::model::{software_refusal, MajorUpgradeSpec, SourcesMode};
 use super::pin::{self, Configurer, Next, Pending, PinSources};
 use super::store::{cancel_queued, close_waves, Actor, CampaignRow, COLUMNS};
 use crate::agent_releases;
 use crate::api::audit::{self, Event};
+use crate::commands::major_upgrade::{self as upgrade, Progress};
 use crate::commands::{CommandStore, Commands, NewCommand};
 use crate::live_settings::Live;
 use crate::mirror::{relays, Mirrors};
-use crate::remediation::snapshot::local;
+use crate::remediation::snapshot::{
+    choice, local, SnapshotError, SnapshotRequest, Snapshotter, Support,
+};
 
 /// How often active campaigns are looked at.
 pub const POLL: Duration = Duration::from_secs(10);
@@ -73,7 +81,15 @@ pub struct Runner {
     /// `[proxmox]` is on: a server mapped to a guest is Proxmox's to
     /// snapshot, so it gets no local snapshot (ADR-0094).
     proxmox: bool,
+    /// Takes the Proxmox snapshots of major upgrades (ADR-0182).
+    snapshotter: Option<Arc<dyn Snapshotter>>,
     wake: Arc<Notify>,
+}
+
+impl std::fmt::Debug for dyn Snapshotter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Snapshotter")
+    }
 }
 
 impl Runner {
@@ -84,8 +100,15 @@ impl Runner {
             sources: None,
             agents: agent_releases::Sources::from_config(&ServerConfig::default()),
             proxmox: false,
+            snapshotter: None,
             wake: Arc::new(Notify::new()),
         }
+    }
+
+    /// Takes the Proxmox snapshots of major upgrade campaigns (ADR-0182).
+    pub fn with_snapshotter(mut self, snapshotter: Arc<dyn Snapshotter>) -> Self {
+        self.snapshotter = Some(snapshotter);
+        self
     }
 
     /// Where agent update campaigns tell agents to download (ADR-0053).
@@ -184,20 +207,26 @@ impl Runner {
             let open = row.state.is_active() && window_ttl(&mut tx, &row, now).await?.is_some();
             restored = pin::restore(&mut tx, &row, open).await?;
         }
+        let mut snapshots = Vec::new();
         let step = if row.state.is_active() {
-            step(
-                &mut tx,
-                &row,
+            if row.major_upgrade.is_some() {
+                follow(&mut tx, &row, now).await?;
+            }
+            let context = Context {
                 now,
-                self.sources.as_ref(),
-                &self.agents,
-                self.proxmox,
-            )
-            .await?
+                sources: self.sources.as_ref(),
+                agents: &self.agents,
+                proxmox: self.proxmox,
+                vm_snapshots: &mut snapshots,
+            };
+            step(&mut tx, &row, context).await?
         } else {
             Step::Idle
         };
         tx.commit().await?;
+        for server in snapshots {
+            self.take_vm_snapshot(row.id, server);
+        }
         if !restored.is_empty() {
             tracing::info!(campaign = %id, commands = restored.len(), "campaign sources restores queued");
             if let Some(commands) = &self.commands {
@@ -216,6 +245,56 @@ impl Runner {
             Step::Idle => {}
         }
         Ok(step)
+    }
+
+    /// Takes the Proxmox snapshot of `server` before its major upgrade in
+    /// `campaign`, outside the runner's transaction: the API call blocks
+    /// for minutes (ADR-0094). Its outcome goes to the server's row, then
+    /// the runner looks again.
+    fn take_vm_snapshot(&self, campaign: Uuid, server: Uuid) {
+        let pool = self.pool.clone();
+        let wake = self.wake.clone();
+        let snapshotter = self.snapshotter.clone();
+        tokio::spawn(async move {
+            let (state, error) = match snapshotter {
+                None => (
+                    "limited",
+                    Some("Proxmox snapshots are not set up".to_owned()),
+                ),
+                Some(snapshotter) => match snapshotter.support(server).await {
+                    Ok(Support::Unavailable(reason)) => ("limited", Some(reason.to_string())),
+                    Ok(Support::Available(_)) => {
+                        match snapshotter
+                            .take(server, SnapshotRequest::for_campaign(campaign))
+                            .await
+                        {
+                            Ok(_) => ("taken", None),
+                            Err(SnapshotError::Unsupported(reason))
+                                if choice::proxmox_decides(reason) =>
+                            {
+                                ("limited", Some(reason.to_string()))
+                            }
+                            Err(error) => ("failed", Some(error.to_string())),
+                        }
+                    }
+                    Err(error) => ("failed", Some(error.to_string())),
+                },
+            };
+            let done = sqlx::query(
+                "UPDATE campaign_targets SET vm_snapshot_state = $3, vm_snapshot_error = $4
+                 WHERE campaign_id = $1 AND server_id = $2 AND vm_snapshot_state = 'taking'",
+            )
+            .bind(campaign)
+            .bind(server)
+            .bind(state)
+            .bind(error.as_deref())
+            .execute(&pool)
+            .await;
+            if let Err(error) = done {
+                tracing::warn!(%campaign, %server, %error, "cannot record a Proxmox snapshot; it is asked again later");
+            }
+            wake.notify_one();
+        });
     }
 
     /// Runs [`Self::tick`] every `poll` and on [`Self::wake`] until
@@ -243,13 +322,20 @@ struct Tally {
     done: i64,
 }
 
+/// What a step needs besides the campaign.
+struct Context<'a> {
+    now: DateTime<Utc>,
+    sources: Option<&'a PinSources>,
+    agents: &'a agent_releases::Sources,
+    proxmox: bool,
+    /// Servers whose Proxmox snapshot to take once committed.
+    vm_snapshots: &'a mut Vec<Uuid>,
+}
+
 async fn step(
     conn: &mut PgConnection,
     row: &CampaignRow,
-    now: DateTime<Utc>,
-    sources: Option<&PinSources>,
-    agents: &agent_releases::Sources,
-    proxmox: bool,
+    mut context: Context<'_>,
 ) -> Result<Step, sqlx::Error> {
     let next = match row.current_wave {
         None => 0,
@@ -265,7 +351,9 @@ async fn step(
                      count(*) FILTER (WHERE (t.error IS NOT NULL
                                              OR c.state IN ('succeeded', 'failed', 'expired', 'cancelled'))
                                         AND (cfg.sent_at IS NULL OR s.revoked_at IS NOT NULL
-                                             OR r.state IN ('succeeded', 'failed', 'expired', 'cancelled'))) AS done
+                                             OR r.state IN ('succeeded', 'failed', 'expired', 'cancelled'))
+                                        AND (c.kind IS DISTINCT FROM 'major_upgrade' OR c.state <> 'succeeded'
+                                             OR t.error IS NOT NULL OR t.upgraded_at IS NOT NULL)) AS done
                  FROM campaign_targets t
                  JOIN servers s ON s.id = t.server_id
                  LEFT JOIN commands c ON c.id = t.command_id
@@ -285,7 +373,7 @@ async fn step(
                 return Ok(Step::Failed);
             }
             if tally.done < tally.size {
-                return queue(conn, row, wave, now, sources, agents, proxmox).await;
+                return queue(conn, row, wave, &mut context).await;
             }
             finish_wave(conn, row.id, wave, &tally).await?;
             wave + 1
@@ -300,7 +388,7 @@ async fn step(
         complete(conn, row.id).await?;
         return Ok(Step::Completed);
     }
-    let step = queue(conn, row, next, now, sources, agents, proxmox).await?;
+    let step = queue(conn, row, next, &mut context).await?;
     if matches!(step, Step::Queued(_)) {
         sqlx::query("UPDATE campaigns SET state = 'running', current_wave = $2 WHERE id = $1")
             .bind(row.id)
@@ -345,11 +433,14 @@ async fn queue(
     conn: &mut PgConnection,
     row: &CampaignRow,
     wave: i32,
-    now: DateTime<Utc>,
-    sources: Option<&PinSources>,
-    agents: &agent_releases::Sources,
-    proxmox: bool,
+    context: &mut Context<'_>,
 ) -> Result<Step, sqlx::Error> {
+    let (now, sources, agents, proxmox) = (
+        context.now,
+        context.sources,
+        context.agents,
+        context.proxmox,
+    );
     let missing: Vec<Pending> = sqlx::query_as(
         "SELECT t.server_id, s.peer_id, s.revoked_at IS NOT NULL AS revoked,
              s.os_family, s.package_updates, cfg.state AS configure_state, cfg.error AS configure_error,
@@ -360,6 +451,7 @@ async fn queue(
              st.report AS storage,
              EXISTS (SELECT 1 FROM server_package_managers m WHERE m.server_id = t.server_id)
                  AS reports_third_party,
+             t.vm_snapshot_state, t.vm_snapshot_at, t.vm_snapshot_error,
              s.command_kinds->>'software' AS software_state
          FROM campaign_targets t JOIN servers s ON s.id = t.server_id
          LEFT JOIN commands cfg ON cfg.id = t.sources_command_id
@@ -382,14 +474,33 @@ async fn queue(
     };
     // An agent update campaign sends self_update instead (ADR-0053).
     let agent_version = row.agent_version.as_deref().map(str::parse::<Version>);
+    // A major upgrade campaign sends major_upgrade, to as many servers of
+    // the batch at once as it allows (ADR-0182).
+    let major: Option<&MajorUpgradeSpec> = row.major_upgrade.as_ref().map(|m| &m.0);
+    let mut places = match major {
+        Some(major) => {
+            let busy = upgrading(conn, row.id, wave).await?;
+            i64::from(major.parallel).saturating_sub(busy).max(0)
+        }
+        None => i64::MAX,
+    };
     let spec = row.spec();
     let software = row.software();
     let mut configurer = None;
     let mut peers = Vec::new();
-    let (mut skipped, mut configured, mut snapshots) = (0, 0, 0);
+    let (mut skipped, mut configured, mut snapshots, mut vm_snapshots) = (0, 0, 0, 0);
     for target in missing {
+        if major.is_some() && target.fresh() && !target.revoked {
+            if places == 0 {
+                continue;
+            }
+            places -= 1;
+        }
         let next = match row.sources_mode {
             _ if target.revoked => Next::Fail("server revoked".into()),
+            _ if major.is_some() => {
+                target.before_major(major.is_some_and(|m| m.accept_limited_rollback), now)
+            }
             _ if !target.package_updates
                 && spec.include_os
                 && agent_version.is_none()
@@ -410,6 +521,21 @@ async fn queue(
         };
         let built = match next {
             Next::Wait => continue,
+            Next::VmSnapshot => {
+                sqlx::query(
+                    "UPDATE campaign_targets
+                     SET vm_snapshot_state = 'taking', vm_snapshot_at = $3, vm_snapshot_error = NULL
+                     WHERE campaign_id = $1 AND server_id = $2",
+                )
+                .bind(row.id)
+                .bind(target.server_id)
+                .bind(now)
+                .execute(&mut *conn)
+                .await?;
+                context.vm_snapshots.push(target.server_id);
+                vm_snapshots += 1;
+                continue;
+            }
             Next::Fail(error) => Err(error),
             Next::Skip => {
                 sqlx::query(
@@ -426,6 +552,10 @@ async fn queue(
                 let name = local::campaign_name(row.id);
                 Ok((TAKE_SNAPSHOT, TakeSnapshot { name }.encode_to_vec()))
             }
+            Next::Update if major.is_some() => Ok((
+                MAJOR_UPGRADE,
+                major.map(MajorUpgradeSpec::payload).unwrap_or_default(),
+            )),
             Next::Update => match (&agent_version, software) {
                 // Software from the catalogue (ADR-0188), where the host
                 // allowed it.
@@ -505,6 +635,20 @@ async fn queue(
             snapshots += 1;
             "UPDATE campaign_targets SET snapshot_command_id = $3
              WHERE campaign_id = $1 AND server_id = $2"
+        } else if kind == MAJOR_UPGRADE {
+            // The checks failing now, which it must leave as they are.
+            let before = upgrade::failing_checks(&mut *conn, target.server_id).await?;
+            sqlx::query(
+                "UPDATE campaign_targets SET checks_before = $3
+                 WHERE campaign_id = $1 AND server_id = $2",
+            )
+            .bind(row.id)
+            .bind(target.server_id)
+            .bind(sqlx::types::Json(before))
+            .execute(&mut *conn)
+            .await?;
+            "UPDATE campaign_targets SET command_id = $3
+             WHERE campaign_id = $1 AND server_id = $2"
         } else {
             "UPDATE campaign_targets SET command_id = $3
              WHERE campaign_id = $1 AND server_id = $2"
@@ -517,7 +661,7 @@ async fn queue(
             .await?;
         peers.push(target.peer_id);
     }
-    if peers.is_empty() && skipped == 0 {
+    if peers.is_empty() && skipped == 0 && vm_snapshots == 0 {
         return Ok(Step::Idle);
     }
     sqlx::query(
@@ -537,12 +681,186 @@ async fn queue(
             "commands": peers.len(),
             "configure_sources": configured,
             "take_snapshot": snapshots,
+            "proxmox_snapshot": vm_snapshots,
             "skipped": skipped,
+            "impact": if major.is_some() { Some("high_impact") } else { None },
             "ttl_s": ttl.as_secs(),
         }),
     )
     .await?;
     Ok(Step::Queued(peers))
+}
+
+/// How many servers of the batch are being upgraded now: a snapshot or
+/// an upgrade under way, not yet done or failed (ADR-0182).
+async fn upgrading(conn: &mut PgConnection, campaign: Uuid, wave: i32) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM campaign_targets t
+         LEFT JOIN commands c ON c.id = t.command_id
+         WHERE t.campaign_id = $1 AND t.wave = $2 AND t.error IS NULL AND t.upgraded_at IS NULL
+           AND ((t.command_id IS NOT NULL AND c.state NOT IN ('failed', 'expired', 'cancelled'))
+                OR (t.command_id IS NULL
+                    AND (t.snapshot_command_id IS NOT NULL OR t.vm_snapshot_state IS NOT NULL)))",
+    )
+    .bind(campaign)
+    .bind(wave)
+    .fetch_one(conn)
+    .await
+}
+
+/// A server back on the new release is judged after this long, so its
+/// checks had time to run again.
+pub const SETTLE: chrono::TimeDelta = chrono::TimeDelta::minutes(5);
+/// Its checks must be back within this long of its return.
+pub const CHECKS_BACK: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
+/// An upgrade not done this long after it started has failed.
+pub const UPGRADE_LIMIT: chrono::TimeDelta = chrono::TimeDelta::hours(6);
+
+/// A server whose upgrade started and is not judged yet.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Following {
+    pub server_id: Uuid,
+    pub command_id: Uuid,
+    /// When the command ended: the upgrade started then.
+    pub started_at: Option<DateTime<Utc>>,
+    pub os_version: Option<String>,
+    pub progress: Option<sqlx::types::Json<Progress>>,
+    pub checks_before: Option<sqlx::types::Json<Vec<String>>>,
+    pub came_back_at: Option<DateTime<Utc>>,
+}
+
+/// What [`judge`] makes of a server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    Wait,
+    /// Back on the new release: its checks are given [`SETTLE`].
+    CameBack,
+    Done,
+    Fail(String),
+}
+
+/// Whether the server of `f` is done with its upgrade to `to`, with the
+/// checks `failing` on it now (read once it came back).
+pub fn judge(f: &Following, to: &str, failing: &[String], now: DateTime<Utc>) -> Verdict {
+    let command = f.command_id.to_string();
+    let progress = f
+        .progress
+        .as_ref()
+        .map(|p| &p.0)
+        .filter(|p| p.command_id == command);
+    if let Some(progress) = progress {
+        if progress.phase == "failed" {
+            let mut error = format!(
+                "the upgrade failed: {}",
+                progress.error.as_deref().unwrap_or("no reason given")
+            );
+            if progress.sources_restored && !error.contains("put back") {
+                error.push_str(" (the sources were put back)");
+            }
+            return Verdict::Fail(error);
+        }
+        let on_target = f
+            .os_version
+            .as_deref()
+            .is_some_and(|v| v == to || v.starts_with(&format!("{to}.")));
+        if progress.phase == "done" && on_target {
+            let Some(back) = f.came_back_at else {
+                return Verdict::CameBack;
+            };
+            let before: &[String] = f.checks_before.as_ref().map_or(&[], |c| &c.0);
+            let new: Vec<&String> = failing.iter().filter(|c| !before.contains(c)).collect();
+            if new.is_empty() && now - back >= SETTLE {
+                return Verdict::Done;
+            }
+            if !new.is_empty() && now - back >= CHECKS_BACK {
+                let names: Vec<&str> = new.iter().map(|c| c.as_str()).collect();
+                return Verdict::Fail(format!("checks not back: {}", names.join(", ")));
+            }
+            return Verdict::Wait;
+        }
+    }
+    if f.started_at.is_some_and(|at| now - at > UPGRADE_LIMIT) {
+        return Verdict::Fail(
+            "the server did not come back on the new release 6 hours after its upgrade started"
+                .into(),
+        );
+    }
+    Verdict::Wait
+}
+
+/// Judges every server of a major upgrade campaign whose upgrade started:
+/// done, failed with why, or still going (ADR-0182).
+async fn follow(
+    conn: &mut PgConnection,
+    row: &CampaignRow,
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    let Some(spec) = row.major_upgrade.as_ref().map(|m| &m.0) else {
+        return Ok(());
+    };
+    let rows: Vec<Following> = sqlx::query_as(
+        "SELECT t.server_id, c.id AS command_id, c.finished_at AS started_at, s.os_version,
+             m.report -> 'progress' AS progress, t.checks_before, t.came_back_at
+         FROM campaign_targets t
+         JOIN commands c ON c.id = t.command_id
+         JOIN servers s ON s.id = t.server_id
+         LEFT JOIN server_major_upgrades m ON m.server_id = t.server_id
+                                          AND jsonb_typeof(m.report -> 'progress') = 'object'
+         WHERE t.campaign_id = $1 AND c.kind = $2 AND c.state = 'succeeded'
+           AND t.error IS NULL AND t.upgraded_at IS NULL",
+    )
+    .bind(row.id)
+    .bind(MAJOR_UPGRADE)
+    .fetch_all(&mut *conn)
+    .await?;
+    for f in rows {
+        let failing = if f.came_back_at.is_some() {
+            upgrade::failing_checks(&mut *conn, f.server_id).await?
+        } else {
+            Vec::new()
+        };
+        let verdict = judge(&f, &spec.to, &failing, now);
+        let (column, action, error) = match &verdict {
+            Verdict::Wait => continue,
+            Verdict::CameBack => ("came_back_at", None, None),
+            Verdict::Done => ("upgraded_at", Some("campaign.upgrade_done"), None),
+            Verdict::Fail(error) => ("error", Some("campaign.upgrade_fail"), Some(error.clone())),
+        };
+        let update = match column {
+            "error" => sqlx::query(
+                "UPDATE campaign_targets SET error = $3 WHERE campaign_id = $1 AND server_id = $2",
+            )
+            .bind(row.id)
+            .bind(f.server_id)
+            .bind(error.clone()),
+            "came_back_at" => sqlx::query(
+                "UPDATE campaign_targets SET came_back_at = $3
+                 WHERE campaign_id = $1 AND server_id = $2",
+            )
+            .bind(row.id)
+            .bind(f.server_id)
+            .bind(now),
+            _ => sqlx::query(
+                "UPDATE campaign_targets SET upgraded_at = $3
+                 WHERE campaign_id = $1 AND server_id = $2",
+            )
+            .bind(row.id)
+            .bind(f.server_id)
+            .bind(now),
+        };
+        update.execute(&mut *conn).await?;
+        if let Some(action) = action {
+            let details = json!({
+                "server_id": f.server_id,
+                "command_id": f.command_id,
+                "from": spec.from,
+                "to": spec.to,
+                "error": error,
+            });
+            record(conn, row.id, action, details).await?;
+        }
+    }
+    Ok(())
 }
 
 async fn finish_wave(
@@ -626,4 +944,86 @@ pub(super) async fn record(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn following(phase: Option<&str>, os: &str) -> Following {
+        let command_id = Uuid::new_v4();
+        Following {
+            server_id: Uuid::nil(),
+            command_id,
+            started_at: Some(Utc::now() - chrono::TimeDelta::minutes(30)),
+            os_version: Some(os.into()),
+            progress: phase.map(|phase| {
+                sqlx::types::Json(Progress {
+                    command_id: command_id.to_string(),
+                    from: "debian 12".into(),
+                    to: "debian 13".into(),
+                    phase: phase.into(),
+                    error: (phase == "failed")
+                        .then(|| "apt-get full-upgrade exited with 100".into()),
+                    sources_restored: false,
+                    disabled_sources: vec![],
+                    started_at: None,
+                    updated_at: None,
+                })
+            }),
+            checks_before: Some(sqlx::types::Json(vec!["disk_used_percent (/srv)".into()])),
+            came_back_at: None,
+        }
+    }
+
+    #[test]
+    fn a_server_is_done_once_back_on_the_release_with_its_checks() {
+        let now = Utc::now();
+        let mut f = following(Some("upgrading"), "debian 12");
+        assert_eq!(judge(&f, "debian 13", &[], now), Verdict::Wait);
+        f = following(Some("done"), "debian 13");
+        assert_eq!(judge(&f, "debian 13", &[], now), Verdict::CameBack);
+        f.came_back_at = Some(now - chrono::TimeDelta::minutes(1));
+        assert_eq!(
+            judge(&f, "debian 13", &[], now),
+            Verdict::Wait,
+            "checks get time"
+        );
+        f.came_back_at = Some(now - SETTLE);
+        // A check failing before is no reason to fail.
+        let before = vec!["disk_used_percent (/srv)".to_owned()];
+        assert_eq!(judge(&f, "debian 13", &before, now), Verdict::Done);
+        let new = vec!["cpu_percent".to_owned()];
+        assert_eq!(judge(&f, "debian 13", &new, now), Verdict::Wait);
+        f.came_back_at = Some(now - CHECKS_BACK);
+        assert_eq!(
+            judge(&f, "debian 13", &new, now),
+            Verdict::Fail("checks not back: cpu_percent".into())
+        );
+    }
+
+    #[test]
+    fn a_failure_or_no_news_fails_the_server() {
+        let now = Utc::now();
+        let f = following(Some("failed"), "debian 12");
+        assert_eq!(
+            judge(&f, "debian 13", &[], now),
+            Verdict::Fail("the upgrade failed: apt-get full-upgrade exited with 100".into())
+        );
+        // Done, but Hello still says the old release: wait for it.
+        let f = following(Some("done"), "debian 12");
+        assert_eq!(judge(&f, "debian 13", &[], now), Verdict::Wait);
+        let mut late = following(None, "debian 12");
+        late.started_at = Some(now - UPGRADE_LIMIT - chrono::TimeDelta::minutes(1));
+        assert!(matches!(
+            judge(&late, "debian 13", &[], now),
+            Verdict::Fail(_)
+        ));
+        // The progress of another command says nothing about this one.
+        let mut other = following(Some("failed"), "debian 12");
+        if let Some(p) = other.progress.as_mut() {
+            p.0.command_id = "other".into();
+        }
+        assert_eq!(judge(&other, "debian 13", &[], now), Verdict::Wait);
+    }
 }

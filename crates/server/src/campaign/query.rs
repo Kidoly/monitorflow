@@ -66,16 +66,29 @@ pub struct TargetRow {
     pub restore_command_id: Option<Uuid>,
     pub restore_state: Option<CommandState>,
     pub snapshot_command_id: Option<Uuid>,
+    /// The command is a major upgrade (ADR-0182).
+    pub major_upgrade: bool,
+    /// The agent's phase of this server's major upgrade.
+    pub upgrade_phase: Option<String>,
+    /// Its Proxmox snapshot before the upgrade: `taking`, `taken`,
+    /// `limited` or `failed`.
+    pub vm_snapshot_state: Option<String>,
+    pub upgraded_at: Option<DateTime<Utc>>,
 }
 
 impl TargetRow {
     /// `pending`, the command's state, or `skipped`; `failed` when the
-    /// sources could not be restored after the update.
+    /// sources could not be restored after the update. A major upgrade
+    /// whose command succeeded (the upgrade started) is `upgrading` until
+    /// it is found done, or `failed` with why (ADR-0182).
     pub fn status(&self) -> &'static str {
         let restore_failed = self
             .restore_state
             .is_some_and(|s| s.is_final() && s != CommandState::Succeeded);
+        let upgrade = self.major_upgrade && self.command_state == Some(CommandState::Succeeded);
         match (self.command_state, &self.error) {
+            (Some(_), Some(_)) if upgrade => CommandState::Failed.as_str(),
+            (Some(_), None) if upgrade && self.upgraded_at.is_none() => "upgrading",
             (Some(_), _) if restore_failed => CommandState::Failed.as_str(),
             (Some(state), _) => state.as_str(),
             (None, Some(_)) => "skipped",
@@ -165,11 +178,16 @@ pub async fn counts(pool: &PgPool, campaigns: &[Uuid]) -> Result<Vec<WaveCounts>
 /// The columns of [`WaveCounts`] over targets `t`, with [`COUNTS_JOINS`].
 const COUNTS: &str = "SELECT t.campaign_id, t.wave, count(*) AS total,
      count(*) FILTER (WHERE t.command_id IS NULL AND t.error IS NULL) AS pending,
-     count(*) FILTER (WHERE c.state IN ('queued', 'sent', 'running')) AS in_progress,
-     count(*) FILTER (WHERE c.state = 'succeeded' AND NOT r.failed) AS succeeded,
+     count(*) FILTER (WHERE c.state IN ('queued', 'sent', 'running')
+                      OR (c.kind = 'major_upgrade' AND c.state = 'succeeded'
+                          AND t.error IS NULL AND t.upgraded_at IS NULL)) AS in_progress,
+     count(*) FILTER (WHERE c.state = 'succeeded' AND NOT r.failed
+                      AND (c.kind <> 'major_upgrade' OR t.upgraded_at IS NOT NULL)) AS succeeded,
      count(*) FILTER (WHERE (t.command_id IS NULL AND t.error IS NOT NULL)
                       OR c.state IN ('failed', 'expired')
-                      OR (c.state = 'succeeded' AND r.failed)) AS failed,
+                      OR (c.state = 'succeeded' AND r.failed)
+                      OR (c.kind = 'major_upgrade' AND c.state = 'succeeded'
+                          AND t.error IS NOT NULL AND t.upgraded_at IS NULL)) AS failed,
      count(*) FILTER (WHERE c.state = 'cancelled') AS cancelled";
 
 const COUNTS_JOINS: &str = "LEFT JOIN commands c ON c.id = t.command_id
@@ -209,7 +227,12 @@ const TARGETS: &str = "SELECT t.wave, t.server_id, s.peer_id, s.hostname, s.site
                    THEN 'restoring sources ' || r.state
                         || COALESCE(': ' || r.error, '') END) AS error,
      c.finished_at, t.sources_command_id, t.restore_command_id,
-     r.state AS restore_state, t.snapshot_command_id";
+     r.state AS restore_state, t.snapshot_command_id,
+     COALESCE(c.kind = 'major_upgrade', false) AS major_upgrade,
+     (SELECT m.report -> 'progress' ->> 'phase' FROM server_major_upgrades m
+      WHERE m.server_id = t.server_id
+        AND m.report -> 'progress' ->> 'command_id' = t.command_id::text) AS upgrade_phase,
+     t.vm_snapshot_state, t.upgraded_at";
 
 const TARGETS_JOINS: &str = "JOIN servers s ON s.id = t.server_id
      LEFT JOIN commands c ON c.id = t.command_id
@@ -329,6 +352,10 @@ mod tests {
             restore_command_id: None,
             restore_state: None,
             snapshot_command_id: None,
+            major_upgrade: false,
+            upgrade_phase: None,
+            vm_snapshot_state: None,
+            upgraded_at: None,
         };
         assert_eq!(row.status(), "pending");
         row.error = Some("server revoked".into());
@@ -339,6 +366,36 @@ mod tests {
         row.restore_state = Some(CommandState::Running);
         assert_eq!(row.status(), "succeeded");
         row.restore_state = Some(CommandState::Expired);
+        assert_eq!(row.status(), "failed");
+    }
+
+    #[test]
+    fn a_major_upgrade_is_upgrading_until_done() {
+        let mut row = TargetRow {
+            wave: 0,
+            server_id: Uuid::nil(),
+            peer_id: "agent-1".into(),
+            hostname: "web-1".into(),
+            site_id: Uuid::nil(),
+            command_id: Some(Uuid::nil()),
+            command_state: Some(CommandState::Succeeded),
+            exit_code: Some(0),
+            error: None,
+            finished_at: None,
+            sources_command_id: None,
+            restore_command_id: None,
+            restore_state: None,
+            snapshot_command_id: None,
+            major_upgrade: true,
+            upgrade_phase: Some("rebooting".into()),
+            vm_snapshot_state: None,
+            upgraded_at: None,
+        };
+        assert_eq!(row.status(), "upgrading");
+        row.upgraded_at = Some(Utc::now());
+        assert_eq!(row.status(), "succeeded");
+        row.upgraded_at = None;
+        row.error = Some("checks not back: cpu".into());
         assert_eq!(row.status(), "failed");
     }
 }

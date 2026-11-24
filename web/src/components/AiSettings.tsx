@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, Fragment, useCallback, useEffect, useId, useState } from "react";
 
 import { rich, t } from "@/i18n";
+import { LOCALE_NAMES } from "@/i18n/locale";
 import {
   type AiForm as AiFormBody,
   type AiModel,
@@ -110,8 +111,56 @@ function Ai() {
         <Banner tone="plain">{rich("ai.offBanner", { off: <strong>{t("ai.off")}</strong> })}</Banner>
       )}
       {settings.from_config ? <FromConfig settings={settings} /> : <AiForm settings={settings} onSaved={setSaved} />}
+      <DiagnosisLanguage settings={settings} onSaved={setSaved} />
       {settings.enabled && <AllowCommands />}
     </div>
+  );
+}
+
+/**
+ * The language the AI writes its diagnoses in (ADR-0181): the one most people chose for the
+ * interface, unless chosen here. Not part of `[ai]`, so it stays editable when the configuration
+ * sets AI. Saved as soon as it is picked.
+ */
+function DiagnosisLanguage({ settings, onSaved }: { settings: AiSettings; onSaved: (settings: AiSettings) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Older servers do not say: nothing to choose.
+  if (settings.effective_language === undefined) return null;
+  const value = settings.language ?? "auto";
+  async function choose(next: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      onSaved(await api.setAiLanguage(next === "en" || next === "fr" ? next : null));
+    } catch (e) {
+      setError(t("ai.language.failed", { error: describeError(e) }));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className={styles.panel} aria-label={t("ai.language.label")}>
+      <h2 className={styles.sectionTitle}>{t("ai.language.label")}</h2>
+      <label className={styles.field}>
+        {t("ai.language.field")}
+        <select className={fieldClass} value={value} disabled={busy} onChange={(e) => void choose(e.target.value)}>
+          <option value="auto">
+            {value === "auto"
+              ? t("ai.language.auto", { language: LOCALE_NAMES[settings.effective_language] })
+              : t("ai.language.autoPlain")}
+          </option>
+          <option value="en">{LOCALE_NAMES.en}</option>
+          <option value="fr">{LOCALE_NAMES.fr}</option>
+        </select>
+        <span className={styles.fieldNote}>{t("ai.language.note")}</span>
+      </label>
+      {error && (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 

@@ -65,6 +65,13 @@ impl PackageManager for Apt {
         super::third_party::collect(&self.tools).await
     }
 
+    async fn major_upgrade(
+        &self,
+        packages: &[Package],
+    ) -> Option<monitorflow_common::proto::v1::MajorUpgradeReport> {
+        crate::major_upgrade::handler::report(packages).await
+    }
+
     async fn reboot_required(&self) -> Result<bool, PackageError> {
         Ok(tokio::fs::try_exists(&self.tools.reboot_required_file)
             .await

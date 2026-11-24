@@ -57,6 +57,12 @@ enum Command {
     #[cfg(unix)]
     #[command(subcommand)]
     Snapshots(SnapshotsCommand),
+    /// Run one AI root action, as root through sudo by the agent
+    /// (ADR-0181): reads a `root_action` command the central server signed
+    /// on stdin and runs it if `commands.root_actions` is set in the
+    /// configuration file.
+    #[cfg(unix)]
+    RootAction,
     /// Install a signed agent release, run as root through sudo by the
     /// agent (ADR-0053): reads a header line and the binary on stdin,
     /// verifies them, replaces /usr/bin/monitorflow-agent and starts the
@@ -67,6 +73,32 @@ enum Command {
         #[command(subcommand)]
         step: Option<SelfUpdateStep>,
     },
+    /// Start a major upgrade of the distribution, run as root through sudo
+    /// by the agent (ADR-0182): reads a `major_upgrade` command the central
+    /// server signed on stdin, checks `packages.major_upgrades` in the
+    /// configuration file and the server, then starts the upgrade in the
+    /// transient unit monitorflow-major-upgrade.
+    #[cfg(unix)]
+    MajorUpgrade {
+        #[command(subcommand)]
+        step: Option<MajorUpgradeStep>,
+    },
+    /// `on` allows major upgrades of the distribution from the web
+    /// interface (ADR-0182), `off` refuses them: sets
+    /// `packages.major_upgrades` in `--config`. Run it as root, then
+    /// restart the agent for the web interface to see it.
+    #[cfg(unix)]
+    MajorUpgrades {
+        #[command(subcommand)]
+        state: Toggle,
+    },
+    /// Start a remote terminal's shell as `remote.terminal_user`, run as
+    /// root through sudo by the agent (ADR-0190): reads a signed
+    /// `remote_session` command on stdin, checks it, then becomes that
+    /// account's login shell on the terminal of its stdout.
+    #[cfg(unix)]
+    #[command(hide = true)]
+    RemoteShell,
     /// Records the certificate authority of the install command as the one
     /// the root helpers trust (ADR-0108). Run as root by the installer,
     /// with the token in MONITORFLOW_ENROLLMENT_TOKEN.
@@ -86,10 +118,27 @@ enum Command {
     /// (ADR-0084), or let the web interface turn them on (ADR-0098): sets
     /// `commands.shell` or `commands.from_web` in `--config`, keeping the
     /// rest of the file. Restart the MonitorFlowAgent service afterwards.
-    #[cfg(windows)]
+    /// On Linux, `root-actions on|off` allows or refuses the AI root
+    /// actions of ADR-0181 (`commands.root_actions`); run it as root.
     AiCommands {
         #[command(subcommand)]
         action: AiCommandsAction,
+    },
+    /// Let this agent run scripts of the central server's script library,
+    /// or stop it (ADR-0189): sets `commands.scripts` in `--config`,
+    /// keeping the rest of the file. The web interface cannot turn it on.
+    /// Restart the MonitorFlowAgent service afterwards.
+    #[cfg(windows)]
+    Scripts {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
+    /// Allow or refuse remote terminals opened from the web interface on
+    /// this host (ADR-0190): sets `remote.terminal` in `--config`, keeping
+    /// the rest of the file. Restart the agent afterwards.
+    RemoteAccess {
+        #[command(subcommand)]
+        what: RemoteAccessWhat,
     },
     /// Let the central server install and remove software from its
     /// catalogue on this host, or stop it (ADR-0188): sets
@@ -119,26 +168,50 @@ enum Command {
     },
 }
 
-#[cfg(windows)]
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 enum OnOff {
     On,
     Off,
 }
 
-#[cfg(windows)]
 #[derive(Subcommand, Debug, Clone, Copy)]
 enum AiCommandsAction {
     /// Run AI commands here, whatever the web interface last said.
+    #[cfg(windows)]
     On,
     /// Refuse AI commands here, whatever the web interface last said.
+    #[cfg(windows)]
     Off,
     /// `on` lets the web interface turn AI commands on and off; `off`
     /// lets it only turn them off.
+    #[cfg(windows)]
     FromWeb {
         #[arg(value_enum)]
         state: OnOff,
     },
+    /// `on` lets AI commands ask for the root actions of ADR-0181
+    /// (clearing the package cache, vacuuming the journal, pruning unused
+    /// Docker images, restarting a service); `off` refuses them. The root
+    /// helper applies it at once; restart the agent for its report.
+    #[cfg(unix)]
+    RootActions {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum RemoteAccessWhat {
+    /// `on` lets people of the roles the central server allows open a
+    /// terminal here, as the agent's user; `off` refuses it.
+    Terminal {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
+    /// The account terminals run as, on Linux, through a root helper that
+    /// checks each signed command; `none` goes back to the agent's user.
+    /// Never root unless named here.
+    TerminalUser { account: String },
 }
 
 #[cfg(unix)]
@@ -182,6 +255,22 @@ enum SelfUpdateStep {
     /// The watchdog, started by `self-update` in a transient systemd unit.
     #[command(hide = true)]
     Watch,
+}
+
+#[cfg(unix)]
+#[derive(Subcommand, Debug, Clone, Copy)]
+enum MajorUpgradeStep {
+    /// The upgrade's steps, started by `major-upgrade` in a transient
+    /// systemd unit.
+    #[command(hide = true)]
+    Run,
+}
+
+#[cfg(unix)]
+#[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
+enum Toggle {
+    On,
+    Off,
 }
 
 #[cfg(unix)]
@@ -252,6 +341,53 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
             return tokio::task::spawn_blocking(move || snapshots(&path, command)).await?;
         }
         #[cfg(unix)]
+        Some(Command::RootAction) => return root_action(cli.config.clone()).await,
+        #[cfg(unix)]
+        Some(Command::AiCommands { action }) => {
+            let AiCommandsAction::RootActions { state } = action;
+            return set_root_actions(&cli.config, state == OnOff::On).await;
+        }
+        #[cfg(unix)]
+        Some(Command::MajorUpgrade { step }) => {
+            return major_upgrade(cli.config.clone(), step).await
+        }
+        #[cfg(unix)]
+        Some(Command::MajorUpgrades { state }) => {
+            use monitorflow_agent::major_upgrade::helper;
+            let on = state == Toggle::On;
+            let path = cli.config.clone();
+            let changed = tokio::task::spawn_blocking(move || helper::set_consent(&path, on))
+                .await?
+                .map_err(anyhow::Error::msg)?;
+            let what = if on {
+                "major upgrades from the web interface are allowed"
+            } else {
+                "major upgrades from the web interface are refused"
+            };
+            if changed {
+                println!(
+                    "{what} in {}; the web interface shows it once the agent restarts: systemctl restart monitorflow-agent",
+                    cli.config.display()
+                );
+            } else {
+                println!("{what} already ({})", cli.config.display());
+            }
+            return Ok(());
+        }
+        #[cfg(unix)]
+        Some(Command::RemoteShell) => {
+            let now = monitorflow_agent::self_update::unix_ms();
+            let path = cli.config.clone();
+            // Returns only when refused; the shell replaced it otherwise.
+            let refused = tokio::task::spawn_blocking(move || {
+                monitorflow_agent::remote::helper::run(&path, now)
+            })
+            .await?;
+            let Err(error) = refused;
+            eprintln!("monitorflow: remote terminal refused: {error}");
+            std::process::exit(1);
+        }
+        #[cfg(unix)]
         Some(Command::PinCa) => {
             let config: AgentConfig = config::load(&cli.config)?;
             let place = monitorflow_agent::helper_trust::Place::agent(&config.tls_paths());
@@ -270,6 +406,20 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         #[cfg(windows)]
         Some(Command::AiCommands { action }) => {
             return set_ai_commands(&cli.config, action).await;
+        }
+        Some(Command::RemoteAccess {
+            what: RemoteAccessWhat::Terminal { state },
+        }) => {
+            return set_remote_terminal(&cli.config, state == OnOff::On).await;
+        }
+        Some(Command::RemoteAccess {
+            what: RemoteAccessWhat::TerminalUser { account },
+        }) => {
+            return set_terminal_user(&cli.config, account).await;
+        }
+        #[cfg(windows)]
+        Some(Command::Scripts { state }) => {
+            return set_scripts(&cli.config, state == OnOff::On).await;
         }
         #[cfg(windows)]
         Some(Command::Software { state }) => {
@@ -367,13 +517,15 @@ async fn set_key(
                     )
                 })?
         }
-        Key::FromWeb | Key::Software => false,
+        Key::FromWeb | Key::RootActions | Key::Scripts | Key::Software => false,
     };
     let what = match (key, on) {
         (Key::Shell, true) => "AI commands are on",
         (Key::Shell, false) => "AI commands are off",
         (Key::FromWeb, true) => "the web interface may turn AI commands on and off",
         (Key::FromWeb, false) => "the web interface may only turn AI commands off",
+        (Key::RootActions, _) => unreachable!("root actions are Linux only"),
+        (Key::Scripts, _) => unreachable!("set by `scripts`"),
         (Key::Software, true) => "the central server may install and remove software",
         (Key::Software, false) => "the central server may not install or remove software",
     };
@@ -384,6 +536,144 @@ async fn set_key(
             "{what} in {}; restart the agent to apply it: Restart-Service MonitorFlowAgent",
             path.display()
         );
+    }
+    Ok(())
+}
+
+/// `ai-commands root-actions on|off`, as root: sets the consent the root
+/// helper reads at each action (ADR-0181).
+#[cfg(unix)]
+async fn set_root_actions(path: &Path, on: bool) -> anyhow::Result<()> {
+    use monitorflow_agent::ai_commands::{self, Key, Outcome};
+
+    let file = path.to_owned();
+    let (outcome, _) =
+        tokio::task::spawn_blocking(move || ai_commands::set(&file, Key::RootActions, on))
+            .await??;
+    let what = if on {
+        "AI commands may ask for root actions"
+    } else {
+        "AI root actions are refused"
+    };
+    if outcome == Outcome::Unchanged {
+        println!("{what} already ({})", path.display());
+    } else {
+        println!(
+            "{what} in {}; it applies at once, and the web interface shows it once the agent restarts: systemctl restart monitorflow-agent",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// The root actions helper (ADR-0181), as root: checks the consent, the
+/// signed command and the action before anything else, then prints each
+/// run's command line and output, and the error last on stderr.
+#[cfg(unix)]
+async fn root_action(config: PathBuf) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    use monitorflow_agent::helper_trust::Place;
+    use monitorflow_agent::root_actions::helper::{self, Programs};
+
+    let action = tokio::task::spawn_blocking(move || {
+        let now = monitorflow_agent::self_update::unix_ms();
+        helper::authorized(
+            &config,
+            &mut std::io::stdin().lock(),
+            |config| Place::agent(&config.tls_paths()),
+            now,
+        )
+    })
+    .await??;
+    let outcome = helper::execute(&action, &Programs::default()).await;
+    let (mut stdout, mut stderr) = (std::io::stdout().lock(), std::io::stderr().lock());
+    for run in &outcome.runs {
+        writeln!(stdout, "$ {}", run.line)?;
+        stdout.write_all(run.stdout.as_bytes())?;
+        stderr.write_all(run.stderr.as_bytes())?;
+    }
+    stdout.flush()?;
+    if let Some(error) = &outcome.error {
+        writeln!(stderr, "Error: {error}")?;
+        stderr.flush()?;
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// `scripts on|off`: sets `commands.scripts` in the configuration file.
+#[cfg(windows)]
+async fn set_scripts(path: &Path, on: bool) -> anyhow::Result<()> {
+    use monitorflow_agent::ai_commands::{self, Key, Outcome};
+
+    let file = path.to_owned();
+    let (outcome, _) =
+        tokio::task::spawn_blocking(move || ai_commands::set(&file, Key::Scripts, on)).await??;
+    let what = if on {
+        "library scripts are allowed"
+    } else {
+        "library scripts are refused"
+    };
+    if outcome == Outcome::Unchanged {
+        println!("{what} already ({})", path.display());
+    } else {
+        println!(
+            "{what} in {}; restart the agent to apply it: Restart-Service MonitorFlowAgent",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// `remote-access terminal on|off`: sets `remote.terminal`.
+async fn set_remote_terminal(path: &Path, on: bool) -> anyhow::Result<()> {
+    use monitorflow_agent::remote_access::{self, Outcome};
+
+    let file = path.to_owned();
+    let (outcome, _) = tokio::task::spawn_blocking(move || remote_access::set(&file, on)).await??;
+    let what = if on {
+        "remote terminals are allowed"
+    } else {
+        "remote terminals are refused"
+    };
+    #[cfg(unix)]
+    let restart = "systemctl restart monitorflow-agent";
+    #[cfg(windows)]
+    let restart = "Restart-Service MonitorFlowAgent";
+    match outcome {
+        Outcome::Unchanged => println!("{what} already ({})", path.display()),
+        Outcome::Changed => println!(
+            "{what} in {}; restart the agent to apply it: {restart}",
+            path.display()
+        ),
+    }
+    Ok(())
+}
+
+/// `remote-access terminal-user <account>|none`: sets `remote.terminal_user`.
+async fn set_terminal_user(path: &Path, account: String) -> anyhow::Result<()> {
+    use monitorflow_agent::remote_access::{self, Outcome};
+
+    let user = (account != "none").then_some(account);
+    let file = path.to_owned();
+    let chosen = user.clone();
+    let (outcome, _) =
+        tokio::task::spawn_blocking(move || remote_access::set_user(&file, chosen.as_deref()))
+            .await??;
+    let what = match &user {
+        Some(user) if user == "root" => {
+            "remote terminals run as root, with every right on this host".to_owned()
+        }
+        Some(user) => format!("remote terminals run as {user}"),
+        None => "remote terminals run as the agent's user".to_owned(),
+    };
+    match outcome {
+        Outcome::Unchanged => println!("{what} already ({})", path.display()),
+        Outcome::Changed => println!(
+            "{what} in {}; restart the agent to apply it",
+            path.display()
+        ),
     }
     Ok(())
 }
@@ -469,6 +759,25 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     let mut handlers = Handlers::default();
     let latest_report = platform_handlers(&config, &host, &mut handlers, &stop);
     let ai_switch = ai_handlers(&config, &mut handlers);
+    #[cfg(unix)]
+    root_action_handler(&config, &ai_switch, &mut handlers).await;
+    handlers.register(
+        monitorflow_common::command::RUN_SCRIPT,
+        Arc::new(monitorflow_agent::commands::script::ScriptHandler::new(
+            config.commands.scripts,
+        )),
+    );
+    // Remote terminals (ADR-0190), only where the host allowed them.
+    let (remote, remote_end) = monitorflow_agent::remote::link(
+        config.remote.terminal,
+        Box::new(updates.clone()),
+        monitorflow_agent::remote::platform_spawner(config.remote.terminal_user.clone()),
+        monitorflow_agent::remote::platform_announce(),
+    );
+    handlers.register(
+        monitorflow_common::command::REMOTE_SESSION,
+        Arc::new(monitorflow_agent::remote::RemoteSessionHandler::new(remote)),
+    );
     let reporting = handlers.clone();
     let (commands_stream, commands_end) = commands::link();
     let ca_certs =
@@ -502,6 +811,7 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         .with_sensors(stream_end)
         .with_upload(uplink)
         .with_commands(commands_stream)
+        .with_remote(remote_end)
         .with_command_handlers(reporting, ai_switch.subscribe());
     if let Some(reports) = latest_report {
         agent = agent.with_reports(reports);
@@ -514,6 +824,10 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         tokio::spawn(discovery.run(stop.clone()));
         agent = agent.with_discovery(reports);
     }
+    // What the machine is made of and runs (ADR-0187).
+    let (inventory, snapshots) = monitorflow_agent::inventory::Collector::new();
+    tokio::spawn(inventory.run(stop.clone()));
+    agent = agent.with_inventory(snapshots);
     let result = agent.run(stop).await.context("cannot connect upstream");
     if result.is_ok() {
         let _ = sensors.await;
@@ -542,6 +856,35 @@ fn ai_handlers(config: &AgentConfig, handlers: &mut Handlers) -> Arc<AiSwitch> {
         Arc::new(AiSwitchHandler::new(switch.clone())),
     );
     switch
+}
+
+/// `root_action` (ADR-0181), on while AI commands are and the host allowed
+/// root actions; sudo is asked once whether its rules know the helper.
+#[cfg(unix)]
+async fn root_action_handler(
+    config: &AgentConfig,
+    switch: &Arc<AiSwitch>,
+    handlers: &mut Handlers,
+) {
+    use monitorflow_agent::packages::Tools;
+    use monitorflow_agent::root_actions::{self, RootActionHandler};
+    use monitorflow_common::command;
+
+    let tools = Tools::default();
+    let allowed = config.commands.root_actions;
+    let sudo_rule = allowed && root_actions::sudo_rule(&tools).await;
+    if allowed && !sudo_rule {
+        tracing::warn!("{}", root_actions::OLD_SUDO_RULES);
+    }
+    handlers.register(
+        command::ROOT_ACTION,
+        Arc::new(RootActionHandler::new(
+            switch.clone(),
+            allowed,
+            sudo_rule,
+            tools,
+        )),
+    );
 }
 
 /// Package reports every `packages.report_interval`, and the handlers of
@@ -591,10 +934,12 @@ fn platform_handlers(
             let handler = SnapshotHandler::new(action, tools.clone(), reports.clone());
             handlers.register(kind, Arc::new(handler));
         }
+        major_upgrade_handler(config, host, &tools, &reports, handlers, stop);
         latest_report
     });
     if latest_report.is_none() {
         for (kind, what) in [
+            (command::MAJOR_UPGRADE, "major upgrades"),
             (command::APPLY_UPDATES, "package updates"),
             (command::CONFIGURE_SOURCES, "package sources"),
             (command::REVERT_SOURCES, "package sources"),
@@ -619,6 +964,60 @@ fn platform_handlers(
         )),
     );
     latest_report
+}
+
+/// `major_upgrade` (ADR-0182) on Debian, accepted where the host allowed
+/// it and sudo knows the helper, and the watch that reports each phase of
+/// an upgrade; refused as unsupported on other families.
+#[cfg(unix)]
+fn major_upgrade_handler(
+    config: &AgentConfig,
+    host: &HostInfo,
+    tools: &monitorflow_agent::packages::Tools,
+    reports: &monitorflow_agent::packages::Reports,
+    handlers: &mut Handlers,
+    stop: &Shutdown,
+) {
+    use monitorflow_agent::commands::unsupported::Unsupported;
+    use monitorflow_agent::major_upgrade::handler::{self, MajorUpgradeHandler};
+    use monitorflow_agent::major_upgrade::state::STATE_DIR;
+    use monitorflow_common::command;
+
+    if host.os_family != os::OsFamily::Debian {
+        handlers.register(
+            command::MAJOR_UPGRADE,
+            Arc::new(Unsupported::new("major upgrades", "this distribution yet")),
+        );
+        return;
+    }
+    tokio::spawn(handler::watch(
+        reports.clone(),
+        STATE_DIR.into(),
+        stop.clone(),
+    ));
+    let allowed = config.packages.major_upgrades;
+    let (tools, reports) = (tools.clone(), reports.clone());
+    let slot = Arc::new(MajorUpgradeHandler::new(
+        tools.clone(),
+        reports.clone(),
+        false,
+    ));
+    handlers.register(command::MAJOR_UPGRADE, slot);
+    if allowed {
+        // Asked once, like the root actions' rule: an old sudoers file
+        // keeps the kind refused, with the reason in the log.
+        let rule = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(handler::sudo_rule(&tools))
+        });
+        if rule {
+            handlers.register(
+                command::MAJOR_UPGRADE,
+                Arc::new(MajorUpgradeHandler::new(tools, reports, true)),
+            );
+        } else {
+            tracing::warn!("{}", handler::OLD_SUDO_RULES);
+        }
+    }
 }
 
 /// Windows Update reports and `apply_updates` through the update service
@@ -668,6 +1067,7 @@ fn platform_handlers(
         (command::REVERT_SOURCES, "package sources"),
         (command::TAKE_SNAPSHOT, "snapshots"),
         (command::DELETE_SNAPSHOT, "snapshots"),
+        (command::ROOT_ACTION, "AI root actions"),
     ] {
         handlers.register(kind, Arc::new(Unsupported::new(what, "Windows")));
     }
@@ -690,6 +1090,89 @@ fn signed_command(
     let place = Place::agent(&config.tls_paths());
     let now = monitorflow_agent::self_update::unix_ms();
     Ok(authorize(&place, &request, kind, now)?)
+}
+
+/// The major upgrade helper (ADR-0182), as root. Without a step: checks
+/// the signed command, the consent, the releases and the server, then
+/// starts the unit, printing each check and the error last on stderr.
+/// `run`: the unit's steps.
+#[cfg(unix)]
+async fn major_upgrade(config: PathBuf, step: Option<MajorUpgradeStep>) -> anyhow::Result<()> {
+    use monitorflow_agent::major_upgrade::checks::Host;
+    use monitorflow_agent::major_upgrade::helper::{self, Paths, System};
+    use monitorflow_agent::major_upgrade::state::STATE_DIR;
+    use monitorflow_agent::packages::apt::parse_simulation;
+    use monitorflow_common::command::MAJOR_UPGRADE;
+
+    if !rustix::process::geteuid().is_root() {
+        anyhow::bail!("run as root, as the agent does through sudo");
+    }
+    let dir = Path::new(STATE_DIR);
+    if let Some(MajorUpgradeStep::Run) = step {
+        return tokio::task::spawn_blocking(move || {
+            monitorflow_agent::major_upgrade::state::check_owned(dir)?;
+            let mut system = System::new(dir)?;
+            let paths = Paths {
+                root: "/".into(),
+                state_dir: dir.into(),
+            };
+            let state = helper::run(&paths, &mut system, monitorflow_agent::self_update::unix_ms)
+                .map_err(anyhow::Error::msg)?;
+            if !state.error.is_empty() {
+                anyhow::bail!("{}", state.error);
+            }
+            Ok(())
+        })
+        .await?;
+    }
+    let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<helper::Started> {
+        let command = signed_command(&config, MAJOR_UPGRADE)?;
+        if !helper::consent(&config).map_err(anyhow::Error::msg)? {
+            anyhow::bail!(
+                "major upgrades are not allowed on this server: {}",
+                helper::ALLOW_LINE
+            );
+        }
+        let running = os::detect_from(None).os_version;
+        let upgrade = helper::requested(&command.payload, &running).map_err(anyhow::Error::msg)?;
+        // The checks read fresh lists of the current release.
+        let refresh = std::process::Command::new("/usr/bin/apt-get")
+            .args(["-q", "update"])
+            .env("LC_ALL", "C")
+            .output()
+            .context("cannot run apt-get update")?;
+        if !refresh.status.success() {
+            anyhow::bail!(
+                "`apt-get update` failed: {}",
+                String::from_utf8_lossy(&refresh.stderr).trim()
+            );
+        }
+        let simulation = std::process::Command::new("/usr/bin/apt-get")
+            .args(["-s", "-q", "dist-upgrade"])
+            .env("LC_ALL", "C")
+            .output()
+            .context("cannot run apt-get -s dist-upgrade")?;
+        let upgradable = parse_simulation(&String::from_utf8_lossy(&simulation.stdout))
+            .iter()
+            .filter(|c| c.installed.is_some())
+            .count();
+        let now = monitorflow_agent::self_update::unix_ms();
+        helper::start(&command.command_id, upgrade, &Host, upgradable, dir, now)
+            .map_err(anyhow::Error::msg)
+    })
+    .await?;
+    match outcome {
+        Ok(started) => {
+            for line in started.lines {
+                println!("{line}");
+            }
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!("Error: {error}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Prints the changed paths and the backup directory, one per line.
@@ -938,6 +1421,9 @@ async fn probe(
     let build = |kind: &str| {
         if kind == monitorflow_webcheck::KIND {
             monitorflow_webcheck::build(&params, local.port_targets.as_ref())
+        } else if monitorflow_apps::is_kind(kind) {
+            let place = monitorflow_apps::Place::Agent(local.port_targets.as_ref());
+            monitorflow_apps::build(kind, &params, place)
         } else {
             registry::build_local(kind, &params, local)
         }

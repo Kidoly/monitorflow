@@ -26,6 +26,10 @@
 //! its results go up on the current stream (ADR-0031). Results produced
 //! while disconnected wait in its queue.
 //!
+//! Frames of remote terminals go both ways between the stream and the
+//! sessions (ADR-0190); when a connection ends, every session ends with
+//! it.
+//!
 //! Envelope payloads are never logged.
 
 use std::sync::Arc;
@@ -38,7 +42,7 @@ use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
     CommandKindState, CommandResult, DiscoveryReport, Envelope, Heartbeat, Hello, LogBatch,
-    LogEntry, PackageReport, SampleBatch, SensorConfigAck,
+    LogEntry, PackageReport, RemoteFrame, SampleBatch, SensorConfigAck,
 };
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
@@ -52,6 +56,7 @@ use crate::backoff::Backoff;
 use crate::commands;
 use crate::identity::AgentIdentity;
 use crate::os::HostInfo;
+use crate::remote;
 use crate::sensor_config::StreamEnd;
 use crate::shutdown::Shutdown;
 use crate::unix_ms;
@@ -114,6 +119,8 @@ pub struct Agent {
     reporting_again: bool,
     reports: Option<watch::Receiver<Option<PackageReport>>>,
     discovery: Option<watch::Receiver<Option<DiscoveryReport>>>,
+    remote: Option<remote::StreamEnd>,
+    inventory: Option<crate::inventory::Link>,
     on_open: Option<Arc<dyn Fn() + Send + Sync>>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
@@ -136,6 +143,8 @@ impl Agent {
             reporting_again: false,
             reports: None,
             discovery: None,
+            remote: None,
+            inventory: None,
             on_open: None,
             sequence: 0,
         }
@@ -202,6 +211,23 @@ impl Agent {
         self
     }
 
+    /// Carries the frames of remote terminals (ADR-0190).
+    pub fn with_remote(mut self, remote: remote::StreamEnd) -> Self {
+        self.remote = Some(remote);
+        self
+    }
+
+    /// Sends the inventory published on `snapshots` (ADR-0187): its hash
+    /// when a stream opens, its changes when it changes, and what the
+    /// server asks for.
+    pub fn with_inventory(
+        mut self,
+        snapshots: watch::Receiver<Option<std::sync::Arc<crate::inventory::Snapshot>>>,
+    ) -> Self {
+        self.inventory = Some(crate::inventory::Link::new(snapshots));
+        self
+    }
+
     /// Calls `on_open` each time the upstream accepts `Hello`, like the
     /// self-update's health record (ADR-0053).
     pub fn on_open(mut self, on_open: Arc<dyn Fn() + Send + Sync>) -> Self {
@@ -222,7 +248,11 @@ impl Agent {
         let mut backoff = self.settings.backoff.clone();
         loop {
             let mut opened = None;
-            let failure = match self.session(&mut shutdown, &mut opened).await {
+            let ended = self.session(&mut shutdown, &mut opened).await;
+            if let Some(remote) = &self.remote {
+                remote.disconnected();
+            }
+            let failure = match ended {
                 Ok(()) => return Ok(()),
                 Err(failure) => failure,
             };
@@ -305,6 +335,14 @@ impl Agent {
         tracing::info!(upstream = %self.settings.upstream_url, agent_id = self.identity.peer_id(), "stream opened");
         if let Some(on_open) = &self.on_open {
             on_open();
+        }
+        if let Some(report) = self
+            .inventory
+            .as_mut()
+            .and_then(crate::inventory::Link::opened)
+        {
+            let envelope = self.envelope(Payload::Inventory(report));
+            let _ = tx.try_send(envelope);
         }
 
         let every = self.settings.heartbeat_interval;
@@ -391,12 +429,37 @@ impl Agent {
                     let _ = tx.send(envelope).await;
                     None
                 }
+                Some(frame) = next_frame(&mut self.remote) => {
+                    let envelope = self.envelope(Payload::Remote(frame));
+                    let _ = tx.send(envelope).await;
+                    None
+                }
                 Some(report) = next_report(&mut self.discovery) => {
                     let envelope = self.envelope(Payload::Discovery(report));
                     let _ = tx.send(envelope).await;
                     None
                 }
+                snapshot = published(&mut self.inventory) => {
+                    if let Some(link) = &mut self.inventory {
+                        let report = link.report(snapshot);
+                        let envelope = self.envelope(Payload::Inventory(report));
+                        let _ = tx.send(envelope).await;
+                    }
+                    None
+                }
                 message = inbound.message() => match message {
+                    Ok(Some(Envelope { payload: Some(Payload::InventoryRequest(request)), sequence })) => {
+                        tracing::debug!(sequence, "inventory requested");
+                        let report = self
+                            .inventory
+                            .as_mut()
+                            .and_then(|link| link.requested(&request.known_hash));
+                        if let Some(report) = report {
+                            let envelope = self.envelope(Payload::Inventory(report));
+                            let _ = tx.send(envelope).await;
+                        }
+                        None
+                    }
                     Ok(Some(envelope)) => {
                         self.receive(envelope);
                         None
@@ -485,6 +548,10 @@ impl Agent {
                 }
                 None => tracing::warn!(sequence, "ignoring command: no command dispatcher"),
             },
+            Some(Payload::Remote(frame)) => match &self.remote {
+                Some(remote) => remote.deliver(frame),
+                None => tracing::debug!(sequence, "ignoring a remote session frame"),
+            },
             Some(other) => tracing::debug!(sequence, kind = kind(&other), "ignoring envelope"),
             None => tracing::debug!(sequence, "ignoring envelope without payload"),
         }
@@ -517,6 +584,10 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::ProbeConfigAck(_) => "probe_config_ack",
         Payload::ProbeTest(_) => "probe_test",
         Payload::ProbeTestResult(_) => "probe_test_result",
+        Payload::FlowReports(_) => "flow_reports",
+        Payload::Remote(_) => "remote",
+        Payload::Inventory(_) => "inventory",
+        Payload::InventoryRequest(_) => "inventory_request",
     }
 }
 
@@ -540,6 +611,24 @@ async fn next_ack(sensors: &mut Option<StreamEnd>) -> Option<SensorConfigAck> {
 async fn next_result(commands: &mut Option<commands::StreamEnd>) -> Option<CommandResult> {
     match commands {
         Some(commands) => commands.results.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The next frame of a remote session; never without sessions.
+async fn next_frame(remote: &mut Option<remote::StreamEnd>) -> Option<RemoteFrame> {
+    match remote {
+        Some(remote) => remote.up.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The next inventory published; never without a collector.
+async fn published(
+    link: &mut Option<crate::inventory::Link>,
+) -> std::sync::Arc<crate::inventory::Snapshot> {
+    match link {
+        Some(link) => link.published().await,
         None => std::future::pending().await,
     }
 }

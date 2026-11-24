@@ -119,8 +119,11 @@ async fn main() -> anyhow::Result<()> {
     );
     let (control, upstream_up) =
         Control::new(ControlSettings::from_config(&config), identities.clone());
-    let probes =
-        monitorflow_relay::probe::start(Arc::new(monitorflow_webcheck::ProbeKinds), stop.clone());
+    let probes = monitorflow_relay::probe::start(
+        Arc::new(monitorflow_webcheck::ProbeKinds),
+        &config.flows,
+        stop.clone(),
+    );
     let control = control
         .with_commands(commands)
         .with_probes(probes)

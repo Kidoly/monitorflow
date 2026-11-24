@@ -159,6 +159,7 @@ pub fn is_reserved(program: &str) -> bool {
     .iter()
     .any(|list| list.contains(&program))
         || program == "systemctl"
+        || program == monitorflow_common::root_action::PROGRAM
 }
 
 /// The verdict on `program` (already resolved) with `args`, the first or

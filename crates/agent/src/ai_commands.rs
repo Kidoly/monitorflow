@@ -5,7 +5,11 @@
 //! counterpart of `MF_AI_COMMANDS_FROM_WEB` (ADR-0098). `software on|off`
 //! lets the central server install and remove software (ADR-0188).
 //!
-//! It sets `[commands] shell`, `from_web` or `software` and leaves every other line,
+//! On Linux, `ai-commands root-actions on|off` allows or refuses the AI
+//! root actions of ADR-0181, the counterpart of `MF_AI_ROOT_ACTIONS`.
+//!
+//! It sets `[commands] shell`, `from_web`, `root_actions`, `scripts` or
+//! `software` and leaves every other line,
 //! comments included, as it was. The file is rewritten in place, so it keeps its
 //! access list, and only when the result still loads. The agent reads it
 //! at start, so the service must restart for it to apply.
@@ -34,7 +38,7 @@ pub enum AiCommandsError {
         path: PathBuf,
         error: Box<toml_edit::TomlError>,
     },
-    #[error("{}: `commands` is not a table", path.display())]
+    #[error("{}: the section to edit is not a table", path.display())]
     NotATable { path: PathBuf },
     /// The message never contains secrets (see [`ConfigError::Parse`]).
     #[error(transparent)]
@@ -53,6 +57,11 @@ pub enum Key {
     Shell,
     /// `from_web`: whether the web interface may turn them on.
     FromWeb,
+    /// `root_actions`: whether AI commands may ask for root actions.
+    RootActions,
+    /// `scripts`: library scripts (ADR-0189), `monitorflow-agent.exe
+    /// scripts on|off`.
+    Scripts,
     /// `software`: whether the central server may install and remove
     /// software (ADR-0188).
     Software,
@@ -63,6 +72,8 @@ impl Key {
         match self {
             Self::Shell => "shell",
             Self::FromWeb => "from_web",
+            Self::RootActions => "root_actions",
+            Self::Scripts => "scripts",
             Self::Software => "software",
         }
     }
@@ -71,6 +82,8 @@ impl Key {
         match self {
             Self::Shell => config.commands.shell,
             Self::FromWeb => config.commands.from_web,
+            Self::RootActions => config.commands.root_actions,
+            Self::Scripts => config.commands.scripts,
             Self::Software => config.commands.software,
         }
     }
@@ -155,6 +168,47 @@ mod tests {
             !load(&std::fs::read_to_string(&path).unwrap())
                 .commands
                 .from_web
+        );
+    }
+
+    #[test]
+    fn allows_root_actions_and_takes_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.toml");
+        std::fs::write(&path, WRITTEN).unwrap();
+        let (outcome, config) = set(&path, Key::RootActions, true).unwrap();
+        assert_eq!(outcome, Outcome::Changed);
+        assert!(config.commands.root_actions && !config.commands.shell);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("root_actions = true"), "{text}");
+        assert_eq!(
+            set(&path, Key::RootActions, true).unwrap().0,
+            Outcome::Unchanged
+        );
+        assert_eq!(
+            set(&path, Key::RootActions, false).unwrap().0,
+            Outcome::Changed
+        );
+        assert!(
+            !load(&std::fs::read_to_string(&path).unwrap())
+                .commands
+                .root_actions
+        );
+    }
+
+    #[test]
+    fn allows_library_scripts_and_takes_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.toml");
+        std::fs::write(&path, WRITTEN).unwrap();
+        let (outcome, config) = set(&path, Key::Scripts, true).unwrap();
+        assert_eq!(outcome, Outcome::Changed);
+        assert!(config.commands.scripts && !config.commands.shell);
+        assert_eq!(set(&path, Key::Scripts, false).unwrap().0, Outcome::Changed);
+        assert!(
+            !load(&std::fs::read_to_string(&path).unwrap())
+                .commands
+                .scripts
         );
     }
 

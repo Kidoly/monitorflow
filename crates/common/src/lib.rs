@@ -6,12 +6,16 @@ pub mod client;
 pub mod command;
 pub mod config;
 pub mod grpc_url;
+pub mod inventory;
 pub mod logging;
+pub mod major_upgrade;
 pub mod mirror;
 pub mod plugin_grant;
 pub mod rate;
 pub mod redact;
 pub mod release;
+pub mod remote;
+pub mod root_action;
 #[cfg(all(unix, feature = "server-update"))]
 pub mod server_update;
 pub mod snapshot;

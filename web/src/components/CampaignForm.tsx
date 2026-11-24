@@ -11,6 +11,7 @@ import {
   type Customer,
   type Me,
   type Server,
+  type ServerUpgrade,
   type Site,
   type SoftwareEntry,
   api,
@@ -39,6 +40,10 @@ import {
   toRequest,
   updateSources,
   validateCampaign,
+  MAJOR_UPGRADES,
+  MAX_PARALLEL,
+  releaseLabel,
+  runsRelease,
 } from "@/lib/campaigns";
 import { formatDuration } from "@/lib/format";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
@@ -48,6 +53,7 @@ import { Switch } from "@/components/ui/Switch";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import { CampaignServerPicker } from "./CampaignServerPicker";
+import { MajorUpgradeChecks } from "./MajorUpgrade";
 import { CampaignWindowCard } from "./CampaignWindowCard";
 import own from "./Campaigns.module.css";
 import { Breadcrumb } from "./ui/Breadcrumb";
@@ -62,6 +68,7 @@ const UPDATE_KINDS: [UpdateKind, PlainKey][] = [
   ["security", "campaigns.form.security"],
   ["packages", "campaigns.form.packages"],
   ["agent", "campaigns.form.agent"],
+  ["major", "campaigns.form.major"],
   ["software", "campaigns.form.software"],
 ];
 
@@ -80,6 +87,11 @@ export function NewCampaignPage() {
   }
   if (sourceId !== null) {
     return <FromCampaign key={sourceId} id={sourceId} edit={editId !== null} me={me} />;
+  }
+  // From a server's Updates tab: a major upgrade of that server (ADR-0182).
+  const major = params.get("major");
+  if (major !== null && UUID.test(major)) {
+    return <CampaignForm me={me} initial={{ ...emptyDraft(), update: "major", serverIds: [major] }} />;
   }
   return <CampaignForm me={me} />;
 }
@@ -217,8 +229,10 @@ export function CampaignForm({
   const servers = inventory.servers
     .filter((s) => s.customer_id === draft.customerId && s.revoked_at === null)
     .sort((a, b) => a.site_name.localeCompare(b.site_name) || a.hostname.localeCompare(b.hostname));
+  const major = draft.update === "major";
   const agentUpdate = draft.update === "agent";
-  const appsOnly = !agentUpdate && !softwareUpdate && draft.sources === "apps" ? draft.managers : null;
+  const wholeSystem = agentUpdate || major;
+  const appsOnly = !wholeSystem && !softwareUpdate && draft.sources === "apps" ? draft.managers : null;
   const targets = campaignTargets(
     inventory.servers,
     draft.customerId,
@@ -227,16 +241,18 @@ export function CampaignForm({
     agentUpdate,
     appsOnly,
     softwareUpdate,
-  );
+  ).filter((s) => !major || runsRelease(s.os_version, draft.majorFrom));
   const noPackages = (s: Server) =>
-    softwareUpdate
-      ? s.os_family !== "windows"
-      : appsOnly
-        ? !appsOnly.some((m) => managerFits(m, s.os_family))
-        : !agentUpdate && s.package_updates === false;
+    major
+      ? !runsRelease(s.os_version, draft.majorFrom)
+      : softwareUpdate
+        ? s.os_family !== "windows"
+        : appsOnly
+          ? !appsOnly.some((m) => managerFits(m, s.os_family))
+          : !agentUpdate && s.package_updates === false;
   // OS updates of Windows servers take approved classifications and held updates (ADR-0188).
-  const osUpdate = !agentUpdate && !softwareUpdate && includesOs(draft.sources);
-  const wingetApps = !agentUpdate && !softwareUpdate && includesApps(draft.sources) && draft.managers.includes("winget");
+  const osUpdate = !wholeSystem && !softwareUpdate && includesOs(draft.sources);
+  const wingetApps = !wholeSystem && !softwareUpdate && includesApps(draft.sources) && draft.managers.includes("winget");
   const leftOut = servers.filter((s) => noPackages(s) && (s.site_id === draft.siteId || draft.serverIds.includes(s.id))).length;
   const request =
     locked && source
@@ -336,7 +352,11 @@ export function CampaignForm({
             selected={draft.serverIds}
             onChange={(serverIds) => set({ serverIds })}
             unavailable={(s) =>
-              noPackages(s) ? t(softwareUpdate ? "campaigns.form.notWindows" : "campaigns.form.noPackages") : null
+              noPackages(s)
+                ? major
+                  ? t("campaigns.major.notOnRelease", { release: releaseLabel(draft.majorFrom) })
+                  : t(softwareUpdate ? "campaigns.form.notWindows" : "campaigns.form.noPackages")
+                : null
             }
             showSite={multiSite(me)}
           />
@@ -374,7 +394,7 @@ export function CampaignForm({
         </Fieldset>
 
         <Fieldset legend={t("campaigns.form.update")} locked={locked}>
-          {!agentUpdate && !softwareUpdate && (
+          {!wholeSystem && !softwareUpdate && (
             <div className={own.row} role="group" aria-label={t("campaigns.form.sources")}>
               <Switch
                 checked={includesOs(draft.sources)}
@@ -392,7 +412,7 @@ export function CampaignForm({
               />
             </div>
           )}
-          {!agentUpdate && !softwareUpdate && includesApps(draft.sources) && (
+          {!wholeSystem && !softwareUpdate && includesApps(draft.sources) && (
             <>
               <div className={own.row} role="group" aria-label={t("campaigns.form.managers")}>
                 {THIRD_PARTY_MANAGERS.map((manager) => (
@@ -420,14 +440,29 @@ export function CampaignForm({
           <SegmentedControl
             label={t("campaigns.form.updateKind")}
             options={UPDATE_KINDS.filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
-              .filter(([kind]) => includesOs(draft.sources) || kind === "all" || kind === "agent" || kind === "software")
+              .filter(
+                ([kind]) =>
+                  includesOs(draft.sources) || kind === "all" || kind === "agent" || kind === "major" || kind === "software",
+              )
               .map(([value, label]) => ({ value, label: t(label) }))}
             value={draft.update}
             onChange={(update) =>
-              // Software leaves the OS and app switches aside: back from it, OS updates as by default.
-              set({ update, ...(draft.update === "software" && update !== "software" && { sources: "os" as const }) })
+              // A major upgrade is of the OS; back from software, OS updates as by default.
+              set({
+                update,
+                ...((update === "major" || (draft.update === "software" && update !== "software")) && {
+                  sources: "os" as const,
+                }),
+              })
             }
           />
+          {major && (
+            <MajorFields
+              draft={draft}
+              targets={targets}
+              onChange={set}
+            />
+          )}
           {softwareUpdate && (
             <SoftwareChoice
               draft={draft}
@@ -476,7 +511,7 @@ export function CampaignForm({
           )}
           {osUpdate && <WindowsApprovals draft={draft} set={set} />}
           <div className={own.row}>
-            {draft.update !== "agent" && (
+            {!wholeSystem && (
               <Switch
                 rowClassName={own.inline}
                 checked={draft.allowReboot}
@@ -785,4 +820,78 @@ function Fieldset({ legend, locked = false, children }: { legend: string; locked
 
 function replace<T>(list: T[], index: number, item: T): T[] {
   return list.map((x, i) => (i === index ? item : x));
+}
+
+/**
+ * The fields of a major upgrade (ADR-0182): the releases, how many servers of a batch at once,
+ * the checks and rollback of every server targeted, and the box for servers without a snapshot.
+ */
+function MajorFields({
+  draft,
+  targets,
+  onChange,
+}: {
+  draft: CampaignDraft;
+  targets: Server[];
+  onChange: (patch: Partial<CampaignDraft>) => void;
+}) {
+  const [servers, setServers] = useState<ServerUpgrade[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const customerId = draft.customerId;
+  useEffect(() => {
+    const controller = new AbortController();
+    api.majorUpgrades({ customer_id: customerId }, controller.signal).then(
+      (list) => setServers(list.servers),
+      (e: unknown) => {
+        if (!isAbortError(e)) setError(describeError(e));
+      },
+    );
+    return () => controller.abort();
+  }, [customerId]);
+  const ids = new Set(targets.map((s) => s.id));
+  const shown = (servers ?? []).filter((s) => ids.has(s.server_id));
+  const limited = shown.filter((s) => !s.rollback.available).length;
+  return (
+    <>
+      <div className={own.row}>
+        <label className={own.fld}>
+          {t("campaigns.form.majorRelease")}
+          <select className={fieldClass} value={draft.majorFrom} onChange={(e) => onChange({ majorFrom: e.target.value })}>
+            {MAJOR_UPGRADES.map((u) => (
+              <option key={u.from} value={u.from}>
+                {t("campaigns.form.majorPair", { from: u.fromLabel, to: u.toLabel })}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={own.fld}>
+          {t("campaigns.form.parallel")}
+          <input
+            className={fieldClass}
+            type="number"
+            min={1}
+            max={MAX_PARALLEL}
+            value={draft.parallel}
+            onChange={(e) => onChange({ parallel: e.target.value })}
+          />
+        </label>
+      </div>
+      <p className={own.note}>{t("campaigns.form.majorNote")}</p>
+      {error && <Banner tone="bad">{error}</Banner>}
+      {!servers && !error && <LoadingBlock label={t("campaigns.major.loading")} />}
+      {servers && shown.length === 0 && <p className={own.note}>{t("campaigns.major.noServer", { release: releaseLabel(draft.majorFrom) })}</p>}
+      {shown.length > 0 && <MajorUpgradeChecks servers={shown} />}
+      {limited > 0 && (
+        <>
+          <Banner tone="warn">{t("campaigns.major.limited", { count: limited })}</Banner>
+          <Switch
+            rowClassName={own.inline}
+            checked={draft.acceptLimited}
+            onChange={(acceptLimited) => onChange({ acceptLimited })}
+            label={t("campaigns.form.acceptLimited")}
+          />
+        </>
+      )}
+    </>
+  );
 }

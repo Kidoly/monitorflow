@@ -626,6 +626,14 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   // Ticked by default (ADR-0175): the server's page can then turn AI
   // commands on; nothing runs until someone does.
   const [aiFromWeb, setAiFromWeb] = useState(true);
+  // Off by default (ADR-0189): scripts run code of the central server's
+  // people on the host, which its administrator must choose.
+  const [scripts, setScripts] = useState(false);
+  // Off by default (ADR-0182): a major upgrade is the change most likely
+  // to leave a server that does not boot.
+  const [majorFromWeb, setMajorFromWeb] = useState(false);
+  // Unticked (ADR-0190): a terminal runs whatever is typed, so each host opts in.
+  const [remoteTerminal, setRemoteTerminal] = useState(false);
   // Off by default (ADR-0188): software from the catalogue, on Windows only.
   const [softwareFromWeb, setSoftwareFromWeb] = useState(false);
   const valid = relay.trim() === "" || isServerAddress(relay);
@@ -635,12 +643,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
     {
       name: "Linux",
       note: t("install.linux.note"),
-      command: linuxInstallCommand(token, source, origin, through, aiFromWeb),
+      command: linuxInstallCommand(token, source, origin, through, aiFromWeb, scripts, majorFromWeb, remoteTerminal),
     },
     {
       name: "Windows",
       note: t("install.windows.note"),
-      command: windowsInstallCommand(token, source, origin, through, aiFromWeb, softwareFromWeb),
+      command: windowsInstallCommand(token, source, origin, through, aiFromWeb, scripts, remoteTerminal, softwareFromWeb),
     },
   ];
   // One note when both commands are missing for the same reason.
@@ -681,6 +689,19 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
         </p>
       )}
       <Switch checked={aiFromWeb} onChange={setAiFromWeb} label={t("install.agent.aiFromWeb")} note={t("install.agent.aiFromWebNote")} />
+      <Switch checked={scripts} onChange={setScripts} label={t("install.agent.scripts")} note={t("install.agent.scriptsNote")} />
+      <Switch
+        checked={majorFromWeb}
+        onChange={setMajorFromWeb}
+        label={t("install.agent.majorFromWeb")}
+        note={t("install.agent.majorFromWebNote")}
+      />
+      <Switch
+        checked={remoteTerminal}
+        onChange={setRemoteTerminal}
+        label={t("install.agent.remoteTerminal")}
+        note={t("install.agent.remoteTerminalNote")}
+      />
       <Switch
         checked={softwareFromWeb}
         onChange={setSoftwareFromWeb}

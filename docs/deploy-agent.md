@@ -37,6 +37,11 @@ One command serves every server of a site, for 30 days by default[^0073]. Each s
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
 | `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. Either value also undoes what the web interface last set. Each server shows whether it accepts AI commands[^0064]. An open alert whose AI remediation stopped because they were off gets a new attempt by itself once they are allowed[^0165] |
 | `MF_AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page (`commands.from_web`), through a systemd drop-in. Without it, the web interface can only turn them off. Works on an installed agent too; `MF_AI_COMMANDS_FROM_WEB=0` takes it back. "Allow AI commands to be turned on from the web interface" on the Add servers page, ticked by default, adds it to the command; AI commands stay off until an administrator turns them on there[^0098][^0175] |
+| `MF_AI_ROOT_ACTIONS=0` | Refuse the AI root actions (clearing the package cache, vacuuming the journal, pruning unused Docker images, restarting a service), which a new install allows (`commands.root_actions` in `agent.toml`). `MF_AI_ROOT_ACTIONS=1` allows them, also on an installed agent; without the variable an installed agent keeps its choice. They run only while AI commands are on ([AI root actions](#ai-root-actions))[^0181] |
+| `MF_ALLOW_SCRIPTS=1` | Let this agent run scripts of the script library (`commands.scripts`) as its own user, never as root, through a systemd drop-in. Off by default, and the web interface cannot turn it on: whoever runs the central server could otherwise run code on this host. Works on an installed agent too; `MF_ALLOW_SCRIPTS=0` takes it back. "Allow scripts from the script library" on the Add servers page, unticked by default, adds it to the command[^0189] |
+| `MF_MAJOR_UPGRADES_FROM_WEB=1` | Allow major upgrades of the distribution from the web interface (`packages.major_upgrades` in `agent.toml`), Debian 12 to 13 for now ([below](#major-upgrades)). Works on an installed agent too; `MF_MAJOR_UPGRADES_FROM_WEB=0` takes it back. "Allow major upgrades from the web interface" on the Add servers page, off by default, adds it to the command[^0182] |
+| `MF_REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page in the web interface, as the agent's user, through the agent's connection: sets `[remote] terminal = true` in `agent.toml` with `monitorflow-agent remote-access terminal on`. Who may (administrators by default), recording and idle time are set on the central server; this line is the server's own consent, which the central server cannot give itself. Works on an installed agent too; `MF_REMOTE_TERMINAL=0` takes it back. "Allow a remote terminal" on the Add servers page, unticked by default, adds it[^0190] |
+| `MF_REMOTE_TERMINAL_USER=<account>` | The local account remote terminals run as (`[remote] terminal_user`), instead of the agent's user. A root helper checks each signed command before it starts that account's login shell; the central server cannot choose the account. Never root unless named here; `none` goes back to the agent's user. Linux only[^0190] |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
@@ -138,10 +143,11 @@ What the rules allow:
 | --- | --- |
 | `monitorflow-agent packages update` | `apply_updates`: every kind, all packages, security only or named packages, and Flatpak and Snap apps |
 | `shutdown -r +1` | `apply_updates` with `allow_reboot` |
-| `monitorflow-agent sources apply`, `… sources revert` | Third-party apps | winget apps installed machine-wide, listed with every report and updated after Windows updates when a command or campaign selects them. Needs PowerShell 7 and the winget module ([above](#third-party-apps-through-winget)) |
-| `configure_sources`, `revert_sources` |
+| `monitorflow-agent sources apply`, `… sources revert` | `configure_sources`, `revert_sources` |
 | `monitorflow-agent self-update` | `self_update`: installs a signed agent release (below) |
 | `monitorflow-agent snapshots inspect`, `… snapshots take`, `… snapshots delete` | The storage part of each package report, `take_snapshot` and `delete_snapshot`: local snapshots before a change (below) |
+| `monitorflow-agent root-action` | `root_action`: one AI root action of a fixed catalog ([below](#ai-root-actions)) |
+| `monitorflow-agent major-upgrade` | `major_upgrade`: a major upgrade of the distribution, only where the server allowed it (below) |
 
 There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself[^0036]. Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite. Flatpak and Snap apps go through the same helper, which runs `flatpak update --system` or `snap refresh` with the app IDs it checked and found installed[^0140]; the agent reads their inventory as its own user, so they need no sudo line of their own.
 
@@ -165,6 +171,30 @@ The `snapshots` helper reads only a snapshot name on stdin and decides the rest 
 Snapshots are deleted automatically: classic LVM snapshots after a day, as they slow every write and become invalid once full, the others after 7 days, and only the newest 3 are kept. Rolling back is manual, as it needs a reboot: the server's Updates tab lists the snapshots with the commands for each.
 
 Hosts installed before snapshots have sudo rules without the `snapshots` lines, and self-update does not change them: run the install command again to get them. The Rollback line says so.
+
+## AI root actions
+
+Some fixes need root, and AI commands run as the agent's user. Instead of `sudo`, which the risk rules refuse, the AI may ask for one action of a fixed catalog, which the agent's root helper runs[^0181]:
+
+| The AI writes | The helper runs, as root | Runs |
+| --- | --- | --- |
+| `monitorflow-root clean-package-cache` | `apt-get clean`, `dnf clean packages` or `zypper --non-interactive clean`, whichever is installed | At once |
+| `monitorflow-root vacuum-journal 500M` | `journalctl --vacuum-size=500M`; the size is between 100M and 64G | At once |
+| `monitorflow-root prune-docker` | `docker image prune --all --force`, then `docker builder prune --all --force`, where Docker is installed | After approval |
+| `monitorflow-root restart-service nginx` | `systemctl restart nginx.service`; never ssh, systemd, D-Bus, networking or MonitorFlow's own services | After approval |
+
+Nothing else reaches root. The helper reads the action from the command the central server signed for this server, checks it with its own trust anchor[^0108] and checks its parameters again, then runs those programs by their full path with fixed options.
+
+Root actions run only where AI commands are on, and where the server's administrator allowed them with `root_actions = true` under `[commands]` in `/etc/monitorflow/agent.toml`. A new install sets it; `MF_AI_ROOT_ACTIONS=0` with the installer refuses them. On an installed server:
+
+```sh
+sudo monitorflow-agent ai-commands root-actions on    # or off
+sudo systemctl restart monitorflow-agent
+```
+
+The helper reads the key from the file at each action, never from the environment, so `off` applies at once and the web interface cannot change it; the restart makes the server's page show it. Turning AI commands off turns root actions off too.
+
+Servers installed before root actions have neither the key nor the `root-action` sudo line, and self-update changes neither: run the install command again. Until then the server's page says it refuses AI root actions, and an incident that needs one says "the sudo rules on this server predate AI root actions; run the install command again". Root actions are Linux only.
 
 ## Self-update
 
@@ -195,6 +225,29 @@ docker compose exec server monitorflow-server agent-release list
 The server's image is read-only and its `/tmp` is a tmpfs, which `docker compose cp` cannot write to, hence `tar`[^0126]. The import checks the signature first. The web interface offers the newest version the server holds.
 
 **Servers installed before self-update** lack the sudo line above: run the installer once more, which installs the new rules with the new binary. Until then `self_update` fails with "a password is required" and nothing changes. A self-update replaces the binary only; when a release changes the unit or the sudo rules, its notes say to run the installer.
+
+## Major upgrades
+
+A major upgrade moves a server to the next release of its distribution: Debian 12 (bookworm) to Debian 13 (trixie) for now, one release at a time[^0182]. It is a campaign of its own kind, "Major upgrade" in the new campaign form (`major_upgrade` in `POST /api/campaigns`), which only global administrators and administrators of the customer can create and start; neither a rule nor the AI ever starts one.
+
+**The server must allow it.** `packages.major_upgrades = true` in `agent.toml`, which only root can write: `MF_MAJOR_UPGRADES_FROM_WEB=1` with the installer, or `sudo monitorflow-agent major-upgrades on` (`off` takes it back), then `systemctl restart monitorflow-agent` for the web interface to see it. The root helper reads the file itself before every upgrade, so a central server that is taken over cannot upgrade a server that did not agree.
+
+**Checks.** The server's Updates tab, and the campaign form for every server picked, show what the agent checked with its last package report: every package of the current release up to date, no held or broken package, enough free space (2 GiB on `/`, 4 GiB on `/var`, 300 MiB on `/boot`, added up when they share a filesystem), no reboot pending, and the sources. Third-party sources are listed: they are switched off for the upgrade and left off, with a comment saying so, since their packages were built for the old release. The central server adds whether the server allows major upgrades, whether its agent knows the next release, and, for a server on the mirrors, whether the mirrors carry Debian 13. The helper runs the checks again, after `apt-get update`, just before it starts, and refuses on any failed one. `GET /api/major-upgrades` returns the same.
+
+**Snapshot.** Each server gets a Proxmox snapshot when it is a mapped guest, else a local LVM or ZFS snapshot, before its upgrade. Where neither is possible, the campaign form says so per server and the campaign needs "I accept that these servers cannot be rolled back by a snapshot" (`accept_limited_rollback`).
+
+**On the server**, `sudo -n /usr/bin/monitorflow-agent major-upgrade` checks the signed command, the consent, the releases and the checks, then starts the transient unit `monitorflow-major-upgrade`, which survives a restart of the agent:
+
+1. every source of the release moves to `trixie` (`sources.list`, `*.list` and deb822 `*.sources`, `non-free-firmware` added where `non-free` was used), after a copy of each file in `/var/lib/monitorflow/major-upgrade/backup/`;
+2. `apt-get update`; on a failure the sources are put back as they were and nothing else changes;
+3. `apt-get upgrade --without-new-pkgs`, then `apt-get full-upgrade`, non-interactive, keeping every changed configuration file;
+4. `systemctl reboot`.
+
+After step 3 starts, only the snapshot goes back. The phase is in `/var/lib/monitorflow/major-upgrade/state.json`, the full output in `/var/lib/monitorflow/major-upgrade/log` (root only) and `journalctl -u monitorflow-major-upgrade`.
+
+**Waves.** One server of a batch at a time by default (`parallel`), the first batch as the pilot, inside the campaign's maintenance windows, stopping at the first failure by default. A server is done once it rebooted, its agent reports Debian 13, and no check fails on it that did not fail before; it fails when a step fails, when its checks are not back 30 minutes after it returned, or 6 hours after its upgrade started.
+
+Hosts installed before major upgrades lack the sudo line and the setting: run the install command again with `MF_MAJOR_UPGRADES_FROM_WEB=1`. Ubuntu and RHEL with its derivatives are planned (ADR-0182).
 
 ## Pointing a server at the mirrors
 
@@ -241,6 +294,8 @@ msiexec /i monitorflow-agent-0.11.0-x64.msi /qn /l*v install.log `
 | `ENROLLMENT_TOKEN` | Optional single-use token. The MSI log shows asterisks in its place. Remove it from `agent.toml` once connected (below) |
 | `REMOVE_DATA=1` | On uninstall, also deletes `%ProgramData%\MonitorFlow`: configuration, identity and logs |
 | `AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page, on a new install or an upgrade: sets `[commands] from_web = true` in `agent.toml`, as `ai-commands from-web on` does[^0098] |
+| `ALLOW_SCRIPTS=1` | Let the agent run scripts of the script library, on a new install or an upgrade: sets `[commands] scripts = true` in `agent.toml`, as `scripts on` does[^0189] |
+| `REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page, on a new install or an upgrade: sets `[remote] terminal = true` in `agent.toml`, as `remote-access terminal on` does; `REMOTE_TERMINAL=0` refuses it[^0190] |
 | `SOFTWARE_FROM_WEB=1` | Let administrators install and remove software of the catalogue on this server, on a new install or an upgrade: sets `[commands] software = true` in `agent.toml`, as `software on` does. "Allow installing and removing software from the web interface" on the Add servers page, off by default, adds it to the command[^0188] |
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
@@ -341,6 +396,8 @@ Without them the server's Updates tab shows winget as not installed, with the re
 | `apply_updates`, update campaigns | Through the update service. All pending updates except feature upgrades, `security_only` for the Security Updates classification, or named KB numbers or update IDs (`KB5034441`). Restarts only with `allow_reboot`, one minute after the result. Windows servers may join any campaign: pinned mirror snapshots do not apply to them |
 | `configure_sources`, `revert_sources` | Refused by the API for Windows servers, and by the agent with "package sources are not supported on Windows yet" |
 | `shell` (AI remediation) | Off until turned on ([below](#ai-commands-on-windows)). Commands run in Windows PowerShell 5.1 as the agent's account, and the server classifies them by rules written for PowerShell[^0084] |
+| `root_action` (AI root actions) | Refused: Linux only[^0181] |
+| Third-party apps | winget apps installed machine-wide, listed with every report and updated after Windows updates when a command or campaign selects them. Needs PowerShell 7 and the winget module ([above](#third-party-apps-through-winget)) |
 
 There are no sudo rules on Windows. The only privileged part is the update service, which accepts typed requests from the agent alone.
 
@@ -356,6 +413,24 @@ Restart-Service MonitorFlowAgent
 The first line sets `[commands] shell = true` in `agent.toml` and leaves the rest of the file as it is; the setting is kept across upgrades. `ai-commands off` takes it back. Either one also undoes what the web interface last set. The server's page shows the change once the agent is back, and gives these lines on its Commands tab.
 
 To let administrators turn AI commands on and off from the server's page instead, run `ai-commands from-web on` the same way, then restart the service; `ai-commands from-web off` takes it back. The MSI's `AI_COMMANDS_FROM_WEB=1` does the same at install[^0098].
+
+To let the agent run scripts of the script library, run `monitorflow-agent.exe scripts on` the same way, then restart the service; `scripts off` takes it back. The MSI's `ALLOW_SCRIPTS=1` does the same at install[^0189].
+
+### Remote terminals
+
+People of the roles the central server allows can open a terminal on a server from its Terminal tab, through the agent's connection and its relay: nothing to open or install[^0190]. The server must allow it first, on the server itself:
+
+```
+sudo monitorflow-agent remote-access terminal on      # Linux, or MF_REMOTE_TERMINAL=1 with the installer
+sudo systemctl restart monitorflow-agent
+```
+
+```powershell
+& "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" remote-access terminal on
+Restart-Service MonitorFlowAgent
+```
+
+`remote-access terminal off` takes it back. The shell runs as the agent's user (`monitorflow` with a login shell on Linux, `NT SERVICE\MonitorFlowAgent` with Windows PowerShell on Windows). On Linux, `remote-access terminal-user <account>` (or `MF_REMOTE_TERMINAL_USER`) makes it that account's login shell instead, started by the root helper `remote-shell` once it checked the signed command; it is never root unless you name root there. Keystrokes and output are sealed end to end between the central server and the agent, so relays cannot read or change them. While a session is open, people logged in on the server are told who opened it (`wall` on Linux, `msg` on Windows), and again when it closes. Sessions close after the idle time the central server sets, 15 minutes by default, and after 12 hours.
 
 Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SERVICE\MonitorFlowAgent`, from `C:\`, with the system `PATH`, and is stopped with everything it started at the time limit. That account is not an administrator: it reads services, processes, the System and Application event logs, disks and network state, but cannot restart most services. To let AI restart one service after approval, grant the account that right on that service, for example with `sc.exe sdshow` and `sc.exe sdset`, adding `(A;;RPWPLCRC;;;S-1-5-80-546755567-1596817566-60379001-3258130523-3598288828)` (the service SID of `MonitorFlowAgent`). Without it, the command fails with "access denied" and the incident goes to a person.
 
@@ -394,7 +469,11 @@ It sets `[commands] software = true` in `agent.toml`; `software off` takes it ba
 [^0091]: [ADR-0091: System logs](adr/0091-system-logs.md)
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
+[^0182]: [ADR-0182: Major distribution upgrades](adr/0182-major-distribution-upgrades.md)
+[^0190]: [ADR-0190: Remote terminals through the agent's connection](adr/0190-remote-terminals.md)
 [^0175]: [ADR-0175: A diagnosis for every alert, commands where allowed](adr/0175-diagnosis-for-every-alert.md)
+[^0181]: [ADR-0181: AI root actions, and the diagnosis in the reader's language](adr/0181-ai-root-actions.md)
+[^0189]: [ADR-0189: Script library and automation rules](adr/0189-script-library-and-automation-rules.md)
 [^0188]: [ADR-0188: Software deployment and update approvals](adr/0188-software-deployment.md)
 [^0103]: [ADR-0103: Plugins](adr/0103-plugins.md)
 [^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)

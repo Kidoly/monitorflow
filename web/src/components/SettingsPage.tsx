@@ -3,7 +3,7 @@
 import { type FormEvent, type ReactNode, useCallback, useState } from "react";
 
 import { rich, t } from "@/i18n";
-import { type RetentionSettings, type ServerSettings, api, describeError } from "@/lib/api";
+import { type RemoteAccessSettings, type RetentionSettings, type ServerSettings, api, describeError } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
 import { administersEverything, useMe } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
@@ -11,6 +11,7 @@ import { usePolledData } from "@/lib/usePolledData";
 import styles from "./AdminPages.module.css";
 import { ServerAddress } from "./TokensAdmin";
 import { Button, fieldClass } from "./ui/Button";
+import { Switch } from "./ui/Switch";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 
@@ -47,6 +48,7 @@ function Settings() {
           <SessionsSection settings={settings} onSaved={refresh} />
           <MirrorSection settings={settings} onSaved={refresh} />
           <RetentionSection retention={settings.retention} onSaved={refresh} />
+          <RemoteAccessSection />
         </>
       ) : error ? (
         <ErrorState what={t("settings.page.theSettings")} error={describeError(error)} onRetry={refresh} />
@@ -463,5 +465,116 @@ function RetentionForm({
         </p>
       )}
     </div>
+  );
+}
+
+const ROLES: RemoteAccessSettings["min_role"][] = [null, "administrator", "approver", "operator"];
+
+/** Who may open remote terminals, recording and idle time (ADR-0190). */
+function RemoteAccessSection() {
+  const fetcher = useCallback((signal: AbortSignal) => api.remoteAccessSettings(signal), []);
+  const { data, error, refresh } = usePolledData(fetcher);
+  return (
+    <Section title={t("remote.settings.title")} note={t("remote.settings.note")}>
+      {data ? (
+        <RemoteAccessForm key={JSON.stringify(data)} settings={data} onSaved={refresh} />
+      ) : error ? (
+        <ErrorState what={t("remote.settings.what")} error={describeError(error)} onRetry={refresh} />
+      ) : (
+        <LoadingBlock />
+      )}
+    </Section>
+  );
+}
+
+function RemoteAccessForm({ settings, onSaved }: { settings: RemoteAccessSettings; onSaved: () => void }) {
+  const [role, setRole] = useState(settings.min_role);
+  const [record, setRecord] = useState(settings.record);
+  const [idle, setIdle] = useState(String(settings.idle_timeout_minutes));
+  const [days, setDays] = useState(String(settings.retention_days));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const idleValue = Number(idle);
+  const daysValue = Number(days);
+  const valid =
+    Number.isInteger(idleValue) && idleValue >= 1 && idleValue <= 1440 &&
+    Number.isInteger(daysValue) && daysValue >= 1 && daysValue <= 3650;
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await api.setRemoteAccessSettings({
+        min_role: role,
+        record,
+        idle_timeout_minutes: idleValue,
+        retention_days: daysValue,
+      });
+      onSaved();
+      setSaved(true);
+    } catch (e) {
+      setError(t("settings.page.saveFailed", { what: t("remote.settings.what"), error: describeError(e) }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className={styles.sectionBody} onSubmit={(e) => void submit(e)}>
+      <div className={styles.formGrid}>
+        <label className={styles.field}>
+          <span>{t("remote.settings.who")}</span>
+          <select
+            className={fieldClass}
+            value={role ?? ""}
+            onChange={(e) => setRole((e.target.value || null) as RemoteAccessSettings["min_role"])}
+          >
+            {ROLES.map((r) => (
+              <option key={r ?? "nobody"} value={r ?? ""}>
+                {t(`remote.settings.${r ?? "nobody"}`)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={styles.field}>
+          <span>{t("remote.settings.idle")}</span>
+          <input
+            className={fieldClass}
+            type="number"
+            min={1}
+            max={1440}
+            value={idle}
+            onChange={(e) => setIdle(e.target.value)}
+          />
+        </label>
+        <label className={styles.field}>
+          <span>{t("remote.settings.retention")}</span>
+          <input
+            className={fieldClass}
+            type="number"
+            min={1}
+            max={3650}
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+          />
+        </label>
+      </div>
+      <Switch
+        checked={record}
+        onChange={setRecord}
+        label={t("remote.settings.record")}
+        note={t("remote.settings.recordNote")}
+      />
+      {!valid && <p className={styles.formError}>{t("remote.settings.invalid")}</p>}
+      <SaveLine busy={busy} disabled={!valid} saved={saved} />
+      {error && (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }

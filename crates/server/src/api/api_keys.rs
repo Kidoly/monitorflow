@@ -110,7 +110,7 @@ impl Area {
             },
             (
                 "servers" | "relays" | "metrics" | "devices" | "virtual-objects" | "network-scans"
-                | "snmp-lookups" | "snmp-mibs" | "snmp-objects",
+                | "inventory" | "snmp-lookups" | "snmp-mibs" | "snmp-objects" | "remote-sessions",
                 _,
             ) => Self::Servers,
             (
@@ -126,12 +126,13 @@ impl Area {
                 | "sensor_configs"
                 | "thresholds"
                 | "notifications"
-                | "checks",
+                | "checks"
+                | "check-templates",
                 _,
             ) => Self::Alerts,
             (
                 "commands" | "campaigns" | "auto-update" | "agent-releases" | "server-update"
-                | "mirrors" | "software",
+                | "mirrors" | "major-upgrades" | "software",
                 _,
             ) => Self::Updates,
             ("settings", _) if segments.get(1) == Some(&"auto-update") => Self::Updates,
@@ -795,6 +796,7 @@ mod tests {
             (&get, "/api/servers/{id}/sensor_configs", Some(Area::Alerts)),
             (&get, "/api/sites/{id}/sensors", Some(Area::Alerts)),
             (&get, "/api/checks/usage", Some(Area::Alerts)),
+            (&get, "/api/check-templates", Some(Area::Alerts)),
             (&get, "/api/servers/{id}/sensor-values", Some(Area::Servers)),
             (
                 &post,

@@ -15,16 +15,19 @@ import * as devices from "./devices";
 import * as discovery from "./discovery";
 import * as display from "./display";
 import * as fleet from "./fleet";
+import * as flows from "./flows";
 import * as followUp from "./followUp";
 import * as format from "./format";
 import * as imports from "./imports";
 import * as incidents from "./incidents";
 import * as install from "./install";
 import * as integrations from "./integrations";
+import * as inventory from "./inventory";
 import * as license from "./license";
 import * as maintenance from "./maintenance";
 import * as maps from "./maps";
 import * as mirrors from "./mirrors";
+import * as mobile from "./mobile";
 import * as monitoring from "./monitoring";
 import * as notifications from "./notifications";
 import * as onCall from "./onCall";
@@ -32,9 +35,11 @@ import * as plugins from "./plugins";
 import * as psa from "./psa";
 import * as relays from "./relays";
 import * as remediation from "./remediation";
+import * as remote from "./remote";
 import * as reports from "./reports";
 import * as rollback from "./rollback";
 import * as rules from "./rules";
+import * as scripts from "./scripts";
 import * as sensors from "./sensors";
 import * as server from "./server";
 import * as serverUpdate from "./serverUpdate";
@@ -66,16 +71,19 @@ export const en = {
   discovery: discovery.en,
   display: display.en,
   fleet: fleet.en,
+  flows: flows.en,
   followUp: followUp.en,
   format: format.en,
   imports: imports.en,
   incidents: incidents.en,
   install: install.en,
   integrations: integrations.en,
+  inventory: inventory.en,
   license: license.en,
   maintenance: maintenance.en,
   maps: maps.en,
   mirrors: mirrors.en,
+  mobile: mobile.en,
   monitoring: monitoring.en,
   notifications: notifications.en,
   onCall: onCall.en,
@@ -83,9 +91,11 @@ export const en = {
   psa: psa.en,
   relays: relays.en,
   remediation: remediation.en,
+  remote: remote.en,
   reports: reports.en,
   rollback: rollback.en,
   rules: rules.en,
+  scripts: scripts.en,
   sensors: sensors.en,
   server: server.en,
   serverUpdate: serverUpdate.en,
@@ -116,16 +126,19 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   discovery: discovery.fr,
   display: display.fr,
   fleet: fleet.fr,
+  flows: flows.fr,
   followUp: followUp.fr,
   format: format.fr,
   imports: imports.fr,
   incidents: incidents.fr,
   install: install.fr,
   integrations: integrations.fr,
+  inventory: inventory.fr,
   license: license.fr,
   maintenance: maintenance.fr,
   maps: maps.fr,
   mirrors: mirrors.fr,
+  mobile: mobile.fr,
   monitoring: monitoring.fr,
   notifications: notifications.fr,
   onCall: onCall.fr,
@@ -133,9 +146,11 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   psa: psa.fr,
   relays: relays.fr,
   remediation: remediation.fr,
+  remote: remote.fr,
   reports: reports.fr,
   rollback: rollback.fr,
   rules: rules.fr,
+  scripts: scripts.fr,
   sensors: sensors.fr,
   server: server.fr,
   serverUpdate: serverUpdate.fr,

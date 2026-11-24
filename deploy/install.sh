@@ -43,6 +43,29 @@
 #   MF_AI_COMMANDS_FROM_WEB=1  agent only: let the web interface turn AI
 #                    commands on and off (commands.from_web, ADR-0098); it
 #                    can always turn them off. 0 takes that back.
+#   MF_AI_ROOT_ACTIONS=0  agent only: refuse the AI root actions of ADR-0181
+#                    (clear the package cache, vacuum the journal, prune
+#                    unused Docker images, restart a service), which a new
+#                    install allows (commands.root_actions); 1 allows them,
+#                    also on a host already installed. Unset keeps what is
+#                    there.
+#   MF_ALLOW_SCRIPTS=1  agent only: let it run scripts of the central
+#                    server's script library as its own user
+#                    (commands.scripts, ADR-0189), also on a host already
+#                    installed; 0 takes that back. Unset keeps what is there.
+#   MF_MAJOR_UPGRADES_FROM_WEB=1  agent only: allow major upgrades of the
+#                    distribution from the web interface
+#                    (packages.major_upgrades, ADR-0182), also on a host
+#                    already installed; 0 takes that back. Unset keeps what
+#                    is there.
+#   MF_REMOTE_TERMINAL=1  agent only: let people of the roles the central
+#                    server allows open a terminal on this host from its page,
+#                    as the agent's user (remote.terminal, ADR-0190), also on a
+#                    host already installed; 0 takes that back.
+#   MF_REMOTE_TERMINAL_USER=name  agent only: the local account remote
+#                    terminals run as (remote.terminal_user), through a root
+#                    helper that checks each signed command; never root unless
+#                    named here. "none" goes back to the agent's own user.
 #   MF_UNINSTALL=1   remove the binary, service and sudo rules; keep the
 #                    configuration and identity. With MF_PURGE=1, remove
 #                    those and the service's user too.
@@ -80,6 +103,7 @@ UNIT=/etc/systemd/system/monitorflow-$MF_ROLE.service
 SERVICE=monitorflow-$MF_ROLE
 ALLOW_COMMANDS=$UNIT.d/allow-commands.conf
 FROM_WEB=$UNIT.d/ai-commands-from-web.conf
+ALLOW_SCRIPTS=$UNIT.d/allow-scripts.conf
 
 MF_SERVER=${MF_SERVER:-}
 MF_TOKEN=${MF_TOKEN:-}
@@ -96,6 +120,11 @@ MF_MIRROR_URL=${MF_MIRROR_URL:-}
 MF_MIRROR=${MF_MIRROR:-}
 MF_ALLOW_COMMANDS=${MF_ALLOW_COMMANDS:-}
 MF_AI_COMMANDS_FROM_WEB=${MF_AI_COMMANDS_FROM_WEB:-}
+MF_AI_ROOT_ACTIONS=${MF_AI_ROOT_ACTIONS:-}
+MF_ALLOW_SCRIPTS=${MF_ALLOW_SCRIPTS:-}
+MF_MAJOR_UPGRADES_FROM_WEB=${MF_MAJOR_UPGRADES_FROM_WEB:-}
+MF_REMOTE_TERMINAL=${MF_REMOTE_TERMINAL:-}
+MF_REMOTE_TERMINAL_USER=${MF_REMOTE_TERMINAL_USER:-}
 
 # Public keys that sign releases (ADR-0053), filled in from
 # deploy/release-keys.pem by deploy/release-files.sh.
@@ -203,7 +232,7 @@ verify() {
 uninstall() {
     if [ -f "$UNIT" ]; then
         systemctl disable --now "$SERVICE" >/dev/null 2>&1 || true
-        rm -f "$UNIT" "$ALLOW_COMMANDS" "$FROM_WEB"
+        rm -f "$UNIT" "$ALLOW_COMMANDS" "$FROM_WEB" "$ALLOW_SCRIPTS"
         rmdir "$UNIT.d" 2>/dev/null || true
         systemctl daemon-reload
     fi
@@ -369,6 +398,34 @@ case $MF_AI_COMMANDS_FROM_WEB in
     *) die "MF_AI_COMMANDS_FROM_WEB must be 1 or 0" ;;
 esac
 [ -z "$MF_AI_COMMANDS_FROM_WEB" ] || [ "$MF_ROLE" = agent ] || die "MF_AI_COMMANDS_FROM_WEB is for agents"
+case $MF_AI_ROOT_ACTIONS in
+    '' | 0 | 1) ;;
+    *) die "MF_AI_ROOT_ACTIONS must be 1 or 0" ;;
+esac
+[ -z "$MF_AI_ROOT_ACTIONS" ] || [ "$MF_ROLE" = agent ] || die "MF_AI_ROOT_ACTIONS is for agents"
+case $MF_ALLOW_SCRIPTS in
+    '' | 0 | 1) ;;
+    *) die "MF_ALLOW_SCRIPTS must be 1 or 0" ;;
+esac
+[ -z "$MF_ALLOW_SCRIPTS" ] || [ "$MF_ROLE" = agent ] || die "MF_ALLOW_SCRIPTS is for agents"
+case $MF_MAJOR_UPGRADES_FROM_WEB in
+    '' | 0 | 1) ;;
+    *) die "MF_MAJOR_UPGRADES_FROM_WEB must be 1 or 0" ;;
+esac
+[ -z "$MF_MAJOR_UPGRADES_FROM_WEB" ] || [ "$MF_ROLE" = agent ] || die "MF_MAJOR_UPGRADES_FROM_WEB is for agents"
+case $MF_REMOTE_TERMINAL in
+    '' | 0 | 1) ;;
+    *) die "MF_REMOTE_TERMINAL must be 1 or 0" ;;
+esac
+[ -z "$MF_REMOTE_TERMINAL" ] || [ "$MF_ROLE" = agent ] || die "MF_REMOTE_TERMINAL is for agents"
+if [ -n "$MF_REMOTE_TERMINAL_USER" ]; then
+    [ "$MF_ROLE" = agent ] || die "MF_REMOTE_TERMINAL_USER is for agents"
+    case $MF_REMOTE_TERMINAL_USER in
+        none) ;;
+        [a-z_]*[!a-z0-9_.-]* | [!a-z_]*) die "MF_REMOTE_TERMINAL_USER must be a local account name, or none" ;;
+        *) getent passwd "$MF_REMOTE_TERMINAL_USER" >/dev/null || die "MF_REMOTE_TERMINAL_USER: no local account $MF_REMOTE_TERMINAL_USER" ;;
+    esac
+fi
 
 if [ -n "$MF_DOWNLOAD_URL" ]; then
     [ -z "$MF_VERSION" ] || die "MF_VERSION selects a GitHub release; with MF_DOWNLOAD_URL, point it at the files of that version instead"
@@ -455,6 +512,14 @@ elif [ "$MF_AI_COMMANDS_FROM_WEB" = 0 ]; then
     rm -f "$FROM_WEB"
     say "the web interface can now only turn AI commands off on this agent"
 fi
+if [ "$MF_ALLOW_SCRIPTS" = 1 ]; then
+    install -d -m 0755 "$UNIT.d"
+    printf '[Service]\nEnvironment=MONITORFLOW_COMMANDS_SCRIPTS=true\n' >"$ALLOW_SCRIPTS"
+    say "this agent will run scripts of the script library as its own user; MF_ALLOW_SCRIPTS=0 takes that back"
+elif [ "$MF_ALLOW_SCRIPTS" = 0 ]; then
+    rm -f "$ALLOW_SCRIPTS"
+    say "this agent will refuse library scripts"
+fi
 rmdir "$UNIT.d" 2>/dev/null || true
 systemctl daemon-reload
 
@@ -467,6 +532,55 @@ elif [ -n "$upstream_url" ]; then
     chmod 0640 "$CONF"
     say "wrote $CONF for $upstream_url"
 fi
+# In agent.toml, which the root helper reads itself (ADR-0181). A new
+# install allows root actions unless told otherwise; an existing one
+# keeps its choice unless MF_AI_ROOT_ACTIONS is given.
+if [ "$MF_ROLE" = agent ]; then
+    root_actions=$MF_AI_ROOT_ACTIONS
+    [ -n "$root_actions" ] || [ -z "$upstream_url" ] || root_actions=1
+    if [ "$root_actions" = 1 ]; then
+        "$BIN" --config "$CONF" ai-commands root-actions on >/dev/null
+        say "AI commands may ask for root actions on this agent while AI commands are on; MF_AI_ROOT_ACTIONS=0 takes that back"
+    elif [ "$root_actions" = 0 ]; then
+        "$BIN" --config "$CONF" ai-commands root-actions off >/dev/null
+        say "AI root actions are refused on this agent; MF_AI_ROOT_ACTIONS=1 allows them"
+    fi
+fi
+# In agent.toml, which the root helper reads itself (ADR-0182).
+if [ "$MF_MAJOR_UPGRADES_FROM_WEB" = 1 ]; then
+    "$BIN" --config "$CONF" major-upgrades on >/dev/null
+    say "major upgrades of the distribution can be started from the web interface on this agent; MF_MAJOR_UPGRADES_FROM_WEB=0 takes that back"
+elif [ "$MF_MAJOR_UPGRADES_FROM_WEB" = 0 ]; then
+    "$BIN" --config "$CONF" major-upgrades off >/dev/null
+    say "major upgrades from the web interface are refused on this agent"
+fi
+
+# In agent.toml, which root owns: the agent's user cannot change it.
+case $MF_REMOTE_TERMINAL in
+    1)
+        "$BIN" --config "$CONF" remote-access terminal on >/dev/null
+        say "people allowed on the central server can open a terminal on this host from its page; MF_REMOTE_TERMINAL=0 takes that back"
+        ;;
+    0)
+        "$BIN" --config "$CONF" remote-access terminal off >/dev/null
+        say "remote terminals are refused on this host"
+        ;;
+esac
+case $MF_REMOTE_TERMINAL_USER in
+    '') ;;
+    none)
+        "$BIN" --config "$CONF" remote-access terminal-user none >/dev/null
+        say "remote terminals run as the agent's user $RUN_USER"
+        ;;
+    *)
+        "$BIN" --config "$CONF" remote-access terminal-user "$MF_REMOTE_TERMINAL_USER" >/dev/null
+        if [ "$MF_REMOTE_TERMINAL_USER" = root ]; then
+            say "warning: remote terminals run as root, with every right on this host; MF_REMOTE_TERMINAL_USER=none takes that back"
+        else
+            say "remote terminals run as $MF_REMOTE_TERMINAL_USER; MF_REMOTE_TERMINAL_USER=none takes that back"
+        fi
+        ;;
+esac
 
 pin_ca
 systemctl enable --quiet "$SERVICE"

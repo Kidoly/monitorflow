@@ -91,6 +91,22 @@
   white-space: pre-line;
 }
 
+/* The AI's words drawn from its Markdown (ADR-0181): the panel's gap spaces the blocks. */
+.diagnosisMarkdown {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diagnosis .diagnosisMarkdown > * {
+  margin: 0;
+}
+
+.diagnosis .diagnosisMarkdown ul,
+.diagnosis .diagnosisMarkdown ol {
+  padding-left: 1.3em;
+}
+
 .diagnosisNote,
 .remediationWhy {
   margin: 0;

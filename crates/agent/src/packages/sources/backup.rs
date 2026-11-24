@@ -314,6 +314,44 @@ impl Backup {
         Ok(true)
     }
 
+    /// Rewrites the copies of the originals with `rewrite`, which gets a
+    /// path and its copy and returns the new content when it changes it,
+    /// and saves the manifest with their new checksums. A major upgrade
+    /// (ADR-0182) uses it so a revert restores sources of the new release.
+    /// Returns the paths changed.
+    pub fn rewrite_copies(
+        &mut self,
+        rewrite: impl Fn(&Path, &str) -> Option<String>,
+    ) -> Result<Vec<PathBuf>, Error> {
+        let Some(dir) = self.dir() else {
+            return Ok(Vec::new());
+        };
+        let mut changed = Vec::new();
+        for entry in &mut self.manifest.entries {
+            let Some(original) = entry.original.as_mut() else {
+                continue;
+            };
+            let copy = dir.join(FILES).join(relative(&entry.path));
+            let content = fs::read(&copy).map_err(io_error(&copy))?;
+            if sha256(&content) != original.sha256 {
+                return Err(Error::Backup {
+                    path: copy,
+                    reason: "copy does not match the manifest".into(),
+                });
+            }
+            let Some(new) = rewrite(&entry.path, &String::from_utf8_lossy(&content)) else {
+                continue;
+            };
+            write_atomic(&copy, new.as_bytes(), 0o600, None)?;
+            original.sha256 = sha256(new.as_bytes());
+            changed.push(entry.path.clone());
+        }
+        if !changed.is_empty() {
+            self.save()?;
+        }
+        Ok(changed)
+    }
+
     fn ensure_dir(&mut self) -> Result<PathBuf, Error> {
         if self.name.is_none() {
             let state = self.root.join(STATE_DIR);

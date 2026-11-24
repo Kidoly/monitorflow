@@ -7,6 +7,7 @@ import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/PageState";
 import { Page } from "@/components/ui/Page";
 
+import { ServerMajorUpgrade } from "./MajorUpgrade";
 import { PackageSources } from "./PackageSources";
 import { PendingUpdates } from "./PendingUpdates";
 import { ServerRollback } from "./ServerRollback";
@@ -31,6 +32,7 @@ export function ServerUpdatesTab({ server }: { server: ServerDetail }) {
       <PendingUpdates server={server} />
       <PackageSources server={server} />
       <ServerRollback server={server} />
+      <ServerMajorUpgrade server={server} />
       <EmptyState
         actions={
           readsCustomers(me) ? <ButtonLink href={scopedHref(CAMPAIGNS_PATH, scope)}>{t("server.updatesTab.openCampaigns")}</ButtonLink> : sensors

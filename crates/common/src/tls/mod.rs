@@ -231,6 +231,18 @@ impl Identity {
         &self.key.cert[0]
     }
 
+    /// Signs `message` with our certificate's key, ECDSA P-256 with
+    /// SHA-256 in ASN.1 form, the kind of key enrollment makes: what proves
+    /// a remote session's keys are ours (ADR-0190). `None` for a key of
+    /// another kind.
+    pub fn sign(&self, message: &[u8]) -> Option<Vec<u8>> {
+        self.key
+            .key
+            .choose_scheme(&[rustls::SignatureScheme::ECDSA_NISTP256_SHA256])?
+            .sign(message)
+            .ok()
+    }
+
     /// Server configuration that requires a client certificate issued by
     /// the configured CA.
     ///

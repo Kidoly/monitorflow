@@ -90,6 +90,8 @@ pub enum Column {
     VmwareCredentials,
     /// The PSA connection's client secret (ADR-0164).
     PsaConnections,
+    /// The private key push services know this server by (ADR-0186).
+    WebPushKeys,
 }
 
 impl Column {
@@ -108,6 +110,7 @@ impl Column {
             Self::NetworkScans => "network_scans.snmp_secret",
             Self::VmwareCredentials => "vmware_credentials.secret",
             Self::PsaConnections => "psa_connections.client_secret",
+            Self::WebPushKeys => "web_push_keys.private_key",
         }
     }
 
