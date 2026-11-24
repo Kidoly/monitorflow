@@ -539,11 +539,13 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         .unwrap();
     let script_run = one(
         "INSERT INTO script_runs (script_id, version, customer_id, target, state, tier, rule, reason)
-         VALUES ($1, 1, $2, '{\"kind\": \"site\"}', 'awaiting_approval', 'read_only', '{}', 'x')
+         VALUES ($1, 1, $2, jsonb_build_object('kind', 'site', 'site_id', $3),
+                 'awaiting_approval', 'read_only', '{}', 'x')
          RETURNING id",
     )
     .bind(script)
     .bind(customer)
+    .bind(site)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -2113,8 +2115,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("DELETE", "/api/remediation/scripts/{id}")
         | ("POST", "/api/remediation/scripts/{id}/runs") => {
             let body = json!({ "customer_id": b.customer, "name": "disk", "interpreter": "sh",
-                               "run_role": "operator", "body": "df -h",
-                               "target": { "kind": "site", "site_id": b.site } });
+                               "run_role": "operator", "body": "df -h" });
             let body = if path.ends_with("runs") {
                 json!({ "target": { "kind": "site", "site_id": b.site } })
             } else {
