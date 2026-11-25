@@ -158,7 +158,25 @@ describe("adding a check", () => {
     expect(threshold).toBeNull();
     expect(more).toEqual([]);
     expect(CHECK_TYPES.find((t) => t.kind === "docker")).toMatchObject({ os: "linux", anyRunner: false, probe: false });
-    expect(DEVICE_CHECK_TYPES.filter((t) => t.template).map((t) => t.kind)).toEqual(["postgresql", "mysql", "redis"]);
+    expect(DEVICE_CHECK_TYPES.filter((t) => t.template).map((t) => t.kind)).toEqual(["postgresql", "mysql", "redis", "kubernetes"]);
+  });
+
+  it("adds a Kubernetes cluster to a device, read from a probe (ADR-0183)", () => {
+    const k8s = DEVICE_CHECK_TYPES.find((t) => t.kind === "kubernetes")!;
+    expect(k8s).toMatchObject({ probe: true, template: true });
+    expect(CHECK_TYPES.find((t) => t.kind === "kubernetes")).toBeUndefined();
+    const values = Object.fromEntries(k8s.fields.map((f) => [f.key, f.initial ?? ""]));
+    const { sensor, threshold } = checkRequests(k8s, { ...values, token: "eyJ.t0ken", ca_certificate: "LS0tLS1CRUdJTg==" }, 300_000);
+    expect(sensor).toEqual({
+      kind: "kubernetes",
+      name: "kubernetes",
+      interval_ms: 300_000,
+      default_alerts: true,
+      params: { port: "6443", token: "eyJ.t0ken", ca_certificate: "LS0tLS1CRUdJTg==" },
+    });
+    expect(threshold).toBeNull();
+    expect(k8s.fields.find((f) => f.key === "token")).toMatchObject({ input: "password" });
+    expect(k8s.fields.find((f) => f.key === "token")?.optional).toBeFalsy();
   });
 
   it("offers what the server's system runs, everything for a site", () => {

@@ -326,7 +326,7 @@ impl monitorflow_probe::ProbeFactory for CentralProbeKinds {
                 ..Limits::default()
             };
             build_within(params, limits).map_err(|e| e.to_string())
-        } else if monitorflow_apps::NETWORK_KINDS.contains(&kind) {
+        } else if monitorflow_apps::PROBE_KINDS.contains(&kind) {
             // Nor do its application checks (ADR-0183).
             monitorflow_apps::build(kind, params, monitorflow_apps::Place::Central)
                 .map_err(|e| e.to_string())

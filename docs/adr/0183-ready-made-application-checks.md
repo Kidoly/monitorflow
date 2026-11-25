@@ -1,7 +1,7 @@
 # ADR-0183: Ready-made application checks
 
 Date: 2026-11-24
-Status: accepted; extends ADR-0148 (checks from a probe), ADR-0150 (sealed check passwords) and ADR-0146 (what the importer moves)
+Status: accepted; Kubernetes added the same day; extends ADR-0148 (checks from a probe), ADR-0150 (sealed check passwords) and ADR-0146 (what the importer moves)
 
 ## Context
 
@@ -64,15 +64,45 @@ A template is the check and the alerts that come with it. `GET /api/check-templa
 
 Alerts on metrics a server never writes (replication on a lone server) never fire. One threshold covers every instance (every database, replica, container), so one restarting container is one incident naming it.
 
+### Kubernetes: a cluster as a device
+
+Added after the first four kinds, as the fifth of this crate.
+
+**A cluster is a device** (ADR-0148): its name, the address of its API server, the central server or the relay of the site that checks it. Its check is of kind `kubernetes`, run by probes only: agents refuse it, as they refuse `vmware`, since a cluster is not a machine with an agent, and its API is what describes it. One check reads the whole cluster each collection. Its incidents are those of the device, so thresholds, silences, notifications and dashboards apply unchanged, as for a vCenter (ADR-0156).
+
+**The REST API over HTTPS, read only.** A collection makes `GET` requests only, with `Authorization: Bearer` and the service account's token, through reqwest over rustls: `/version`, then `/api/v1/nodes`, `/api/v1/pods`, `/apis/apps/v1/deployments`, `statefulsets` and `daemonsets`, and `/api/v1/persistentvolumeclaims`, for all namespaces, each list read page by page (`limit=500` and its `continue` token). It stops at 10,000 objects of one list and 64 MiB in all, with an error that says to narrow `namespaces`; no redirect is followed and no proxy used. No connection is kept between collections, as for the other kinds. A watch (`?watch=1`) was not chosen: it would hold a stream per cluster on every probe, and a collection a minute is the resolution of every other check.
+
+**The token and the CA are sealed together.** The check's parameters `token` and `ca_certificate` are taken out of `params` by the API and sealed as one JSON object in `sensor_configs.secret` (ADR-0125, ADR-0150), never returned (rows say `secret_set`), never written in the audit log, and given only to the probe that runs the check, which gets them back as two parameters over its mTLS stream. The CA is public data, but sealing it with the token keeps the pair whole: the token never goes to a server the CA does not vouch for. An update without `token` keeps both; one with it replaces both, so a CA left out then means the machine's roots; `ca_certificate` alone is refused. A kept token never follows the check to a new `host` or `port`, as a kept password does not. Errors are scrubbed of the token.
+
+**The certificate is always verified**, against the cluster's CA when one is given (PEM, possibly pasted on one line, or a kubeconfig's `certificate-authority-data`, the base64 of the PEM), else the machine's roots, as some managed clusters' API certificates are publicly trusted. The address must be one the certificate names. There is no option to skip it: the token would go to whoever answers. Pinning a fingerprint, as for vCenter, was not needed: a cluster always has a CA, and it is in every kubeconfig.
+
+**Least rights.** The guide and `deploy/kubernetes/monitorflow-reader.yaml` give a ServiceAccount `monitorflow-reader` in a namespace `monitorflow`, a ClusterRole of the same name with `get` and `list` on `nodes`, `pods` and `persistentvolumeclaims` (core) and on `deployments`, `statefulsets` and `daemonsets` (`apps`), its ClusterRoleBinding, and a `kubernetes.io/service-account-token` Secret for a token that does not expire (or `kubectl create token --duration` for one that does). It reads no secret, config map or log, and can neither exec into a pod nor change anything. `/version` is readable by any authenticated account (`system:public-info-viewer`). A 403 names the path refused and the ClusterRole to bind.
+
+**What it measures.** Besides `up` (label `version`, the API server's `gitVersion`; 0 with `reason` among `connect`, `timeout`, `tls`, `login`, `permission`, `protocol`) and `response_seconds`:
+
+| Object | Instance | Metrics |
+| --- | --- | --- |
+| Node | its name | `node_ready` (labels `roles`, `kubelet_version`), `node_memory_pressure`, `node_disk_pressure`, `node_pid_pressure`, `node_network_unavailable` (1 while the condition is true), `node_unschedulable` (cordoned); and `nodes`, `nodes_not_ready` for the cluster |
+| Namespace | its name | `namespace_pods`, `namespace_pods_not_running` (label `pods`: the pods and why, `api-1 CrashLoopBackOff`, within 200 bytes), `namespace_pod_restarts` (container restarts since the last collection, a pod first seen after the first collection counting all its restarts), `namespace_claims_pending`, `namespace_claims_lost` (label `claims`); and `pods`, `pods_not_running`, `claims_pending` for the cluster |
+| Deployment, stateful set, daemon set | `namespace/kind/name` | `workload_replicas_desired` (label `workload`), `workload_replicas_ready`, `workload_ready_ratio` (absent when scaled to zero); and `workloads_short` for the cluster |
+
+Pods are counted per namespace, not one series per pod: pod names change with every rollout, which would make series without end and incidents that resolve by disappearing. The `pods` label still names the pods at fault in the incident. **A pod does not run** when it is `Pending`, `Unknown`, `Failed` (unless a Job owns it: that is the job's failure), or `Running` without its `Ready` condition; the reason is a waiting container's (`CrashLoopBackOff`, `ImagePullBackOff`) or else the phase. Pods being deleted and `Succeeded` ones are not counted. `namespaces`, a regular expression, narrows pods, workloads and claims; nodes are always the cluster's.
+
+**Default alerts**: the API not answering (critical, 2 min); a node not ready (critical, 5 min); memory, disk or PID pressure (warning, 5 min); the network unavailable (critical, 5 min); pods not running in a namespace (warning, 10 min); a container restart (warning, at once, as for Docker); a workload under all its ready replicas (warning) or under half (critical), for 10 minutes; a claim pending for 10 minutes (warning); a claim lost (critical, at once).
+
+**Tests.** A fake API server over TLS with a CA of its own (`crates/apps/src/kubernetes/tests.rs`) covers pages, namespaces, restarts, 401, 403, an untrusted certificate and a closed port. `scripts/kubernetes-test.sh` runs k3s in a container, applies the guide's manifest, checks with `kubectl auth can-i` what the account may and may not do, and runs `crates/apps/tests/real.rs` against it. It runs k3s without a pod network (`--flannel-backend=none`, no kube-proxy), since those need iptables modules a test machine may lack and the check reads only the API; its node is then not ready and its pods pending, which the test reads as such.
+
 ### Moving from another tool
 
 The importer (ADR-0146) maps the equivalent sensors to these kinds where it is simple, PRTG first: its PostgreSQL, MySQL and Docker container sensors, the Zabbix templates "PostgreSQL by Zabbix agent 2", "MySQL by Zabbix agent", "Redis by Zabbix agent 2", "Docker by Zabbix agent 2" and their siblings, and Prometheus jobs scraping `postgres_exporter`, `mysqld_exporter` and `redis_exporter`. Passwords are never exported by these tools, so a database check is approximated: "enter the password on the check". A PRTG database sensor's own SQL query is not run: its connection and response time are, with the template's metrics.
+
+For Kubernetes, PRTG has no sensor of its own: people read a cluster with REST Custom or HTTP Advanced sensors on its API, or with script sensors. A REST Custom or HTTP sensor whose URL is the API (a path under `/api/v1/` or `/apis/`, or `/healthz`, `/livez`, `/readyz` or `/version` on port 6443) and a sensor whose type names Kubernetes become the device's `kubernetes` check, at the URL's address; a REST Custom sensor on anything else is not moved. Zabbix's "Kubernetes ... by HTTP" templates become one `kubernetes` check per host, at `{$KUBE.API.URL}` (or `{$KUBE.API.ENDPOINT.URL}`, `{$KUBE.API.SERVER.URL}`), their items and triggers covered. Prometheus jobs scraping an API server (named `apiserver`, as `kubernetes-apiservers` is, or on port 6443) become the check of that address. A cluster is always checked from a probe, at the server's address when the host has an agent. The token is never exported: "enter the service account's token and the cluster's CA on the check".
 
 ### What comes next, each in its own task
 
 - **SQL Server**: a `mssql` kind over TDS (the `tiberius` client, with rustls), from the agent on Windows or a probe: connections, batch requests, page life expectancy, buffer cache hit ratio, blocked processes, database sizes and log use, Always On replica state and lag, through `sys.dm_os_performance_counters`, `sys.dm_exec_requests` and `sys.dm_hadr_database_replica_states`, with `VIEW SERVER STATE` as its only right (`VIEW SERVER PERFORMANCE STATE` on 2022). Left out here to keep this change reviewable, and because its test server is a 1.5 GB image needing 2 GB of memory.
 - **Java (JMX)**: JMX is Java RMI, which only a JVM speaks well. The plan is to read Jolokia's HTTP JSON bridge where it is installed (an agent JAR, as Zabbix's Java gateway is a separate process), from the agent or a probe: heap and non-heap use against their maximum, GC count and time per collector, threads, and Tomcat's or Kafka's MBeans as optional groups.
-- **Kubernetes**: a cluster is a device checked from a probe through its API with a read-only service account token (sealed like a password) and its CA pinned: nodes ready and their pressure conditions, pods not running or restarting by namespace, deployments and stateful sets with fewer ready replicas than desired, and persistent volume claims pending. The inventory follows the VMware model (ADR-0156): one check, objects as instances, `_info` samples to describe them.
+- **Kubernetes** is now decided above. Left for later: an inventory of the cluster's objects shown on the device's page, as VMware's (`_info` samples into `virtual_objects`, ADR-0156), and nodes matched to the servers already monitored; jobs and cron jobs that failed; and the resource use of pods and nodes, which needs metrics-server (`metrics.k8s.io`).
 - **Cloud providers**: realistic first step, the state and basic metrics of virtual machines of AWS (EC2 `DescribeInstances`, `DescribeInstanceStatus` and CloudWatch `GetMetricData` for CPU, network and status checks), Azure (Resource Graph and Azure Monitor metrics) and Google Cloud (Compute Engine and Cloud Monitoring), each with read-only credentials sealed per account, run from the central server, and matched to monitored servers by instance ID, as virtual machines are (ADR-0156). Managed databases (RDS, Azure SQL, Cloud SQL) then reuse the database kinds above for what is inside, and the cloud check for what the provider sees.
 - **Encrypted Redis** and an **agent-local Unix socket** for PostgreSQL and MySQL (peer authentication without a password).
 
@@ -92,4 +122,5 @@ The importer (ADR-0146) maps the equivalent sensors to these kinds where it is s
 - An agent with `sensors.port_targets` must list `127.0.0.1` (or the database's address) for these checks to run there; the check's error says so.
 - Watching Docker gives the agent's account root's power on that host, which a person grants knowingly; the agent's code only reads.
 - The real tests (`crates/apps/tests/real.rs`, with `scripts/apps-test.sh`) need Docker and are not run by CI, which has no database containers; parsing, limits and failures are unit tested everywhere.
-- SQL Server, JMX, Kubernetes and the cloud providers stay on the roadmap as their own tasks.
+- SQL Server, JMX and the cloud providers stay on the roadmap as their own tasks, as do Kubernetes' inventory page and nodes matched to servers.
+- A Kubernetes check reads every pod of the cluster each collection: about 1 MiB of JSON per 300 pods, within the 64 MiB and 10,000 objects of a list it stops at.

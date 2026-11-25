@@ -2,9 +2,9 @@
 //! alerts a check gets when it is added with them.
 //!
 //! The checks themselves are ordinary rows of `sensor_configs` of kinds
-//! `postgresql`, `mysql`, `redis` and `docker`, made with the routes of
-//! [`super::sensors`]; a template only says what such a check measures and
-//! which thresholds come with it.
+//! `postgresql`, `mysql`, `redis`, `docker` and `kubernetes`, made with
+//! the routes of [`super::sensors`]; a template only says what such a
+//! check measures and which thresholds come with it.
 
 use axum::Json;
 use monitorflow_apps::templates::{self, Template};
@@ -28,7 +28,8 @@ pub struct TemplateView {
     pub kind: &'static str,
     pub title: &'static str,
     /// `agent_or_probe`: the server's agent, the central server or a
-    /// relay; `agent`: the server's agent only.
+    /// relay; `agent`: the server's agent only; `probe`: the central
+    /// server or a relay only.
     pub runs: &'static str,
     pub default_port: Option<u16>,
     pub params: Vec<ParamView>,

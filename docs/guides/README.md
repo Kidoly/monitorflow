@@ -45,6 +45,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor Apache](monitor-apache.md): Get alerted when the Apache web server stops or ports 80 and 443 stop answering, on Debian, Ubuntu, RHEL and Rocky servers.
 - [How to monitor a website over HTTPS](monitor-website-https.md): Know when your website stops answering as it should: its status code, the text on the page, how long it takes, its redirects and when its certificate expires.
 - [How to monitor Docker](monitor-docker.md): Watch each Docker or Podman container: whether it runs, its restarts, its health check, its processor and memory, and get alerted when the engine or a container stops.
+- [How to monitor Kubernetes](monitor-kubernetes.md): Watch a Kubernetes cluster through its API with a read-only token: nodes and their conditions, pods that do not run or restart, deployments short of ready replicas and volume claims left pending.
 - [How to monitor Proxmox VE](monitor-proxmox-ve.md): Watch your Proxmox VE hosts: the web interface on port 8006, the cluster service, and the disk space, CPU and memory every VM depends on.
 - [How to monitor VMware vSphere and Hyper-V](monitor-vmware-hyper-v.md): Watch the hosts, clusters, virtual machines and datastores of a vCenter, an ESXi host or a Hyper-V host, get alerted on disconnected hosts, full datastores and old snapshots, and tie each virtual machine to its server.
 

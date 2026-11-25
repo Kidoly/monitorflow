@@ -45,6 +45,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller Apache](surveiller-apache.md) : Soyez alerté quand le serveur web Apache s'arrête ou que les ports 80 et 443 ne répondent plus, sous Debian, Ubuntu, RHEL et Rocky.
 - [Comment surveiller un site web en HTTPS](surveiller-site-web-https.md) : Sachez quand votre site ne répond plus comme il le devrait : son code de réponse, le texte de la page, son temps de réponse, ses redirections et l'expiration de son certificat.
 - [Comment surveiller Docker](surveiller-docker.md) : Suivez chaque conteneur Docker ou Podman : s'il tourne, ses redémarrages, son contrôle de santé, son processeur et sa mémoire, et soyez alerté quand le moteur ou un conteneur s'arrête.
+- [Comment surveiller Kubernetes](surveiller-kubernetes.md) : Suivez un cluster Kubernetes par son API avec un jeton en lecture seule : les nœuds et leurs conditions, les pods qui ne tournent pas ou redémarrent, les déploiements sans assez de réplicas prêts et les volume claims en attente.
 - [Comment surveiller Proxmox VE](surveiller-proxmox-ve.md) : Surveillez vos hôtes Proxmox VE : l'interface web sur le port 8006, le service de cluster, et l'espace disque, le CPU et la mémoire des VM.
 - [Comment surveiller VMware vSphere et Hyper-V](surveiller-vmware-hyper-v.md) : Surveillez les hôtes, clusters, machines virtuelles et banques de données d'un vCenter, d'un hôte ESXi ou d'un hôte Hyper-V, et reliez chaque machine virtuelle à son serveur.
 

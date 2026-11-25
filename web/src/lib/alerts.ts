@@ -517,7 +517,24 @@ function appTypes(device: boolean): CheckType[] {
       },
     },
   ];
-  if (device) return types;
+  // A cluster, read through its API from the central server or a relay.
+  const kubernetes: CheckType = {
+    ...common,
+    kind: "kubernetes",
+    get label() {
+      return t("checks.type.kubernetes");
+    },
+    get fields(): CheckField[] {
+      return [
+        hostField(),
+        { key: "port", label: t("checks.field.port"), placeholder: "6443", initial: "6443", check: portNumber },
+        { key: "token", label: t("checks.field.token"), placeholder: "", hint: t("checks.field.tokenHint"), input: "password" },
+        { key: "ca_certificate", label: t("checks.field.caCertificate"), placeholder: "LS0tLS1CRUdJTi…", hint: t("checks.field.caCertificateHint"), optional: true },
+        { key: "namespaces", label: t("checks.field.namespaces"), placeholder: "^(shop|billing)$", hint: t("checks.field.namespacesHint"), optional: true, advanced: true },
+      ];
+    },
+  };
+  if (device) return [...types, kubernetes];
   return [
     ...types,
     {
@@ -889,6 +906,10 @@ function ownTitle(sensor: EffectiveSensor): string {
     }
     case "docker":
       return t("checks.type.docker");
+    case "kubernetes": {
+      const host = remoteHost(params);
+      return host ? t("checks.title.appOn", { app: t("checks.type.kubernetes"), host }) : t("checks.type.kubernetes");
+    }
     default:
       return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }

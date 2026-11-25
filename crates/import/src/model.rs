@@ -265,6 +265,9 @@ impl Watch {
     }
 }
 
+/// The port of a Kubernetes API server, the check's default.
+pub const KUBERNETES_PORT: u16 = 6443;
+
 /// The kinds of ready-made application checks (ADR-0183).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -276,6 +279,8 @@ pub enum AppKind {
     /// The containers of the host's Docker or Podman engine, read by its
     /// agent.
     Docker,
+    /// A Kubernetes cluster through its API, read from a probe.
+    Kubernetes,
 }
 
 impl AppKind {
@@ -286,6 +291,7 @@ impl AppKind {
             Self::Mysql => "mysql",
             Self::Redis => "redis",
             Self::Docker => "docker",
+            Self::Kubernetes => "kubernetes",
         }
     }
 }

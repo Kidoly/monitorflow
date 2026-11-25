@@ -73076,7 +73076,7 @@
           },
           "params": {
             "type": "object",
-            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused.\n\nA website check (`http`, ADR-0150) takes `url` (required),\n`method` (`GET` or `HEAD`), `status` (`200-299` by default, like\n`200,301-302`), `contains`, `not_contains`, `follow_redirects`\n(`true` by default), `headers` (`Name: value` lines), `username`,\n`password` and `ip` (`any`, `4` or `6`). `password` is accepted\nwith an `https://` URL only, kept sealed and never returned: absent\nfrom an update, the stored one is kept; `\"\"` removes it.\n\nThe ready-made application checks (ADR-0183) take `host`\n(`127.0.0.1` from the agent; the device's address from a probe),\n`port`, `user` and `password` (kept sealed as above), and `tls`\n(`prefer`, `verify` or `off`): `postgresql` also `database` and\n`slow_after`, `mysql` (MySQL and MariaDB) and `redis` nothing more.\n`docker`, run by the agent only, takes `engine` (`docker` or\n`podman`), `containers` (a regular expression on names) and\n`stats`. `GET /api/check-templates` lists what each measures."
+            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused.\n\nA website check (`http`, ADR-0150) takes `url` (required),\n`method` (`GET` or `HEAD`), `status` (`200-299` by default, like\n`200,301-302`), `contains`, `not_contains`, `follow_redirects`\n(`true` by default), `headers` (`Name: value` lines), `username`,\n`password` and `ip` (`any`, `4` or `6`). `password` is accepted\nwith an `https://` URL only, kept sealed and never returned: absent\nfrom an update, the stored one is kept; `\"\"` removes it.\n\nThe ready-made application checks (ADR-0183) take `host`\n(`127.0.0.1` from the agent; the device's address from a probe),\n`port`, `user` and `password` (kept sealed as above), and `tls`\n(`prefer`, `verify` or `off`): `postgresql` also `database` and\n`slow_after`, `mysql` (MySQL and MariaDB) and `redis` nothing more.\n`docker`, run by the agent only, takes `engine` (`docker` or\n`podman`), `containers` (a regular expression on names) and\n`stats`. `kubernetes`, run from a probe only, takes `host` (the\ndevice's address by default), `port` (6443), `token` (a read-only\nservice account's) and `ca_certificate` (the cluster's CA in PEM,\nor a kubeconfig's `certificate-authority-data`), sealed together\nand never returned (an update without `token` keeps both; one\nwith it replaces both), and `namespaces` (a regular expression).\n`GET /api/check-templates` lists what each measures."
           },
           "probe": {
             "type": [
@@ -76555,7 +76555,7 @@
           },
           "runs": {
             "type": "string",
-            "description": "`agent_or_probe`: the server's agent, the central server or a\nrelay; `agent`: the server's agent only."
+            "description": "`agent_or_probe`: the server's agent, the central server or a\nrelay; `agent`: the server's agent only; `probe`: the central\nserver or a relay only."
           },
           "title": {
             "type": "string"

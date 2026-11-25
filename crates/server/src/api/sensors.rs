@@ -80,7 +80,13 @@ pub struct EntryRequest {
     /// `slow_after`, `mysql` (MySQL and MariaDB) and `redis` nothing more.
     /// `docker`, run by the agent only, takes `engine` (`docker` or
     /// `podman`), `containers` (a regular expression on names) and
-    /// `stats`. `GET /api/check-templates` lists what each measures.
+    /// `stats`. `kubernetes`, run from a probe only, takes `host` (the
+    /// device's address by default), `port` (6443), `token` (a read-only
+    /// service account's) and `ca_certificate` (the cluster's CA in PEM,
+    /// or a kubeconfig's `certificate-authority-data`), sealed together
+    /// and never returned (an update without `token` keeps both; one
+    /// with it replaces both), and `namespaces` (a regular expression).
+    /// `GET /api/check-templates` lists what each measures.
     #[serde(default)]
     #[schema(value_type = Object)]
     pub params: Map<String, Value>,
@@ -224,6 +230,51 @@ pub fn validate_with_host(
     validate_full(request, address, false)
 }
 
+/// The parameters a check of `kind` keeps sealed (`password`, or a
+/// Kubernetes cluster's `token` and `ca_certificate`), taken out of
+/// `params`: what the request does with the stored secret.
+fn take_secret(
+    kind: &str,
+    params: &mut Map<String, Value>,
+    stored_secret: bool,
+) -> Result<SecretChange, String> {
+    let names: &[&str] = if kind == monitorflow_webcheck::KIND {
+        &[monitorflow_webcheck::SECRET_PARAM]
+    } else {
+        monitorflow_apps::secret_params(kind)
+    };
+    let Some(main) = names.first() else {
+        params.remove(monitorflow_webcheck::SECRET_PARAM);
+        return Ok(SecretChange::Clear);
+    };
+    let mut given = std::collections::BTreeMap::new();
+    for name in names {
+        match params.remove(*name) {
+            None => {}
+            Some(Value::String(value)) => {
+                given.insert((*name).to_owned(), value);
+            }
+            Some(_) => return Err(format!("param `{name}` must be a string")),
+        }
+    }
+    Ok(match given.get(*main) {
+        None if given.is_empty() && stored_secret => SecretChange::Keep,
+        None if given.is_empty() => SecretChange::Clear,
+        // The token and the CA are sealed together.
+        None => {
+            return Err(format!(
+                "param `{main}` must be given with `{}`",
+                names[1..].join("`, `")
+            ))
+        }
+        Some(value) if value.is_empty() => SecretChange::Clear,
+        Some(_) if kind == monitorflow_webcheck::KIND => {
+            SecretChange::Set(given.remove(*main).unwrap_or_default())
+        }
+        Some(_) => SecretChange::Set(monitorflow_apps::seal_form(kind, &given)),
+    })
+}
+
 /// [`validate_with_host`] for a row that may hold a secret already
 /// (`stored_secret`), which a request without `password` keeps.
 pub fn validate_full(
@@ -233,20 +284,7 @@ pub fn validate_full(
 ) -> Result<ValidEntry, String> {
     let website = request.kind == monitorflow_webcheck::KIND;
     let app = monitorflow_apps::is_kind(&request.kind);
-    let takes_secret = website || monitorflow_apps::takes_secret(&request.kind);
-    let secret = match request.params.remove(monitorflow_webcheck::SECRET_PARAM) {
-        _ if !takes_secret => SecretChange::Clear,
-        None if stored_secret => SecretChange::Keep,
-        None => SecretChange::Clear,
-        Some(Value::String(secret)) if secret.is_empty() => SecretChange::Clear,
-        Some(Value::String(secret)) => SecretChange::Set(secret),
-        Some(_) => {
-            return Err(format!(
-                "param `{}` must be a string",
-                monitorflow_webcheck::SECRET_PARAM
-            ))
-        }
-    };
+    let secret = take_secret(&request.kind, &mut request.params, stored_secret)?;
     let name = request.name.unwrap_or_else(|| request.kind.clone());
     validate::sensor_name(&request.kind).map_err(|e| format!("kind: {e}"))?;
     validate::sensor_name(&name).map_err(|e| format!("name: {e}"))?;
@@ -320,10 +358,11 @@ pub fn validate_full(
         }
         match &secret {
             SecretChange::Set(secret) => {
-                check.insert(monitorflow_apps::SECRET_PARAM.into(), secret.clone());
+                monitorflow_apps::open_into(&request.kind, secret, &mut check);
             }
             SecretChange::Keep => {
-                check.insert(monitorflow_apps::SECRET_PARAM.into(), "kept".into());
+                let main = monitorflow_apps::secret_params(&request.kind)[0];
+                check.insert(main.into(), "kept".into());
             }
             SecretChange::Clear => {}
         }
@@ -827,6 +866,7 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
         || valid.kind == monitorflow_snmp::KIND
         || valid.kind == monitorflow_snmp::CUSTOM_KIND
         || valid.kind == monitorflow_vmware::KIND
+        || valid.kind == monitorflow_apps::KUBERNETES
         || udp;
     if by.probe.is_none() {
         if probe_only {
@@ -895,8 +935,7 @@ pub fn probe_kind(kind: &str) -> bool {
     monitorflow_probe::PROBE_RUNS.contains(&kind) || kind == monitorflow_webcheck::KIND
 }
 
-const PROBE_KINDS_TEXT: &str =
-    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql` and `redis`";
+const PROBE_KINDS_TEXT: &str = "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql`, `redis` and `kubernetes`";
 
 async fn create(
     state: &ApiState,
@@ -1033,7 +1072,9 @@ pub async fn update(
     {
         return Err(ApiError::Invalid(format!(
             "param `{}` must be given again when the address of the check changes",
-            monitorflow_webcheck::SECRET_PARAM
+            monitorflow_apps::secret_params(&valid.kind)
+                .first()
+                .unwrap_or(&monitorflow_webcheck::SECRET_PARAM)
         )));
     }
     check_run_by(&mut valid, &by)?;

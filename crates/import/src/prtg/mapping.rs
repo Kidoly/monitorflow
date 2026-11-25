@@ -76,7 +76,7 @@ fn network_device(tree: &Indexed, device: &Object) -> bool {
             | Family::HyperV
             | Family::App(crate::model::AppKind::Docker) => false,
             Family::Cpu | Family::Memory | Family::Disk | Family::Traffic => t.starts_with("snmp"),
-            Family::Other | Family::OtherDatabase => {
+            Family::Other | Family::OtherDatabase | Family::Rest => {
                 !(t.starts_with("wmi") || t.starts_with("ssh") || t.starts_with("exe"))
             }
             _ => true,
