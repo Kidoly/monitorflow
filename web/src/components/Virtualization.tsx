@@ -66,6 +66,31 @@ function memory(o: VirtualObject): string {
   return use === undefined ? formatBytes(bytes) : `${formatBytes(bytes)}, ${formatPercent(use)}`;
 }
 
+const perSecond = (bytes: number): string => `${formatBytes(bytes)}/s`;
+
+/** "1.2 KiB/s in, 300 B/s out", for a cloud machine. */
+function network(o: VirtualObject): string {
+  const rx = num(o, "network_in_bytes_per_second");
+  const tx = num(o, "network_out_bytes_per_second");
+  if (rx === undefined && tx === undefined) return missingText("noData");
+  return t("cloud.rate", { in: perSecond(rx ?? 0), out: perSecond(tx ?? 0) });
+}
+
+/** "10 KiB/s read, 2 KiB/s written". */
+function disk(o: VirtualObject): string {
+  const read = num(o, "disk_read_bytes_per_second");
+  const written = num(o, "disk_write_bytes_per_second");
+  if (read === undefined && written === undefined) return missingText("noData");
+  return t("cloud.disk", { read: perSecond(read ?? 0), written: perSecond(written ?? 0) });
+}
+
+/** "Passed", "1 failed", "Not checked" (a stopped machine). */
+function checks(o: VirtualObject): string {
+  const failed = num(o, "status_checks_failed");
+  if (failed === undefined) return t("cloud.checks.none");
+  return failed > 0 ? t("cloud.checks.failed", { count: String(failed) }) : t("cloud.checks.ok");
+}
+
 /** "None", "2, oldest 9 d". */
 export function snapshots(o: VirtualObject): string {
   const count = num(o, "snapshots") ?? 0;
@@ -121,7 +146,8 @@ function GuestLine({ guest }: { guest: Virtualization["guest_of"][number] }) {
   return (
     <p className={styles.sectionNote} role="note">
       {o.details.host ? t("virtualization.guest.line", values) : t("virtualization.guest.lineNoHost", values)}{" "}
-      {t("virtualization.guest.snapshots", { snapshots: snapshots(o) })}{" "}
+      {/* Cloud machines have no snapshots to speak of. */}
+      {num(o, "snapshots") !== undefined && <>{t("virtualization.guest.snapshots", { snapshots: snapshots(o) })} </>}
       <Link href={scopedHref(serverHref(guest.source_id), scope)}>{guest.source_name}</Link>
     </p>
   );
@@ -164,13 +190,15 @@ function Inventory({
   onChanged: () => void;
 }) {
   const hyperv = server.kind === "agent";
+  // An AWS account or an Azure subscription (ADR-0183).
+  const cloud = Boolean(data.source?.details.provider);
   const of = (kind: VirtualObject["kind"]) => data.objects.filter((o) => o.kind === kind);
   return (
     <section aria-label={t("virtualization.title")}>
       <SourceLine data={data} now={now} server={server} />
       {of("host").length > 0 && <HostTable rows={of("host")} now={now} />}
       {of("cluster").length > 0 && <ClusterTable rows={of("cluster")} now={now} />}
-      <VmTable server={server} rows={of("vm")} now={now} hyperv={hyperv} onChanged={onChanged} />
+      <VmTable server={server} rows={of("vm")} now={now} hyperv={hyperv} cloud={cloud} onChanged={onChanged} />
       {of("datastore").length > 0 && <DatastoreTable rows={of("datastore")} now={now} />}
     </section>
   );
@@ -262,12 +290,14 @@ function VmTable({
   rows,
   now,
   hyperv,
+  cloud = false,
   onChanged,
 }: {
   server: ServerDetail;
   rows: VirtualObject[];
   now: Date;
   hyperv: boolean;
+  cloud?: boolean;
   onChanged: () => void;
 }) {
   const me = useMe();
@@ -295,38 +325,50 @@ function VmTable({
     }
   }
 
-  const columns: Column<VirtualObject>[] = [
-    nameColumn(now),
-    ...(hyperv ? [] : [{ key: "host", header: t("virtualization.col.host"), cell: (o: VirtualObject) => o.details.host ?? missingText("unknown") }]),
-    { key: "cpu", header: t("virtualization.col.cpu"), cell: cpu, sortValue: (o) => num(o, "cpu_usage_ratio") ?? null },
-    { key: "memory", header: t("virtualization.col.memory"), cell: memory },
-    {
-      key: "snapshots",
-      header: hyperv ? t("virtualization.col.checkpoints") : t("virtualization.col.snapshots"),
-      cell: (o) => {
-        const health = num(o, "replication_health");
-        const replication =
-          health === undefined ? "" : ` · ${t("virtualization.col.replication")}: ${t(`virtualization.replication.${health as 0}`)}`;
-        return snapshots(o) + replication;
-      },
-      sortValue: (o) => num(o, "snapshot_age_seconds") ?? null,
-    },
-    {
-      key: "server",
-      header: t("virtualization.col.server"),
-      cell: (o) =>
-        o.server ? (
-          <PrimaryCell
-            title={o.server.hostname}
-            href={scopedHref(serverHref(o.server.id), scope)}
-            sub={o.server.awaiting_agent ? `${matchedBy(o)} · ${t("virtualization.server.waiting")}` : matchedBy(o)}
-          />
-        ) : (
-          t("virtualization.server.none")
-        ),
-      sortValue: (o) => o.server?.hostname ?? null,
-    },
-  ];
+  const serverColumn: Column<VirtualObject> = {
+    key: "server",
+    header: t("virtualization.col.server"),
+    cell: (o) =>
+      o.server ? (
+        <PrimaryCell
+          title={o.server.hostname}
+          href={scopedHref(serverHref(o.server.id), scope)}
+          sub={o.server.awaiting_agent ? `${matchedBy(o)} · ${t("virtualization.server.waiting")}` : matchedBy(o)}
+        />
+      ) : (
+        t("virtualization.server.none")
+      ),
+    sortValue: (o) => o.server?.hostname ?? null,
+  };
+  const columns: Column<VirtualObject>[] = cloud
+    ? [
+        nameColumn(now),
+        { key: "zone", header: t("cloud.col.zone"), cell: (o) => o.details.host ?? missingText("unknown"), sortValue: (o) => o.details.host ?? null },
+        { key: "size", header: t("cloud.col.size"), cell: (o) => o.details.size ?? missingText("unknown"), sortValue: (o) => o.details.size ?? null },
+        { key: "cpu", header: t("virtualization.col.cpu"), cell: cpu, sortValue: (o) => num(o, "cpu_usage_ratio") ?? null },
+        { key: "network", header: t("cloud.col.network"), cell: network, sortValue: (o) => num(o, "network_in_bytes_per_second") ?? null },
+        { key: "disk", header: t("cloud.col.disk"), cell: disk, sortValue: (o) => num(o, "disk_write_bytes_per_second") ?? null },
+        { key: "checks", header: t("cloud.col.checks"), cell: checks, sortValue: (o) => num(o, "status_checks_failed") ?? null },
+        serverColumn,
+      ]
+    : [
+        nameColumn(now),
+        ...(hyperv ? [] : [{ key: "host", header: t("virtualization.col.host"), cell: (o: VirtualObject) => o.details.host ?? missingText("unknown") }]),
+        { key: "cpu", header: t("virtualization.col.cpu"), cell: cpu, sortValue: (o) => num(o, "cpu_usage_ratio") ?? null },
+        { key: "memory", header: t("virtualization.col.memory"), cell: memory },
+        {
+          key: "snapshots",
+          header: hyperv ? t("virtualization.col.checkpoints") : t("virtualization.col.snapshots"),
+          cell: (o) => {
+            const health = num(o, "replication_health");
+            const replication =
+              health === undefined ? "" : ` · ${t("virtualization.col.replication")}: ${t(`virtualization.replication.${health as 0}`)}`;
+            return snapshots(o) + replication;
+          },
+          sortValue: (o) => num(o, "snapshot_age_seconds") ?? null,
+        },
+        serverColumn,
+      ];
   return (
     <TableBox title={t("virtualization.kind.vm")}>
       {problem && (

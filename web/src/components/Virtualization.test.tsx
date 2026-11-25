@@ -169,4 +169,34 @@ describe("Virtualization", () => {
     expect(await screen.findByText(/Could not be read .*the agent cannot read Hyper-V/)).toBeTruthy();
     expect(screen.queryByText("Watch Hyper-V")).toBeNull();
   });
+  it("lists a cloud account's machines with their network, disks and status checks", async () => {
+    const ec2 = object({
+      id: "i1",
+      name: "web",
+      key: "i-0123456789abcdef0",
+      details: { host: "eu-west-3a", size: "t3.micro", power_state: "running" },
+      metrics: { powered_on: 1, cpu_count: 2, cpu_usage_ratio: 0.5, network_in_bytes_per_second: 2048, network_out_bytes_per_second: 512, status_checks_failed: 1 },
+    });
+    const stopped = object({ id: "i2", name: "batch", details: { power_state: "stopped" }, metrics: { powered_on: 0 } });
+    stubFetch({
+      "GET /api/servers/aws1/virtualization": {
+        status: 200,
+        body: {
+          source: { up: true, reason: null, error: null, details: { product: "Amazon EC2 (eu-west-3)", provider: "aws" }, seen_at: NOW.toISOString() },
+          objects: [ec2, stopped],
+          guest_of: [],
+        },
+      },
+    });
+    render(
+      <As user={me({ role: "administrator", customer_id: null, site_id: null })}>
+        <VirtualizationSection server={server({ id: "aws1", address: "ec2.eu-west-3.amazonaws.com" })} />
+      </As>,
+    );
+    expect(await screen.findByText(/Amazon EC2 \(eu-west-3\)/)).toBeTruthy();
+    const table = screen.getByRole("table", { name: "Virtual machines" });
+    const text = table.textContent ?? "";
+    for (const shown of ["Zone", "eu-west-3a", "t3.micro", "2 KiB/s in, 512 B/s out", "1 failed", "Not checked"]) expect(text).toContain(shown);
+    expect(text).not.toContain("Snapshots");
+  });
 });

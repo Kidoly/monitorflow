@@ -144,4 +144,33 @@ describe("AddDevice", () => {
     const body = JSON.parse(String(fetchMock.mock.calls.find(([url, init]) => String(url) === "/api/devices" && init?.method === "POST")?.[1]?.body));
     expect(body.vmware).toEqual({ port: 443, user: "monitor@vsphere.local", password: "a password", fingerprint: print });
   });
+  it("adds a cloud account without an address, ping or probe", async () => {
+    const fetchMock = stubFetch({
+      "GET /api/sites": { status: 200, body: { sites: [site] } },
+      "GET /api/sites/site-1/probes": { status: 200, body: probes },
+      "POST /api/devices": { status: 201, body: { id: "aws-1" } },
+    });
+    render(
+      <As user={operator}>
+        <AddDevice />
+      </As>,
+    );
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/^Name/), "AWS production");
+    await user.click(screen.getByLabelText(/It is a cloud account/));
+    expect(screen.queryByLabelText(/^Address/)).toBeNull();
+    expect(screen.queryByLabelText("Checked from")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Add the device" }));
+    expect(screen.getByText("Fill in every field.")).toBeTruthy();
+    await user.type(screen.getByLabelText("Access key ID"), "AKIAIOSFODNN7EXAMPLE");
+    await user.type(screen.getByLabelText("Secret access key"), "s3cret");
+    await user.type(screen.getByLabelText(/^Regions/), "eu-west-3");
+    await user.click(screen.getByRole("button", { name: "Add the device" }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/servers/view/?id=aws-1"));
+    expect(sent(fetchMock)).toEqual({
+      site_id: "site-1",
+      name: "AWS production",
+      cloud: { provider: "aws", key_id: "AKIAIOSFODNN7EXAMPLE", secret: "s3cret", regions: ["eu-west-3"] },
+    });
+  });
 });

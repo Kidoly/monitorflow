@@ -1026,10 +1026,11 @@ export interface NetworkScanAddResult {
 export interface DeviceRequest {
   site_id: string;
   name: string;
-  address: string;
+  /** Required unless it is a cloud account. */
+  address?: string;
   /** `central` or a relay's ID; absent: the site's default. */
   probe?: string;
-  /** Add a ping every minute and its alerts; true when absent. */
+  /** Add a ping every minute and its alerts; true when absent, false for a cloud account. */
   ping?: boolean;
   /** How to reach it over SNMP (ADR-0149); needed with `template`. */
   snmp?: SnmpCredentialsRequest;
@@ -1037,6 +1038,47 @@ export interface DeviceRequest {
   template?: string;
   /** For a vCenter or ESXi host (ADR-0156): its `vmware` check and alerts come with it. */
   vmware?: VmwareCredentialsRequest;
+  /** For an AWS account or an Azure subscription (ADR-0183): read by the central server. */
+  cloud?: CloudCredentialsRequest;
+}
+
+export type CloudProvider = "aws" | "azure";
+
+/** Cloud credentials as sent; what is left out keeps the stored value (ADR-0183). */
+export interface CloudCredentialsRequest {
+  provider?: CloudProvider;
+  /** AWS: the access key ID. Azure: the application (client) ID. */
+  key_id?: string;
+  /** The secret access key or the client secret. */
+  secret?: string;
+  /** AWS only. */
+  regions?: string[];
+  /** Azure only. */
+  tenant?: string;
+  subscription?: string;
+}
+
+/** A device's cloud credentials, never the secret. */
+export interface CloudCredentials {
+  provider: CloudProvider;
+  key_id: string;
+  regions: string[];
+  tenant: string | null;
+  subscription: string | null;
+  secret_set: boolean;
+  updated_at: string;
+}
+
+/** What cloud credentials answered to a test. */
+export interface CloudTested {
+  login: boolean;
+  reason: string | null;
+  error: string | null;
+  vms: number;
+  running: number;
+  /** null when there was nothing to ask. */
+  metrics: boolean | null;
+  warning: string | null;
 }
 
 /** vCenter or ESXi credentials as sent; what is left out keeps the stored value (ADR-0156). */
@@ -5888,6 +5930,16 @@ export const api = {
 
   setDeviceVmware: (id: string, body: VmwareCredentialsRequest) =>
     request<VmwareCredentials>(`/api/devices/${encodeURIComponent(id)}/vmware`, { method: "PUT", body }),
+
+  /** Signs in to a cloud account once from the central server and counts its machines (ADR-0183). */
+  testCloud: (body: { site_id: string; cloud: CloudCredentialsRequest }) =>
+    request<CloudTested>("/api/devices/cloud/test", { method: "POST", body }),
+
+  deviceCloud: (id: string, signal?: AbortSignal) =>
+    request<CloudCredentials>(`/api/devices/${encodeURIComponent(id)}/cloud`, { signal }),
+
+  setDeviceCloud: (id: string, body: CloudCredentialsRequest) =>
+    request<CloudCredentials>(`/api/devices/${encodeURIComponent(id)}/cloud`, { method: "PUT", body }),
 
   /** A source's hosts, clusters, virtual machines and datastores, and the virtual machine a server is. */
   serverVirtualization: (id: string, signal?: AbortSignal) =>
