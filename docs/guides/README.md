@@ -47,6 +47,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor Docker](monitor-docker.md): Watch each Docker or Podman container: whether it runs, its restarts, its health check, its processor and memory, and get alerted when the engine or a container stops.
 - [How to monitor Proxmox VE](monitor-proxmox-ve.md): Watch your Proxmox VE hosts: the web interface on port 8006, the cluster service, and the disk space, CPU and memory every VM depends on.
 - [How to monitor VMware vSphere and Hyper-V](monitor-vmware-hyper-v.md): Watch the hosts, clusters, virtual machines and datastores of a vCenter, an ESXi host or a Hyper-V host, get alerted on disconnected hosts, full datastores and old snapshots, and tie each virtual machine to its server.
+- [How to monitor AWS and Azure virtual machines](monitor-aws-azure.md): Watch the EC2 instances of an AWS account and the virtual machines of an Azure subscription: their state, status checks, processor, network and disks, with read-only credentials, and tie each one to its server.
 
 ## Linux services
 

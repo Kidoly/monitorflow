@@ -156,6 +156,7 @@ db_tests! {
                 Column::VmwareCredentials,
                 Column::PsaConnections,
                 Column::WebPushKeys,
+                Column::CloudCredentials,
             ]
         );
         let channels = "SELECT secret FROM notification_channels ORDER BY settings->>'url'";
@@ -177,6 +178,7 @@ db_tests! {
         assert_eq!(
             listed,
             [
+                "cloud_credentials.secret",
                 "identity_providers.secret",
                 "import_runs.secrets",
                 "integration_endpoints.secret",

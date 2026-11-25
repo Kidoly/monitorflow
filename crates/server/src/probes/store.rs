@@ -84,7 +84,7 @@ impl ProbeStore {
         Ok(sets)
     }
 
-    /// The opened SNMP (ADR-0149) or vCenter (ADR-0156) credentials of
+    /// The opened SNMP (ADR-0149), vCenter (ADR-0156) or cloud (ADR-0183) credentials of
     /// `devices`, as check parameters, by device ID. Those that do not
     /// open are left out, logged.
     async fn credentials(
@@ -104,6 +104,12 @@ impl ProbeStore {
             let opened = if kind == monitorflow_vmware::KIND {
                 crate::vmware::load(&mut conn, id)
                     .await?
+                    .map(|c| c.map(|c| c.params()))
+            } else if crate::cloud::is_kind(kind) {
+                // Only the provider's own check gets them.
+                crate::cloud::load(&mut conn, id)
+                    .await?
+                    .filter(|c| c.as_ref().map_or(true, |c| c.provider == kind))
                     .map(|c| c.map(|c| c.params()))
             } else {
                 crate::snmp::load(&mut conn, id)
@@ -125,11 +131,13 @@ impl ProbeStore {
 }
 
 /// Kinds whose checks run with their device's credentials (ADR-0149,
-/// ADR-0156, ADR-0157).
-pub const CREDENTIALED: [&str; 3] = [
+/// ADR-0156, ADR-0157, ADR-0183).
+pub const CREDENTIALED: [&str; 5] = [
     monitorflow_snmp::KIND,
     monitorflow_snmp::CUSTOM_KIND,
     monitorflow_vmware::KIND,
+    monitorflow_cloud::AWS,
+    monitorflow_cloud::AZURE,
 ];
 
 /// Adds to each check of `kind` its device's credentials; checks of a
@@ -207,6 +215,8 @@ fn group(lines: Vec<Line>) -> HashMap<String, ProbeSet> {
         ) = line;
         let probe = match (probe.as_str(), relay) {
             ("central", _) => CENTRAL.to_owned(),
+            // Cloud credentials never leave the central server.
+            _ if crate::cloud::is_kind(&kind) => continue,
             (_, Some(relay)) => relay,
             _ => continue,
         };
@@ -429,5 +439,28 @@ mod tests {
         assert_ne!(central.revision(), relay.revision());
         assert_eq!(relay.revision(), relay.clone().revision());
         assert_eq!(ProbeSet::default().to_proto().checks.len(), 0);
+    }
+
+    #[test]
+    fn cloud_checks_run_on_the_central_server_only() {
+        let cloud = |device: &str, probe: &str, relay: Option<&str>| {
+            let mut l = line(
+                device,
+                Some("ec2.eu-west-3.amazonaws.com"),
+                "aws",
+                probe,
+                relay,
+                serde_json::json!({}),
+            );
+            l.3 = "aws".into();
+            l
+        };
+        let sets = group(vec![
+            cloud("prod", "central", None),
+            cloud("lab", "relay", Some("relay-1")),
+        ]);
+        assert_eq!(sets[CENTRAL].checks.len(), 1);
+        assert_eq!(sets[CENTRAL].checks[0].device, "prod");
+        assert!(!sets.contains_key("relay-1"), "never sent to a relay");
     }
 }

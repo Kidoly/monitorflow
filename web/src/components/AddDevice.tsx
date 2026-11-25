@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/Switch";
 
 import styles from "./AdminPages.module.css";
 import { NEW_CREDENTIALS, SnmpFields, snmpProblem, snmpRequest } from "./SnmpCredentials";
+import { CloudFields, CloudTest, NEW_CLOUD, type CloudForm, cloudProblem, cloudRequest } from "./CloudCredentials";
 import { NEW_VMWARE, VmwareFields, VmwareTest, needsTrust, vmwareProblem, vmwareRequest } from "./VmwareCredentials";
 
 /** An IP address (v4, or v6 with or without brackets) or a DNS name, as the server checks it. */
@@ -133,6 +134,10 @@ export function AddDevice() {
   const [vcenter, setVcenter] = useState<VmwareCredentialsRequest>(NEW_VMWARE);
   const [vcenterTested, setVcenterTested] = useState<VmwareTested | null>(null);
   const [vcenterError, setVcenterError] = useState<string | null>(null);
+  // A cloud account (ADR-0183): no address, ping or probe to choose.
+  const [cloud, setCloud] = useState(false);
+  const [account, setAccount] = useState<CloudForm>(NEW_CLOUD);
+  const [cloudError, setCloudError] = useState<string | null>(null);
   const [errors, setErrors] = useState<{ name?: string; address?: string }>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -189,10 +194,15 @@ export function AddDevice() {
     event.preventDefault();
     const found = {
       ...(name.trim() === "" && { name: t("devices.error.name") }),
-      ...(!validAddress(address) && { address: t("devices.error.address") }),
+      ...(!cloud && !validAddress(address) && { address: t("devices.error.address") }),
     };
     setErrors(found);
     if (Object.keys(found).length > 0) return;
+    if (cloud) {
+      const problem = cloudProblem(account, false);
+      setCloudError(problem);
+      if (problem) return;
+    }
     if (snmp) {
       const problem = snmpProblem(credentials, false) ?? (template ? null : t("devices.snmp.needTemplate"));
       setSnmpError(problem);
@@ -206,15 +216,19 @@ export function AddDevice() {
     setBusy(true);
     setError(null);
     try {
-      const device = await api.createDevice({
-        site_id: siteId,
-        name: name.trim(),
-        address: address.trim(),
-        ping,
-        ...((ping || snmp || vmware) && probe && { probe }),
-        ...(snmp && { snmp: snmpRequest(credentials), template }),
-        ...(vmware && { vmware: vmwareRequest(vcenter) }),
-      });
+      const device = await api.createDevice(
+        cloud
+          ? { site_id: siteId, name: name.trim(), cloud: cloudRequest(account) }
+          : {
+              site_id: siteId,
+              name: name.trim(),
+              address: address.trim(),
+              ping,
+              ...((ping || snmp || vmware) && probe && { probe }),
+              ...(snmp && { snmp: snmpRequest(credentials), template }),
+              ...(vmware && { vmware: vmwareRequest(vcenter) }),
+            },
+      );
       router.push(scopedHref(serverHref(device.id), scope));
     } catch (e) {
       setError(t("devices.add.failed", { error: describeError(e) }));
@@ -237,23 +251,25 @@ export function AddDevice() {
         />
         {errors.name && <span role="alert" className={styles.formError}>{errors.name}</span>}
       </label>
-      <label className={styles.field}>
-        {t("devices.add.address")}
-        <input
-          className={fieldClass}
-          value={address}
-          placeholder={t("devices.add.addressPlaceholder")}
-          spellCheck={false}
-          autoCapitalize="none"
-          onChange={(e) => setAddress(e.target.value)}
-          aria-invalid={errors.address ? true : undefined}
-        />
-        {errors.address ? (
-          <span role="alert" className={styles.formError}>{errors.address}</span>
-        ) : (
-          <span className={styles.sectionNote}>{t("devices.add.addressHint")}</span>
-        )}
-      </label>
+      {!cloud && (
+        <label className={styles.field}>
+          {t("devices.add.address")}
+          <input
+            className={fieldClass}
+            value={address}
+            placeholder={t("devices.add.addressPlaceholder")}
+            spellCheck={false}
+            autoCapitalize="none"
+            onChange={(e) => setAddress(e.target.value)}
+            aria-invalid={errors.address ? true : undefined}
+          />
+          {errors.address ? (
+            <span role="alert" className={styles.formError}>{errors.address}</span>
+          ) : (
+            <span className={styles.sectionNote}>{t("devices.add.addressHint")}</span>
+          )}
+        </label>
+      )}
       {multiSite(me) && sites && (
         <label className={styles.field}>
           {t("devices.add.site")}
@@ -273,13 +289,29 @@ export function AddDevice() {
           </select>
         </label>
       )}
-      <Switch checked={ping} onChange={setPing} label={t("devices.add.ping")} />
-      <Switch checked={snmp} onChange={setSnmp} label={t("devices.snmp.watch")} />
-      <Switch checked={vmware} onChange={setVmware} label={t("virtualization.vmware.watch")} />
-      {(ping || snmp || vmware) && siteId && (
+      {!cloud && (
+        <>
+          <Switch checked={ping} onChange={setPing} label={t("devices.add.ping")} />
+          <Switch checked={snmp} onChange={setSnmp} label={t("devices.snmp.watch")} />
+          <Switch checked={vmware} onChange={setVmware} label={t("virtualization.vmware.watch")} />
+        </>
+      )}
+      <Switch checked={cloud} onChange={setCloud} label={t("cloud.watch")} />
+      {cloud && (
+        <fieldset className={styles.panel} aria-label={t("cloud.title")}>
+          <CloudFields value={account} onChange={setAccount} />
+          <CloudTest siteId={siteId} value={account} />
+          {cloudError && (
+            <p className={styles.formError} role="alert">
+              {cloudError}
+            </p>
+          )}
+        </fieldset>
+      )}
+      {!cloud && (ping || snmp || vmware) && siteId && (
         <ProbeSelect key={siteId} siteId={siteId} value={probe} onChange={setProbe} label={t("devices.add.from")} />
       )}
-      {snmp && (
+      {!cloud && snmp && (
         <fieldset className={styles.panel} aria-label={t("devices.snmp.title")}>
           <SnmpFields value={credentials} onChange={setCredentials} />
           <div className={styles.formFoot}>
@@ -307,7 +339,7 @@ export function AddDevice() {
           )}
         </fieldset>
       )}
-      {vmware && (
+      {!cloud && vmware && (
         <fieldset className={styles.panel} aria-label={t("virtualization.vmware.title")}>
           <VmwareFields value={vcenter} onChange={setVcenter} />
           <VmwareTest
