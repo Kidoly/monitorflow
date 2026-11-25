@@ -52,6 +52,9 @@ describe("HaloPsaPage", () => {
       [`PUT ${CONNECTION}`]: { status: 200, body: connection() },
       "GET /api/psa/site-links": { status: 200, body: { sites: [] } },
       "GET /api/psa/tickets": { status: 200, body: { tickets: [] } },
+      "GET /api/psa/customer-links": { status: 200, body: { customers: [] } },
+      "GET /api/psa/asset-settings": { status: 200, body: { asset_sync: false, asset_inactive_on_removal: false, types: [] } },
+      "GET /api/psa/asset-types": { status: 200, body: { records: [] } },
       ...psaListStubs,
     });
     const user = userEvent.setup();
@@ -82,6 +85,9 @@ describe("HaloPsaPage", () => {
       [`GET ${CONNECTION}`]: { status: 200, body: { connection: connection() } },
       "GET /api/psa/site-links": { status: 200, body: { sites: [] } },
       "GET /api/psa/tickets": { status: 200, body: { tickets: [] } },
+      "GET /api/psa/customer-links": { status: 200, body: { customers: [] } },
+      "GET /api/psa/asset-settings": { status: 200, body: { asset_sync: false, asset_inactive_on_removal: false, types: [] } },
+      "GET /api/psa/asset-types": { status: 200, body: { records: [] } },
       ...psaListStubs,
       [`POST ${CONNECTION}/test`]: {
         status: 200,

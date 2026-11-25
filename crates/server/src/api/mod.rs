@@ -329,7 +329,21 @@
 //! | GET | `/api/psa/categories` | global administrator | [`psa::CategoryList`]: the PSA's first-level categories |
 //! | GET | `/api/psa/statuses` | global administrator | [`psa::RecordList`]: the PSA's ticket statuses |
 //! | PUT | `/api/psa/ticket-settings` | global administrator | body [`psa::TicketSettingsRequest`], checked against the PSA's lists; 200 [`psa::ConnectionView`]; audited |
-//! | GET | `/api/psa/tickets` | global administrator | [`psa::TicketList`]: the latest tickets opened for incidents, closed, skipped or refused |
+//! | GET | `/api/psa/tickets` | global administrator | [`psa::TicketList`]: the latest tickets opened for incidents, closed, skipped, refused, held by a silence or ended in the PSA |
+//! | GET | `/api/psa/priorities` | global administrator | `?ticket_type_id=`; [`psa::RecordList`]: the priorities of the ticket type's SLA (ADR-0191) |
+//! | GET | `/api/psa/customer-links` | global administrator | [`psa_links::CustomerLinkList`]: every customer with the PSA client it is matched to |
+//! | GET | `/api/psa/customer-links/suggestions` | global administrator | [`psa_links::SuggestionList`]: PSA clients whose name reads the same as an unmatched customer's |
+//! | PUT | `/api/psa/customer-links/{customer_id}` | global administrator | body [`psa_links::CustomerLinkRequest`]; checked with the PSA; 200 [`psa_links::CustomerLink`]; audited |
+//! | DELETE | `/api/psa/customer-links/{customer_id}` | global administrator | 204, 404 when not matched; audited |
+//! | PUT | `/api/psa/default-client` | global administrator | body [`psa_links::DefaultClientRequest`]; the client of sites matched to nothing; 200 [`psa::ConnectionView`]; audited |
+//! | GET | `/api/psa/asset-types` | global administrator | [`psa::RecordList`]: the PSA's asset types |
+//! | GET | `/api/psa/asset-types/{id}/fields` | global administrator | [`psa::RecordList`]: that type's fields |
+//! | GET | `/api/psa/asset-settings` | global administrator | [`psa_assets::AssetSettingsView`]: whether servers are synced as assets, and each family's type and fields |
+//! | PUT | `/api/psa/asset-settings` | global administrator | body [`psa_assets::AssetSettingsRequest`], checked against the PSA's lists; 200 [`psa_assets::AssetSettingsView`]; audited |
+//! | GET | `/api/psa/asset-links` | global administrator | [`psa_assets::AssetLinkList`]: servers and their PSA assets, proposed matches first |
+//! | PUT | `/api/psa/asset-links/{server_id}` | global administrator | body [`psa_assets::AssetLinkRequest`]: confirms or chooses the asset, or asks for a new one; audited |
+//! | DELETE | `/api/psa/asset-links/{server_id}` | global administrator | 204, 404 when none; forgets the asset in MonitorFlow only; audited |
+//! | POST | `/api/psa/asset-links/sync` | global administrator | 200 [`psa_assets::SyncQueued`]: linked servers pushed again at the next passes |
 //!
 //! # Authentication
 //!
@@ -860,6 +874,8 @@ pub mod plugins;
 pub mod preferences;
 pub mod proxmox;
 pub mod psa;
+pub mod psa_assets;
+pub mod psa_links;
 pub mod public_address;
 pub mod recommendations;
 pub mod relays;
@@ -1844,6 +1860,35 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/psa/statuses", get(psa::statuses))
         .route("/api/psa/ticket-settings", put(psa::put_ticket_settings))
         .route("/api/psa/tickets", get(psa::tickets))
+        .route("/api/psa/priorities", get(psa::priorities))
+        .route("/api/psa/customer-links", get(psa_links::customer_links))
+        .route(
+            "/api/psa/customer-links/suggestions",
+            get(psa_links::suggestions),
+        )
+        .route(
+            "/api/psa/customer-links/{customer_id}",
+            put(psa_links::put_customer_link).delete(psa_links::delete_customer_link),
+        )
+        .route(
+            "/api/psa/default-client",
+            put(psa_links::put_default_client),
+        )
+        .route("/api/psa/asset-types", get(psa_assets::asset_types))
+        .route(
+            "/api/psa/asset-types/{id}/fields",
+            get(psa_assets::asset_fields),
+        )
+        .route(
+            "/api/psa/asset-settings",
+            get(psa_assets::get_settings).put(psa_assets::put_settings),
+        )
+        .route("/api/psa/asset-links", get(psa_assets::asset_links))
+        .route("/api/psa/asset-links/sync", post(psa_assets::sync_now))
+        .route(
+            "/api/psa/asset-links/{server_id}",
+            put(psa_assets::put_asset_link).delete(psa_assets::delete_asset_link),
+        )
         .route(
             "/api/psa/site-links/{site_id}",
             put(psa::put_site_link).delete(psa::delete_site_link),

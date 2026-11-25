@@ -166,10 +166,18 @@ pub async fn server(
 /// sync starts from (ADR-0164, ADR-0187).
 pub fn asset_facts(hostname: String, items: &[ItemView]) -> AssetFacts {
     let system = items.iter().find(|i| i.kind == "system");
+    system_facts(hostname, system.map(|s| &s.fields))
+}
+
+/// The asset facts of a server from the fields of its `system` item, as
+/// the PSA's asset sync reads them (ADR-0191).
+pub fn system_facts(hostname: String, system: Option<&Value>) -> AssetFacts {
     let field = |name: &str| {
         system
-            .and_then(|s| s.fields.get(name))
+            .and_then(|s| s.get(name))
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
             .map(str::to_owned)
     };
     AssetFacts {

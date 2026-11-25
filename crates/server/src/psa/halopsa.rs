@@ -3,10 +3,15 @@
 //! `{base}/api` with the Bearer token.
 //!
 //! Requests follow no redirects and have a timeout; answers are read up to
-//! [`MAX_ANSWER`]. The token, the secret and ticket text never appear in
+//! [`MAX_ANSWER`]. Every request goes through a [`Limiter`] that keeps
+//! the process under HaloPSA's documented limit of 700 requests in a
+//! rolling 5 minutes, and a 429 pauses them all for its `Retry-After`
+//! (ADR-0191). The token, the secret and ticket text never appear in
 //! errors or logs: an error is Halo's own text, cut short, with the secret
 //! taken out in case Halo echoes it.
 
+use std::collections::VecDeque;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use monitorflow_common::redact::{Secret, REDACTED};
@@ -26,6 +31,111 @@ const ERROR_TEXT: usize = 300;
 const TOKEN_MARGIN: Duration = Duration::from_secs(60);
 /// The token's life when Halo does not say.
 const DEFAULT_TOKEN_LIFE: Duration = Duration::from_secs(3600);
+
+/// HaloPSA's limit, from its public API documentation: 700 requests in a
+/// rolling 5 minutes.
+pub const HALO_LIMIT: usize = 700;
+/// The rolling window of [`HALO_LIMIT`].
+pub const WINDOW: Duration = Duration::from_secs(300);
+/// What this process allows itself within [`WINDOW`]: the rest is left to
+/// the tenant's other integrations and to other central server instances'
+/// pages.
+pub const BUDGET: usize = 600;
+/// The pause after a 429 without a usable `Retry-After`.
+const DEFAULT_PAUSE: Duration = Duration::from_secs(60);
+/// The longest pause a `Retry-After` may ask for.
+const MAX_PAUSE: Duration = Duration::from_secs(300);
+
+/// Requests sent in the last [`WINDOW`], and a pause after a 429.
+#[derive(Debug)]
+pub struct Limiter {
+    budget: usize,
+    state: std::sync::Mutex<LimiterState>,
+}
+
+#[derive(Debug, Default)]
+struct LimiterState {
+    sent: VecDeque<Instant>,
+    paused_until: Option<Instant>,
+}
+
+/// The limiter every request of this process goes through.
+static LIMITER: LazyLock<Arc<Limiter>> = LazyLock::new(|| Arc::new(Limiter::new(BUDGET)));
+
+impl Limiter {
+    pub fn new(budget: usize) -> Self {
+        Self {
+            budget,
+            state: std::sync::Mutex::new(LimiterState::default()),
+        }
+    }
+
+    /// The limiter of this process.
+    pub fn shared() -> Arc<Self> {
+        LIMITER.clone()
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, LimiterState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Counts one request at `now`, or how long to wait before one may be
+    /// sent: until the pause ends, or until the oldest request leaves the
+    /// window.
+    pub fn take(&self, now: Instant) -> Result<(), Duration> {
+        let mut state = self.state();
+        if let Some(until) = state.paused_until {
+            if now < until {
+                return Err(until - now);
+            }
+            state.paused_until = None;
+        }
+        while state
+            .sent
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= WINDOW)
+        {
+            state.sent.pop_front();
+        }
+        if state.sent.len() >= self.budget {
+            let oldest = state.sent.front().copied().unwrap_or(now);
+            return Err(WINDOW.saturating_sub(now.duration_since(oldest)));
+        }
+        state.sent.push_back(now);
+        Ok(())
+    }
+
+    /// Stops every request for `pause` from `now`, after a 429.
+    pub fn pause(&self, now: Instant, pause: Duration) {
+        let mut state = self.state();
+        let until = now + pause.min(MAX_PAUSE);
+        state.paused_until = Some(state.paused_until.map_or(until, |u| u.max(until)));
+    }
+
+    /// Requests that may still be sent at `now` without waiting.
+    pub fn remaining(&self, now: Instant) -> usize {
+        let state = self.state();
+        if state.paused_until.is_some_and(|u| now < u) {
+            return 0;
+        }
+        let recent = state
+            .sent
+            .iter()
+            .filter(|t| now.duration_since(**t) < WINDOW)
+            .count();
+        self.budget.saturating_sub(recent)
+    }
+}
+
+/// The pause a 429's `Retry-After` asks for, in seconds; HTTP dates are
+/// not used by HaloPSA's documentation and fall back to the default.
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Duration {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map_or(DEFAULT_PAUSE, Duration::from_secs)
+}
 
 /// Why a request to Halo failed, in plain words.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -84,6 +194,7 @@ pub struct Halo {
     http: reqwest::Client,
     credentials: Credentials,
     token: Mutex<Option<Token>>,
+    limiter: Arc<Limiter>,
 }
 
 impl std::fmt::Debug for Halo {
@@ -178,6 +289,36 @@ impl Halo {
             http,
             credentials,
             token: Mutex::new(None),
+            limiter: Limiter::shared(),
+        }
+    }
+
+    /// This client with its own limiter, for tests.
+    pub fn with_limiter(mut self, limiter: Arc<Limiter>) -> Self {
+        self.limiter = limiter;
+        self
+    }
+
+    /// Counts one request, or says how long until one may be sent: a
+    /// retryable error, so loops try again later and pages say so.
+    fn admit(&self) -> Result<(), HaloError> {
+        self.limiter.take(Instant::now()).map_err(|wait| {
+            HaloError::new(format!(
+                "MonitorFlow keeps under HaloPSA's limit of {HALO_LIMIT} requests in 5 minutes: try again in {} s.",
+                wait.as_secs().max(1)
+            ))
+        })
+    }
+
+    /// After a 429, pauses every request for what Halo asks.
+    fn rate_limited(&self, status: reqwest::StatusCode, headers: &reqwest::header::HeaderMap) {
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let pause = retry_after(headers);
+            tracing::warn!(
+                seconds = pause.as_secs(),
+                "HaloPSA answered 429; pausing its requests"
+            );
+            self.limiter.pause(Instant::now(), pause);
         }
     }
 
@@ -229,6 +370,7 @@ impl Halo {
                 .map(String::from)
                 .unwrap_or(url);
         }
+        self.admit()?;
         let form = [
             ("grant_type", "client_credentials"),
             ("client_id", self.credentials.client_id.as_str()),
@@ -243,6 +385,7 @@ impl Halo {
             .await
             .map_err(|e| HaloError::new(request_error(&host, e).message))?;
         let status = response.status();
+        self.rate_limited(status, response.headers());
         let body = read(response, &host).await?;
         if !status.is_success() {
             let mut error = self.refusal("the sign-in", status, &body);
@@ -284,6 +427,7 @@ impl Halo {
         path: &str,
     ) -> Result<Value, HaloError> {
         let token = self.token().await?;
+        self.admit()?;
         let host = self.host();
         let url = format!("{}/api/{path}", self.credentials.base_url);
         let response = request(&self.http, url)
@@ -293,6 +437,7 @@ impl Halo {
             .await
             .map_err(|e| HaloError::new(request_error(&host, e).message))?;
         let status = response.status();
+        self.rate_limited(status, response.headers());
         let body = read(response, &host).await?;
         if !status.is_success() {
             if status.as_u16() == 401 {
@@ -348,6 +493,11 @@ pub struct NewTicket {
     pub site_id: Option<i64>,
     pub ticket_type_id: Option<i64>,
     pub category: Option<String>,
+    /// The priority within the ticket type's SLA; `None` for Halo's
+    /// default.
+    pub priority_id: Option<i64>,
+    /// The server's asset, attached when Halo accepts it.
+    pub asset_id: Option<i64>,
 }
 
 /// A client or site of Halo, as the matching shows it.
@@ -561,9 +711,36 @@ impl Halo {
         if let Some(category) = &ticket.category {
             body["category_1"] = category.clone().into();
         }
-        let answer = self
-            .post("the new ticket", "Tickets", &Value::Array(vec![body]))
-            .await?;
+        if let Some(priority) = ticket.priority_id {
+            body["priority_id"] = priority.into();
+        }
+        let answer = match ticket.asset_id {
+            None => {
+                self.post("the new ticket", "Tickets", &Value::Array(vec![body]))
+                    .await?
+            }
+            Some(asset) => {
+                // How a ticket names its asset is not in Halo's public
+                // documentation: an instance that refuses it gets the
+                // ticket without (ADR-0191).
+                let mut with_asset = body.clone();
+                with_asset["assets"] = serde_json::json!([{ "id": asset }]);
+                match self
+                    .post("the new ticket", "Tickets", &Value::Array(vec![with_asset]))
+                    .await
+                {
+                    Err(error)
+                        if error
+                            .status
+                            .is_some_and(|s| (400..500).contains(&s) && s != 429) =>
+                    {
+                        self.post("the new ticket", "Tickets", &Value::Array(vec![body]))
+                            .await?
+                    }
+                    other => other?,
+                }
+            }
+        };
         let created = match &answer {
             Value::Array(items) => items.first().cloned().unwrap_or(Value::Null),
             other => other.clone(),
@@ -625,9 +802,444 @@ impl Halo {
     }
 }
 
+/// A ticket as the poller reads it back (ADR-0191).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TicketState {
+    pub status_id: Option<i64>,
+    /// The assigned agent; 1 or less is nobody.
+    pub agent_id: Option<i64>,
+    pub deleted: bool,
+    /// The ticket it was merged into; `None` when not merged.
+    pub merged_into: Option<i64>,
+}
+
+impl TicketState {
+    fn from_answer(answer: &Value) -> Self {
+        let int = |key: &str| answer.get(key).and_then(Value::as_i64);
+        Self {
+            status_id: int("status_id"),
+            agent_id: int("agent_id"),
+            deleted: answer
+                .get("deleted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            merged_into: int("merged_into_id").filter(|id| *id > 0),
+        }
+    }
+}
+
+/// An asset of a client, as the matching reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteAsset {
+    pub id: i64,
+    pub inventory_number: Option<String>,
+    /// The type's key field, what Halo shows as the asset's name.
+    pub key_field: Option<String>,
+    /// The asset type's fields: id and value.
+    pub fields: Vec<(i64, String)>,
+}
+
+impl RemoteAsset {
+    fn from_answer(value: &Value) -> Option<Self> {
+        let text = |key: &str| {
+            value
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        };
+        let fields = value
+            .get("fields")
+            .and_then(Value::as_array)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter_map(|f| {
+                        let id = f.get("id")?.as_i64()?;
+                        let value = match f.get("value")? {
+                            Value::String(s) => s.trim().to_owned(),
+                            Value::Number(n) => n.to_string(),
+                            _ => return None,
+                        };
+                        Some((id, value))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(Self {
+            id: value.get("id")?.as_i64()?,
+            inventory_number: text("inventory_number"),
+            key_field: text("key_field"),
+            fields,
+        })
+    }
+
+    /// The value of `target`: `inventory_number` or a field id.
+    pub fn value(&self, target: &str) -> Option<&str> {
+        if target == INVENTORY_NUMBER {
+            return self.inventory_number.as_deref();
+        }
+        let id: i64 = target.parse().ok()?;
+        self.fields
+            .iter()
+            .find(|(f, _)| *f == id)
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// The asset field that is HaloPSA's asset tag rather than a field of the
+/// type.
+pub const INVENTORY_NUMBER: &str = "inventory_number";
+
+/// An asset to create or update. `fields` maps a target, `inventory_number`
+/// or a field id, to its value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetBody {
+    /// `None` creates the asset.
+    pub id: Option<i64>,
+    pub type_id: i64,
+    pub client_id: i64,
+    pub site_id: Option<i64>,
+    pub fields: Vec<(String, String)>,
+    /// Marks it inactive, for a removed server.
+    pub inactive: bool,
+    /// The External Link back to the server: its id, host name and page.
+    pub link: Option<(String, String, String)>,
+}
+
+impl AssetBody {
+    /// The JSON Halo takes, inside the array it wants.
+    pub fn json(&self) -> Value {
+        let mut body = serde_json::json!({
+            "assettype_id": self.type_id,
+            "client_id": self.client_id,
+        });
+        if let Some(id) = self.id {
+            body["id"] = id.into();
+        }
+        if let Some(site) = self.site_id {
+            body["site_id"] = site.into();
+        }
+        let mut fields = Vec::new();
+        for (target, value) in &self.fields {
+            if target == INVENTORY_NUMBER {
+                body["inventory_number"] = value.clone().into();
+            } else if let Ok(id) = target.parse::<i64>() {
+                fields.push(serde_json::json!({ "id": id, "value": value }));
+            }
+        }
+        if !fields.is_empty() {
+            body["fields"] = fields.into();
+        }
+        if self.inactive {
+            body["inactive"] = true.into();
+        }
+        if let Some((id, name, url)) = &self.link {
+            body["new_external_link"] = serde_json::json!({
+                "integration_name": "MonitorFlow",
+                "third_party_id": id,
+                "third_party_desc": name,
+                "third_party_url": url,
+            });
+        }
+        body
+    }
+}
+
+/// Asset pages read at most per client and type: 2,000 assets.
+const ASSET_PAGES: usize = 20;
+
+impl Halo {
+    /// The ticket `id` as it is now; `None` when Halo no longer has it.
+    pub async fn ticket(&self, id: i64) -> Result<Option<TicketState>, HaloError> {
+        match self.get("the ticket", &format!("Tickets/{id}"), &[]).await {
+            Ok(answer) => Ok(Some(TicketState::from_answer(&answer))),
+            Err(error) if error.status == Some(404) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The name of the agent `id`.
+    pub async fn agent(&self, id: i64) -> Result<Option<String>, HaloError> {
+        match self.get("the agent", &format!("Agent/{id}"), &[]).await {
+            Ok(answer) => Ok(answer
+                .get("name")
+                .and_then(Value::as_str)
+                .map(|n| n.trim().to_owned())
+                .filter(|n| !n.is_empty())),
+            Err(error) if error.status == Some(404) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Moves `ticket` to the priority `priority`.
+    pub async fn set_priority(&self, ticket: i64, priority: i64) -> Result<(), HaloError> {
+        let update = serde_json::json!([{ "id": ticket, "priority_id": priority }]);
+        self.post("the priority change", "Tickets", &update)
+            .await
+            .map(drop)
+    }
+
+    /// The priorities a ticket of type `ticket_type` may take: those of the
+    /// type's default SLA, by their number within it (`priorityid`), which
+    /// is what a ticket's `priority_id` names. Without a type or an SLA,
+    /// every priority number once.
+    pub async fn priorities(&self, ticket_type: Option<i64>) -> Result<Vec<Record>, HaloError> {
+        let sla = match ticket_type {
+            Some(id) => self
+                .get("the ticket type", &format!("TicketType/{id}"), &[])
+                .await?
+                .get("default_sla")
+                .and_then(Value::as_i64)
+                .filter(|s| *s > 0),
+            None => None,
+        };
+        let answer = self.get("the priority list", "Priority", &[]).await?;
+        let mut found: Vec<Record> = Vec::new();
+        for p in records(&answer, "priorities") {
+            let Some(number) = p.get("priorityid").and_then(Value::as_i64) else {
+                continue;
+            };
+            let slaid = p.get("slaid").and_then(Value::as_i64);
+            if sla.is_some() && slaid.is_some() && slaid != sla {
+                continue;
+            }
+            if found.iter().any(|r| r.id == number) {
+                continue;
+            }
+            let name = p
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            found.push(Record { id: number, name });
+        }
+        found.sort_by_key(|r| r.id);
+        Ok(found)
+    }
+
+    /// Every active client, by name, up to the scan's limit: what name
+    /// suggestions are made from.
+    pub async fn all_clients(&self) -> Result<Vec<Record>, HaloError> {
+        let mut found = Vec::new();
+        for page in 1..=SCAN_PAGES {
+            let query = [
+                ("pageinate", "true".to_owned()),
+                ("page_size", SCAN_PAGE.to_string()),
+                ("page_no", page.to_string()),
+                ("order", "name".to_owned()),
+                ("includeinactive", "false".to_owned()),
+            ];
+            let answer = self.get("the client list", "Client", &query).await?;
+            let listed = records(&answer, "clients");
+            found.extend(listed.iter().filter_map(record));
+            if listed.len() < SCAN_PAGE {
+                break;
+            }
+        }
+        Ok(found)
+    }
+
+    /// Asset types, by name.
+    pub async fn asset_types(&self) -> Result<Vec<Record>, HaloError> {
+        let answer = self.get("the asset type list", "AssetType", &[]).await?;
+        let mut types: Vec<Record> = records(&answer, "assettypes")
+            .iter()
+            .filter(|t| !t.get("inactive").and_then(Value::as_bool).unwrap_or(false))
+            .filter_map(record)
+            .collect();
+        types.sort_by_key(|t| t.name.to_lowercase());
+        Ok(types)
+    }
+
+    /// The fields of the asset type `id`, by name: from the type's details,
+    /// or else from one of its assets, whose `fields` name them.
+    pub async fn asset_fields(&self, id: i64) -> Result<Vec<Record>, HaloError> {
+        let named = |list: &[Value]| -> Vec<Record> {
+            list.iter()
+                .filter_map(|f| {
+                    Some(Record {
+                        id: f.get("id")?.as_i64()?,
+                        name: f.get("name").and_then(Value::as_str)?.trim().to_owned(),
+                    })
+                })
+                .collect()
+        };
+        let details = self
+            .get(
+                "the asset type",
+                &format!("AssetType/{id}"),
+                &[("includedetails", "true".to_owned())],
+            )
+            .await?;
+        let mut fields = named(&records(&details, "fields"));
+        if fields.is_empty() {
+            let query = [
+                ("assettypes", id.to_string()),
+                ("includeassetfields", "true".to_owned()),
+                ("pageinate", "true".to_owned()),
+                ("page_size", "1".to_owned()),
+                ("page_no", "1".to_owned()),
+            ];
+            let answer = self.get("the asset list", "Asset", &query).await?;
+            if let Some(asset) = records(&answer, "assets").first() {
+                fields = named(&records(
+                    asset.get("fields").unwrap_or(&Value::Null),
+                    "fields",
+                ));
+            }
+        }
+        fields.sort_by_key(|f| f.name.to_lowercase());
+        fields.dedup_by_key(|f| f.id);
+        Ok(fields)
+    }
+
+    /// The active assets of `client` of the type `type_id`, with their
+    /// fields.
+    pub async fn assets(&self, client: i64, type_id: i64) -> Result<Vec<RemoteAsset>, HaloError> {
+        let mut found = Vec::new();
+        for page in 1..=ASSET_PAGES {
+            let query = [
+                ("client_id", client.to_string()),
+                ("assettypes", type_id.to_string()),
+                ("includeassetfields", "true".to_owned()),
+                ("includeinactive", "false".to_owned()),
+                ("pageinate", "true".to_owned()),
+                ("page_size", SCAN_PAGE.to_string()),
+                ("page_no", page.to_string()),
+            ];
+            let answer = self.get("the asset list", "Asset", &query).await?;
+            let listed = records(&answer, "assets");
+            found.extend(listed.iter().filter_map(RemoteAsset::from_answer));
+            if listed.len() < SCAN_PAGE {
+                break;
+            }
+        }
+        Ok(found)
+    }
+
+    /// The asset `id` and its client; `None` when Halo does not know it.
+    pub async fn asset(&self, id: i64) -> Result<Option<(RemoteAsset, Option<i64>)>, HaloError> {
+        match self.get("the asset", &format!("Asset/{id}"), &[]).await {
+            Ok(answer) => Ok(RemoteAsset::from_answer(&answer)
+                .map(|asset| (asset, answer.get("client_id").and_then(Value::as_i64)))),
+            Err(error) if error.status == Some(404) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Creates or updates an asset, posted in an array as Halo takes them;
+    /// its id.
+    pub async fn upsert_asset(&self, asset: &AssetBody) -> Result<i64, HaloError> {
+        let answer = self
+            .post("the asset", "Asset", &Value::Array(vec![asset.json()]))
+            .await?;
+        let saved = match &answer {
+            Value::Array(items) => items.first().cloned().unwrap_or(Value::Null),
+            other => other.clone(),
+        };
+        saved
+            .get("id")
+            .and_then(Value::as_i64)
+            .or(asset.id)
+            .ok_or_else(|| {
+                HaloError::new(format!(
+                    "{} saved the asset without saying its number.",
+                    self.host()
+                ))
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_limiter_keeps_under_its_budget_and_pauses_after_a_429() {
+        let limiter = Limiter::new(3);
+        let start = Instant::now();
+        for _ in 0..3 {
+            assert_eq!(limiter.take(start), Ok(()));
+        }
+        assert_eq!(limiter.remaining(start), 0);
+        let wait = limiter.take(start + Duration::from_secs(100)).unwrap_err();
+        assert_eq!(wait, Duration::from_secs(200));
+        // The oldest leaves the window: room again.
+        assert_eq!(limiter.take(start + WINDOW), Ok(()));
+        let later = start + WINDOW + Duration::from_secs(1);
+        limiter.pause(later, Duration::from_secs(30));
+        assert_eq!(limiter.remaining(later), 0);
+        assert_eq!(limiter.take(later).unwrap_err(), Duration::from_secs(30));
+        // A pause asks for at most five minutes.
+        limiter.pause(later, Duration::from_secs(10_000));
+        assert_eq!(limiter.take(later).unwrap_err(), MAX_PAUSE);
+    }
+
+    #[test]
+    fn retry_after_is_read_in_seconds() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        assert_eq!(retry_after(&headers), DEFAULT_PAUSE);
+        headers.insert(reqwest::header::RETRY_AFTER, "12".parse().unwrap());
+        assert_eq!(retry_after(&headers), Duration::from_secs(12));
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Wed, 21 Oct 2026 07:28:00 GMT".parse().unwrap(),
+        );
+        assert_eq!(retry_after(&headers), DEFAULT_PAUSE);
+    }
+
+    #[test]
+    fn tickets_read_back_say_status_agent_deletion_and_merge() {
+        let state = TicketState::from_answer(&serde_json::json!({
+            "id": 5001, "status_id": 9, "agent_id": 4, "deleted": false, "merged_into_id": 0,
+        }));
+        assert_eq!(
+            state,
+            TicketState {
+                status_id: Some(9),
+                agent_id: Some(4),
+                deleted: false,
+                merged_into: None
+            }
+        );
+        let merged = TicketState::from_answer(&serde_json::json!({"merged_into_id": 77}));
+        assert_eq!(merged.merged_into, Some(77));
+    }
+
+    #[test]
+    fn assets_are_sent_with_their_fields_and_link() {
+        let body = AssetBody {
+            id: None,
+            type_id: 3,
+            client_id: 10,
+            site_id: Some(100),
+            fields: vec![
+                (INVENTORY_NUMBER.into(), "web-01".into()),
+                ("12".into(), "SN123".into()),
+            ],
+            inactive: false,
+            link: Some(("srv".into(), "web-01".into(), "https://mf/servers".into())),
+        };
+        let json = body.json();
+        assert_eq!(json["inventory_number"], "web-01");
+        assert_eq!(
+            json["fields"],
+            serde_json::json!([{"id": 12, "value": "SN123"}])
+        );
+        assert_eq!(json["new_external_link"]["integration_name"], "MonitorFlow");
+        assert!(json.get("id").is_none());
+        let asset = RemoteAsset::from_answer(&serde_json::json!({
+            "id": 7, "inventory_number": " web-01 ", "key_field": "web-01",
+            "fields": [{"id": 12, "name": "Serial", "value": "SN123"}],
+        }))
+        .unwrap();
+        assert_eq!(asset.value("12"), Some("SN123"));
+        assert_eq!(asset.value(INVENTORY_NUMBER), Some("web-01"));
+        assert_eq!(asset.value("13"), None);
+    }
 
     #[test]
     fn names_match_without_case_or_accents() {

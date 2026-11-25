@@ -7,13 +7,17 @@ use serde_json::{json, Value};
 use utoipa::OpenApi;
 
 use super::openapi::{Common, ErrorBody};
-use super::psa;
+use super::{psa, psa_assets, psa_links};
 
 #[derive(OpenApi)]
 #[openapi(
     paths(get_psa_connection, put_psa_connection, delete_psa_connection, test_psa_connection,
           list_psa_clients, list_psa_client_sites, list_psa_site_links, put_psa_site_link, delete_psa_site_link,
-          list_psa_ticket_types, list_psa_categories, list_psa_statuses, put_psa_ticket_settings, list_psa_tickets),
+          list_psa_ticket_types, list_psa_categories, list_psa_statuses, put_psa_ticket_settings, list_psa_tickets,
+          list_psa_priorities, list_psa_customer_links, list_psa_suggestions, put_psa_customer_link,
+          delete_psa_customer_link, put_psa_default_client, list_psa_asset_types, list_psa_asset_fields,
+          get_psa_asset_settings, put_psa_asset_settings, list_psa_asset_links, put_psa_asset_link,
+          delete_psa_asset_link, sync_psa_assets),
     components(schemas(ErrorBody)),
     modifiers(&Common),
     tags((name = "psa", description = "The PSA connection: MonitorFlow calls a PSA's API with credentials \
@@ -23,9 +27,17 @@ HaloPSA API, View Applications) with the authentication method Client ID and Sec
 acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` \
 with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never \
 answered. Each MonitorFlow site is then matched to a PSA client, and optionally one of its sites, chosen \
-from the PSA's lists read through the connection; incidents of a site without a match open no ticket. An incident at the chosen severity then opens one \
-ticket for its site's client, with the chosen ticket type and category, and its resolution adds a private \
-note and moves the ticket to the chosen status. \
+from the PSA's lists read through the connection, and each customer to a client, with suggestions by name \
+that an administrator confirms; a site of a matched customer without a match of its own uses the customer's \
+client, and a default client takes the rest, or no ticket is opened. An incident at the chosen severity then \
+opens one ticket for that client, with the chosen ticket type, category and the priority mapped to its \
+severity; a silence covering the incident holds the ticket until it ends. An escalation raises the priority, \
+and the resolution adds a private note and moves the ticket to the chosen status. Every minute the open \
+tickets are read back: one moved to a closed status, or assigned to an agent, acknowledges its incident, and \
+one deleted or merged ends the link. When asset sync is on, servers of matched sites and customers become \
+PSA assets of the chosen type per system family, matched to existing assets by serial number then host name \
+for an administrator to confirm, or created, and updated at most once an hour. MonitorFlow keeps under \
+HaloPSA's limit of 700 requests in 5 minutes and pauses on a 429. \
 When the PSA refuses or does not answer, the answer is 502 `psa_unavailable` with its own words. Every change is in the audit log, with the key's ID. API keys need the `administration` area."))
 )]
 pub(super) struct Doc;
@@ -51,6 +63,22 @@ fn connection() -> Value {
             "min_severity": "critical",
             "resolved_status_id": 9,
             "resolved_status_name": "Closed",
+            "warning_priority_id": 3,
+            "warning_priority_name": "Medium",
+            "critical_priority_id": 1,
+            "critical_priority_name": "Critical",
+            "closed_status_ids": [9],
+            "acknowledge_on_assign": true,
+        },
+        "default_client": {
+            "default_client_id": null,
+            "default_client_name": null,
+            "default_site_id": null,
+            "default_site_name": null,
+        },
+        "assets": {
+            "asset_sync": true,
+            "asset_inactive_on_removal": false,
         },
     })
 }
@@ -269,20 +297,28 @@ fn list_psa_statuses() {}
 /// Choose what tickets are opened
 ///
 /// The ticket type and category of new tickets, the least severity whose
-/// incidents open one (`critical` by default), and the status a ticket
-/// moves to when its incident is resolved (9, Closed, by default; `null`
-/// adds a note only). Each is checked against the PSA's lists, which also
-/// give the names kept. Audited as `psa.connection.tickets`.
+/// incidents open one (`critical` by default), the status a ticket moves
+/// to when its incident is resolved (9, Closed, by default; `null` adds a
+/// note only), the priority of warning and critical incidents' tickets
+/// (from the ticket type's SLA), the statuses that mean closed, and
+/// whether an agent taking a ticket acknowledges its incident. Each is
+/// checked against the PSA's lists, which also give the names kept. A
+/// ticket already closed in the PSA is never moved at resolution.
+/// Audited as `psa.connection.tickets`.
 #[utoipa::path(put, path = "/api/v1/psa/ticket-settings", tag = "psa",
     request_body(content = psa::TicketSettingsRequest, example = json!({
         "ticket_type_id": 1,
         "category": "Hardware>Server",
         "min_severity": "critical",
         "resolved_status_id": 9,
+        "warning_priority_id": 3,
+        "critical_priority_id": 1,
+        "closed_status_ids": [9],
+        "acknowledge_on_assign": true,
     })),
     responses(
         (status = 200, description = "Saved", body = psa::ConnectionView, example = json!(connection())),
-        (status = 400, description = "`invalid`: a ticket type, category or status the PSA does not have, or another severity", body = ErrorBody),
+        (status = 400, description = "`invalid`: a ticket type, category, status or priority the PSA does not have, more than 20 closed statuses, or another severity", body = ErrorBody),
         (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
         (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
         (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
@@ -292,8 +328,10 @@ fn put_psa_ticket_settings() {}
 /// List tickets opened for incidents
 ///
 /// The 50 most recently changed: created, closed when their incident
-/// resolved, skipped because the site has no PSA client, or refused by
-/// the PSA with its words. Global administrators only.
+/// resolved, skipped because the site has no PSA client or the incident
+/// opened and resolved during a silence, refused by the PSA with its
+/// words, held by a silence, or ended because the ticket was deleted or
+/// merged in the PSA. Global administrators only.
 #[utoipa::path(get, path = "/api/v1/psa/tickets", tag = "psa",
     responses(
         (status = 200, description = "The tickets", body = psa::TicketList, example = json!({
@@ -301,6 +339,8 @@ fn put_psa_ticket_settings() {}
                 "incident_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
                 "ticket_id": 5001,
                 "state": "open",
+                "psa_status_id": 2,
+                "checked_at": "2026-11-22T10:05:00Z",
                 "error": null,
                 "metric": "disk_used_percent",
                 "severity": "critical",
@@ -314,3 +354,294 @@ fn put_psa_ticket_settings() {}
         (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
     ))]
 fn list_psa_tickets() {}
+
+/// List the priorities of a ticket type
+///
+/// The priorities of the ticket type's SLA, by their number within it,
+/// which is what a ticket's priority names; absent `ticket_type_id` means
+/// the connection's ticket type. Global administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/priorities", tag = "psa",
+    params(psa::PriorityQuery),
+    responses(
+        (status = 200, description = "The priorities", body = psa::RecordList, example = json!({
+            "records": [{"id": 1, "name": "Critical"}, {"id": 2, "name": "High"}, {"id": 3, "name": "Medium"}],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn list_psa_priorities() {}
+
+fn customer_link() -> Value {
+    json!({
+        "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+        "customer_name": "Example Industries",
+        "client_id": 10,
+        "client_name": "Example Industries SAS",
+        "linked_at": "2026-11-25T10:00:00Z",
+        "site_count": 2,
+        "matched_sites": 1,
+    })
+}
+
+/// List customers and their PSA match
+///
+/// Every MonitorFlow customer, by name, with the PSA client it is matched
+/// to, or `null`s, and how many of its sites have a match of their own.
+/// Read from MonitorFlow only. Global administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/customer-links", tag = "psa",
+    responses(
+        (status = 200, description = "The customers", body = psa_links::CustomerLinkList, example = json!({
+            "customers": [customer_link()],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+    ))]
+fn list_psa_customer_links() {}
+
+/// Suggest PSA clients for customers
+///
+/// For each customer without a match, the PSA client whose name reads the
+/// same once case, accents, punctuation and company suffixes like SAS or
+/// Ltd are left out, when exactly one does. Reads up to 3,000 clients
+/// from the PSA. Nothing is matched until each suggestion is confirmed
+/// with `PUT /api/v1/psa/customer-links/{customer_id}`.
+#[utoipa::path(get, path = "/api/v1/psa/customer-links/suggestions", tag = "psa",
+    responses(
+        (status = 200, description = "The suggestions", body = psa_links::SuggestionList, example = json!({
+            "suggestions": [{
+                "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "customer_name": "Example Industries",
+                "client_id": 10,
+                "client_name": "Example Industries SAS",
+            }],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn list_psa_suggestions() {}
+
+/// Match a customer to a PSA client
+///
+/// Its sites without a match of their own open tickets for this client,
+/// and a site's own match must name it. Checked with the PSA, which also
+/// gives the name kept; a PSA client matches one customer at most.
+/// Audited as `psa.link.update`. Safe to repeat.
+#[utoipa::path(put, path = "/api/v1/psa/customer-links/{customer_id}", tag = "psa",
+    params(("customer_id" = uuid::Uuid, Path, description = "The MonitorFlow customer")),
+    request_body(content = psa_links::CustomerLinkRequest, example = json!({"client_id": 10})),
+    responses(
+        (status = 200, description = "Matched", body = psa_links::CustomerLink, example = json!(customer_link())),
+        (status = 400, description = "`invalid`: the PSA has no such client", body = ErrorBody),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "`not_found`: no such customer", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up, the client is matched to another customer, or a site of the customer is matched to another client", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn put_psa_customer_link() {}
+
+/// Unmatch a customer
+///
+/// Its sites without a match of their own fall back to the default
+/// client. Audited as `psa.link.delete`.
+#[utoipa::path(delete, path = "/api/v1/psa/customer-links/{customer_id}", tag = "psa",
+    params(("customer_id" = uuid::Uuid, Path, description = "The MonitorFlow customer")),
+    responses(
+        (status = 204, description = "Unmatched"),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "`not_found`: the customer is not matched", body = ErrorBody),
+    ))]
+fn delete_psa_customer_link() {}
+
+/// Choose the default PSA client
+///
+/// The PSA client, and optionally one of its sites, that incidents of
+/// sites matched to nothing (neither the site nor its customer) open
+/// tickets for; `client_id: null` opens no ticket for them, the default.
+/// Checked with the PSA. Audited as `psa.connection.default`.
+#[utoipa::path(put, path = "/api/v1/psa/default-client", tag = "psa",
+    request_body(content = psa_links::DefaultClientRequest, example = json!({"client_id": 10, "psa_site_id": 100})),
+    responses(
+        (status = 200, description = "Saved", body = psa::ConnectionView, example = json!(connection())),
+        (status = 400, description = "`invalid`: the PSA has no such client or site, or the site belongs to another client", body = ErrorBody),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn put_psa_default_client() {}
+
+/// List the PSA's asset types
+///
+/// Active asset types, by name, read through the connection. Global
+/// administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/asset-types", tag = "psa",
+    responses(
+        (status = 200, description = "The asset types", body = psa::RecordList, example = json!({
+            "records": [{"id": 3, "name": "Server"}, {"id": 4, "name": "Workstation"}],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn list_psa_asset_types() {}
+
+/// List an asset type's fields
+///
+/// The fields of one asset type, by name, which can receive a server's
+/// host name, serial number, maker and model; besides them,
+/// `inventory_number` is the asset tag. Global administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/asset-types/{id}/fields", tag = "psa",
+    params(("id" = i64, Path, description = "The PSA asset type's id")),
+    responses(
+        (status = 200, description = "Its fields", body = psa::RecordList, example = json!({
+            "records": [{"id": 13, "name": "Manufacturer"}, {"id": 14, "name": "Model"}, {"id": 12, "name": "Serial Number"}],
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn list_psa_asset_fields() {}
+
+fn asset_settings() -> Value {
+    json!({
+        "asset_sync": true,
+        "asset_inactive_on_removal": false,
+        "types": [{
+            "family": "linux",
+            "type_id": 3,
+            "type_name": "Server",
+            "hostname_field": "inventory_number",
+            "serial_field": "12",
+            "manufacturer_field": "13",
+            "model_field": "14",
+        }],
+    })
+}
+
+/// Read the asset sync's settings
+///
+/// Whether servers are synced as PSA assets, whether a removed server's
+/// asset is marked inactive, and each system family's asset type and the
+/// fields that receive the host name, serial number, maker and model.
+#[utoipa::path(get, path = "/api/v1/psa/asset-settings", tag = "psa",
+    responses(
+        (status = 200, description = "The settings", body = psa_assets::AssetSettingsView, example = json!(asset_settings())),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+    ))]
+fn get_psa_asset_settings() {}
+
+/// Choose how servers become assets
+///
+/// Turns the asset sync on or off, and sets each system family's asset
+/// type (`linux`, `windows`; a family without one is not synced) and
+/// where each value goes: `inventory_number` or a field id of the type,
+/// as text, or `null`. The sync is one way: servers of matched sites and
+/// customers become assets of their client and site; an existing asset
+/// found by serial number, then host name, is proposed for confirmation,
+/// otherwise one is created with an External Link back to the server.
+/// MonitorFlow never deletes assets. Audited as `psa.connection.assets`.
+#[utoipa::path(put, path = "/api/v1/psa/asset-settings", tag = "psa",
+    request_body(content = psa_assets::AssetSettingsRequest, example = json!({
+        "asset_sync": true,
+        "asset_inactive_on_removal": false,
+        "types": [{"family": "linux", "type_id": 3, "hostname_field": "inventory_number",
+                   "serial_field": "12", "manufacturer_field": "13", "model_field": "14"}],
+    })),
+    responses(
+        (status = 200, description = "Saved", body = psa_assets::AssetSettingsView, example = json!(asset_settings())),
+        (status = 400, description = "`invalid`: another family, two types for one family, a type or field the PSA does not have, or the sync turned on without a type", body = ErrorBody),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn put_psa_asset_settings() {}
+
+fn asset_link() -> Value {
+    json!({
+        "server_id": "1b2c3d4e-5f60-4718-9a0b-1c2d3e4f5a6b",
+        "hostname": "web-01",
+        "site_name": "paris",
+        "state": "proposed",
+        "asset_id": 7001,
+        "asset_name": "WEB-01",
+        "matched_by": "serial",
+        "deactivated": false,
+        "error": null,
+        "pushed_at": null,
+        "updated_at": "2026-11-25T10:01:00Z",
+    })
+}
+
+/// List servers and their PSA assets
+///
+/// Servers the asset sync has looked at, proposed matches first, then
+/// refusals, then the most recently changed, at most 200, with counts of
+/// all of them by state. Global administrators only.
+#[utoipa::path(get, path = "/api/v1/psa/asset-links", tag = "psa",
+    responses(
+        (status = 200, description = "The servers", body = psa_assets::AssetLinkList, example = json!({
+            "servers": [asset_link()],
+            "proposed": 1,
+            "linked": 40,
+            "failed": 0,
+        })),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+    ))]
+fn list_psa_asset_links() {}
+
+/// Confirm or choose a server's asset
+///
+/// `asset_id` set to the proposed asset confirms it; another asset of the
+/// server's client chooses that one instead (checked with the PSA); `null`
+/// creates a new asset at the next pass. The asset is then updated, with
+/// an External Link back to the server. Audited as `psa.asset.link`.
+#[utoipa::path(put, path = "/api/v1/psa/asset-links/{server_id}", tag = "psa",
+    params(("server_id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = psa_assets::AssetLinkRequest, example = json!({"asset_id": 7001})),
+    responses(
+        (status = 200, description = "Saved", body = psa_assets::AssetLinkView, example = json!({
+            "server_id": "1b2c3d4e-5f60-4718-9a0b-1c2d3e4f5a6b",
+            "hostname": "web-01",
+            "site_name": "paris",
+            "state": "linked",
+            "asset_id": 7001,
+            "asset_name": "WEB-01",
+            "matched_by": "serial",
+            "deactivated": false,
+            "error": null,
+            "pushed_at": null,
+            "updated_at": "2026-11-25T10:02:00Z",
+        })),
+        (status = 400, description = "`invalid`: the PSA has no such asset, or it belongs to another client", body = ErrorBody),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "`not_found`: no such server", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up, the server's site and customer have no PSA client, or the asset is another server's", body = ErrorBody),
+        (status = 502, description = "`psa_unavailable`: the PSA refused or did not answer", body = ErrorBody),
+    ))]
+fn put_psa_asset_link() {}
+
+/// Forget a server's asset
+///
+/// In MonitorFlow only: the asset stays in the PSA, and the next pass
+/// matches the server again. Audited as `psa.asset.unlink`.
+#[utoipa::path(delete, path = "/api/v1/psa/asset-links/{server_id}", tag = "psa",
+    params(("server_id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 204, description = "Forgotten"),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "`not_found`: the server has no asset", body = ErrorBody),
+    ))]
+fn delete_psa_asset_link() {}
+
+/// Sync assets now
+///
+/// Linked servers, and those the PSA refused, are pushed again at the next
+/// passes instead of within the hour, 20 servers a minute.
+#[utoipa::path(post, path = "/api/v1/psa/asset-links/sync", tag = "psa",
+    responses(
+        (status = 200, description = "Queued", body = psa_assets::SyncQueued, example = json!({"queued": 41})),
+        (status = 403, description = "Not a global administrator: `forbidden`; `api_key_scope`", body = ErrorBody),
+        (status = 409, description = "`conflict`: no connection is set up", body = ErrorBody),
+    ))]
+fn sync_psa_assets() {}
