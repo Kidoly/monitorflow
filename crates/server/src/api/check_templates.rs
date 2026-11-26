@@ -165,7 +165,9 @@ mod tests {
     #[test]
     fn views_name_full_metrics() {
         let views: Vec<_> = templates::TEMPLATES.iter().map(view).collect();
-        assert_eq!(views.len(), 4);
+        assert_eq!(views.len(), 5);
+        let k8s = views.iter().find(|v| v.kind == "kubernetes").unwrap();
+        assert_eq!((k8s.runs, k8s.default_port), ("probe", Some(6443)));
         let pg = &views[0];
         assert_eq!(pg.kind, "postgresql");
         assert!(pg
